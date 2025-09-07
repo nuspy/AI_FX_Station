@@ -25,9 +25,46 @@ from ..utils.config import get_config
 from ..postproc import uncertainty as unc
 from ..data import io as data_io
 
-app = FastAPI(title="MagicForex Inference Service")
+from contextlib import asynccontextmanager
 
 cfg = get_config()
+
+# Define lifespan manager to ensure alembic and DBWriter start/stop correctly per worker process
+@asynccontextmanager
+async def lifespan(app):
+    # run alembic upgrade head (best-effort)
+    try:
+        if getattr(cfg.app, "alembic_upgrade_on_start", True) or (isinstance(cfg, dict) and cfg.get("app", {}).get("alembic_upgrade_on_start", True)):
+            # run synchronously; acceptable for startup preparation
+            _run_alembic_upgrade_head()
+    except Exception as e:
+        logger.warning("Alembic upgrade attempt failed in lifespan: {}", e)
+
+    # start DBWriter if present
+    try:
+        if "db_writer" in globals() and db_writer is not None:
+            try:
+                db_writer.start()
+                logger.info("Background DBWriter started (lifespan)")
+            except Exception as e:
+                logger.exception("Failed to start DBWriter in lifespan: {}", e)
+    except Exception:
+        pass
+
+    try:
+        yield
+    finally:
+        # stop DBWriter gracefully
+        try:
+            if "db_writer" in globals() and db_writer is not None:
+                db_writer.stop(flush=True, timeout=5.0)
+                logger.info("Background DBWriter stopped (lifespan)")
+        except Exception as e:
+            logger.exception("Failed to stop DBWriter in lifespan: {}", e)
+
+
+# Create FastAPI app with lifespan manager so uvicorn/ASGI server triggers start/stop per worker
+app = FastAPI(title="MagicForex Inference Service", lifespan=lifespan)
 
 
 class ForecastRequest(BaseModel):
@@ -222,37 +259,8 @@ db_service = DBService(engine=_engine)
 calib_service = CalibrationService(engine=_engine)
 model_service = ModelService(engine=_engine)
 
-# instantiate DBWriter (background writer) but start it in startup_event
+# instantiate DBWriter (background writer) - lifecycle managed by the FastAPI lifespan
 db_writer = DBWriter(db_service=db_service)
-
-
-@app.on_event("startup")
-def startup_event():
-    # run alembic upgrade head if configured
-    try:
-        if getattr(cfg.app, "alembic_upgrade_on_start", True) or (isinstance(cfg, dict) and cfg.get("app", {}).get("alembic_upgrade_on_start", True)):
-            _run_alembic_upgrade_head()
-    except Exception as e:
-        logger.warning("Alembic upgrade attempt failed: {}", e)
-    # start background DB writer
-    try:
-        db_writer.start()
-        logger.info("Background DBWriter started")
-    except Exception as e:
-        logger.exception("Failed to start DBWriter: {}", e)
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    """
-    Ensure background DBWriter is stopped cleanly when the server shuts down.
-    """
-    try:
-        if 'db_writer' in globals() and db_writer is not None:
-            db_writer.stop(flush=True, timeout=5.0)
-            logger.info("Background DBWriter stopped on shutdown")
-    except Exception as e:
-        logger.exception("Failed to stop DBWriter cleanly on shutdown: {}", e)
 
 
 @app.post("/forecast", response_model=ForecastResponse)

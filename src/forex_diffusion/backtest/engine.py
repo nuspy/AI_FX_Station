@@ -367,6 +367,34 @@ class BacktestEngine:
             }
             reports.append(fold_report)
 
+            # Persist a lightweight fold summary as a prediction record asynchronously if db_writer is available.
+            # This avoids blocking the backtest loop on DB IO while retaining a record of fold results.
+            try:
+                if getattr(self, "db_writer", None) is not None and symbol is not None and timeframe is not None:
+                    # use a special horizon label to indicate fold summary
+                    horizon_label = f"fold_{fold}_summary"
+                    # store net_pnl in q50 (convenience) and mirror into q05/q95
+                    net_pnl_val = float(summary.get("net_pnl", 0.0) or 0.0)
+                    meta = {
+                        "fold": int(fold),
+                        "n_trades": int(summary.get("n_trades", 0) or 0),
+                        "sharpe": float(summary.get("sharpe") or 0.0),
+                    }
+                    enqueued = self.db_writer.write_prediction_async(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        horizon=horizon_label,
+                        q05=net_pnl_val,
+                        q50=net_pnl_val,
+                        q95=net_pnl_val,
+                        meta=meta,
+                    )
+                    if not enqueued:
+                        # Log and continue; do not fail the backtest for a full queue
+                        logger.warning("BacktestEngine: DBWriter queue full, could not enqueue fold summary for fold {}", fold)
+            except Exception as e:
+                logger.exception("BacktestEngine: failed to enqueue fold summary: {}", e)
+
             fold += 1
             start = start + test_bars  # move forward by test length (non-overlapping)
 
