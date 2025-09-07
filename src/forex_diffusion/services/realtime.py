@@ -41,6 +41,7 @@ class RealTimeIngestService:
         symbols: Optional[List[str]] = None,
         timeframe: str = "1m",
         poll_interval: float = 1.0,
+        db_writer: Optional[Any] = None,
     ):
         self.engine = engine
         self.cfg = get_config()
@@ -57,6 +58,8 @@ class RealTimeIngestService:
         self._first_tick_seen: Dict[str, bool] = {}
         # lock for thread-safe access
         self._lock = threading.Lock()
+        # optional background writer to persist features asynchronously
+        self.db_writer = db_writer
 
     def start(self):
         """Start background polling thread."""

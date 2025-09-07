@@ -267,3 +267,9 @@ debug:
   # developer switches
   simulate_provider_errors: false
   force_small_dataset: false
+
+# Persist features precomputed during backfill/realtime ingestion (optional; enable for faster training)
+persist_features: true
+features:
+  bulk_batch_size: 500
+  retention_days: 365

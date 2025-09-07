@@ -450,11 +450,15 @@ def pipeline_process(
     if warmup > 0:
         if len(tmp) <= warmup:
             logger.warning("Pipeline: data length (%d) <= warmup (%d). Returning empty features.", len(tmp), warmup)
-            features_df = tmp.iloc[0:0][features].copy()
+            features_df = tmp.iloc[0:0][["ts_utc"] + features].copy()
         else:
-            features_df = tmp.iloc[warmup:][features].copy()
+            features_df = tmp.iloc[warmup:][["ts_utc"] + features].copy()
     else:
-        features_df = tmp[features].copy()
+        # ensure ts_utc preserved
+        if "ts_utc" in tmp.columns:
+            features_df = tmp[["ts_utc"] + features].copy()
+        else:
+            features_df = tmp[features].copy()
 
     # Standardization
     if standardizer is None:

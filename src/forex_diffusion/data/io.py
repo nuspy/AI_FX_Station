@@ -364,15 +364,17 @@ def backfill_from_provider(
     start_ts_ms: int,
     end_ts_ms: int,
     resampled: bool = False,
+    db_writer=None,
 ) -> Dict:
     """
     Download from provider_client (must implement get_historical(symbol, timeframe, start_ts_ms, end_ts_ms))
     The provider is expected to return a pandas.DataFrame with columns ts_utc, open, high, low, close, volume(optional).
     The function validates, resamples if needed, and upserts to DB, returning a QA report.
+
+    Optionally compute features via pipeline and persist them (async via db_writer or sync via DBService).
     """
     cfg = get_config()
     logger.info("Backfilling {} {} from {} to {}", symbol, timeframe, start_ts_ms, end_ts_ms)
-    # Provider client may require timeframe mapping; assume it supports requested timeframe.
     df = provider_client.get_historical(symbol=symbol, timeframe=timeframe, start_ts_ms=start_ts_ms, end_ts_ms=end_ts_ms)
     if not isinstance(df, pd.DataFrame):
         raise ValueError("Provider client.get_historical must return a pandas.DataFrame")
@@ -382,8 +384,37 @@ def backfill_from_provider(
 
     # Upsert
     report = upsert_candles(engine, dfv, symbol, timeframe, resampled=resampled)
-    # Combine reports
     combined = {"provider_rows": len(df), "validation": vreport, "upsert": report}
-    # QA logging
+
+    # Optionally compute features and persist
+    try:
+        persist = False
+        try:
+            persist = bool(getattr(cfg, "persist_features", False) or (isinstance(cfg, dict) and cfg.get("persist_features", False)))
+        except Exception:
+            persist = False
+        if persist:
+            # compute features using pipeline
+            from ..features.pipeline import pipeline_process
+            # compute features for dfv (may require warmup trimming)
+            features_df, _ = pipeline_process(dfv, timeframe=timeframe, features_config=getattr(cfg, "features", {}))
+            # persist each row using db_writer if available, otherwise use sync DBService
+            if db_writer is not None:
+                for _, row in features_df.iterrows():
+                    enq = db_writer.write_features_async(symbol=symbol, timeframe=timeframe, ts_utc=int(row.get("ts_utc", row.name)), features=row.to_dict(), pipeline_version=getattr(cfg.model, "pipeline_version", "v1") if hasattr(cfg, "model") else "v1")
+                    if not enq:
+                        logger.warning("backfill: DBWriter queue full while enqueuing features for {} {}", symbol, timeframe)
+            else:
+                # sync write via DBService
+                from ..services.db_service import DBService
+                dbs = DBService(engine=engine)
+                for _, row in features_df.iterrows():
+                    dbs.write_features(symbol=symbol, timeframe=timeframe, ts_utc=int(row.get("ts_utc", row.name)), features=row.to_dict(), pipeline_version=getattr(cfg.model, "pipeline_version", "v1") if hasattr(cfg, "model") else "v1")
+            combined["features_persisted"] = True
+    except Exception as e:
+        logger.exception("Failed to compute/persist features for backfill: {}", e)
+        combined["features_persisted"] = False
+        combined["features_error"] = str(e)
+
     logger.info("Backfill report for {}/{}: {}", symbol, timeframe, combined)
     return combined

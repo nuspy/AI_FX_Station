@@ -178,6 +178,51 @@ class DBService:
             logger.exception("Failed to write prediction: {}", e)
             raise
 
+            def write_features_bulk(self, rows: List[Dict[str, Any]]):
+                """
+                Bulk insert multiple features rows in a single transaction.
+                rows: list of dicts with keys: symbol, timeframe, ts_utc, features (dict), pipeline_version
+                """
+                if not rows:
+                    return
+                payloads = []
+                now_ms = int(time.time() * 1000)
+                for r in rows:
+                    payloads.append({
+                        "symbol": r.get("symbol"),
+                        "timeframe": r.get("timeframe"),
+                        "ts_utc": int(r.get("ts_utc")),
+                        "pipeline_version": r.get("pipeline_version"),
+                        "features_json": json.dumps(r.get("features", {})),
+                        "ts_created_ms": now_ms,
+                    })
+                try:
+                    with self.engine.begin() as conn:
+                        conn.execute(self.features_tbl.insert(), payloads)
+                except Exception as e:
+                    logger.exception("Failed to write_features_bulk: {}", e)
+                    raise
+
+            def compact_features(self, older_than_days: int = 365):
+                """
+                Compact/retention policy: delete features older than older_than_days (based on ts_created_ms).
+                Returns number of rows deleted.
+                """
+                try:
+                    cutoff = int((time.time() - older_than_days * 86400.0) * 1000)
+                    with self.engine.begin() as conn:
+                        res = conn.execute(self.features_tbl.delete().where(self.features_tbl.c.ts_created_ms < cutoff))
+                        # SQLAlchemy core `Result` may not provide rowcount reliably on all DBs; attempt to return int if available.
+                        try:
+                            deleted = int(res.rowcount) if hasattr(res, "rowcount") and res.rowcount is not None else 0
+                        except Exception:
+                            deleted = 0
+                    logger.info("compact_features: deleted {} rows older than {} days", deleted, older_than_days)
+                    return deleted
+                except Exception as e:
+                    logger.exception("Failed to compact features: {}", e)
+                    raise
+
     def write_calibration_record(self, record: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
