@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenv
+.venv/
+venv/
+env/
+ENV/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs and runtime files
+logs/
+*.log
+*.csv
+
+# Build / packaging
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+
+# Pipenv / poetry
+poetry.lock
+
+# Docker
+*.pid
+docker-compose.override.yml
+
+# Local data/artifacts
+data/
+artifacts/
+tmp/
+.cache/
+
+# Environment files
+.env
+.env.local
