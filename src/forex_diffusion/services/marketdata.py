@@ -52,7 +52,9 @@ class AlphaVantageClient:
     def __init__(self, key: Optional[str] = None, base_url: str = "https://www.alphavantage.co/query", rate_limit_per_minute: int = 5):
         cfg = get_config()
         av_cfg = getattr(cfg, "providers", {}).get("alpha_vantage", {}) if hasattr(cfg, "providers") else {}
-        self.api_key = key or av_cfg.get("key") or av_cfg.get("api_key")
+        from ..utils.user_settings import get_setting
+        user_key = get_setting("alpha_vantage_api_key", None)
+        self.api_key = key or av_cfg.get("key") or av_cfg.get("api_key") or user_key or os.environ.get("ALPHAVANTAGE_KEY")
         self.base_url = av_cfg.get("base_url", base_url)
         self.rate_limit = rate_limit_per_minute or av_cfg.get("rate_limit_per_minute", 5)
         self._client = httpx.Client(timeout=30.0)

@@ -32,38 +32,115 @@ class SignalsTab(QWidget):
         # initialize empty
         self._populate_empty()
 # ui/signals_tab.py
-# Widget to display persisted signals from the DB (simple table with refresh)
+# Widget to display persisted signals from the DB with admin controls for regime/index management
 from __future__ import annotations
 
 from typing import Optional
+import threading
+import json
+import time
 
 import pandas as pd
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTableWidget, QTableWidgetItem, QLabel
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QPushButton, QTableWidget,
+    QTableWidgetItem, QLabel, QTextEdit, QHBoxLayout, QMessageBox
+)
+from PySide6.QtCore import Qt
 from loguru import logger
 from sqlalchemy import MetaData, select
 
 from ..services.db_service import DBService
+from ..services.regime_service import RegimeService
+from ..services.scheduler import RegimeScheduler
+from ..services.monitor import RegimeMonitor
 
 
 class SignalsTab(QWidget):
     """
-    Displays recent signals persisted in the DB.
-    Methods:
-      - refresh(engine, limit=100): reloads the most recent signals
+    Displays recent signals persisted in the DB and provides admin controls:
+    - Refresh signals
+    - Rebuild regime index (async)
+    - Incremental update (one batch)
+    - Start/Stop scheduler
+    - Show index metrics and monitor metrics
+    Logs actions into a small console area.
     """
     def __init__(self, parent=None, db_service: Optional[DBService] = None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
-        self.header = QLabel("Signals")
+
+        self.header = QLabel("Signals & Admin")
+        self.header.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.header)
-        self.refresh_btn = QPushButton("Refresh")
-        self.layout.addWidget(self.refresh_btn)
-        self.table = QTableWidget()
-        self.layout.addWidget(self.table)
+
+        # signals table and refresh
+        top_h = QHBoxLayout()
+        self.refresh_btn = QPushButton("Refresh Signals")
         self.refresh_btn.clicked.connect(self.on_refresh_clicked)
+        top_h.addWidget(self.refresh_btn)
+
+        self.table = QTableWidget()
+        self.layout.addLayout(top_h)
+        self.layout.addWidget(self.table)
+
+        # admin controls
+        admin_h = QHBoxLayout()
+        self.rebuild_btn = QPushButton("Rebuild Regime Index")
+        self.rebuild_btn.clicked.connect(self.on_rebuild_clicked)
+        admin_h.addWidget(self.rebuild_btn)
+
+        # Settings button
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.clicked.connect(self.on_settings_clicked)
+        admin_h.addWidget(self.settings_btn)
+
+        # Admin login for remote admin actions
+        self.login_btn = QPushButton("Login (Admin)")
+        self.login_btn.clicked.connect(self.on_login_clicked)
+        admin_h.addWidget(self.login_btn)
+
+        self.incremental_btn = QPushButton("Incremental Update")
+        self.incremental_btn.clicked.connect(self.on_incremental_clicked)
+        admin_h.addWidget(self.incremental_btn)
+
+        self.start_sched_btn = QPushButton("Start Scheduler")
+        self.start_sched_btn.clicked.connect(self.on_start_scheduler)
+        admin_h.addWidget(self.start_sched_btn)
+
+        self.stop_sched_btn = QPushButton("Stop Scheduler")
+        self.stop_sched_btn.clicked.connect(self.on_stop_scheduler)
+        admin_h.addWidget(self.stop_sched_btn)
+
+        self.metrics_btn = QPushButton("Show Index Metrics")
+        self.metrics_btn.clicked.connect(self.on_show_index_metrics)
+        admin_h.addWidget(self.metrics_btn)
+
+        self.monitor_btn = QPushButton("Show Monitor Metrics")
+        self.monitor_btn.clicked.connect(self.on_show_monitor_metrics)
+        admin_h.addWidget(self.monitor_btn)
+
+        self.layout.addLayout(admin_h)
+
+        # log area
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFixedHeight(160)
+        self.layout.addWidget(self.log)
+
+        # DB and services
         self.db_service = db_service or DBService()
-        # initialize empty
+        self.regime_service = RegimeService(engine=self.db_service.engine)
+        # local scheduler/monitor (do not conflict with server instances)
+        self.scheduler: Optional[RegimeScheduler] = None
+        self.monitor: Optional[RegimeMonitor] = None
+
+        # initialize empty table
         self._populate_empty()
+
+    def _log(self, msg: str):
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.log.append(f"[{ts}] {msg}")
+        logger.info(msg)
 
     def _populate_empty(self):
         self.table.setColumnCount(6)
@@ -73,8 +150,10 @@ class SignalsTab(QWidget):
     def on_refresh_clicked(self):
         try:
             self.refresh(limit=100)
+            self._log("Refreshed signals table")
         except Exception as e:
             logger.exception("SignalsTab refresh failed: {}", e)
+            QMessageBox.warning(self, "Refresh failed", str(e))
 
     def refresh(self, limit: int = 100):
         """
@@ -108,6 +187,72 @@ class SignalsTab(QWidget):
         except Exception as e:
             logger.exception("Failed to load signals: {}", e)
             self._populate_empty()
+            raise
+
+    def on_rebuild_clicked(self):
+        def worker():
+            try:
+                self._log("Triggering full rebuild (async)...")
+                res = self.regime_service.rebuild_async(n_clusters=8, limit=None)
+                self._log(f"Rebuild started: {res}")
+            except Exception as e:
+                self._log(f"Rebuild failed to start: {e}")
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_incremental_clicked(self):
+        def worker():
+            try:
+                self._log("Running incremental update (one batch)...")
+                res = self.regime_service.incremental_update(batch_size=500)
+                self._log(f"Incremental update result: {res}")
+            except Exception as e:
+                self._log(f"Incremental update failed: {e}")
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_start_scheduler(self):
+        if self.scheduler is None or not getattr(self.scheduler, "_thread", None):
+            try:
+                self.scheduler = RegimeScheduler(engine=self.db_service.engine, interval_seconds=60, batch_size=500)
+                self.scheduler.start()
+                self._log("Started local RegimeScheduler")
+            except Exception as e:
+                self._log(f"Failed to start scheduler: {e}")
+        else:
+            self._log("Scheduler already running")
+
+    def on_stop_scheduler(self):
+        if self.scheduler is not None:
+            try:
+                self.scheduler.stop()
+                self._log("Stopped local RegimeScheduler")
+            except Exception as e:
+                self._log(f"Failed to stop scheduler: {e}")
+        else:
+            self._log("No local scheduler to stop")
+
+    def on_show_index_metrics(self):
+        try:
+            metrics = self.regime_service.get_index_metrics()
+            self._log(f"Index metrics: {json.dumps(metrics)}")
+            QMessageBox.information(self, "Index Metrics", json.dumps(metrics, indent=2))
+        except Exception as e:
+            self._log(f"Failed to get index metrics: {e}")
+            QMessageBox.warning(self, "Metrics failed", str(e))
+
+    def on_show_monitor_metrics(self):
+        try:
+            # attempt to connect to a running RegimeMonitor (if server running) else show local metrics
+            try:
+                rem = RegimeMonitor(engine=self.db_service.engine)
+                # get current metrics (may start a monitor thread internally); prefer to read direct metrics
+                metrics = rem.get_metrics()
+            except Exception:
+                metrics = {}
+            self._log(f"Monitor metrics: {json.dumps(metrics)}")
+            QMessageBox.information(self, "Monitor Metrics", json.dumps(metrics, indent=2))
+        except Exception as e:
+            self._log(f"Failed to get monitor metrics: {e}")
+            QMessageBox.warning(self, "Monitor failed", str(e))
     def _populate_empty(self):
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["ts", "symbol", "timeframe", "entry", "target", "stop"])
