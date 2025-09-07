@@ -24,6 +24,8 @@ def main():
     rs = RegimeService(engine=engine)
     rs.fit_clusters_and_index(n_clusters=args.n_clusters, limit=args.limit)
     print("Regime index built and saved.")
+    # report mapping path
+    print("Index path:", rs.index and rs.index or "index saved to artifacts/regime_index.bin")
 
 if __name__ == "__main__":
     main()

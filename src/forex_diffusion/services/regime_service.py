@@ -92,8 +92,76 @@ class RegimeService:
         self.index = p
         self.id_to_idx = {int(_id): int(i) for i, _id in enumerate(ids_f)}
         self.idx_to_id = {int(i): int(_id) for i, _id in enumerate(ids_f)}
+        # store last_indexed_id so incremental updates can append new latents
+        last_indexed_id = int(ids_f[-1]) if len(ids_f) > 0 else None
         with open(MAPPING_PATH, "w", encoding="utf-8") as fh:
-            json.dump({"id_to_idx": self.id_to_idx, "idx_to_id": self.idx_to_id}, fh)
+            json.dump({"id_to_idx": self.id_to_idx, "idx_to_id": self.idx_to_id, "last_indexed_id": last_indexed_id}, fh)
+
+    def incremental_update(self, batch_size: int = 1000):
+        """
+        Incrementally add new latents (id > last_indexed_id) to existing HNSW index.
+        If index not present, raises.
+        """
+        if not os.path.exists(MAPPING_PATH) or not os.path.exists(INDEX_PATH):
+            raise RuntimeError("Index/mapping not found; run full build first")
+        # load mapping to get last_indexed_id
+        with open(MAPPING_PATH, "r", encoding="utf-8") as fh:
+            meta = json.load(fh)
+        last_id = meta.get("last_indexed_id", None)
+        # load new latents with id > last_id
+        meta_db = self.db.latents_tbl.metadata
+        tbl = self.db.latents_tbl
+        with self.engine.connect() as conn:
+            if last_id is None:
+                stmt = tbl.select().order_by(tbl.c.ts_utc.asc()).limit(batch_size)
+            else:
+                stmt = tbl.select().where(tbl.c.id > int(last_id)).order_by(tbl.c.ts_utc.asc()).limit(batch_size)
+            rows = conn.execute(stmt).fetchall()
+            if not rows:
+                return {"updated": 0, "message": "no_new_latents"}
+            new_ids = []
+            new_vecs = []
+            for r in rows:
+                try:
+                    vec = np.asarray(json.loads(r["latent_json"]), dtype=np.float32)
+                except Exception:
+                    continue
+                if vec.size == 0:
+                    continue
+                new_ids.append(int(r["id"]))
+                new_vecs.append(vec)
+        if len(new_vecs) == 0:
+            return {"updated": 0, "message": "no_valid_latents"}
+
+        # load index and mapping
+        self.load_index()
+        # current count
+        try:
+            cur_count = int(self.index.get_current_count())
+        except Exception:
+            cur_count = len(self.idx_to_id)
+        # add items
+        data = np.vstack(new_vecs).astype(np.float32)
+        start_idx = cur_count
+        try:
+            self.index.add_items(data, np.arange(start_idx, start_idx + data.shape[0]))
+        except Exception as e:
+            logger.exception("RegimeService.incremental_update: failed to add_items to index: {}", e)
+            raise
+        # update mappings
+        for i, _id in enumerate(new_ids):
+            idx = start_idx + i
+            self.id_to_idx[int(_id)] = int(idx)
+            self.idx_to_id[int(idx)] = int(_id)
+        # persist index and mapping (update last_indexed_id)
+        last_indexed_id = int(new_ids[-1])
+        with open(MAPPING_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"id_to_idx": self.id_to_idx, "idx_to_id": self.idx_to_id, "last_indexed_id": last_indexed_id}, fh)
+        try:
+            self.index.save_index(INDEX_PATH)
+        except Exception as e:
+            logger.exception("RegimeService.incremental_update: failed to save index: {}", e)
+        return {"updated": len(new_ids), "last_indexed_id": last_indexed_id}
 
     def load_index(self):
         """
