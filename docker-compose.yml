@@ -1,5 +1,28 @@
 version: "3.8"
+version: "3.8"
 
+services:
+  app:
+    build: .
+    image: magicforex:dev
+    container_name: magicforex_app
+    env_file:
+      - .env.example
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./logs:/app/logs
+      - ./src:/app/src
+      - ./configs:/app/configs
+    restart: unless-stopped
+    command: ["./docker/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 services:
   app:
     build: .

@@ -21,31 +21,6 @@ Aggiorna sempre pyproject.toml quando aggiungi librerie, vincoli Python 3.12, pr
 
 Zero testo ornamentale. Nessun blocco “spiegazione” al di fuori del mini-riepilogo finale.
 
-Formato di risposta (obbligatorio)
-Per ogni file creato o modificato, segui esattamente questo schema, ripetuto in sequenza per più file (quanti ne servono nel singolo giro):
-
-[PATH]: <percorso/del/file.ext>
-[NOTE]: 1–2 righe, essenziali (cosa fa/cosa é cambiato/why)
-[CONTENT]:
-```<linguaggio>
-<contenuto COMPLETO del file, non parziale>
-
-
-Se servono comandi (migrazioni, install, build, ecc.), alla fine inserisci **un solo** blocco:
-
-
-
-[SHELL]:
-
-# comandi necessari nell'ordine esatto, uno per riga
-
-
-**Riepilogo finale (sempre, ultra-breve)**  
-Tre elenchi separati, max 4 voci ciascuno:
-- ✅ **Fatto**: …  
-- 🔶 **Parziale**: …  
-- 🧩 **TODO**: …
-
 **Politica di continuità**  
 - Non attendere “continua”. Prosegui internamente finché possibile.  
 - Se lo spazio non basta, chiudi con una singola riga:  

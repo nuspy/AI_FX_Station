@@ -214,10 +214,16 @@ _engine = _get_engine()
 from ..services.model_service import ModelService
 from ..services.db_service import DBService
 from ..services.calibration import CalibrationService
+from ..services.db_writer import DBWriter
+from ..services.db_writer import DBWriter
+from ..services.db_writer import DBWriter
 
 db_service = DBService(engine=_engine)
 calib_service = CalibrationService(engine=_engine)
 model_service = ModelService(engine=_engine)
+
+# instantiate DBWriter (background writer) but start it in startup_event
+db_writer = DBWriter(db_service=db_service)
 
 
 @app.on_event("startup")
@@ -228,6 +234,12 @@ def startup_event():
             _run_alembic_upgrade_head()
     except Exception as e:
         logger.warning("Alembic upgrade attempt failed: {}", e)
+    # start background DB writer
+    try:
+        db_writer.start()
+        logger.info("Background DBWriter started")
+    except Exception as e:
+        logger.exception("Failed to start DBWriter: {}", e)
 
 
 @app.post("/forecast", response_model=ForecastResponse)
@@ -285,10 +297,10 @@ def forecast(req: ForecastRequest):
         adjusted_bands = bands_raw
         diagnostics["calibration_error"] = str(e)
 
-    # Persist predictions into DB (one row per horizon)
+    # Persist predictions asynchronously via DBWriter (one task per horizon)
     try:
         for h_label, qdict in adjusted_quantiles.items():
-            db_service.write_prediction(
+            enqueued = db_writer.write_prediction_async(
                 symbol=req.symbol,
                 timeframe=req.timeframe,
                 horizon=h_label,
@@ -297,9 +309,11 @@ def forecast(req: ForecastRequest):
                 q95=float(qdict["q95"]),
                 meta={"diagnostics": diagnostics, "credibility": credibility.get(h_label)},
             )
+            if not enqueued:
+                logger.warning("DBWriter queue full: failed to enqueue prediction for {} {} {}", req.symbol, req.timeframe, h_label)
         diagnostics["persisted_predictions"] = True
     except Exception as e:
-        logger.exception("Failed to persist predictions: {}", e)
+        logger.exception("Failed to enqueue predictions: {}", e)
         diagnostics["persisted_predictions"] = False
         diagnostics["persist_error"] = str(e)
 

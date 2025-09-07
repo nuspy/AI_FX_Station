@@ -98,12 +98,13 @@ class UIController:
     """
     Binds menu signals to actions, runs background workers, exposes signals for UI updates.
     """
-    def __init__(self, main_window, market_service: Optional[MarketDataService] = None, engine_url: str = "http://127.0.0.1:8000"):
+    def __init__(self, main_window, market_service: Optional[MarketDataService] = None, engine_url: str = "http://127.0.0.1:8000", db_writer: Optional["DBWriter"] = None):
         self.main_window = main_window
         self.market_service = market_service or MarketDataService()
         self.engine_url = engine_url
         self.signals = UIControllerSignals()
         self.pool = QThreadPool.globalInstance()
+        self.db_writer = db_writer  # optional background writer for async persistence
 
     def bind_menu_signals(self, menu_signals):
         """
@@ -140,6 +141,15 @@ class UIController:
             timeframe = "1m"
         payload = {"symbol": symbol, "timeframe": timeframe, "horizons": ["1m", "5m", "15m"], "N_samples": 200, "apply_conformal": True}
         self.signals.status.emit(f"Forecast requested for {symbol} {timeframe}")
+
+        # Log the forecast request asynchronously via DBWriter if available (lightweight audit)
+        try:
+            if getattr(self, "db_writer", None) is not None:
+                self.db_writer.write_prediction_async(symbol=symbol, timeframe=timeframe, horizon="request", q05=0.0, q50=0.0, q95=0.0, meta={"event": "forecast_requested"})
+        except Exception:
+            # non-fatal: ignore logging errors from UI
+            pass
+
         fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
         self.pool.start(fw)
 

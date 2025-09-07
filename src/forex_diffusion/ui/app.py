@@ -17,3 +17,20 @@ from ..services.marketdata import MarketDataService  # Use UIController to bind 
             self.controller.signals.forecastReady.connect(lambda df, q: self.signals_tab.refresh(limit=100))
         except Exception as e:
             logger.exception("Failed to initialize SignalsTab: {}", e)
+
+        # Signals tab (shows persisted signals)
+        try:
+            self.db_service = DBService()
+            # create and start a DBWriter for UI-originated async writes
+            from ..services.db_writer import DBWriter
+            self.db_writer = DBWriter(db_service=self.db_service)
+            self.db_writer.start()
+
+            self.signals_tab = SignalsTab(self, db_service=self.db_service)
+            layout.addWidget(self.signals_tab)
+            # refresh signals after each successful forecast
+            self.controller.signals.forecastReady.connect(lambda df, q: self.signals_tab.refresh(limit=100))
+            # also connect controller to use this writer
+            self.controller.db_writer = self.db_writer
+        except Exception as e:
+            logger.exception("Failed to initialize SignalsTab or DBWriter: {}", e)
