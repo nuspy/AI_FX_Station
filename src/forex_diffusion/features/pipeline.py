@@ -307,6 +307,63 @@ def time_cyclic_and_session(df: pd.DataFrame) -> pd.DataFrame:
     return tmp
 
 
+def build_conditioning(df: pd.DataFrame, window_long: int = 240, donchian_n: int = 55) -> pd.DataFrame:
+    """
+    Build a compact conditioning vector (h) per row containing multi-scale/context features:
+    - hour_sin, hour_cos
+    - session dummies
+    - realized volatility long-run (sqrt sum squares over window_long)
+    - donchian position over donchian_n
+    - hurst rolling (short)
+    - round-number proximity (distance to nearest 00/50 pips)
+    - volatility bucket (categorical -> one-hot via simple quantiles)
+    Returns DataFrame with conditioning columns aligned with df.
+    """
+    tmp = df.copy().reset_index(drop=True)
+    # ensure basic time features
+    tmp = time_cyclic_and_session(tmp)
+
+    # realized vol long-run (sqrt of sum squares)
+    if "close" in tmp.columns:
+        r = np.log(tmp["close"]).diff().fillna(0.0)
+        rv = np.sqrt(r.pow(2).rolling(window=window_long, min_periods=1).sum())
+        tmp["rv_long"] = rv.fillna(method="bfill")
+
+    # donchian position
+    don = donchian(tmp, n=donchian_n)
+    upper = don.get(f"don_upper_{donchian_n}", pd.Series(np.nan, index=tmp.index))
+    lower = don.get(f"don_lower_{donchian_n}", pd.Series(np.nan, index=tmp.index))
+    tmp["don_pos"] = (tmp["close"] - lower) / (upper - lower).replace(0, np.nan)
+    tmp["don_pos"] = tmp["don_pos"].fillna(0.5)
+
+    # hurst short
+    tmp = hurst_feature(tmp, window=min(128, max(32, window_long // 2)), out_col="hurst_short")
+
+    # round-number proximity in pips (assumes price in decimal, pip scale 1e-4 for many FX)
+    pip = 1e-4
+    tmp["round_prox"] = (np.abs((tmp["close"] / pip) % 50 - 0) / 50.0).fillna(0.0)  # normalized
+
+    # volatility bucket: quantile-based over rv_long
+    try:
+        q = pd.qcut(tmp["rv_long"].fillna(0.0), q=4, labels=False, duplicates="drop")
+        tmp["vol_bucket"] = q.fillna(0).astype(int)
+    except Exception:
+        tmp["vol_bucket"] = 0
+
+    # One-hot encode vol_bucket into fixed columns
+    for b in range(4):
+        tmp[f"vol_b{b}"] = (tmp["vol_bucket"] == b).astype(int)
+
+    # Compact conditioning columns list
+    cond_cols = ["hour_sin", "hour_cos", "session_tokyo", "session_london", "session_ny", "rv_long", "don_pos", "hurst_short", "round_prox"] + [f"vol_b{b}" for b in range(4)]
+    # ensure missing cols exist
+    for c in cond_cols:
+        if c not in tmp.columns:
+            tmp[c] = 0.0
+
+    return tmp[cond_cols]
+
+
 @dataclass
 class Standardizer:
     """

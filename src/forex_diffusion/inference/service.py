@@ -212,6 +212,31 @@ class ModelService:
         recent_closes = d["recent_closes"]
         recent_ts = d["recent_ts"]
 
+        # Build conditioning vector h from recent candles using pipeline.build_conditioning
+        try:
+            # fetch last n rows of candles to construct df for conditioning
+            from ..data import io as data_io_local
+            from ..features.pipeline import build_conditioning
+            # query recent candles as DataFrame via engine
+            with self.engine.connect() as conn:
+                tbl = MetaData()
+                tbl.reflect(bind=self.engine, only=["market_data_candles"])
+                mdt = tbl.tables.get("market_data_candles")
+                if mdt is not None:
+                    stmt = select(mdt).where(mdt.c.symbol == symbol).where(mdt.c.timeframe == timeframe).order_by(mdt.c.ts_utc.desc()).limit(1024)
+                    rows = conn.execute(stmt).fetchall()
+                    if rows:
+                        df_recent = pd.DataFrame(rows, columns=rows[0]._mapping.keys()).sort_values("ts_utc").reset_index(drop=True)
+                        cond_df = build_conditioning(df_recent)
+                        # take last row as conditioning vector
+                        cond_vec = cond_df.iloc[-1].to_numpy(dtype=float)
+                    else:
+                        cond_vec = None
+                else:
+                    cond_vec = None
+        except Exception:
+            cond_vec = None
+
         sigma_1 = self._estimate_sigma(recent_closes, window=cfg.features.get("standardization", {}).get("window_bars", 1000) if isinstance(cfg.features, dict) else 100)
         # Generate samples per horizon using log-normal RW: price_h = last_close * exp(sigma_1 * sqrt(h_minutes) * Z)
         quantiles_out = {}

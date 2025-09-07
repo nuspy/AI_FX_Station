@@ -13,6 +13,7 @@ import os
 from typing import Optional
 
 import torch
+from pyexpat import model
 from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -23,21 +24,26 @@ from .loop import ForexDiffusionLit
 
 
 class RandomDataset(Dataset):
-    """Synthetic dataset emitting random patches and a simple target close value."""
-    def __init__(self, num_samples: int = 1024, in_channels: int = 6, patch_len: int = 64):
+    """Synthetic dataset emitting random patches and a simple target close value plus conditioning vector."""
+
+    def __init__(self, num_samples: int = 1024, in_channels: int = 6, patch_len: int = 64, cond_dim: int = 16):
         super().__init__()
         self.num_samples = num_samples
         self.in_channels = in_channels
         self.patch_len = patch_len
+        self.cond_dim = cond_dim
 
     def __len__(self):
         return self.num_samples
 
     def __getitem__(self, idx):
+        # price channels (no volume by requirement). x shape: (C, L)
         x = torch.randn(self.in_channels, self.patch_len).float()
+        # synthetic conditioning vector (e.g., session + rv + donchian pos etc.)
+        cond = torch.randn(self.cond_dim).float()
         # synthetic target: last close approximated as normal around 0
         y = torch.randn(1).float()
-        return {"x": x, "y": y}
+        return {"x": x, "y": y, "cond": cond}
 
 
 def build_dataloader(batch_size: int = 32, num_workers: int = 4, dataset: Optional[Dataset] = None):

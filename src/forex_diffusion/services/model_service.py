@@ -1,6 +1,8 @@
 """
 ModelService: load model artifacts (VAE + Diffusion) and provide forecast sampling API.
 """
+from pyexpat import model
+
 ModelService: load model artifacts (VAE + Diffusion) and provide forecast sampling API.
 
 - Tries to load latest checkpoint from artifacts dir (supports checkpoints with keys 'vae' and 'diffusion'
@@ -95,17 +97,30 @@ class ModelService:
             # load states if present
             if vae_state is not None:
                 try:
-                    self.vae.load_state_dict(vae_state)
-                except Exception:
-                    # if the saved dict is nested, try 'state_dict'
-                    if "state_dict" in vae_state:
+                    # if vae_state is a dict with metadata
+                    if isinstance(vae_state, dict) and "state_dict" in vae_state:
                         self.vae.load_state_dict(vae_state["state_dict"])
+                    else:
+                        self.vae.load_state_dict(vae_state)
+                except Exception:
+                    logger.exception("Failed to load VAE state_dict from checkpoint")
             if diff_state is not None:
                 try:
-                    self.diffusion.load_state_dict(diff_state)
-                except Exception:
-                    if "state_dict" in diff_state:
+                    if isinstance(diff_state, dict) and "state_dict" in diff_state:
                         self.diffusion.load_state_dict(diff_state["state_dict"])
+                    else:
+                        self.diffusion.load_state_dict(diff_state)
+                except Exception:
+                    logger.exception("Failed to load Diffusion state_dict from checkpoint")
+
+            # load metadata if present
+            if isinstance(data, dict) and "metadata" in data:
+                meta = data["metadata"]
+                self.pipeline_version = meta.get("pipeline_version", getattr(self, "pipeline_version", None))
+                self.scaler = meta.get("scaler", None)
+                # expose scaler reconstructible values
+                self.scaler_mu = self.scaler.get("mu") if isinstance(self.scaler, dict) else None
+                self.scaler_sigma = self.scaler.get("sigma") if isinstance(self.scaler, dict) else None
 
             # Move to device and eval
             self.vae.to(self.device).eval()
