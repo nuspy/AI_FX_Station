@@ -1,6 +1,7 @@
 """
 ModelService: load model artifacts (VAE + Diffusion) and provide forecast sampling API.
 """
+from _ast import If
 from pyexpat import model
 
 ModelService: load model artifacts (VAE + Diffusion) and provide forecast sampling API.
@@ -177,9 +178,10 @@ class ModelService:
         qs = np.quantile(sim_prices, [0.05, 0.5, 0.95])
         return sim_prices, qs
 
-    def forecast(self, symbol: str, timeframe: str, horizons: List[str], N_samples: int = 200, apply_conformal: bool = True) -> Dict[str, Any]:
+    def forecast(self, symbol: str, timeframe: str, horizons: List[str], N_samples: int = 200, apply_conformal: bool = True, cond: Optional[Any] = None) -> Dict[str, Any]:
         """
         Forecast API: attempts to use loaded models; if not available uses RW fallback.
+        Accepts optional conditioning `cond` (ndarray/list) used by the diffusion sampler.
         Returns dict: {quantiles, bands_conformal, credibility, diagnostics, samples(optional)}
         """
         label2min = {}
@@ -210,12 +212,32 @@ class ModelService:
         credibility = {}
         diagnostics = {"model_loaded": self.is_model_loaded(), "model_sigma_estimate": float(sigma_1)}
 
-        # If model loaded, attempt to sample trajectories via diffusion in latent space
+        # prepare conditioning tensor if provided
+        cond_tensor = None
+        if cond is not None:
+            try:
+                import numpy as _np
+                import torch as _torch
+                arr = cond if isinstance(cond, _np.ndarray) else _np.asarray(cond)
+                # ensure 2D (n_samples, cond_dim) for passing to sampler: replicate per sample
+                if arr.ndim == 1:
+                    cond_tensor = _torch.tensor(arr, dtype=_torch.float32, device=self.device)
+                    cond_tensor = cond_tensor.unsqueeze(0).repeat(N_samples, 1)
+                elif arr.ndim == 2:
+                    # either (1,cond_dim) or (N,cond_dim); if (1,cond_dim) replicate
+                    cond_tensor = _torch.tensor(arr, dtype=_torch.float32, device=self.device)
+                    if cond_tensor.shape[0] == 1:
+                        cond_tensor = cond_tensor.repeat(N_samples, 1)
+                else:
+                    # unsupported shape: try to flatten to vector
+                    cond_tensor = _torch.tensor(arr.flatten(), dtype=_torch.float32, device=self.device).unsqueeze(0).repeat(N_samples, 1)
+            except Exception:
+                cond_tensor = None
+
+        # If model loaded, attempt to sample trajectories via diffusion in latent space and pass cond_tensor
         if self.is_model_loaded():
             device = self.device
-            # sample shape (N_samples, z_dim)
             z_shape = (N_samples, self.vae.z_dim)
-            # Use sampler (DDIM by default)
             sampler_name = getattr(self.cfg, "sampler", {}).get("default", "ddim")
             steps = int(getattr(self.cfg, "sampler", {}).get(sampler_name, {}).get("steps", 20))
             steps = min(steps, int(getattr(self.cfg, "sampler", {}).get("max_steps", 20)))
@@ -223,16 +245,13 @@ class ModelService:
             z_init = torch.randn(*z_shape, device=device)
             try:
                 if sampler_name == "ddim":
-                    z0 = sampler_ddim(self.diffusion, z_init, shape=z_shape, steps=steps, eta=float(getattr(self.cfg, "sampler", {}).get("ddim", {}).get("eta", 0.0)), device=device, schedule=schedule, cond=None)
+                    z0 = sampler_ddim(self.diffusion, z_init, shape=z_shape, steps=steps, eta=float(getattr(self.cfg, "sampler", {}).get("ddim", {}).get("eta", 0.0)), device=device, schedule=schedule, cond=cond_tensor)
                 else:
-                    z0 = sampler_dpmpp_heun(self.diffusion, z_init, shape=z_shape, steps=steps, device=device, schedule=schedule, cond=None)
-                # decode all z0 to trajectories in data space via vae.decode -> (N, C, L)
+                    z0 = sampler_dpmpp_heun(self.diffusion, z_init, shape=z_shape, steps=steps, device=device, schedule=schedule, cond=cond_tensor)
                 with torch.no_grad():
-                    x_recon = self.vae.decode(z0.to(device)).cpu().numpy()  # (N, C, L)
-                # extract last close from channel index assumed to be 3 (best-effort)
+                    x_recon = self.vae.decode(z0.to(device)).cpu().numpy()
                 c_index = min(3, x_recon.shape[1] - 1)
-                last_close_preds = x_recon[:, c_index, -1]  # (N,)
-                # For each horizon, use same samples (model-level should produce multi-horizon; MVP uses same)
+                last_close_preds = x_recon[:, c_index, -1]
                 for h_label in horizons:
                     h_min = label2min.get(h_label)
                     if h_min is None:
@@ -244,16 +263,15 @@ class ModelService:
                             h_min = int(h_label[:-1]) * 1440
                         else:
                             h_min = 1
-                    # For MVP use last_close_preds as proxy for horizon predictions
                     qs = np.quantile(last_close_preds, [0.05, 0.5, 0.95])
                     quantiles_out[h_label] = {"q05": float(qs[0]), "q50": float(qs[1]), "q95": float(qs[2])}
                     bands[h_label] = {"low": float(qs[0]), "high": float(qs[2])}
-                    credibility[h_label] = 1.0  # placeholder high because model sampling used
+                    credibility[h_label] = 1.0
                 diagnostics["samples"] = last_close_preds.tolist()
             except Exception as e:
                 logger.exception("ModelService: sampling using model failed, falling back to RW: {}", e)
                 diagnostics["sampling_error"] = str(e)
-                # fallback to RW for all horizons
+                # fallback RW...
                 for h_label in horizons:
                     h_min = label2min.get(h_label) or (int(h_label[:-1]) if h_label.endswith("m") else 1)
                     samples, qs = self._rw_forecast_quantiles(last_close, sigma_1, h_min, N_samples)
@@ -262,7 +280,7 @@ class ModelService:
                     credibility[h_label] = 0.5
                     diagnostics.setdefault("fallback_rw", True)
         else:
-            # RW fallback
+            # RW fallback...
             for h_label in horizons:
                 h_min = label2min.get(h_label)
                 if h_min is None:

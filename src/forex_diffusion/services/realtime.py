@@ -171,6 +171,30 @@ class RealTimeIngestService:
             except Exception as e:
                 logger.exception("RealTime: failed upsert for {}: {}", symbol, e)
 
+            # Tick counting per-minute: increment counter for minute bucket (ts minute end)
+            minute_ts = (int(ts_ms) // 60000) * 60000 + 60000  # period end
+            with self._lock:
+                prev = getattr(self, "_tick_counts", None)
+                if prev is None:
+                    self._tick_counts = {}
+                key = (symbol, minute_ts)
+                self._tick_counts[key] = self._tick_counts.get(key, 0) + 1
+                # if minute bucket complete (current ts_ms beyond minute end), persist and clear
+                # approximate: if current time > minute_ts + small slack
+                now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+                slack = 2000  # 2 sec slack
+                if now_ms >= minute_ts + slack:
+                    count = self._tick_counts.pop(key, 0)
+                    try:
+                        if getattr(self, "db_writer", None) is not None:
+                            self.db_writer.write_tick_async(symbol=symbol, timeframe=self.timeframe, ts_utc=minute_ts, tick_count=count)
+                        else:
+                            from ..services.db_service import DBService
+                            dbs = DBService(engine=self.engine)
+                            dbs.write_tick_aggregate(symbol=symbol, timeframe=self.timeframe, ts_utc=minute_ts, tick_count=count)
+                    except Exception as e:
+                        logger.exception("RealTime: failed to persist tick aggregate for {}: {}", symbol, e)
+
             # On first tick, set rt_start and trigger historical backfill in separate thread
             with self._lock:
                 if not self._first_tick_seen.get(symbol, False):

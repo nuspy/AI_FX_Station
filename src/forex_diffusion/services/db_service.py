@@ -88,6 +88,16 @@ class DBService:
             Column("latent_json", Text, nullable=False),
             Column("ts_created_ms", Integer, nullable=False),
         )
+        self.ticks_tbl = Table(
+            "ticks_aggregate",
+            meta,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("symbol", String(64), nullable=False, index=True),
+            Column("timeframe", String(16), nullable=False, index=True),
+            Column("ts_utc", Integer, nullable=False, index=True),
+            Column("tick_count", Integer, nullable=False),
+            Column("ts_created_ms", Integer, nullable=False),
+        )
         meta.create_all(self.engine)
 """
 DBService: simple persistence helpers for predictions, calibration records and signals.

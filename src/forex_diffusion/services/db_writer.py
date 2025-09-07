@@ -53,3 +53,12 @@
             "model_version": model_version,
         }
         return self.enqueue_task("latents", payload)
+
+    def write_tick_async(self, symbol: str, timeframe: str, ts_utc: int, tick_count: int) -> bool:
+        payload = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "ts_utc": int(ts_utc),
+            "tick_count": int(tick_count),
+        }
+        return self.enqueue_task("ticks", payload)
