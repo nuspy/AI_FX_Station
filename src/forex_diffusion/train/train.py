@@ -68,6 +68,15 @@ def main():
 
     # Instantiate model
     model = ForexDiffusionLit(cfg=cfg)
+
+    # instantiate DBWriter for training-run latents persistence and start it
+    from ..services.db_service import DBService
+    from ..services.db_writer import DBWriter
+    dbs = DBService()
+    dbw = DBWriter(db_service=dbs, batch_size=int(getattr(cfg.features, "bulk_batch_size", 500)))
+    dbw.start()
+    # attach to model (module will call db_writer.write_latents_async in training step)
+    model.db_writer = dbw
 """
 Training entrypoint for MagicForex.
 

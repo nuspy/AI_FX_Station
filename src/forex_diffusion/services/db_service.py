@@ -98,6 +98,15 @@ class DBService:
             Column("tick_count", Integer, nullable=False),
             Column("ts_created_ms", Integer, nullable=False),
         )
+        self.metrics_tbl = Table(
+            "metrics",
+            meta,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("name", String(128), nullable=False, index=True),
+            Column("value", Float, nullable=False),
+            Column("labels", Text, nullable=True),
+            Column("ts_created_ms", Integer, nullable=False, index=True),
+        )
         meta.create_all(self.engine)
 """
 DBService: simple persistence helpers for predictions, calibration records and signals.

@@ -56,6 +56,13 @@ class RegimeScheduler:
                 if lid is not None:
                     REGIME_LAST_INDEXED.set(float(lid))
                 logger.info("RegimeScheduler incremental update result: {}", res)
+                # persist metric to DB (best-effort)
+                try:
+                    from .db_service import DBService
+                    db = DBService()
+                    db.write_metric("regime_incremental_updated", float(res.get("updated", 0)), labels={"last_indexed_id": lid})
+                except Exception as e:
+                    logger.exception("RegimeScheduler: failed to persist metric to DB: {}", e)
             except Exception as e:
                 logger.exception("RegimeScheduler error during incremental update: {}", e)
             # sleep with interruption check
