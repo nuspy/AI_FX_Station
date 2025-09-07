@@ -1,3 +1,4 @@
+from .signals_tab import SignalsTab
 from ..services.marketdata import MarketDataService  # Use UIController to bind menu actions and handle background tasks
         from .controllers import UIController
         # instantiate controller with MarketDataService and bind menu signals

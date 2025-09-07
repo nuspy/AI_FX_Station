@@ -47,7 +47,7 @@ class BacktestEngine:
         - q05, q50, q95 (columns may be floats or named accordingly)
     """
 
-    def __init__(self, cfg: Optional[object] = None):
+    def __init__(self, cfg: Optional[object] = None, db_writer: Optional["DBWriter"] = None):
         self.cfg = cfg or get_config()
         # default backtest config
         bf = getattr(self.cfg, "backtest", {}) if hasattr(self.cfg, "backtest") else {}
@@ -61,6 +61,9 @@ class BacktestEngine:
         self.rw_sigma_window = int(baseline_cfg.get("rw_sigma_window", 100))
         self.spread_pips = float(baseline_cfg.get("spread_pips", 0.5))
         self.slippage_pips = float(baseline_cfg.get("slippage_pips", 0.2))
+
+        # optional async DB writer to persist signals/predictions without blocking
+        self.db_writer = db_writer
 
     # ------------------------------
     # Utility metrics
@@ -330,8 +333,22 @@ class BacktestEngine:
             q_val = qdf.iloc[train_end:val_end].reset_index(drop=True)
             q_test = qdf.iloc[val_end:test_end].reset_index(drop=True)
 
-            # Simulate strategy on test_df
-            trades, summary = self.simulate_trades(test_df, q_test, entry_threshold=0.0, max_hold=20)
+            # Try to infer symbol/timeframe from the dataframe if available
+            symbol = None
+            timeframe = None
+            if "symbol" in test_df.columns:
+                try:
+                    symbol = str(test_df["symbol"].iloc[0])
+                except Exception:
+                    symbol = None
+            if "timeframe" in test_df.columns:
+                try:
+                    timeframe = str(test_df["timeframe"].iloc[0])
+                except Exception:
+                    timeframe = None
+
+            # Simulate strategy on test_df and provide symbol/timeframe for async persistence
+            trades, summary = self.simulate_trades(test_df, q_test, entry_threshold=0.0, max_hold=20, symbol=symbol, timeframe=timeframe)
             # Baseline: compute RW baseline CRPS etc placeholder (we compute baseline net_pnl = 0)
             baseline = {"net_pnl": 0.0, "crps": None}
 

@@ -242,6 +242,19 @@ def startup_event():
         logger.exception("Failed to start DBWriter: {}", e)
 
 
+@app.on_event("shutdown")
+def shutdown_event():
+    """
+    Ensure background DBWriter is stopped cleanly when the server shuts down.
+    """
+    try:
+        if 'db_writer' in globals() and db_writer is not None:
+            db_writer.stop(flush=True, timeout=5.0)
+            logger.info("Background DBWriter stopped on shutdown")
+    except Exception as e:
+        logger.exception("Failed to stop DBWriter cleanly on shutdown: {}", e)
+
+
 @app.post("/forecast", response_model=ForecastResponse)
 def forecast(req: ForecastRequest):
     """
