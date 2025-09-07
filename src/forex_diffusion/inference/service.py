@@ -208,7 +208,16 @@ class ModelService:
         return {"quantiles": quantiles_out, "bands_conformal": bands, "credibility": credibility, "diagnostics": diagnostics}
 
 
-model_service = ModelService(engine=_get_engine())
+# initialize services with a shared engine
+_engine = _get_engine()
+# local imports to avoid top-level circulars in some environments
+from ..services.model_service import ModelService
+from ..services.db_service import DBService
+from ..services.calibration import CalibrationService
+
+db_service = DBService(engine=_engine)
+calib_service = CalibrationService(engine=_engine)
+model_service = ModelService(engine=_engine)
 
 
 @app.on_event("startup")
@@ -223,6 +232,13 @@ def startup_event():
 
 @app.post("/forecast", response_model=ForecastResponse)
 def forecast(req: ForecastRequest):
+    """
+    Forecast endpoint that:
+      - invokes ModelService.forecast
+      - optionally applies last calibration (if apply_conformal and a calibration record exists)
+      - persists predictions in DBService
+      - returns structured ForecastResponse
+    """
     try:
         res = model_service.forecast(req.symbol, req.timeframe, req.horizons, N_samples=req.N_samples, apply_conformal=req.apply_conformal)
     except HTTPException:
@@ -231,13 +247,67 @@ def forecast(req: ForecastRequest):
         logger.exception("Forecast error: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
-    # build response model
-    quantiles = {h: HorizonQuantiles(**res["quantiles"][h]) for h in res["quantiles"].keys()}
-    bands = res.get("bands_conformal", None)
+    quantiles_raw = res.get("quantiles", {})
+    bands_raw = res.get("bands_conformal", {})
     credibility = res.get("credibility", {})
     diagnostics = res.get("diagnostics", {})
 
-    return ForecastResponse(quantiles=quantiles, bands_conformal=bands, credibility=credibility, diagnostics=diagnostics)
+    # If requested, try to apply latest calibration adjustments (if present)
+    adjusted_bands = {}
+    adjusted_quantiles = {}
+    try:
+        if req.apply_conformal:
+            last_cal = calib_service.get_last_calibration(req.symbol, req.timeframe)
+            if last_cal:
+                delta = last_cal.delta_global
+                # apply delta to each horizon quantiles
+                for h, q in quantiles_raw.items():
+                    q05 = float(q["q05"])
+                    q50 = float(q["q50"])
+                    q95 = float(q["q95"])
+                    adj = unc.apply_conformal_adjustment(q05=q05, q50=q50, q95=q95, delta=delta, asymmetric=True)
+                    adjusted_quantiles[h] = {"q05": float(adj["q05_adj"]), "q50": float(adj["q50"]), "q95": float(adj["q95_adj"])}
+                    adjusted_bands[h] = {"low": float(adj["q05_adj"]), "high": float(adj["q95_adj"])}
+                diagnostics["calibration_applied"] = True
+                diagnostics["calibration_delta"] = float(delta)
+            else:
+                # no calibration available; use raw quantiles/bands
+                adjusted_quantiles = {h: {"q05": float(q["q05"]), "q50": float(q["q50"]), "q95": float(q["q95"])} for h, q in quantiles_raw.items()}
+                adjusted_bands = bands_raw
+                diagnostics["calibration_applied"] = False
+        else:
+            adjusted_quantiles = {h: {"q05": float(q["q05"]), "q50": float(q["q50"]), "q95": float(q["q95"])} for h, q in quantiles_raw.items()}
+            adjusted_bands = bands_raw
+            diagnostics["calibration_applied"] = False
+    except Exception as e:
+        logger.exception("Failed to apply calibration: {}", e)
+        adjusted_quantiles = {h: {"q05": float(q["q05"]), "q50": float(q["q50"]), "q95": float(q["q95"])} for h, q in quantiles_raw.items()}
+        adjusted_bands = bands_raw
+        diagnostics["calibration_error"] = str(e)
+
+    # Persist predictions into DB (one row per horizon)
+    try:
+        for h_label, qdict in adjusted_quantiles.items():
+            db_service.write_prediction(
+                symbol=req.symbol,
+                timeframe=req.timeframe,
+                horizon=h_label,
+                q05=float(qdict["q05"]),
+                q50=float(qdict["q50"]),
+                q95=float(qdict["q95"]),
+                meta={"diagnostics": diagnostics, "credibility": credibility.get(h_label)},
+            )
+        diagnostics["persisted_predictions"] = True
+    except Exception as e:
+        logger.exception("Failed to persist predictions: {}", e)
+        diagnostics["persisted_predictions"] = False
+        diagnostics["persist_error"] = str(e)
+
+    # build response model
+    quantiles_resp = {h: HorizonQuantiles(**adjusted_quantiles[h]) for h in adjusted_quantiles.keys()}
+    bands_resp = adjusted_bands if adjusted_bands else None
+
+    return ForecastResponse(quantiles=quantiles_resp, bands_conformal=bands_resp, credibility=credibility, diagnostics=diagnostics)
 
 
 def main():

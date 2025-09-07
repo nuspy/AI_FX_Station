@@ -58,23 +58,40 @@ class ForecastWorker(QRunnable):
         """
         Query market_data_candles for the last n_bars for the given symbol/timeframe.
         Returns DataFrame sorted ascending by ts_utc.
+
+        Uses SQLAlchemy reflection to locate the table safely.
         """
-        metadata = data_io.MetaData() if hasattr(data_io, "MetaData") else None
-        # fallback using SQLAlchemy reflect
-        from sqlalchemy import MetaData, select
-        meta = MetaData()
-        meta.reflect(bind=engine, only=["market_data_candles"])
-        tbl = meta.tables.get("market_data_candles")
-        if tbl is None:
-            return pd.DataFrame()
-        with engine.connect() as conn:
-            stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume).where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe).order_by(tbl.c.ts_utc.desc()).limit(n_bars)
-            rows = conn.execute(stmt).fetchall()
-            if not rows:
+        try:
+            from sqlalchemy import MetaData, select
+            meta = MetaData()
+            meta.reflect(bind=engine, only=["market_data_candles"])
+            tbl = meta.tables.get("market_data_candles")
+            if tbl is None:
                 return pd.DataFrame()
-            df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
-            df = df.sort_values("ts_utc").reset_index(drop=True)
-            return df
+            with engine.connect() as conn:
+                stmt = (
+                    select(
+                        tbl.c.ts_utc,
+                        tbl.c.open,
+                        tbl.c.high,
+                        tbl.c.low,
+                        tbl.c.close,
+                        tbl.c.volume,
+                    )
+                    .where(tbl.c.symbol == symbol)
+                    .where(tbl.c.timeframe == timeframe)
+                    .order_by(tbl.c.ts_utc.desc())
+                    .limit(n_bars)
+                )
+                rows = conn.execute(stmt).fetchall()
+                if not rows:
+                    return pd.DataFrame()
+                df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
+                df = df.sort_values("ts_utc").reset_index(drop=True)
+                return df
+        except Exception as e:
+            logger.exception("Failed to fetch recent candles: {}", e)
+            return pd.DataFrame()
 
 
 class UIController:
