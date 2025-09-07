@@ -8,3 +8,12 @@ from ..services.marketdata import MarketDataService  # Use UIController to bind 
         self.controller.signals.forecastReady.connect(lambda df, q: self.viewer.update_plot(df, q))
         self.controller.signals.status.connect(lambda s: self.status_label.setText(f"Status: {s}"))
         self.controller.signals.error.connect(lambda e: self.status_label.setText(f"Error: {e}"))
+
+        # Signals tab (shows persisted signals)
+        try:
+            self.signals_tab = SignalsTab(self, db_service=DBService())
+            layout.addWidget(self.signals_tab)
+            # refresh signals after each successful forecast
+            self.controller.signals.forecastReady.connect(lambda df, q: self.signals_tab.refresh(limit=100))
+        except Exception as e:
+            logger.exception("Failed to initialize SignalsTab: {}", e)

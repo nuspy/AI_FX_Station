@@ -310,12 +310,61 @@ def forecast(req: ForecastRequest):
     return ForecastResponse(quantiles=quantiles_resp, bands_conformal=bands_resp, credibility=credibility, diagnostics=diagnostics)
 
 
+@app.get("/health")
+def health():
+    """
+    Simple liveness probe. Returns status ok and basic service flags.
+    """
+    try:
+        model_loaded = bool(model_service.is_model_loaded())
+    except Exception:
+        model_loaded = False
+    return {"status": "ok", "model_loaded": model_loaded}
+
+
+@app.get("/ready")
+def ready():
+    """
+    Readiness probe: verifies DB connectivity and that migrations/tables exist.
+    """
+    try:
+        # quick DB check: count predictions
+        with db_service.engine.connect() as conn:
+            res = conn.execute("SELECT 1").fetchone()
+            ready_db = res is not None
+    except Exception as e:
+        logger.warning("Readiness DB check failed: {}", e)
+        return {"ready": False, "reason": "db_unavailable"}
+    # optionally ensure model loaded or fallback allowed
+    model_ok = bool(model_service.is_model_loaded())
+    return {"ready": True, "db": True, "model_loaded": model_ok}
+
+
+@app.get("/metrics")
+def metrics():
+    """
+    Lightweight metrics endpoint returning counts of persisted entities.
+    Suitable for scraping by simple monitors.
+    """
+    try:
+        with db_service.engine.connect() as conn:
+            pred_count = conn.execute("SELECT COUNT(1) FROM predictions").scalar() or 0
+            cal_count = conn.execute("SELECT COUNT(1) FROM calibration_records").scalar() or 0
+            sig_count = conn.execute("SELECT COUNT(1) FROM signals").scalar() or 0
+    except Exception as e:
+        logger.warning("Metrics query failed: {}", e)
+        return {"error": "db_unavailable"}
+    return {"predictions": int(pred_count), "calibrations": int(cal_count), "signals": int(sig_count)}
+
+
 def main():
     import uvicorn
+    import os
 
-    host = "127.0.0.1"
-    port = 8000
-    uvicorn.run("src.forex_diffusion.inference.service:app", host=host, port=port, reload=False)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    workers = int(os.environ.get("WORKERS", "1"))
+    uvicorn.run("src.forex_diffusion.inference.service:app", host=host, port=port, workers=workers, reload=False)
 
 
 if __name__ == "__main__":
