@@ -1,8 +1,7 @@
 """
 Market data providers and MarketDataService.
 
-- AlphaVantageClient: minimal client to download FX_DAILY and FX_INTRADAY using httpx + tenacity retries
-- DukascopyClient: placeholder client matching same interface (get_historical, get_current)
+- AlphaVantageClient: client bridge to the official 'alpha_vantage' library (preferred) with httpx fallback for historical endpoints.
 - MarketDataService: orchestrates missing-interval detection, download, normalization and upsert into DB
 """
 
@@ -20,6 +19,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from ..utils.config import get_config
 from ..data import io as data_io
 from sqlalchemy import create_engine
+
+# try to import official alpha_vantage library; if not available we'll fallback to httpx
+try:
+    from alpha_vantage.foreignexchange import ForeignExchange  # type: ignore
+    from alpha_vantage.timeseries import TimeSeries  # type: ignore
+    _HAS_ALPHA_VANTAGE = True
+except Exception:
+    _HAS_ALPHA_VANTAGE = False
 
 
 def parse_symbol(symbol: str) -> Tuple[str, str]:
@@ -39,13 +46,8 @@ def parse_symbol(symbol: str) -> Tuple[str, str]:
 
 class AlphaVantageClient:
     """
-    Minimal Alpha Vantage client for FX historical data.
-
-    Methods implemented:
-      - get_historical(symbol, timeframe, start_ts_ms, end_ts_ms) -> pd.DataFrame
-      - get_current_price(symbol) -> dict
-
-    NOTE: This client uses the TIME_SERIES endpoints and may be rate limited.
+    Alpha Vantage client bridge: uses official alpha_vantage library for realtime where possible,
+    and falls back to httpx for historical FX_DAILY / FX_INTRADAY endpoints.
     """
     def __init__(self, key: Optional[str] = None, base_url: str = "https://www.alphavantage.co/query", rate_limit_per_minute: int = 5):
         cfg = get_config()
@@ -56,6 +58,18 @@ class AlphaVantageClient:
         self._client = httpx.Client(timeout=30.0)
         self._last_req_ts = 0.0
         self._min_period = 60.0 / float(self.rate_limit) if self.rate_limit > 0 else 0.0
+
+        # init official client objects if library available
+        self._fx = None
+        self._ts = None
+        if _HAS_ALPHA_VANTAGE and self.api_key:
+            try:
+                self._fx = ForeignExchange(key=self.api_key, output_format="pandas")  # type: ignore
+                self._ts = TimeSeries(key=self.api_key, output_format="pandas")  # type: ignore
+            except Exception as e:
+                logger.warning("AlphaVantage library init failed, will fallback to HTTP client: {}", e)
+                self._fx = None
+                self._ts = None
 
     def _throttle(self):
         # Simple throttle to respect rate limit
@@ -87,24 +101,20 @@ class AlphaVantageClient:
         """
         records = []
         for stamp_str, vals in ts_dict.items():
-            # stamp_str often in "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD"
             try:
-                # parse as UTC (Alpha Vantage timestamps are in UTC for FX)
                 dt = pd.to_datetime(stamp_str, utc=True)
                 ts_ms = int(dt.view("int64") // 1_000_000)
             except Exception:
-                # fallback to naive parse
                 dt = pd.to_datetime(stamp_str)
                 dt = dt.tz_localize(timezone.utc)
                 ts_ms = int(dt.view("int64") // 1_000_000)
             record = {
                 "ts_utc": ts_ms,
-                "open": float(vals.get("1. open") or vals.get("open") or vals.get("1. open", 0.0)),
+                "open": float(vals.get("1. open") or vals.get("open") or 0.0),
                 "high": float(vals.get("2. high") or vals.get("high") or 0.0),
                 "low": float(vals.get("3. low") or vals.get("low") or 0.0),
                 "close": float(vals.get("4. close") or vals.get("close") or 0.0),
             }
-            # volume may be absent for FX (tick volume) but include if present
             vol = vals.get("5. volume") or vals.get("volume")
             if vol is not None:
                 try:
@@ -121,12 +131,9 @@ class AlphaVantageClient:
     def get_historical(self, symbol: str, timeframe: str, start_ts_ms: Optional[int] = None, end_ts_ms: Optional[int] = None) -> pd.DataFrame:
         """
         Download historical data for symbol and timeframe.
-        For long-run daily: use function FX_DAILY
-        For intraday: use function FX_INTRADAY with interval (1min, 5min, ...)
-        Returns DataFrame with columns ts_utc (ms), open, high, low, close, volume(optional)
+        Uses HTTP fallback for FX_DAILY and FX_INTRADAY endpoints.
         """
         from_sym, to_sym = parse_symbol(symbol)
-        # Choose function by timeframe
         if timeframe in ["1d", "1D", "daily"]:
             params = {"function": "FX_DAILY", "from_symbol": from_sym, "to_symbol": to_sym, "outputsize": "full", "datatype": "json"}
             data = self._get(params)
@@ -134,13 +141,10 @@ class AlphaVantageClient:
             ts = data.get(ts_key) or data.get("Time Series FX (Daily)") or data.get("Time Series (Daily)") or {}
             df = self._parse_time_series(ts)
         else:
-            # intraday
-            # map timeframe like '1m'-> '1min' or use AlphaVantage intervals: 1min, 5min, 15min, 30min, 60min
             interval_map = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "60m": "60min", "1h": "60min"}
             interval = interval_map.get(timeframe, "1min")
             params = {"function": "FX_INTRADAY", "from_symbol": from_sym, "to_symbol": to_sym, "interval": interval, "outputsize": "full", "datatype": "json"}
             data = self._get(params)
-            # key may vary
             ts_key = None
             for k in data.keys():
                 if "Time Series FX" in k or "Time Series" in k:
@@ -151,43 +155,29 @@ class AlphaVantageClient:
         if df.empty:
             logger.warning("AlphaVantage returned empty data for {} {}", symbol, timeframe)
             return df
-
-        # Filter by start/end if provided
         if start_ts_ms is not None:
             df = df[df["ts_utc"] >= int(start_ts_ms)].reset_index(drop=True)
         if end_ts_ms is not None:
             df = df[df["ts_utc"] <= int(end_ts_ms)].reset_index(drop=True)
-
         return df
 
     def get_current_price(self, symbol: str) -> dict:
+        """
+        Try official library first for realtime exchange rate; fallback to HTTP query.
+        """
         from_sym, to_sym = parse_symbol(symbol)
+        # try official library ForeignExchange.get_currency_exchange_rate
+        if self._fx is not None:
+            try:
+                data, _ = self._fx.get_currency_exchange_rate(from_symbol=from_sym, to_symbol=to_sym)  # type: ignore
+                return data
+            except Exception as e:
+                logger.debug("alpha_vantage lib get_currency_exchange_rate failed: {}", e)
+        # fallback HTTP
         params = {"function": "CURRENCY_EXCHANGE_RATE", "from_currency": from_sym, "to_currency": to_sym}
         data = self._get(params)
-        rate_info = data.get("Realtime Currency Exchange Rate", {}) or data.get("Realtime Currency Exchange Rate", {})
+        rate_info = data.get("Realtime Currency Exchange Rate", {}) or {}
         return rate_info
-
-
-class DukascopyClient:
-    """
-    Placeholder Dukascopy client. Implements same interface as AlphaVantageClient.
-    For production, implement actual REST calls to Dukascopy endpoints and parsing.
-    """
-    def __init__(self, base_url: Optional[str] = None, key: Optional[str] = None):
-        cfg = get_config()
-        duk_cfg = getattr(cfg, "providers", {}).get("dukascopy", {}) if hasattr(cfg, "providers") else {}
-        self.base_url = (duk_cfg.get("rest", {}) or {}).get("base_url", base_url) or base_url or "https://www.dukascopy.com"
-        self.key = key or duk_cfg.get("key")
-        self._client = httpx.Client(timeout=30.0)
-
-    def get_historical(self, symbol: str, timeframe: str, start_ts_ms: Optional[int] = None, end_ts_ms: Optional[int] = None) -> pd.DataFrame:
-        # Simple placeholder raising NotImplementedError for now
-        logger.warning("DukascopyClient.get_historical is a placeholder and needs implementation.")
-        raise NotImplementedError("Dukascopy historical client not implemented in MVP.")
-
-    def get_current_price(self, symbol: str) -> dict:
-        logger.warning("DukascopyClient.get_current_price is a placeholder.")
-        raise NotImplementedError("Dukascopy current price not implemented in MVP.")
 
 
 class MarketDataService:
@@ -208,8 +198,6 @@ class MarketDataService:
         default = providers_cfg.get("default", "alpha_vantage")
         if default == "alpha_vantage":
             self.provider = AlphaVantageClient()
-        elif default == "dukascopy":
-            self.provider = DukascopyClient()
         else:
             # fallback to alpha
             logger.warning("Unknown provider '{}', falling back to AlphaVantage", default)
