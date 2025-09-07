@@ -1,0 +1,269 @@
+# Configuration for MagicForex - default values
+# Override with environment-specific YAML or env vars.
+# NOTE: keep sampler.steps <= 20 for production/service constraints.
+
+app:
+  name: "magicforex"
+  debug: false
+  seed: 42
+  alembic_upgrade_on_start: true
+  artifacts_dir: "./artifacts"
+  temp_dir: "./tmp"
+  # At startup the app will run alembic upgrade head and then backfill per-configured symbols/timeframes
+  startup:
+    run_backfill: true
+    parallel_backfill_workers: 4
+
+db:
+  # SQLite for MVP; file path relative to project root
+  dialect: "sqlite"
+  database_url: "sqlite:///./data/forex_diffusion.db"
+  pool_size: 5
+  # DB writer queue settings
+  writer:
+    max_queue: 1000
+    commit_batch: 500
+
+alembic:
+  script_location: "migrations"
+  env: "production"
+
+providers:
+  default: "alpha_vantage"
+  alpha_vantage:
+    key: "${ALPHAVANTAGE_KEY:-YOUR_ALPHA_VANTAGE_KEY}"
+    base_url: "https://www.alphavantage.co/query"
+    rate_limit_per_minute: 5
+    retry:
+      attempts: 8
+      backoff_base_seconds: 1.0
+      max_backoff_seconds: 60.0
+  dukascopy:
+    enabled: false
+    key: "${DUKASCOPY_KEY:-}"
+    rest:
+      base_url: "https://www.dukascopy.com"
+      endpoints:
+        currentPrices: "/rest/currentPrices"
+        historicalPrices: "/rest/historicalPrices"
+    retry:
+      attempts: 6
+      backoff_base_seconds: 1.0
+      max_backoff_seconds: 60.0
+
+data:
+  symbols:
+    - "EUR/USD"
+    - "USD/JPY"
+    - "GBP/USD"
+  # Historical backfill preferences
+  backfill:
+    history_years: 20
+    intraday_recent_days: 90
+    intraday_base_tf: "1m"
+    # if provider doesn't return minute history for full 20y, use daily for long-run and intraday recent segment
+    prefer_daily_for_longrun: true
+  storage:
+    resampled_flag_field: "resampled"
+    # unique key enforced: (symbol, timeframe, ts_utc)
+    unique_index: true
+
+timeframes:
+  native:
+    - "1m"
+    - "5m"
+    - "15m"
+    - "30m"
+    - "60m"
+    - "1d"
+  # If target timeframe is not native, resample causally from lower granularity
+  resample_map:
+    "2m": "1m"
+    "3m": "1m"
+    "4m": "1m"
+    "2h": "60m"
+    "4h": "60m"
+
+horizons:
+  # Horizons expressed as human label -> minutes
+  list:
+    - label: "1m"; minutes: 1
+    - label: "5m"; minutes: 5
+    - label: "15m"; minutes: 15
+    - label: "30m"; minutes: 30
+    - label: "60m"; minutes: 60
+    # multi-hour up to 24h
+    - label: "2h"; minutes: 120
+    - label: "4h"; minutes: 240
+    - label: "8h"; minutes: 480
+    - label: "12h"; minutes: 720
+    - label: "24h"; minutes: 1440
+    # multi-day
+    - label: "1d"; minutes: 1440
+    - label: "2d"; minutes: 2880
+    - label: "3d"; minutes: 4320
+    - label: "5d"; minutes: 7200
+  quantiles:
+    - 0.05
+    - 0.5
+    - 0.95
+
+model:
+  artifacts_dir: "./artifacts/models"
+  max_saved: 10
+  versioning: true
+  metadata:
+    include_scaler: true
+    patch_len: 64
+    z_dim: 128
+
+vae:
+  patch_len: 64
+  stride: 1
+  channels: ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos"]
+  z_dim: 128
+  encoder:
+    hidden_channels: 256
+    n_layers: 6
+  decoder:
+    hidden_channels: 256
+    n_layers: 6
+  loss:
+    recon_weight: 1.0
+    kl_weight_max: 1.0
+    kl_anneal:
+      type: "logistic"  # logistic | linear
+      warmup_steps: 10000
+      k: 0.002
+
+diffusion:
+  # Timesteps for forward process (we use cosine schedule)
+  T: 1000
+  schedule:
+    type: "cosine"
+    s: 0.008
+  parametrization: "v_prediction"  # v-prediction (Imagen) recommended
+  conditioning:
+    multi_scale_pool: [1, 2, 5, 15, 60]
+    horizon_embedding_dim: 64
+    symbol_embedding_dim: 32
+  training:
+    lambda_v: 1.0
+    lambda_crps: 1.0
+    lambda_kl: 0.01
+
+sampler:
+  default: "ddim"
+  ddim:
+    steps: 20
+    eta: 0.0
+  dpmpp:
+    steps: 20
+    order: 2
+  # safety: enforce <= 20 steps in code at runtime
+  max_steps: 20
+
+training:
+  device: "auto"
+  batch_size: 64
+  num_workers: 8
+  max_epochs: 200
+  learning_rate: 2e-4
+  weight_decay: 1e-6
+  grad_clip_val: 1.0
+  early_stopping:
+    monitor: "val/crps_agg"
+    patience: 12
+    mode: "min"
+  seed_everything: 42
+
+inference:
+  n_samples: 200
+  batch_decode: 32
+  apply_conformal_by_default: true
+  crps_bootstrap_samples: 1000
+
+calibration:
+  method: "weighted_icp"  # weighted_icp | standard_icp | mondrian
+  alpha: 0.10
+  half_life_days: 30.0
+  weight_lambda: 0.0231  # derived from half-life
+  mondrian:
+    enabled: true
+    buckets: ["session", "volatility_bucket"]
+  # fallback to symmetric or asymmetric envelopes
+  symmetric: false
+  base_delta_scale: 1.0
+
+features:
+  standardization:
+    mode: "rolling"  # rolling | static
+    window_bars: 1000
+  indicators:
+    atr:
+      n: 14
+      method: "wilder"  # wilder | sma
+    bollinger:
+      n: 20
+      k: 2.0
+    macd:
+      fast: 12
+      slow: 26
+      signal: 9
+    rsi:
+      n: 14
+    hurst:
+      window: 256
+  warmup_bars: 512
+
+qa:
+  outlier_zscore_threshold: 8.0
+  gap_flag_multiplier: 1.1  # if delta > multiplier * expected_delta => flag
+  report_dir: "./artifacts/reports"
+  log_qa: true
+
+backtest:
+  walk_forward:
+    n_splits: 5
+    train_window_days: 365 * 2
+    val_window_days: 90
+    test_window_days: 90
+  baseline:
+    rw_sigma_window: 100
+    spread_pips: 0.5
+    slippage_pips: 0.2
+
+gui:
+  provider_default: "alpha_vantage"
+  update_interval_ms: 250
+  batch_update_size: 500
+  non_blocking_workers: 6
+  show_envelopes: true
+  enable_realtime_feed: true
+  plots:
+    decimate_threshold: 10000
+    crosshair_tooltip: true
+  menus:
+    enable_train: true
+    enable_backtest: true
+    enable_calibrate: true
+
+logging:
+  level: "INFO"
+  file:
+    enabled: true
+    dir: "./logs"
+    rotation: "10 MB"
+    retention: "14 days"
+  console:
+    enabled: true
+    rich: false
+
+metrics:
+  # CRPS baseline comparisons
+  crps_rel_threshold: 0.01
+
+debug:
+  # developer switches
+  simulate_provider_errors: false
+  force_small_dataset: false
