@@ -51,6 +51,24 @@ async def lifespan(app):
     except Exception:
         pass
 
+    # start real-time ingest service to receive tick data immediately
+    try:
+        from ..services.realtime import RealTimeIngestService
+        # symbols and timeframe from config
+        symbols = getattr(cfg.data, "symbols", None) or (cfg.data.get("symbols") if isinstance(cfg.data, dict) else [])
+        tf_default = None
+        try:
+            tf_default = cfg.timeframes.native[0] if hasattr(cfg.timeframes, "native") else (cfg.timeframes.get("native", [])[0] if isinstance(cfg.timeframes, dict) else "1m")
+        except Exception:
+            tf_default = "1m"
+        rt = RealTimeIngestService(engine=_engine, market_service=None, symbols=symbols, timeframe=tf_default, poll_interval=cfg.get("providers", {}).get("poll_interval", 2.0) if isinstance(cfg, dict) else 2.0)
+        # expose globally so other components may reference or stop it
+        globals()["rt_service"] = rt
+        rt.start()
+        logger.info("RealTimeIngestService started in lifespan for symbols: {}", symbols)
+    except Exception as e:
+        logger.exception("Failed to start RealTimeIngestService in lifespan: {}", e)
+
     try:
         yield
     finally:
