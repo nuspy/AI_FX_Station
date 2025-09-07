@@ -142,6 +142,23 @@ class ForexDiffusionLit(pl.LightningModule):
         eps = torch.randn_like(std)
         z0 = mu + eps * std  # (B, z_dim)
 
+        # persist latents async if db_writer and meta info present in batch
+        try:
+            if getattr(self, "db_writer", None) is not None and "meta" in batch and batch["meta"] is not None:
+                meta = batch["meta"]
+                symbol = meta.get("symbol")
+                timeframe = meta.get("timeframe")
+                # ts list: if batch contains ts_utc vector use it else None
+                ts_arr = meta.get("ts_utc")  # expected list/array aligned with batch
+                # convert z0 to python lists and enqueue by sample
+                z_list = z0.detach().cpu().numpy().tolist()
+                for i, z_vec in enumerate(z_list):
+                    ts_val = int(ts_arr[i]) if ts_arr is not None and i < len(ts_arr) else None
+                    self.db_writer.write_latents_async(symbol=symbol, timeframe=timeframe, ts_utc=ts_val or int(time.time() * 1000), latent=z_vec, model_version=self.pipeline_version)
+        except Exception:
+            # non-blocking, ignore failures in persist
+            pass
+
         B = z0.shape[0]
         device = z0.device
 

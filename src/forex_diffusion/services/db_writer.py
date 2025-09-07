@@ -43,3 +43,13 @@
             "pipeline_version": pipeline_version,
         }
         return self.enqueue_task("features", payload)
+
+    def write_latents_async(self, symbol: Optional[str], timeframe: Optional[str], ts_utc: int, latent: List[float], model_version: Optional[str] = None) -> bool:
+        payload = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "ts_utc": int(ts_utc),
+            "latent": latent,
+            "model_version": model_version,
+        }
+        return self.enqueue_task("latents", payload)

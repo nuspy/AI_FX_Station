@@ -255,22 +255,57 @@ def hurst_aggvar(ts: pd.Series, min_chunks: int = 4) -> float:
     return float(H)
 
 
+def _rs_hurst(series: np.ndarray) -> float:
+    """
+    Rescaled Range (R/S) Hurst estimator for a 1D numpy array.
+    Faster than aggregated variance for medium windows.
+    """
+    n = len(series)
+    if n < 20:
+        return float("nan")
+    # mean-centred cumulative deviate series
+    mean = series.mean()
+    Y = np.cumsum(series - mean)
+    R = np.max(Y) - np.min(Y)
+    S = series.std(ddof=1)
+    if S <= 0 or R == 0:
+        return float("nan")
+    return float(np.log(R / S) / np.log(n))
+
 def hurst_feature(df: pd.DataFrame, window: int = 256, out_col: str = "hurst") -> pd.DataFrame:
     """
-    Rolling Hurst estimator applied to log-returns.
+    Rolling Hurst estimator using R/S statistic with vectorized approach where possible.
     """
     tmp = df.copy()
     if "r" not in tmp.columns:
         tmp = log_returns(tmp, col="close", out_col="r")
-    rs = []
-    series = tmp["r"].fillna(0.0)
-    for i in range(len(series)):
-        if i + 1 < window:
-            rs.append(float("nan"))
-            continue
-        window_series = series.iloc[i + 1 - window : i + 1]
-        rs.append(hurst_aggvar(window_series))
-    tmp[out_col] = rs
+    series = tmp["r"].fillna(0.0).to_numpy()
+    n = len(series)
+    res = np.full(n, np.nan, dtype=float)
+    # vectorized sliding windows using stride trick for moderate windows
+    if n >= window:
+        # rolling windows
+        for i in range(window - 1, n):
+            seg = series[i + 1 - window : i + 1]
+            res[i] = _rs_hurst(seg)
+    tmp[out_col] = res
+    return tmp
+
+
+def garman_klass_rolling(df: pd.DataFrame, window: int = 20, out_col: str = "vol_gk") -> pd.DataFrame:
+    """
+    Compute per-bar GK variance then rolling sqrt of mean variance to get volatility estimate.
+    Vectorized per-bar computation then rolling.
+    """
+    tmp = df.copy()
+    # per-bar variance
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ln_hl = np.log((tmp["high"] / tmp["low"]).replace([np.inf, -np.inf], np.nan)).fillna(0.0)
+        ln_co = np.log((tmp["close"] / tmp["open"]).replace([np.inf, -np.inf], np.nan)).fillna(0.0)
+        var_bar = 0.5 * (ln_hl ** 2) - (2.0 * math.log(2.0) - 1.0) * (ln_co ** 2)
+    tmp["_gk_var"] = var_bar
+    tmp[out_col] = np.sqrt(tmp["_gk_var"].rolling(window=window, min_periods=1).mean().clip(lower=0.0))
+    tmp.drop(columns=["_gk_var"], inplace=True, errors="ignore")
     return tmp
 
 

@@ -77,6 +77,17 @@ class DBService:
             Column("stop_price", Float, nullable=False),
             Column("metrics", Text, nullable=True),
         )
+        self.latents_tbl = Table(
+            "latents",
+            meta,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("symbol", String(64), nullable=True, index=True),
+            Column("timeframe", String(16), nullable=True, index=True),
+            Column("ts_utc", Integer, nullable=False, index=True),
+            Column("model_version", String(128), nullable=True),
+            Column("latent_json", Text, nullable=False),
+            Column("ts_created_ms", Integer, nullable=False),
+        )
         meta.create_all(self.engine)
 """
 DBService: simple persistence helpers for predictions, calibration records and signals.
@@ -181,27 +192,83 @@ class DBService:
             def write_features_bulk(self, rows: List[Dict[str, Any]]):
                 """
                 Bulk insert multiple features rows in a single transaction.
+                When using Postgres, prefer COPY via STDIN for maximum throughput.
+                Requires psycopg[binary] installed.
                 rows: list of dicts with keys: symbol, timeframe, ts_utc, features (dict), pipeline_version
                 """
                 if not rows:
                     return
-                payloads = []
+
+                dialect = self.engine.dialect.name.lower()
                 now_ms = int(time.time() * 1000)
-                for r in rows:
-                    payloads.append({
-                        "symbol": r.get("symbol"),
-                        "timeframe": r.get("timeframe"),
-                        "ts_utc": int(r.get("ts_utc")),
-                        "pipeline_version": r.get("pipeline_version"),
-                        "features_json": json.dumps(r.get("features", {})),
-                        "ts_created_ms": now_ms,
-                    })
-                try:
-                    with self.engine.begin() as conn:
-                        conn.execute(self.features_tbl.insert(), payloads)
-                except Exception as e:
-                    logger.exception("Failed to write_features_bulk: {}", e)
-                    raise
+
+                if dialect == "postgresql":
+                    # Use COPY FROM STDIN with CSV in memory for best throughput
+                    import io
+                    import csv
+
+                    # Prepare CSV buffer
+                    buffer = io.StringIO()
+                    writer = csv.writer(buffer, quoting=csv.QUOTE_MINIMAL)
+                    for r in rows:
+                        symbol = r.get("symbol")
+                        timeframe = r.get("timeframe")
+                        ts_utc = int(r.get("ts_utc"))
+                        pipeline_version = r.get("pipeline_version") or None
+                        features_json = json.dumps(r.get("features", {}), ensure_ascii=False)
+                        writer.writerow([symbol, timeframe, str(ts_utc), pipeline_version or "", features_json, str(now_ms)])
+                    buffer.seek(0)
+                    # Execute COPY using raw connection
+                    conn = self.engine.raw_connection()
+                    try:
+                        # psycopg supports copy_expert; use it
+                        cur = conn.cursor()
+                        copy_sql = "COPY features (symbol, timeframe, ts_utc, pipeline_version, features_json, ts_created_ms) FROM STDIN WITH (FORMAT csv)"
+                        cur.copy_expert(copy_sql, buffer)
+                        conn.commit()
+                    except Exception as e:
+                        conn.rollback()
+                        logger.exception("Postgres COPY failed in write_features_bulk, falling back to executemany: {}", e)
+                        # fallback to executemany insert
+                        payloads = []
+                        for r in rows:
+                            payloads.append({
+                                "symbol": r.get("symbol"),
+                                "timeframe": r.get("timeframe"),
+                                "ts_utc": int(r.get("ts_utc")),
+                                "pipeline_version": r.get("pipeline_version"),
+                                "features_json": json.dumps(r.get("features", {})),
+                                "ts_created_ms": now_ms,
+                            })
+                        with self.engine.begin() as conn2:
+                            conn2.execute(self.features_tbl.insert(), payloads)
+                    finally:
+                        try:
+                            cur.close()
+                        except Exception:
+                            pass
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                else:
+                    # Generic bulk insert using executemany via SQLAlchemy
+                    payloads = []
+                    for r in rows:
+                        payloads.append({
+                            "symbol": r.get("symbol"),
+                            "timeframe": r.get("timeframe"),
+                            "ts_utc": int(r.get("ts_utc")),
+                            "pipeline_version": r.get("pipeline_version"),
+                            "features_json": json.dumps(r.get("features", {})),
+                            "ts_created_ms": now_ms,
+                        })
+                    try:
+                        with self.engine.begin() as conn:
+                            conn.execute(self.features_tbl.insert(), payloads)
+                    except Exception as e:
+                        logger.exception("Failed to write_features_bulk (fallback): {}", e)
+                        raise
 
             def compact_features(self, older_than_days: int = 365):
                 """

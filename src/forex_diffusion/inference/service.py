@@ -213,10 +213,11 @@ class ModelService:
         recent_ts = d["recent_ts"]
 
         # Build conditioning vector h from recent candles using pipeline.build_conditioning
+        cond_vec = None
         try:
-            # fetch last n rows of candles to construct df for conditioning
             from ..data import io as data_io_local
             from ..features.pipeline import build_conditioning
+            from ..services.nn_service import NearestNeighborService
             # query recent candles as DataFrame via engine
             with self.engine.connect() as conn:
                 tbl = MetaData()
@@ -228,14 +229,51 @@ class ModelService:
                     if rows:
                         df_recent = pd.DataFrame(rows, columns=rows[0]._mapping.keys()).sort_values("ts_utc").reset_index(drop=True)
                         cond_df = build_conditioning(df_recent)
-                        # take last row as conditioning vector
                         cond_vec = cond_df.iloc[-1].to_numpy(dtype=float)
-                    else:
-                        cond_vec = None
-                else:
-                    cond_vec = None
+                        # compute latent mu for recent patch if model loaded and VAE available
+                        if model_service.is_model_loaded():
+                            try:
+                                # Build a patch from recent candles: select last patch_len bars and channels (no volume)
+                                patch_len = model_service.vae.patch_len
+                                in_ch = model_service.vae.in_channels
+                                rec = df_recent.tail(patch_len)
+                                if len(rec) == patch_len:
+                                    # construct x shape (1, C, L) expecting channels order [open,high,low,close,...]
+                                    channels = []
+                                    channels.append(rec["open"].to_numpy())
+                                    channels.append(rec["high"].to_numpy())
+                                    channels.append(rec["low"].to_numpy())
+                                    channels.append(rec["close"].to_numpy())
+                                    # if additional channels present in VAE (e.g., hour_sin/hour_cos), compute and append
+                                    # quick attempt: use build_conditioning to get hour_sin/hour_cos and append if expected
+                                    try:
+                                        bc = build_conditioning(rec)
+                                        # append numeric conditioning channels if vae.in_channels > 4
+                                        for c in range(4, in_ch):
+                                            name = bc.columns[c - 4] if (c - 4) < len(bc.columns) else None
+                                            if name and name in bc.columns:
+                                                channels.append(bc[name].to_numpy())
+                                    except Exception:
+                                        pass
+                                    x_patch = np.stack(channels, axis=0)[None, ...]  # (1, C, L)
+                                    import torch
+                                    x_t = torch.tensor(x_patch, dtype=torch.float32).to(model_service.device)
+                                    mu, lv = model_service.vae.encode(x_t)
+                                    mu_np = mu.detach().cpu().numpy().flatten().tolist()
+                                    # query NN service for regime
+                                    nn = NearestNeighborService(engine=_engine)
+                                    nn_res = nn.get_regime(mu_np, symbol=symbol, timeframe=timeframe, k=10)
+                                    # append regime_score to conditioning vector (if cond exists)
+                                    regime_score = float(nn_res.get("regime_score", 0.0)) if nn_res.get("found", False) else 0.0
+                                    if cond_vec is not None:
+                                        cond_vec = np.concatenate([cond_vec, np.array([regime_score])], axis=0)
+                                    else:
+                                        cond_vec = np.array([regime_score])
+                            except Exception:
+                                # ignore NN errors
+                                pass
         except Exception:
-            cond_vec = None
+            cond_vec = cond_vec
 
         sigma_1 = self._estimate_sigma(recent_closes, window=cfg.features.get("standardization", {}).get("window_bars", 1000) if isinstance(cfg.features, dict) else 100)
         # Generate samples per horizon using log-normal RW: price_h = last_close * exp(sigma_1 * sqrt(h_minutes) * Z)

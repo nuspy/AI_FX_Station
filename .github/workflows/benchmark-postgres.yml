@@ -1,0 +1,55 @@
+name: Benchmark Postgres
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: fx
+          POSTGRES_PASSWORD: fxpass
+          POSTGRES_DB: magicforex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install psycopg[binary]
+
+      - name: Wait for Postgres
+        run: |
+          for i in `seq 1 20`; do
+            pg_isready -h 127.0.0.1 -p 5432 -U fx && break
+            sleep 2
+          done
+
+      - name: Run Alembic migrations
+        env:
+          DATABASE_URL: postgresql://fx:fxpass@127.0.0.1:5432/magicforex
+        run: |
+          alembic upgrade head
+
+      - name: Run benchmark bulk
+        env:
+          DATABASE_URL: postgresql://fx:fxpass@127.0.0.1:5432/magicforex
+        run: |
+          python scripts/benchmark_bulk.py --db-url $DATABASE_URL --rows 50000 --batch 1000

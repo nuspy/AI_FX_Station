@@ -273,3 +273,4 @@ persist_features: true
 features:
   bulk_batch_size: 500
   retention_days: 365
+  compaction_interval_hours: 24  # interval to run feature compaction (hours)

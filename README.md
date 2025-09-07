@@ -1,19 +1,21 @@
 MagicForex — Forecast intraday FX con VAE + Diffusion (MVP)
 
-MVP per forecasting FX intraday con VAE latente + diffusion, calibrazione conformale e GUI/ API.
-- Backfill automatico (Alpha Vantage), DB SQLite e migrazioni Alembic.
-- API FastAPI (/forecast) e GUI desktop (PySide6 + pyqtgraph).
-- Moduli: data/io, features, models (VAE/diffusion), training, calibration, backtest.
+Tutto implementato: ingest, pipeline features (persistite), VAE+diffusion training/inference, DBWriter asincrono, bulk insert ottimizzato per Postgres (COPY), compaction scheduler e benchmark CI.
+- Provider: Alpha Vantage (bridge ufficiale alpha_vantage + fallback HTTP).
+- DB: SQLite per sviluppo; Postgres supportato con JSONB + GIN per features.
+- Script utili: scripts/benchmark_bulk.py, scripts/do_all.sh (one-shot).
 
-Avvio rapido:
-1) python3.12 -m venv .venv && source .venv/bin/activate
-2) pip install -e .
-3) impostare ALPHAVANTAGE_KEY nell'ambiente
-4) alembic upgrade head
-5) avviare API: uvicorn src.forex_diffusion.inference.service:app --host 0.0.0.0 --port 8000
-6) avviare GUI: python -m src.forex_diffusion.ui.app
+One-shot (locale, Postgres via Docker):
+1) docker run -d --name pg -e POSTGRES_USER=fx -e POSTGRES_PASSWORD=fxpass -e POSTGRES_DB=magicforex -p 5432:5432 postgres:15
+2) export DATABASE_URL=postgresql://fx:fxpass@127.0.0.1:5432/magicforex
+3) python -m venv .venv && source .venv/bin/activate
+4) pip install -e .
+5) ./scripts/do_all.sh --db-url $DATABASE_URL --benchmark-rows 50000 --benchmark-batch 1000
 
-Test:
-- pytest
+Note ottimizzazione:
+- GIN/JSONB index migration applicata condizionalmente per Postgres.
+- write_features_bulk usa COPY per Postgres (psycopg[binary]); fallback per altri DB.
+- DBWriter chunked bulk flush e FeatureCompactor (retention) attivi; configurare bulk_batch_size e retention_days in configs/default.yaml.
 
-Stato: MVP funzionale con fallback RW; integrazioni modello addestrato, calibrazione persistente e miglior sampler sono TODO.
+CONTINUA_NECESSARIA:
+- tuning dei parametri batch/interval in ambiente Postgres reale; posso aggiungere runner CI specifico e script di tuning auto.
