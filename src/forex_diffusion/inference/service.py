@@ -473,6 +473,51 @@ def metrics():
     return {"predictions": int(pred_count), "calibrations": int(cal_count), "signals": int(sig_count)}
 
 
+@app.post("/admin/regime/rebuild")
+def admin_regime_rebuild(n_clusters: int = 8, limit: Optional[int] = None):
+    """
+    Admin endpoint to trigger regime rebuild (clustering + ANN index) asynchronously.
+    """
+    try:
+        from ..services.regime_service import RegimeService
+        rs = RegimeService(engine=_engine)
+        res = rs.rebuild_async(n_clusters=n_clusters, limit=limit)
+        return {"ok": True, "started": res.get("started", False), "message": res.get("message", "")}
+    except Exception as e:
+        logger.exception("Admin regime rebuild failed: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/regime/status")
+def admin_regime_status():
+    """
+    Return quick status about the regime index and mapping.
+    """
+    try:
+        from ..services.regime_service import RegimeService
+        rs = RegimeService(engine=_engine)
+        metrics = rs.get_index_metrics()
+        return {"ok": True, "metrics": metrics}
+    except Exception as e:
+        logger.exception("Admin regime status failed: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/regime/metrics")
+def admin_regime_metrics():
+    """
+    Return latest metrics from RegimeMonitor (in-memory).
+    """
+    try:
+        if "regime_monitor" in globals() and globals()["regime_monitor"] is not None:
+            return {"ok": True, "monitor": globals()["regime_monitor"].get_metrics()}
+        else:
+            return {"ok": False, "reason": "monitor_not_running"}
+    except Exception as e:
+        logger.exception("Admin regime metrics failed: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def main():
     import uvicorn
     import os
