@@ -10,6 +10,12 @@ class DBWriter:
     def __init__(self, db_service: DBService):
         self.db_service = db_service
 
+    def start(self):
+        """
+        Placeholder for starting the writer process/thread.
+        """
+        pass
+
     def enqueue_task(self, task_type: str, payload: Dict) -> bool:
         """
         Placeholder for the actual task enqueuing logic.

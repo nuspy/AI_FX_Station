@@ -7,6 +7,7 @@ Market data providers and MarketDataService.
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from typing import Optional, Tuple
@@ -51,12 +52,17 @@ class AlphaVantageClient:
     """
     def __init__(self, key: Optional[str] = None, base_url: str = "https://www.alphavantage.co/query", rate_limit_per_minute: int = 5):
         cfg = get_config()
-        av_cfg = getattr(cfg, "providers", {}).get("alpha_vantage", {}) if hasattr(cfg, "providers") else {}
+        av_cfg = getattr(getattr(cfg, "providers", None), "alpha_vantage", None)
+
         from ..utils.user_settings import get_setting
         user_key = get_setting("alpha_vantage_api_key", None)
-        self.api_key = key or av_cfg.get("key") or av_cfg.get("api_key") or user_key or os.environ.get("ALPHAVANTAGE_KEY")
-        self.base_url = av_cfg.get("base_url", base_url)
-        self.rate_limit = rate_limit_per_minute or av_cfg.get("rate_limit_per_minute", 5)
+
+        self.api_key = key or (getattr(av_cfg, "key", None) or getattr(av_cfg, "api_key", None) if av_cfg else None) or user_key or os.environ.get("ALPHAVANTAGE_KEY")
+        self.base_url = (getattr(av_cfg, "base_url", None) if av_cfg else None) or base_url
+
+        rate_limit_from_cfg = getattr(av_cfg, "rate_limit_per_minute", None) if av_cfg else None
+        self.rate_limit = rate_limit_from_cfg if rate_limit_from_cfg is not None else rate_limit_per_minute
+
         self._client = httpx.Client(timeout=30.0)
         self._last_req_ts = 0.0
         self._min_period = 60.0 / float(self.rate_limit) if self.rate_limit > 0 else 0.0
