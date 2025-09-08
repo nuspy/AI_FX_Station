@@ -197,7 +197,7 @@ class MarketDataService:
         self.engine = create_engine(self.db_url, future=True)
         # instantiate default provider
         providers_cfg = getattr(self.cfg, "providers", {}) if hasattr(self.cfg, "providers") else {}
-        default = providers_cfg.get("default", "alpha_vantage")
+        default = getattr(providers_cfg, "default", "alpha_vantage")
         if default == "alpha_vantage":
             self.provider = AlphaVantageClient()
         else:

@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from .db_service import DBService
 
 
 class DBWriter:
@@ -6,6 +7,8 @@ class DBWriter:
     A placeholder class for asynchronously writing data to a database.
     In a real implementation, this would interact with a queue and a worker process.
     """
+    def __init__(self, db_service: DBService):
+        self.db_service = db_service
 
     def enqueue_task(self, task_type: str, payload: Dict) -> bool:
         """
