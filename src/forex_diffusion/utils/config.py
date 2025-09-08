@@ -119,7 +119,18 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="allow", frozen=True)
 
 
-_default_config_path = Path("./configs/default.yaml")
+# Prefer config file located under the repository root: <repo>/configs/default.yaml
+# This avoids failures when script is run from a nested working directory (eg. src/forex_diffusion/utils).
+_repo_root = Path(__file__).resolve().parents[3]  # <repo>/src/.. -> repo root
+_default_config_path = _repo_root / "configs" / "default.yaml"
+
+# Fallback: if for some reason the repo-root config doesn't exist, also consider local ./configs/default.yaml
+# at runtime (preserve original behavior for callers that put configs next to the script).
+if not _default_config_path.exists():
+    _cwd_candidate = Path("./configs/default.yaml")
+    if _cwd_candidate.exists():
+        _default_config_path = _cwd_candidate
+
 _config_singleton: Optional[Settings] = None
 
 

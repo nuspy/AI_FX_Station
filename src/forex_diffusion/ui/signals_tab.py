@@ -90,11 +90,13 @@ class SignalsTab(QWidget):
 
         # Settings button
         self.settings_btn = QPushButton("Settings")
+        # connect to settings handler (may open settings dialog)
         self.settings_btn.clicked.connect(self.on_settings_clicked)
         admin_h.addWidget(self.settings_btn)
 
         # Admin login for remote admin actions
         self.login_btn = QPushButton("Login (Admin)")
+        # connect to login handler (opens login dialog)
         self.login_btn.clicked.connect(self.on_login_clicked)
         admin_h.addWidget(self.login_btn)
 
@@ -197,6 +199,48 @@ class SignalsTab(QWidget):
             except Exception as e:
                 self._log(f"Rebuild failed to start: {e}")
         threading.Thread(target=worker, daemon=True).start()
+
+    # --- Added safe handlers for buttons that may be connected by setup_ui ---
+    def on_settings_clicked(self):
+        """
+        Open settings dialog (stub). Real app should show settings_dialog.
+        Provide a safe placeholder so UI initialization does not fail.
+        """
+        try:
+            # Try to import real settings dialog if available
+            try:
+                from .settings_dialog import SettingsDialog  # type: ignore
+                dlg = SettingsDialog(parent=self)
+                dlg.exec()
+                self._log("Settings dialog closed")
+            except Exception:
+                # Fallback: show a message box or log
+                self._log("Settings clicked (no settings dialog available)")
+                try:
+                    QMessageBox.information(self, "Settings", "Settings dialog not available in this build.")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.exception("on_settings_clicked failed: {}", e)
+
+    def on_login_clicked(self):
+        """
+        Admin login handler (stub). Real app should open admin_login_dialog.
+        """
+        try:
+            try:
+                from .admin_login_dialog import AdminLoginDialog  # type: ignore
+                dlg = AdminLoginDialog(parent=self)
+                res = dlg.exec()
+                self._log(f"Admin login dialog closed (result={res})")
+            except Exception:
+                self._log("Admin login requested (no dialog available)")
+                try:
+                    QMessageBox.information(self, "Admin Login", "Admin login dialog not available in this build.")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.exception("on_login_clicked failed: {}", e)
 
     def on_incremental_clicked(self):
         def worker():

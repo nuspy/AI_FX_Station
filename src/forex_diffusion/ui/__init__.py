@@ -1,11 +1,7 @@
 # ui package initializer
-from .app import main as app_main
-from .viewer import ViewerWidget
-from .menus import MainMenuBar
-# ui package initializer
-from .app import main as app_main
+# Export setup_ui as app_main (app.py defines setup_ui)
+from .app import setup_ui as app_main
 from .viewer import ViewerWidget
 from .menus import MainMenuBar
 
-__all__ = ["app_main", "ViewerWidget", "MainMenuBar"]
 __all__ = ["app_main", "ViewerWidget", "MainMenuBar"]

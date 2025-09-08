@@ -1,4 +1,4 @@
-# Configuration for MagicForex - default values
+# Configuration for MagicForex - consolidated defaults
 # Override with environment-specific YAML or env vars.
 # NOTE: keep sampler.steps <= 20 for production/service constraints.
 
@@ -53,9 +53,13 @@ providers:
 
 data:
   symbols:
-    - "EUR/USD"
-    - "USD/JPY"
-    - "GBP/USD"
+    - EUR/USD
+  timeframes:
+    native:
+      - 1m
+      - 5m
+      - 1d
+      -
   # Historical backfill preferences
   backfill:
     history_years: 20
@@ -87,22 +91,36 @@ timeframes:
 horizons:
   # Horizons expressed as human label -> minutes
   list:
-    - label: "1m"; minutes: 1
-    - label: "5m"; minutes: 5
-    - label: "15m"; minutes: 15
-    - label: "30m"; minutes: 30
-    - label: "60m"; minutes: 60
+    - label: "1m"
+      minutes: 1
+    - label: "5m"
+      minutes: 5
+    - label: "15m"
+      minutes: 15
+    - label: "30m"
+      minutes: 30
+    - label: "60m"
+      minutes: 60
     # multi-hour up to 24h
-    - label: "2h"; minutes: 120
-    - label: "4h"; minutes: 240
-    - label: "8h"; minutes: 480
-    - label: "12h"; minutes: 720
-    - label: "24h"; minutes: 1440
+    - label: "2h"
+      minutes: 120
+    - label: "4h"
+      minutes: 240
+    - label: "8h"
+      minutes: 480
+    - label: "12h"
+      minutes: 720
+    - label: "24h"
+      minutes: 1440
     # multi-day
-    - label: "1d"; minutes: 1440
-    - label: "2d"; minutes: 2880
-    - label: "3d"; minutes: 4320
-    - label: "5d"; minutes: 7200
+    - label: "1d"
+      minutes: 1440
+    - label: "2d"
+      minutes: 2880
+    - label: "3d"
+      minutes: 4320
+    - label: "5d"
+      minutes: 7200
   quantiles:
     - 0.05
     - 0.5
@@ -120,7 +138,14 @@ model:
 vae:
   patch_len: 64
   stride: 1
-  channels: ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos"]
+  channels:
+    - "open"
+    - "high"
+    - "low"
+    - "close"
+    - "volume"
+    - "hour_sin"
+    - "hour_cos"
   z_dim: 128
   encoder:
     hidden_channels: 256
@@ -216,6 +241,13 @@ features:
       window: 256
   warmup_bars: 512
 
+# Persist features precomputed during backfill/realtime ingestion (optional; enable for faster training)
+persist_features: true
+persist_features_config:
+  bulk_batch_size: 500
+  retention_days: 365
+  compaction_interval_hours: 24  # interval to run feature compaction (hours)
+
 qa:
   outlier_zscore_threshold: 8.0
   gap_flag_multiplier: 1.1  # if delta > multiplier * expected_delta => flag
@@ -225,7 +257,7 @@ qa:
 backtest:
   walk_forward:
     n_splits: 5
-    train_window_days: 365 * 2
+    train_window_days: 730
     val_window_days: 90
     test_window_days: 90
   baseline:
@@ -267,10 +299,3 @@ debug:
   # developer switches
   simulate_provider_errors: false
   force_small_dataset: false
-
-# Persist features precomputed during backfill/realtime ingestion (optional; enable for faster training)
-persist_features: true
-features:
-  bulk_batch_size: 500
-  retention_days: 365
-  compaction_interval_hours: 24  # interval to run feature compaction (hours)
