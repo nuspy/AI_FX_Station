@@ -53,13 +53,9 @@ providers:
 
 data:
   symbols:
-    - EUR/USD
-  timeframes:
-    native:
-      - 1m
-      - 5m
-      - 1d
-      -
+    - "EUR/USD"
+    - "USD/JPY"
+    - "GBP/USD"
   # Historical backfill preferences
   backfill:
     history_years: 20

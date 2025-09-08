@@ -18,7 +18,7 @@ import pandas as pd
 from loguru import logger
 
 from ..data import io as data_io
-from ..services.marketdata import AlphaVantageClient, DukascopyClient, MarketDataService
+from ..services.marketdata import AlphaVantageClient, MarketDataService
 from ..utils.config import get_config
 
 

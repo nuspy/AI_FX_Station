@@ -233,33 +233,89 @@ class MarketDataService:
         Backfill symbol/timeframe from last DB timestamp to now.
         If force_full True, download full history per provider mapping (e.g., 20 years daily etc.)
         Returns QA report dict.
+
+        This implementation is robust to Settings being a pydantic model or a plain dict.
         """
-        # decide timeframe mapping: for long-run daily + intraday recent segment per spec
         cfg = self.cfg
+        # normalize data section into a plain dict for safe access
+        data_cfg = None
+        try:
+            data_cfg = getattr(cfg, "data", None)
+        except Exception:
+            data_cfg = None
+        if data_cfg is None:
+            try:
+                # pydantic v2: model_dump returns dict
+                if hasattr(cfg, "model_dump"):
+                    data_cfg = cfg.model_dump().get("data", None)
+                elif isinstance(cfg, dict):
+                    data_cfg = cfg.get("data", None)
+            except Exception:
+                data_cfg = None
+        # Ensure data_cfg is a dict (fallbacks)
+        if data_cfg is None:
+            data_cfg = {}
+        if not isinstance(data_cfg, dict):
+            try:
+                data_cfg = dict(data_cfg)
+            except Exception:
+                data_cfg = {}
+
         df_report = {"symbol": symbol, "timeframe": timeframe, "actions": []}
         # compute last timestamp
         t_last = data_io.get_last_ts_for_symbol_tf(self.engine, symbol, timeframe)
-        now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+        # compute now in ms robustly
+        try:
+            now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+        except Exception:
+            now_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
+
         # If no data present or force_full and timeframe daily -> request full 20y daily
         if t_last is None or force_full:
-            # For daily use long-run history years
             if timeframe in ["1d", "1D", "daily"]:
-                years = int(cfg.data.backfill.history_years if hasattr(cfg, "data") and hasattr(cfg.data, "backfill") else cfg.data.get("backfill", {}).get("history_years", 20))
-                # In AlphaVantage we request FX_DAILY with outputsize full and rely on truncation by start_ts here
+                years = int(data_cfg.get("backfill", {}).get("history_years", 20))
                 start_ts_ms = None
                 end_ts_ms = now_ms
                 df = self.provider.get_historical(symbol=symbol, timeframe="1d", start_ts_ms=start_ts_ms, end_ts_ms=end_ts_ms)
                 report = data_io.upsert_candles(self.engine, df, symbol, "1d", resampled=False)
-                df_report["actions"].append({"type": "full_daily_backfill", "report": report})
+                df_report["actions"].append({"type": "full_daily_backfill", "years": years, "report": report})
             else:
-                # for intraday, fallback to recent segment
-                recent_days = int(getattr(cfg.data.backfill, "intraday_recent_days", 90))
-                start_ts = pd.Timestamp.utcnow() - pd.Timedelta(days=recent_days)
-                start_ts_ms = int(start_ts.value // 1_000_000)
+                recent_days = int(data_cfg.get("backfill", {}).get("intraday_recent_days", 90))
+                try:
+                    start_ts = pd.Timestamp.utcnow() - pd.Timedelta(days=recent_days)
+                    start_ts_ms = int(start_ts.value // 1_000_000)
+                except Exception:
+                    start_ts_ms = int(pd.Timestamp.utcnow().timestamp() * 1000) - recent_days * 86400 * 1000
                 df = self.provider.get_historical(symbol=symbol, timeframe="1m", start_ts_ms=start_ts_ms, end_ts_ms=now_ms)
                 report = data_io.upsert_candles(self.engine, df, symbol, "1m", resampled=False)
-                df_report["actions"].append({"type": "intraday_recent_backfill", "report": report})
+                df_report["actions"].append({"type": "intraday_recent_backfill", "recent_days": recent_days, "report": report})
             return df_report
+
+        # Otherwise fetch incremental segments from last timestamp to now
+        chunk_seconds = 24 * 3600 * 7  # 7 days chunk for intraday by default
+        start_ms = t_last + 1
+        end_ms = now_ms
+        segments = []
+        cur_start = start_ms
+        while cur_start <= end_ms:
+            cur_end = cur_start + chunk_seconds * 1000 - 1
+            if cur_end > end_ms:
+                cur_end = end_ms
+            segments.append((cur_start, cur_end))
+            cur_start = cur_end + 1
+
+        for seg_start, seg_end in segments:
+            try:
+                df_seg = self.provider.get_historical(symbol=symbol, timeframe=timeframe, start_ts_ms=seg_start, end_ts_ms=seg_end)
+                if df_seg is None or df_seg.empty:
+                    df_report["actions"].append({"segment": (seg_start, seg_end), "note": "no_data"})
+                    continue
+                report = data_io.upsert_candles(self.engine, df_seg, symbol, timeframe, resampled=False)
+                df_report["actions"].append({"segment": (seg_start, seg_end), "report": report})
+            except Exception as e:
+                logger.exception("Failed to fetch segment {}-{} for {}/{}: {}", seg_start, seg_end, symbol, timeframe, e)
+                df_report["actions"].append({"segment": (seg_start, seg_end), "error": str(e)})
+        return df_report
 
         # Otherwise fetch from t_last + delta to now
         # compute small sliding windows to avoid huge requests (provider limits)
@@ -294,10 +350,90 @@ class MarketDataService:
         """
         Run alembic upgrade head externally; then for each configured symbol/timeframe,
         compute and fill missing data. This function is sync and may be invoked in a worker pool.
+
+        This implementation is robust to different config shapes:
+          - pydantic Settings with extra fields
+          - plain dict loaded from YAML
+          - missing data/timeframes -> sensible defaults
         """
         cfg = self.cfg
-        symbols = getattr(cfg.data, "symbols", None) or (cfg.data.get("symbols", []) if isinstance(cfg.data, dict) else [])
-        timeframes = getattr(cfg, "timeframes", None) or (cfg.timeframes.get("native", []) if isinstance(cfg.timeframes, dict) else [])
+
+        # Try various ways to obtain the 'data' section
+        data_cfg = None
+        try:
+            data_cfg = getattr(cfg, "data", None)
+        except Exception:
+            data_cfg = None
+
+        if data_cfg is None:
+            try:
+                # pydantic v2: model_dump returns dict
+                if hasattr(cfg, "model_dump"):
+                    data_cfg = cfg.model_dump().get("data", None)
+                elif isinstance(cfg, dict):
+                    data_cfg = cfg.get("data", None)
+            except Exception:
+                data_cfg = None
+
+        # Extract symbols
+        symbols = []
+        try:
+            if data_cfg is None:
+                symbols = []
+            elif isinstance(data_cfg, dict):
+                symbols = data_cfg.get("symbols", []) or []
+            else:
+                # pydantic container-like object
+                symbols = getattr(data_cfg, "symbols", []) or []
+        except Exception:
+            symbols = []
+
+        # Fallback default if no symbols configured
+        if not symbols:
+            symbols = ["EUR/USD"]
+
+        # Extract timeframes (prefer data.timeframes.native, then top-level timeframes.native)
+        timeframes = []
+        try:
+            if data_cfg is None:
+                timeframes = []
+            elif isinstance(data_cfg, dict):
+                tf = data_cfg.get("timeframes", {})
+                if isinstance(tf, dict):
+                    timeframes = tf.get("native", []) or []
+                else:
+                    # unexpected shape
+                    timeframes = []
+            else:
+                tf = getattr(data_cfg, "timeframes", None)
+                if tf is None:
+                    timeframes = []
+                else:
+                    # try attribute 'native' or dict-like get
+                    try:
+                        timeframes = getattr(tf, "native", None) or (tf.get("native") if hasattr(tf, "get") else [])
+                    except Exception:
+                        timeframes = []
+        except Exception:
+            timeframes = []
+
+        # If still empty, try top-level timeframes in config
+        if not timeframes:
+            try:
+                tf_cfg = getattr(cfg, "timeframes", None)
+                if tf_cfg is None and hasattr(cfg, "model_dump"):
+                    tf_cfg = cfg.model_dump().get("timeframes", None)
+                if isinstance(tf_cfg, dict):
+                    timeframes = tf_cfg.get("native", []) or []
+                else:
+                    timeframes = getattr(tf_cfg, "native", None) or []
+            except Exception:
+                timeframes = []
+
+        # final fallback defaults
+        if not timeframes:
+            timeframes = ["1m", "1d"]
+
         reports = []
         for sym in symbols:
             for tf in timeframes:
