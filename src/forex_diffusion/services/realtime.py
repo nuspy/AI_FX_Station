@@ -47,7 +47,38 @@ class RealTimeIngestService:
         self.cfg = get_config()
         self.market_service = market_service or MarketDataService()
         self.provider = self.market_service.provider
-        self.symbols = symbols or (getattr(self.cfg, "data", {}).get("symbols", []) if isinstance(getattr(self.cfg, "data", {}), dict) else [])
+
+        # Resolve symbols robustly: prefer explicit parameter, then config.data.symbols (supports pydantic Settings or plain dict),
+        # finally fallback to a sensible default.
+        resolved_symbols: List[str] = []
+        if symbols:
+            resolved_symbols = list(symbols)
+        else:
+            try:
+                data_section = getattr(self.cfg, "data", None)
+            except Exception:
+                data_section = None
+            if data_section is None:
+                try:
+                    if hasattr(self.cfg, "model_dump"):
+                        data_section = self.cfg.model_dump().get("data", None)
+                    elif isinstance(self.cfg, dict):
+                        data_section = self.cfg.get("data", None)
+                except Exception:
+                    data_section = None
+            # normalize to dict-like
+            if isinstance(data_section, dict):
+                resolved_symbols = data_section.get("symbols", []) or []
+            else:
+                try:
+                    resolved_symbols = list(getattr(data_section, "symbols", []) or [])
+                except Exception:
+                    resolved_symbols = []
+        # final fallback
+        if not resolved_symbols:
+            resolved_symbols = ["EUR/USD"]
+
+        self.symbols = resolved_symbols
         self.timeframe = timeframe
         self.poll_interval = float(poll_interval)
         self._thread = None

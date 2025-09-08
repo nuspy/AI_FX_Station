@@ -3,7 +3,7 @@
 Start a local RealTimeIngestService for testing.
 
 Usage (PowerShell):
-  python .\scripts\start_realtime.py
+  python .\\scripts\\start_realtime.py
 Press Ctrl+C to stop.
 
 This script starts DBWriter (if available), a MarketDataService and RealTimeIngestService
