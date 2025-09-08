@@ -33,7 +33,6 @@ class SignalsTab(QWidget):
         self._populate_empty()
 # ui/signals_tab.py
 # Widget to display persisted signals from the DB with admin controls for regime/index management
-from __future__ import annotations
 
 from typing import Optional
 import threading

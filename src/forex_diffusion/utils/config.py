@@ -20,11 +20,23 @@ from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
 class GenericConfig(BaseModel):
     """
-    Generic container to allow nested arbitrary config sections while still benefiting
-    from pydantic validation for top-level settings.
+    Generic container allowing arbitrary nested config fields.
+    Uses pydantic v2 ConfigDict with extra='allow' instead of __root__.
     """
     model_config = ConfigDict(extra="allow")
-    __root__: Dict[str, Any] = Field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        # model_dump returns a dict of all fields (including arbitrary)
+        return self.model_dump()
+
+    # Provide compatibility alias for older code expecting dict-like access
+    def __getitem__(self, item):
+        d = self.to_dict()
+        return d.get(item)
+
+    def get(self, item, default=None):
+        d = self.to_dict()
+        return d.get(item, default)
 
 
 class AppConfig(BaseModel):

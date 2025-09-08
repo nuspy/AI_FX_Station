@@ -115,8 +115,6 @@ DBService: simple persistence helpers for predictions, calibration records and s
 - Provides write_prediction, write_calibration_record, write_signal
 """
 
-from __future__ import annotations
-
 import json
 import time
 from typing import Any, Dict, Optional
