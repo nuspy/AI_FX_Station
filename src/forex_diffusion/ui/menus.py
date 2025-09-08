@@ -13,6 +13,13 @@ class MenuSignals(QObject):
     saveRequested = Signal()
     settingsRequested = Signal()
     exitRequested = Signal()
+    ingestRequested = Signal()
+    trainRequested = Signal()
+    forecastRequested = Signal()
+    calibrationRequested = Signal()
+    backtestRequested = Signal()
+    realtimeToggled = Signal(bool)
+    configRequested = Signal()
 
     def __init__(self):
         super().__init__()
