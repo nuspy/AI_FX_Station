@@ -304,8 +304,18 @@ class SignalsTab(QWidget):
     def on_refresh_clicked(self):
         try:
             self.refresh(limit=100)
+            # update UI log area so user sees the refresh happened
+            try:
+                self._log("Refreshed signals table")
+            except Exception:
+                # best-effort: do not crash UI if logging widget is unavailable
+                pass
         except Exception as e:
             logger.exception("SignalsTab refresh failed: {}", e)
+            try:
+                QMessageBox.warning(self, "Refresh failed", str(e))
+            except Exception:
+                pass
 
     def refresh(self, limit: int = 100):
         """

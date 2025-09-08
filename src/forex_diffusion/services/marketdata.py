@@ -111,11 +111,18 @@ class AlphaVantageClient:
         for stamp_str, vals in ts_dict.items():
             try:
                 dt = pd.to_datetime(stamp_str, utc=True)
-                ts_ms = int(dt.view("int64") // 1_000_000)
+                # Prefer pandas.Timestamp.value (ns since epoch) if available, fallback to timestamp()
+                try:
+                    ts_ms = int(dt.value // 1_000_000)
+                except Exception:
+                    ts_ms = int(pd.Timestamp(dt).timestamp() * 1000)
             except Exception:
                 dt = pd.to_datetime(stamp_str)
                 dt = dt.tz_localize(timezone.utc)
-                ts_ms = int(dt.view("int64") // 1_000_000)
+                try:
+                    ts_ms = int(dt.value // 1_000_000)
+                except Exception:
+                    ts_ms = int(pd.Timestamp(dt).timestamp() * 1000)
             record = {
                 "ts_utc": ts_ms,
                 "open": float(vals.get("1. open") or vals.get("open") or 0.0),
