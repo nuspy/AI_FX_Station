@@ -19,10 +19,10 @@ sys.path.insert(0, ".")
 from loguru import logger
 
 try:
-    from forex_diffusion.services.db_service import DBService
-    from forex_diffusion.services.marketdata import MarketDataService
-    from forex_diffusion.services.realtime import RealTimeIngestService
-    from forex_diffusion.services.db_writer import DBWriter
+    from src.forex_diffusion.services.db_service import DBService
+    from src.forex_diffusion.services.marketdata import MarketDataService
+    from src.forex_diffusion.services.realtime import RealTimeIngestService
+    from src.forex_diffusion.services.db_writer import DBWriter
 except Exception as e:
     print("Failed to import project services:", e)
     raise

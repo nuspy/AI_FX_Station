@@ -180,7 +180,11 @@ class RealTimeIngestService:
             if ts_ms is None:
                 ts_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
             if price is None:
-                logger.debug("RealTime: no price found for {}", symbol)
+                # Log raw provider response to debug parsing issues
+                try:
+                    logger.debug("RealTime: no price found for {}. raw data: {}", symbol, data)
+                except Exception:
+                    logger.debug("RealTime: no price found for {}", symbol)
                 return
 
             # Build a 1-row candle (open/high/low/close = price)
