@@ -184,7 +184,8 @@ class AlphaVantageClient:
         # try official library ForeignExchange.get_currency_exchange_rate
         if self._fx is not None:
             try:
-                data, _ = self._fx.get_currency_exchange_rate(from_symbol=from_sym, to_symbol=to_sym)  # type: ignore
+                # correct parameter names for alpha_vantage ForeignExchange API
+                data, _ = self._fx.get_currency_exchange_rate(from_currency=from_sym, to_currency=to_sym)  # type: ignore
                 return data
             except Exception as e:
                 logger.debug("alpha_vantage lib get_currency_exchange_rate failed: {}", e)
