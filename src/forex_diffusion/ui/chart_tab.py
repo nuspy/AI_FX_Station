@@ -210,15 +210,61 @@ class ChartTab(QWidget):
             pass
 
     # Public convenience methods (aliases/wrappers) to avoid AttributeError when other modules call them
+    def _normalize_indicator_cfg(self, raw: dict | None) -> dict:
+        """
+        Normalize raw config (from dialog or old format) into canonical structure:
+        { "sma": {"enabled":bool,"window":int,"color":str}, ... }
+        """
+        # defaults
+        defaults = {
+            "sma": {"enabled": False, "window": 20, "color": "#1f77b4"},
+            "ema": {"enabled": False, "span": 20, "color": "#ff7f0e"},
+            "bollinger": {"enabled": False, "window": 20, "n_std": 2.0, "color_up": "#2ca02c", "color_low": "#d62728"},
+            "rsi": {"enabled": False, "period": 14, "color": "#9467bd"},
+            "macd": {"enabled": False, "fast": 12, "slow": 26, "signal": 9, "color": "#ff7f0e"},
+        }
+        out = {}
+        try:
+            if not isinstance(raw, dict):
+                return defaults
+            for k, v in defaults.items():
+                rv = raw.get(k)
+                if isinstance(rv, dict):
+                    # if 'enabled' present use it, else presence = enabled True
+                    enabled = bool(rv.get("enabled", True)) if rv else False
+                    if k == "sma":
+                        out[k] = {"enabled": enabled, "window": int(rv.get("window", v["window"])), "color": rv.get("color", v["color"])}
+                    elif k == "ema":
+                        out[k] = {"enabled": enabled, "span": int(rv.get("span", v["span"])), "color": rv.get("color", v["color"])}
+                    elif k == "bollinger":
+                        nstd = rv.get("n_std", rv.get("k", v["n_std"]))
+                        try:
+                            nstd = float(nstd)
+                        except Exception:
+                            nstd = v["n_std"]
+                        out[k] = {"enabled": enabled, "window": int(rv.get("window", v["window"])), "n_std": nstd, "color_up": rv.get("color_up", v["color_up"]), "color_low": rv.get("color_low", v["color_low"])}
+                    elif k == "rsi":
+                        out[k] = {"enabled": enabled, "period": int(rv.get("period", v["period"])), "color": rv.get("color", v["color"])}
+                    elif k == "macd":
+                        out[k] = {"enabled": enabled, "fast": int(rv.get("fast", v["fast"])), "slow": int(rv.get("slow", v["slow"])), "signal": int(rv.get("signal", v["signal"])), "color": rv.get("color", v["color"])}
+                else:
+                    # missing -> use defaults
+                    out[k] = v
+        except Exception:
+            return defaults
+        return out
+
     def apply_indicators(self, cfg: dict):
         """
-        Public wrapper to apply indicators (safe entry point).
+        Public wrapper to apply indicators (safe entry point). Normalizes cfg and calls internal implementation.
         """
         try:
-            self._indicator_cfg = cfg
+            norm = self._normalize_indicator_cfg(cfg)
+            # store canonical config
+            self._indicator_cfg = norm
             # call internal implementation
             try:
-                self._apply_indicators(cfg)
+                self._apply_indicators(norm)
             except Exception as e:
                 logger.exception("apply_indicators internal failure: {}", e)
         except Exception as e:
@@ -231,11 +277,47 @@ class ChartTab(QWidget):
         if getattr(self, "_last_df", None) is not None:
             self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
 
+    def showEvent(self, event):
+        """
+        When the Chart tab is shown, ensure the chart is populated automatically
+        by loading recent historical rows from DB (if not already loaded).
+        """
+        try:
+            # only act on first show when we have db_service and symbol/timeframe
+            if getattr(self, "_last_df", None) is None and getattr(self, "db_service", None) is not None and getattr(self, "symbol", None):
+                try:
+                    from sqlalchemy import select
+                    meta = MetaData()
+                    meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
+                    tbl = meta.tables.get("market_data_candles")
+                    if tbl is not None:
+                        with self.db_service.engine.connect() as conn:
+                            stmt = select(tbl).where(tbl.c.symbol == self.symbol).where(tbl.c.timeframe == self.timeframe).order_by(tbl.c.ts_utc.desc()).limit(500)
+                            rows = conn.execute(stmt).fetchall()
+                            if rows:
+                                import pandas as pd
+                                df = pd.DataFrame([dict(r) for r in rows[::-1]])  # ascending
+                                try:
+                                    self._last_df = df
+                                    self.update_plot(df, timeframe=self.timeframe)
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    logger.debug("showEvent failed to load initial data: {}", e)
+        except Exception:
+            pass
+        # call base
+        try:
+            super().showEvent(event)
+        except Exception:
+            pass
+
     def _apply_indicators(self, cfg: dict):
         """
         Internal: remove previous indicator artists and overlay configured indicators.
         Does NOT redraw base 'close' line (update_plot is responsible for that).
         Reuses auxiliary axes for indicators requiring separate y-axis (rsi, macd).
+        Only indicators with 'enabled': True are drawn; disabled ones are removed.
         """
         try:
             if self._last_df is None or self._last_df.empty:
@@ -247,63 +329,11 @@ class ChartTab(QWidget):
             df = df.sort_values("ts_utc").reset_index(drop=True)
             x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True).dt.tz_convert(None)
 
-            # normalize cfg: support legacy format where keys exist only if enabled
+            # normalize cfg if needed (ensure canonical structure)
             try:
-                norm_cfg = {}
-                for name in ["sma", "ema", "bollinger", "rsi", "macd"]:
-                    val = cfg.get(name)
-                    if isinstance(val, dict):
-                        # if 'enabled' present, keep; else treat presence as enabled
-                        enabled = bool(val.get("enabled", True)) if "enabled" in val else True
-                        # ensure keys exist with defaults
-                        if name == "sma":
-                            norm_cfg[name] = {
-                                "enabled": enabled,
-                                "window": int(val.get("window", 20)),
-                                "color": val.get("color")
-                            }
-                        elif name == "ema":
-                            norm_cfg[name] = {
-                                "enabled": enabled,
-                                "span": int(val.get("span", 20)),
-                                "color": val.get("color")
-                            }
-                        elif name == "bollinger":
-                            norm_cfg[name] = {
-                                "enabled": enabled,
-                                "window": int(val.get("window", 20)),
-                                "n_std": float(val.get("n_std", val.get("k", 2.0))),
-                                "color_up": val.get("color_up"),
-                                "color_low": val.get("color_low")
-                            }
-                        elif name == "rsi":
-                            norm_cfg[name] = {
-                                "enabled": enabled,
-                                "period": int(val.get("period", 14)),
-                                "color": val.get("color")
-                            }
-                        elif name == "macd":
-                            norm_cfg[name] = {
-                                "enabled": enabled,
-                                "fast": int(val.get("fast", 12)),
-                                "slow": int(val.get("slow", 26)),
-                                "signal": int(val.get("signal", 9)),
-                                "color": val.get("color")
-                            }
-                    else:
-                        # missing -> disabled
-                        if name == "sma":
-                            norm_cfg[name] = {"enabled": False, "window": 20, "color": None}
-                        elif name == "ema":
-                            norm_cfg[name] = {"enabled": False, "span": 20, "color": None}
-                        elif name == "bollinger":
-                            norm_cfg[name] = {"enabled": False, "window": 20, "n_std": 2.0, "color_up": None, "color_low": None}
-                        elif name == "rsi":
-                            norm_cfg[name] = {"enabled": False, "period": 14, "color": None}
-                        elif name == "macd":
-                            norm_cfg[name] = {"enabled": False, "fast": 12, "slow": 26, "signal": 9, "color": None}
+                norm = self._normalize_indicator_cfg(cfg)
             except Exception:
-                norm_cfg = cfg
+                norm = cfg
 
             # remove existing indicator artists and clear aux axes if present
             try:
@@ -314,7 +344,7 @@ class ChartTab(QWidget):
                         except Exception:
                             pass
                 self._indicator_artists = {}
-                # clear aux axes lines by hiding them (do not destroy)
+                # clear aux axes lines
                 for k, ax_aux in list(self._aux_axes.items()):
                     try:
                         ax_aux.cla()
@@ -340,10 +370,10 @@ class ChartTab(QWidget):
                     pass
 
             # SMA
-            if "sma" in cfg:
+            if norm.get("sma", {}).get("enabled"):
                 try:
-                    w = int(cfg["sma"].get("window", 20))
-                    col = _get_color(cfg.get("sma"), "#1f77b4")
+                    w = int(norm["sma"]["window"])
+                    col = _get_color(norm["sma"], "#1f77b4")
                     s = sma(df["close"], w)
                     ln, = self.ax.plot(x, s, label=f"SMA({w})", color=col, alpha=0.9)
                     _register(f"sma_{w}_{col}", ln)
@@ -351,10 +381,10 @@ class ChartTab(QWidget):
                     pass
 
             # EMA
-            if "ema" in cfg:
+            if norm.get("ema", {}).get("enabled"):
                 try:
-                    sp = int(cfg["ema"].get("span", 20))
-                    col = _get_color(cfg.get("ema"), "#ff7f0e")
+                    sp = int(norm["ema"]["span"])
+                    col = _get_color(norm["ema"], "#ff7f0e")
                     e = ema(df["close"], sp)
                     ln, = self.ax.plot(x, e, label=f"EMA({sp})", color=col, alpha=0.9)
                     _register(f"ema_{sp}_{col}", ln)
@@ -362,12 +392,12 @@ class ChartTab(QWidget):
                     pass
 
             # Bollinger
-            if "bollinger" in cfg:
+            if norm.get("bollinger", {}).get("enabled"):
                 try:
-                    w = int(cfg["bollinger"].get("window", 20))
-                    nstd = float(cfg["bollinger"].get("n_std", 2.0))
-                    col_up = cfg["bollinger"].get("color_up") or _get_color(cfg.get("bollinger"), "#2ca02c")
-                    col_low = cfg["bollinger"].get("color_low") or _get_color(cfg.get("bollinger"), "#d62728")
+                    w = int(norm["bollinger"]["window"])
+                    nstd = float(norm["bollinger"]["n_std"])
+                    col_up = norm["bollinger"].get("color_up") or _get_color(norm.get("bollinger"), "#2ca02c")
+                    col_low = norm["bollinger"].get("color_low") or _get_color(norm.get("bollinger"), "#d62728")
                     up, low = bollinger(df["close"], window=w, n_std=nstd)
                     l1, = self.ax.plot(x, up, label=f"BB_up({w},{nstd})", color=col_up, alpha=0.6)
                     l2, = self.ax.plot(x, low, label=f"BB_low({w},{nstd})", color=col_low, alpha=0.6)
@@ -376,21 +406,19 @@ class ChartTab(QWidget):
                     pass
 
             # RSI (reuse/create aux axis)
-            if "rsi" in cfg:
+            if norm.get("rsi", {}).get("enabled"):
                 try:
-                    p = int(cfg["rsi"].get("period", 14))
-                    col = _get_color(cfg.get("rsi"), "#9467bd")
+                    p = int(norm["rsi"]["period"])
+                    col = _get_color(norm["rsi"], "#9467bd")
                     r = rsi(df["close"], period=p)
                     ax_rsi = self._aux_axes.get("rsi")
                     if ax_rsi is None:
                         ax_rsi = self.ax.twinx()
-                        # shift right if needed
                         try:
                             ax_rsi.spines["right"].set_position(("axes", 1.05))
                         except Exception:
                             pass
                         self._aux_axes["rsi"] = ax_rsi
-                    # plot on ax_rsi
                     ln, = ax_rsi.plot(x, r, label=f"RSI({p})", color=col, alpha=0.8)
                     ax_rsi.set_ylabel("RSI")
                     _register(f"rsi_{p}_{col}", ln)
@@ -398,12 +426,12 @@ class ChartTab(QWidget):
                     pass
 
             # MACD (reuse/create aux axis)
-            if "macd" in cfg:
+            if norm.get("macd", {}).get("enabled"):
                 try:
-                    f = int(cfg["macd"].get("fast", 12))
-                    s = int(cfg["macd"].get("slow", 26))
-                    sg = int(cfg["macd"].get("signal", 9))
-                    col = _get_color(cfg.get("macd"), "#ff7f0e")
+                    f = int(norm["macd"]["fast"])
+                    s = int(norm["macd"]["slow"])
+                    sg = int(norm["macd"]["signal"])
+                    col = _get_color(norm["macd"], "#ff7f0e")
                     m = macd(df["close"], fast=f, slow=s, signal=sg)
                     ax_macd = self._aux_axes.get("macd")
                     if ax_macd is None:
@@ -584,9 +612,10 @@ class ChartTab(QWidget):
                         if initial:
                             try:
                                 # SMA
-                                if "sma" in initial:
+                                if "sma" in initial and isinstance(initial["sma"], dict):
                                     try:
-                                        self.sma_cb.setChecked(True)
+                                        ena = bool(initial["sma"].get("enabled", False))
+                                        self.sma_cb.setChecked(ena)
                                         if "window" in initial["sma"]:
                                             self.sma_w.setValue(int(initial["sma"]["window"]))
                                         if "color" in initial["sma"]:
@@ -598,9 +627,10 @@ class ChartTab(QWidget):
                                     except Exception:
                                         pass
                                 # EMA
-                                if "ema" in initial:
+                                if "ema" in initial and isinstance(initial["ema"], dict):
                                     try:
-                                        self.ema_cb.setChecked(True)
+                                        ena = bool(initial["ema"].get("enabled", False))
+                                        self.ema_cb.setChecked(ena)
                                         if "span" in initial["ema"]:
                                             self.ema_span.setValue(int(initial["ema"]["span"]))
                                         if "color" in initial["ema"]:
@@ -612,9 +642,10 @@ class ChartTab(QWidget):
                                     except Exception:
                                         pass
                                 # Bollinger
-                                if "bollinger" in initial:
+                                if "bollinger" in initial and isinstance(initial["bollinger"], dict):
                                     try:
-                                        self.bb_cb.setChecked(True)
+                                        ena = bool(initial["bollinger"].get("enabled", False))
+                                        self.bb_cb.setChecked(ena)
                                         if "window" in initial["bollinger"]:
                                             self.bb_n.setValue(int(initial["bollinger"]["window"]))
                                         if "n_std" in initial["bollinger"]:
@@ -632,9 +663,10 @@ class ChartTab(QWidget):
                                     except Exception:
                                         pass
                                 # RSI
-                                if "rsi" in initial:
+                                if "rsi" in initial and isinstance(initial["rsi"], dict):
                                     try:
-                                        self.rsi_cb.setChecked(True)
+                                        ena = bool(initial["rsi"].get("enabled", False))
+                                        self.rsi_cb.setChecked(ena)
                                         if "period" in initial["rsi"]:
                                             self.rsi_p.setValue(int(initial["rsi"]["period"]))
                                         if "color" in initial["rsi"]:
@@ -645,9 +677,10 @@ class ChartTab(QWidget):
                                     except Exception:
                                         pass
                                 # MACD
-                                if "macd" in initial:
+                                if "macd" in initial and isinstance(initial["macd"], dict):
                                     try:
-                                        self.macd_cb.setChecked(True)
+                                        ena = bool(initial["macd"].get("enabled", False))
+                                        self.macd_cb.setChecked(ena)
                                         if "fast" in initial["macd"]:
                                             self.macd_fast.setValue(int(initial["macd"]["fast"]))
                                         if "slow" in initial["macd"]:
@@ -722,16 +755,21 @@ class ChartTab(QWidget):
                     pass
                 return
 
-        # persist and apply
+        # persist (normalized) config and apply
+        if not cfg:
+            return
         try:
-            # persist config
-            self._indicator_cfg = cfg
+            try:
+                norm_cfg = self._normalize_indicator_cfg(cfg)
+            except Exception:
+                norm_cfg = cfg
+            self._indicator_cfg = norm_cfg
             from pathlib import Path
             import json
             cfg_path = Path(__file__).resolve().parents[3] / "configs" / "indicators.json"
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
             with cfg_path.open("w", encoding="utf-8") as fh:
-                json.dump(cfg, fh, indent=2)
+                json.dump(norm_cfg, fh, indent=2)
             try:
                 logger.info(f"Saved indicator config to {cfg_path}")
             except Exception:
@@ -740,10 +778,16 @@ class ChartTab(QWidget):
             logger.exception("Failed to persist indicators config: {}", e)
 
         try:
-            # use public wrapper to apply indicators (ensures internal method exists)
             try:
-                self.apply_indicators(cfg)
+                # Apply indicators (internal) and force a full redraw from last_df to ensure removals are reflected
+                self.apply_indicators(self._indicator_cfg)
             except Exception as e:
                 logger.exception("apply_indicators failed: {}", e)
+            # Force a redraw using current buffer so changes (including disabling) are reflected
+            try:
+                if getattr(self, "_last_df", None) is not None:
+                    self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
+            except Exception as e:
+                logger.exception("Failed to force redraw after applying indicators: {}", e)
         except Exception as e:
             logger.exception("Failed to apply indicators after dialog: {}", e)

@@ -1,25 +1,25 @@
 {
   "sma": {
-    "enabled": true,
+    "enabled": false,
     "window": 20,
     "color": "#ff7f0e"
   },
   "ema": {
-    "enabled": true,
+    "enabled": false,
     "span": 20,
     "color": "#ff7f0e"
   },
   "bollinger": {
-    "enabled": true,
+    "enabled": false,
     "window": 20,
     "n_std": 2.0,
     "color_up": "#ff7f0e",
     "color_low": "#ff7f0e"
   },
   "rsi": {
-    "enabled": true,
+    "enabled": false,
     "period": 14,
-    "color": "#ff7f0e"
+    "color": "#d62728"
   },
   "macd": {
     "enabled": true,
