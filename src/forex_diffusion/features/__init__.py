@@ -1,7 +1,5 @@
 # features package initializer
-from .pipeline import pipeline_process, Standardizer
-# features package initializer
-from .pipeline import pipeline_process, Standardizer
+# Export the technical indicators implementations only to avoid importing the heavy pipeline
+from .indicators import sma, ema, bollinger, rsi, macd
 
-__all__ = ["pipeline_process", "Standardizer"]
-__all__ = ["pipeline_process", "Standardizer"]
+__all__ = ["sma", "ema", "bollinger", "rsi", "macd"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 import pandas as pd
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox
 from PySide6.QtCore import QTimer
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -12,8 +12,9 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as Navigation
 import matplotlib.dates as mdates
 from matplotlib.dates import DateFormatter
 from sqlalchemy import MetaData, select
+from loguru import logger
 
-from src.forex_diffusion.features.indicators import sma, ema, bollinger, rsi, macd
+from ..features.indicators import sma, ema, bollinger, rsi, macd
 
 
 class ChartTab(QWidget):
@@ -61,6 +62,8 @@ class ChartTab(QWidget):
         self.ax = self.canvas.figure.subplots()
         self.ax.set_title("Historical chart")
         self._last_df = None
+        # track plotted artists per indicator name so we can remove/replace them instead of duplicating
+        self._indicator_artists: dict[str, list] = {}
 
         # Interaction state for panning
         self._is_panning = False
@@ -78,8 +81,9 @@ class ChartTab(QWidget):
         try:
             from ..utils.event_bus import subscribe
             subscribe("tick", self._on_tick_event)
-        except Exception:
-            pass
+            logger.info("ChartTab subscribed to 'tick' events")
+        except Exception as e:
+            logger.exception("ChartTab failed to subscribe to 'tick' events: {}", e)
 
     def set_symbol_timeframe(self, db_service, symbol: str, timeframe: str):
         self.db_service = db_service
@@ -125,13 +129,13 @@ class ChartTab(QWidget):
 
     def _on_motion(self, event):
         try:
+            # pan while left button pressed
             if not self._is_panning or self._pan_start is None:
                 return
             if event.inaxes != self.ax:
                 return
             xpress, ypress, (x0, x1), (y0, y1) = self._pan_start
             dx = event.x - xpress
-            import matplotlib.transforms as mtrans
             # compute shift in data coordinates using axis transform
             inv = self.ax.transData.inverted()
             p1 = inv.transform((xpress, 0))
@@ -139,8 +143,8 @@ class ChartTab(QWidget):
             dx_data = p2[0] - p1[0]
             self.ax.set_xlim(x0 - dx_data, x1 - dx_data)
             self.canvas.draw_idle()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("ChartTab _on_motion exception: {}", e)
 
     def _on_button_release(self, event):
         try:
@@ -150,160 +154,227 @@ class ChartTab(QWidget):
         except Exception:
             pass
 
-    def _open_indicators_dialog(self):
+    def _tick_noop(self, payload):
+        """Fallback noop tick handler (UI-thread); logs payload for diagnostics."""
         try:
-            from .indicators_dialog import IndicatorsDialog
-            dlg = IndicatorsDialog(parent=self)
-            if dlg.exec():
-                cfg = dlg.result()
-                # store current indicator config and apply immediately
-                self._indicator_cfg = cfg
-                self._apply_indicators(cfg)
-        except Exception:
-            pass
-
-    def _apply_indicators(self, cfg: dict):
-        """
-        Compute indicators from current _last_df and overlay on axes.
-        cfg example: {'sma': {'window':20}, 'rsi': {'period':14}}
-        """
-        if self._last_df is None or self._last_df.empty:
-            return
-        try:
-            import pandas as pd
-            # use top-level imports from ..features.indicators (sma, ema, bollinger, rsi, macd)
-            df = self._last_df.copy()
-            # ensure sorted ascending and close column present
-            if "ts_utc" not in df.columns or "close" not in df.columns:
-                return
-            df = df.sort_values("ts_utc").reset_index(drop=True)
-            x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True).dt.tz_convert(None)
-            y = df["close"].astype(float)
-            # replot base
+            logger.debug("Tick received but handler not ready: {}", payload)
+            # attempt to update bid/ask label if payload contains simple fields
             try:
-                self.ax.lines.clear()
-            except Exception:
-                pass
-            self.ax.plot(x, y, color="black", linewidth=1.0, label="close")
-            # compute/plot configured indicators
-            def _get_color(entry, default):
-                try:
-                    c = entry.get("color") if entry is not None else None
-                    return c or default
-                except Exception:
-                    return default
-
-            if "sma" in cfg:
-                w = int(cfg["sma"].get("window", 20))
-                col = _get_color(cfg.get("sma"), "#1f77b4")
-                s = sma(df["close"], w)
-                self.ax.plot(x, s, label=f"SMA({w})", color=col, alpha=0.9)
-            if "ema" in cfg:
-                sp = int(cfg["ema"].get("span", 20))
-                e = ema(df["close"], sp)
-                self.ax.plot(x, e, label=f"EMA({sp})", alpha=0.9)
-            if "bollinger" in cfg:
-                w = int(cfg["bollinger"].get("window", 20))
-                nstd = float(cfg["bollinger"].get("n_std", 2.0))
-                up, low = bollinger(df["close"], window=w, n_std=nstd)
-                self.ax.plot(x, up, label=f"BB_up({w},{nstd})", color="green", alpha=0.6)
-                self.ax.plot(x, low, label=f"BB_low({w},{nstd})", color="red", alpha=0.6)
-            if "rsi" in cfg:
-                p = int(cfg["rsi"].get("period", 14))
-                r = rsi(df["close"], period=p)
-                # plot RSI on secondary axis
-                ax2 = self.ax.twinx()
-                ax2.plot(x, r, label=f"RSI({p})", color="purple", alpha=0.8)
-                ax2.set_ylabel("RSI")
-            if "macd" in cfg:
-                f = int(cfg["macd"].get("fast", 12))
-                s = int(cfg["macd"].get("slow", 26))
-                sg = int(cfg["macd"].get("signal", 9))
-                m = macd(df["close"], fast=f, slow=s, signal=sg)
-                ax2 = self.ax.twinx()
-                ax2.plot(x, m["macd"], label=f"MACD({f},{s})", color="orange", alpha=0.9)
-                ax2.plot(x, m["signal"], label=f"Signal({sg})", color="blue", alpha=0.6)
-            try:
-                self.ax.legend(loc="upper left", fontsize="small")
-            except Exception:
-                pass
-            self.canvas.draw()
-            # if user previously selected indicators, reapply to ensure overlays present
-            try:
-                if getattr(self, "_indicator_cfg", None):
-                    self._apply_indicators(self._indicator_cfg)
+                bid = payload.get("bid") if isinstance(payload, dict) else None
+                ask = payload.get("ask") if isinstance(payload, dict) else None
+                if getattr(self, "bidask_label", None) is not None and bid is not None and ask is not None:
+                    try:
+                        self.bidask_label.setText(f"Bid: {float(bid):.5f}    Ask: {float(ask):.5f}")
+                    except Exception:
+                        pass
             except Exception:
                 pass
         except Exception:
             pass
 
-    def _on_xlim_changed(self, ax):
+    def _on_tick_event(self, payload):
+        """Schedule handling of incoming tick on UI thread."""
         try:
-            x0, x1 = ax.get_xlim()
-            import matplotlib.dates as mdates
-            # convert x0,x1 (float days) to timestamps in ms
-            t0 = int(mdates.num2epoch(x0) * 1000)
-            t1 = int(mdates.num2epoch(x1) * 1000)
-            # expand by 50%
-            span = t1 - t0
-            ext0 = max(0, t0 - span // 2)
-            ext1 = t1 + span // 2
-            # fetch from DB
-            if getattr(self, "db_service", None) is None or not hasattr(self, "symbol"):
-                return
-            meta = MetaData()
-            meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
-            tbl = meta.tables.get("market_data_candles")
-            if tbl is None:
-                return
-            with self.db_service.engine.connect() as conn:
-                stmt = select(tbl).where(tbl.c.symbol == self.symbol).where(tbl.c.timeframe == self.timeframe).where(tbl.c.ts_utc >= ext0).where(tbl.c.ts_utc <= ext1).order_by(tbl.c.ts_utc.asc())
-                rows = conn.execute(stmt).fetchall()
-                import pandas as pd
-                if rows:
-                    df = pd.DataFrame([dict(r) for r in rows])
-                    self.update_plot(df, timeframe=self.timeframe)
-        except Exception:
-            pass
-
-    def update_plot(self, df: pd.DataFrame, timeframe: Optional[str] = None):
-        try:
-            self.ax.clear()
-            if df is None or df.empty:
-                self.ax.set_title("No data")
-                self.canvas.draw()
-                return
-            # ensure ts_utc column exists and convert to datetimes (local tz)
-            try:
-                x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True)
-                # convert to local timezone naive datetimes for matplotlib
-                x = x.dt.tz_convert(None)
-            except Exception:
-                # fallback: if ts_utc already datetime-like
-                x = pd.to_datetime(df.get("ts_utc", df.index))
-            y = df["close"].astype(float)
-            self.ax.plot(x, y, "-")
-            self.ax.set_title("Historical close")
-            # format X axis with date+time
-            try:
-                self.ax.xaxis.set_major_formatter(DateFormatter("%Y-%m-%d %H:%M:%S"))
-                self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-            except Exception:
-                pass
-            self.ax.figure.autofmt_xdate()
-            self.canvas.draw()
-            self._last_df = df
-            # connect xlim_changed handler once
-            try:
-                if not getattr(self, "_xlim_connected", False):
-                    self.canvas.mpl_connect("xlim_changed", self._on_xlim_changed)
-                    self._xlim_connected = True
-            except Exception:
-                pass
+            QTimer.singleShot(0, lambda p=payload: self._handle_tick(p))
         except Exception as e:
+            logger.debug("Failed to schedule tick handling: {}", e)
+
+    def _handle_tick(self, payload):
+        """
+        UI-thread: accept payload (dict-like) and append to last_df, update bid/ask label and redraw.
+        """
+        try:
+            # Normalize payload to dict
+            if not isinstance(payload, dict):
+                try:
+                    payload = dict(payload)
+                except Exception:
+                    payload = {"price": payload}
+            sym = payload.get("symbol")
+            tf = payload.get("timeframe", "1m")
+            if getattr(self, "symbol", None) is None or getattr(self, "timeframe", None) is None:
+                # not configured yet
+                return
+            if sym != self.symbol or tf != self.timeframe:
+                # different symbol/timeframe, ignore for display (DB still persists)
+                return
+            ts = int(payload.get("ts_utc", int(pd.Timestamp.utcnow().value // 1_000_000)))
+            price = float(payload.get("price", 0.0))
+            bid = payload.get("bid", None)
+            ask = payload.get("ask", None)
+
+            row = {"ts_utc": int(ts), "open": price, "high": price, "low": price, "close": price, "volume": None}
+            import pandas as pd
+            if getattr(self, "_last_df", None) is None or self._last_df.empty:
+                self._last_df = pd.DataFrame([row])
+            else:
+                df_append = pd.DataFrame([row])
+                df_combined = pd.concat([self._last_df, df_append], ignore_index=True)
+                df_combined = df_combined.drop_duplicates(subset=["ts_utc"], keep="last").sort_values("ts_utc").reset_index(drop=True)
+                self._last_df = df_combined
+
+            # update bid/ask label
             try:
-                self.ax.clear()
-                self.ax.set_title(f"Plot error: {e}")
-                self.canvas.draw()
+                if getattr(self, "bidask_label", None) is not None:
+                    bv = bid if bid is not None else price
+                    av = ask if ask is not None else price
+                    self.bidask_label.setText(f"Bid: {float(bv):.5f}    Ask: {float(av):.5f}")
             except Exception:
                 pass
+
+            # redraw
+            try:
+                self.update_plot(self._last_df, timeframe=self.timeframe)
+            except Exception as e:
+                logger.debug("Failed to update plot after tick: {}", e)
+        except Exception as e:
+            logger.exception("Error handling tick payload: {}", e)
+
+    def _open_indicators_dialog(self):
+        """
+        Open indicators dialog (packaged if available) or fallback expanded dialog.
+        Fallback includes SMA, EMA, Bollinger, RSI, MACD with color selectors.
+        """
+        cfg = None
+        try:
+            from .indicators_dialog import IndicatorsDialog  # type: ignore
+            dlg = IndicatorsDialog(parent=self, initial=self._indicator_cfg if getattr(self, "_indicator_cfg", None) else None)
+            if not dlg.exec():
+                return
+            cfg = dlg.result()
+        except Exception as e:
+            logger.debug("Packaged IndicatorsDialog not available or failed: {}", e)
+            # build richer fallback dialog inline (SMA, EMA, Bollinger, RSI, MACD)
+            try:
+                from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QDialogButtonBox, QCheckBox, QLabel, QSpinBox, QLineEdit, QComboBox
+                class FallbackDialog(QDialog):
+                    def __init__(self, parent=None, initial=None):
+                        super().__init__(parent)
+                        self.setWindowTitle("Indicatori (fallback)")
+                        self.layout = QVBoxLayout(self)
+                        palette = [("blue","#1f77b4"),("red","#d62728"),("green","#2ca02c"),("orange","#ff7f0e"),("purple","#9467bd"),("black","#000000")]
+
+                        # SMA
+                        row = QHBoxLayout()
+                        self.sma_cb = QCheckBox("SMA")
+                        self.sma_w = QSpinBox(); self.sma_w.setRange(1,500); self.sma_w.setValue(20)
+                        self.sma_col = QComboBox()
+                        for n,h in palette: self.sma_col.addItem(f"{n} ({h})", h)
+                        row.addWidget(self.sma_cb); row.addWidget(QLabel("w:")); row.addWidget(self.sma_w); row.addWidget(QLabel("color:")); row.addWidget(self.sma_col)
+                        self.layout.addLayout(row)
+
+                        # EMA
+                        row = QHBoxLayout()
+                        self.ema_cb = QCheckBox("EMA")
+                        self.ema_span = QSpinBox(); self.ema_span.setRange(1,500); self.ema_span.setValue(20)
+                        self.ema_col = QComboBox()
+                        for n,h in palette: self.ema_col.addItem(f"{n} ({h})", h)
+                        row.addWidget(self.ema_cb); row.addWidget(QLabel("span:")); row.addWidget(self.ema_span); row.addWidget(QLabel("color:")); row.addWidget(self.ema_col)
+                        self.layout.addLayout(row)
+
+                        # Bollinger
+                        row = QHBoxLayout()
+                        self.bb_cb = QCheckBox("Bollinger")
+                        self.bb_n = QSpinBox(); self.bb_n.setRange(1,500); self.bb_n.setValue(20)
+                        self.bb_k = QLineEdit("2.0")
+                        self.bb_col_u = QComboBox(); self.bb_col_l = QComboBox()
+                        for n,h in palette:
+                            self.bb_col_u.addItem(f"{n} ({h})", h)
+                            self.bb_col_l.addItem(f"{n} ({h})", h)
+                        row.addWidget(self.bb_cb); row.addWidget(QLabel("n:")); row.addWidget(self.bb_n); row.addWidget(QLabel("k:")); row.addWidget(self.bb_k)
+                        row.addWidget(QLabel("up col:")); row.addWidget(self.bb_col_u); row.addWidget(QLabel("low col:")); row.addWidget(self.bb_col_l)
+                        self.layout.addLayout(row)
+
+                        # RSI
+                        row = QHBoxLayout()
+                        self.rsi_cb = QCheckBox("RSI")
+                        self.rsi_p = QSpinBox(); self.rsi_p.setRange(1,500); self.rsi_p.setValue(14)
+                        self.rsi_col = QComboBox()
+                        for n,h in palette: self.rsi_col.addItem(f"{n} ({h})", h)
+                        row.addWidget(self.rsi_cb); row.addWidget(QLabel("period:")); row.addWidget(self.rsi_p); row.addWidget(QLabel("color:")); row.addWidget(self.rsi_col)
+                        self.layout.addLayout(row)
+
+                        # MACD
+                        row = QHBoxLayout()
+                        self.macd_cb = QCheckBox("MACD")
+                        self.macd_fast = QSpinBox(); self.macd_fast.setRange(1,200); self.macd_fast.setValue(12)
+                        self.macd_slow = QSpinBox(); self.macd_slow.setRange(1,500); self.macd_slow.setValue(26)
+                        self.macd_sig = QSpinBox(); self.macd_sig.setRange(1,200); self.macd_sig.setValue(9)
+                        self.macd_col = QComboBox()
+                        for n,h in palette: self.macd_col.addItem(f"{n} ({h})", h)
+                        row.addWidget(self.macd_cb); row.addWidget(QLabel("fast:")); row.addWidget(self.macd_fast)
+                        row.addWidget(QLabel("slow:")); row.addWidget(self.macd_slow); row.addWidget(QLabel("sig:")); row.addWidget(self.macd_sig)
+                        row.addWidget(QLabel("color:")); row.addWidget(self.macd_col)
+                        self.layout.addLayout(row)
+
+                        # Buttons
+                        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+                        self.layout.addWidget(bb)
+
+                        # load initial if provided (best-effort)
+                        if initial:
+                            try:
+                                if "sma" in initial:
+                                    self.sma_cb.setChecked(True)
+                                    if "window" in initial["sma"]:
+                                        self.sma_w.setValue(int(initial["sma"]["window"]))
+                                    if "color" in initial["sma"]:
+                                        col = initial["sma"]["color"]
+                                        for idx in range(self.sma_col.count()):
+                                            if self.sma_col.itemData(idx) == col:
+                                                self.sma_col.setCurrentIndex(idx); break
+                                if "ema" in initial:
+                                    self.ema_cb.setChecked(True)
+                                    if "span" in initial["ema"]:
+                                        self.ema_span.setValue(int(initial["ema"]["span"]))
+                                    if "color" in initial["ema"]:
+                                        col = initial["ema"]["color"]
+                                        for idx in range(self.ema_col.count()):
+                                            if self.ema_col.itemData(idx) == col:
+                                                self.ema_col.setCurrentIndex(idx); break
+                            except Exception:
+                                pass
+
+                    def result(self):
+                        out = {}
+                        if self.sma_cb.isChecked():
+                            out["sma"] = {"window": int(self.sma_w.value()), "color": self.sma_col.currentData()}
+                        if self.ema_cb.isChecked():
+                            out["ema"] = {"span": int(self.ema_span.value()), "color": self.ema_col.currentData()}
+                        if self.bb_cb.isChecked():
+                            out["bollinger"] = {"window": int(self.bb_n.value()), "n_std": float(self.bb_k.text()), "color_up": self.bb_col_u.currentData(), "color_low": self.bb_col_l.currentData()}
+                        if self.rsi_cb.isChecked():
+                            out["rsi"] = {"period": int(self.rsi_p.value()), "color": self.rsi_col.currentData()}
+                        if self.macd_cb.isChecked():
+                            out["macd"] = {"fast": int(self.macd_fast.value()), "slow": int(self.macd_slow.value()), "signal": int(self.macd_sig.value()), "color": self.macd_col.currentData()}
+                        return out
+
+                dlg = FallbackDialog(parent=self, initial=self._indicator_cfg if getattr(self, "_indicator_cfg", None) else None)
+                if not dlg.exec():
+                    return
+                cfg = dlg.result()
+            except Exception as ee:
+                logger.exception("Failed to build fallback Indicators dialog: {}", ee)
+                try:
+                    QMessageBox.warning(self, "Indicators error", f"Cannot open indicators dialog: {ee}")
+                except Exception:
+                    pass
+                return
+
+        # persist and apply
+        try:
+            self._indicator_cfg = cfg
+            from pathlib import Path
+            import json
+            cfg_path = Path(__file__).resolve().parents[3] / "configs" / "indicators.json"
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            with cfg_path.open("w", encoding="utf-8") as fh:
+                json.dump(cfg, fh, indent=2)
+        except Exception as e:
+            logger.exception("Failed to persist indicators config: {}", e)
+
+        try:
+            self._apply_indicators(cfg)
+        except Exception as e:
+            logger.exception("Failed to apply indicators after dialog: {}", e)
