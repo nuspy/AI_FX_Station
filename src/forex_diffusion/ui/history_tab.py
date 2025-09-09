@@ -212,9 +212,16 @@ class HistoryTab(QWidget):
         # if chart connected, update chart with fetched rows (ascending order)
         if getattr(self, "chart_tab", None) is not None and rows:
             import pandas as pd
-            df = pd.DataFrame([dict(r) for r in rows[::-1]])  # reverse to ascending
-            try:
-                self.chart_tab.set_symbol_timeframe(self.db_service, self.symbol_combo.currentText(), self.tf_combo.currentText())
-            except Exception:
-                pass
-            self.chart_tab.update_plot(df, timeframe=self.tf_combo.currentText())
+            # Normalize rows to dicts safely (support Row._mapping or tuple fallback)
+            recs = [self._row_to_dict(r) for r in rows[::-1]]  # reverse to ascending
+            if recs:
+                try:
+                    df = pd.DataFrame(recs)
+                except Exception:
+                    # fallback: try to coerce each record to dict again
+                    df = pd.DataFrame([dict(x) if hasattr(x, "items") else x for x in recs])
+                try:
+                    self.chart_tab.set_symbol_timeframe(self.db_service, self.symbol_combo.currentText(), self.tf_combo.currentText())
+                except Exception:
+                    pass
+                self.chart_tab.update_plot(df, timeframe=self.tf_combo.currentText())

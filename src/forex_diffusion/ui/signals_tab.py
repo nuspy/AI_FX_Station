@@ -80,6 +80,11 @@ class SignalsTab(QWidget):
         # keep reference to market service (allows provider switching from UI)
         try:
             self.market_service = market_service or MarketDataService()
+            # ensure default provider is Tiingo for signals UI
+            try:
+                self.market_service.set_provider("tiingo")
+            except Exception:
+                pass
         except Exception:
             self.market_service = market_service
 

@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+import matplotlib.dates as mdates
+from matplotlib.dates import DateFormatter
 
 class ChartTab(QWidget):
     """
@@ -142,11 +144,23 @@ class ChartTab(QWidget):
                 self.ax.set_title("No data")
                 self.canvas.draw()
                 return
-            # assume df has ts_utc and close
-            x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True)
+            # ensure ts_utc column exists and convert to datetimes (local tz)
+            try:
+                x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True)
+                # convert to local timezone naive datetimes for matplotlib
+                x = x.dt.tz_convert(None)
+            except Exception:
+                # fallback: if ts_utc already datetime-like
+                x = pd.to_datetime(df.get("ts_utc", df.index))
             y = df["close"].astype(float)
             self.ax.plot(x, y, "-")
             self.ax.set_title("Historical close")
+            # format X axis with date+time
+            try:
+                self.ax.xaxis.set_major_formatter(DateFormatter("%Y-%m-%d %H:%M:%S"))
+                self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            except Exception:
+                pass
             self.ax.figure.autofmt_xdate()
             self.canvas.draw()
             self._last_df = df
