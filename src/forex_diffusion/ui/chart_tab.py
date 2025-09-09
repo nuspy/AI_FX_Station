@@ -4,12 +4,17 @@ from __future__ import annotations
 from typing import Optional
 import pandas as pd
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+from PySide6.QtCore import QTimer
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.dates as mdates
 from matplotlib.dates import DateFormatter
+from sqlalchemy import MetaData, select
+
+from src.forex_diffusion.features.indicators import sma, ema, bollinger, rsi, macd
+
 
 class ChartTab(QWidget):
     """
@@ -21,21 +26,37 @@ class ChartTab(QWidget):
         self.layout = QVBoxLayout(self)
         self.canvas = FigureCanvas(Figure(figsize=(6,4)))
         self.toolbar = NavigationToolbar(self.canvas, self)
-        # indicators button
+        # indicators button - always create the button (visible), enable only if dialog available
+        self.indicators_btn = QPushButton("Indicatori")
+        self.indicators_btn.setToolTip("Apri la finestra degli indicatori")
+        # place toolbar and button in a horizontal layout; always add topbar so button is visible
+        topbar = QWidget()
+        top_layout = QHBoxLayout(topbar)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.addWidget(self.toolbar)
+        top_layout.addWidget(self.indicators_btn)
+        # real-time bid/ask label (initial placeholder)
         try:
-            from .indicators_dialog import IndicatorsDialog
-            self.indicators_btn = QPushButton("Indicatori")
-            self.indicators_btn.clicked.connect(self._open_indicators_dialog)
-            # place toolbar and button in a horizontal layout
-            topbar = QWidget()
-            top_layout = QHBoxLayout(topbar)
-            top_layout.setContentsMargins(0, 0, 0, 0)
-            top_layout.addWidget(self.toolbar)
-            top_layout.addWidget(self.indicators_btn)
-            self.layout.addWidget(topbar)
+            self.bidask_label = QLabel("Bid: -    Ask: -")
+            self.bidask_label.setMinimumWidth(220)
+            self.bidask_label.setStyleSheet("font-weight: bold;")
+            top_layout.addWidget(self.bidask_label)
         except Exception:
-            # fallback: just add toolbar
-            self.layout.addWidget(self.toolbar)
+            # fallback: ignore if QLabel not available
+            self.bidask_label = None
+        self.layout.addWidget(topbar)
+
+        # Always connect the indicators button; if packaged dialog is missing, we'll show a dynamic fallback
+        try:
+            self.indicators_btn.clicked.connect(self._open_indicators_dialog)
+            self.indicators_btn.setEnabled(True)
+        except Exception:
+            # best-effort: keep button visible but it will be inert (very unlikely)
+            try:
+                self.indicators_btn.setEnabled(False)
+                self.indicators_btn.setToolTip("Cannot connect indicators handler")
+            except Exception:
+                pass
         self.layout.addWidget(self.canvas)
         self.ax = self.canvas.figure.subplots()
         self.ax.set_title("Historical chart")
@@ -50,6 +71,13 @@ class ChartTab(QWidget):
             self.canvas.mpl_connect("button_press_event", self._on_button_press)
             self.canvas.mpl_connect("motion_notify_event", self._on_motion)
             self.canvas.mpl_connect("button_release_event", self._on_button_release)
+        except Exception:
+            pass
+
+        # subscribe to in-process tick events for live updates
+        try:
+            from ..utils.event_bus import subscribe
+            subscribe("tick", self._on_tick_event)
         except Exception:
             pass
 
@@ -128,6 +156,8 @@ class ChartTab(QWidget):
             dlg = IndicatorsDialog(parent=self)
             if dlg.exec():
                 cfg = dlg.result()
+                # store current indicator config and apply immediately
+                self._indicator_cfg = cfg
                 self._apply_indicators(cfg)
         except Exception:
             pass
@@ -141,7 +171,7 @@ class ChartTab(QWidget):
             return
         try:
             import pandas as pd
-            from ..features.indicators import sma, ema, bollinger, rsi, macd
+            # use top-level imports from ..features.indicators (sma, ema, bollinger, rsi, macd)
             df = self._last_df.copy()
             # ensure sorted ascending and close column present
             if "ts_utc" not in df.columns or "close" not in df.columns:
@@ -156,10 +186,18 @@ class ChartTab(QWidget):
                 pass
             self.ax.plot(x, y, color="black", linewidth=1.0, label="close")
             # compute/plot configured indicators
+            def _get_color(entry, default):
+                try:
+                    c = entry.get("color") if entry is not None else None
+                    return c or default
+                except Exception:
+                    return default
+
             if "sma" in cfg:
                 w = int(cfg["sma"].get("window", 20))
+                col = _get_color(cfg.get("sma"), "#1f77b4")
                 s = sma(df["close"], w)
-                self.ax.plot(x, s, label=f"SMA({w})", alpha=0.9)
+                self.ax.plot(x, s, label=f"SMA({w})", color=col, alpha=0.9)
             if "ema" in cfg:
                 sp = int(cfg["ema"].get("span", 20))
                 e = ema(df["close"], sp)
@@ -190,6 +228,12 @@ class ChartTab(QWidget):
             except Exception:
                 pass
             self.canvas.draw()
+            # if user previously selected indicators, reapply to ensure overlays present
+            try:
+                if getattr(self, "_indicator_cfg", None):
+                    self._apply_indicators(self._indicator_cfg)
+            except Exception:
+                pass
         except Exception:
             pass
 

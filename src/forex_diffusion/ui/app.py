@@ -46,6 +46,7 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             threading.Thread(target=market_service.ensure_startup_backfill, daemon=True).start()
         except Exception:
             pass
+
         controller = UIController(main_window=main_window, market_service=market_service, engine_url=engine_url)
         # bind menu signals (best-effort)
         try:
@@ -71,6 +72,18 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
     except Exception as e:
         logger.exception("Failed to initialize DBService: {}", e)
         db_service = None
+
+    # start local websocket server for realtime ticks (accept external WS pushes)
+    try:
+        from ..services.local_ws import LocalWebsocketServer
+        ws_port = getattr(market_service, "_ws_port", None) or 8765
+        # pass the db_service instance we just created
+        local_ws = LocalWebsocketServer(host="127.0.0.1", port=ws_port, db_service=db_service)
+        local_ws.start()
+        result["local_ws"] = local_ws
+        logger.info("Started LocalWebsocketServer on port {}", ws_port)
+    except Exception as e:
+        logger.exception("Failed to start LocalWebsocketServer: {}", e)
 
     try:
         # create and start a DBWriter for UI-originated async writes if DB available
@@ -106,6 +119,32 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
                 pass
 
             layout.addWidget(tabw)
+
+            # Populate chart at startup: set defaults and refresh history (which will update chart)
+            try:
+                # choose sensible defaults
+                default_symbol = "EUR/USD"
+                default_tf = "1m"
+                try:
+                    history_tab.symbol_combo.setCurrentText(default_symbol)
+                except Exception:
+                    pass
+                try:
+                    history_tab.tf_combo.setCurrentText(default_tf)
+                except Exception:
+                    pass
+                # set chart symbol/timeframe so it can accept realtime ticks
+                try:
+                    chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
+                except Exception:
+                    pass
+                # refresh history (will populate table and chart)
+                try:
+                    history_tab.refresh(limit=500)
+                except Exception:
+                    pass
+            except Exception:
+                pass
 
             result["signals_tab"] = signals_tab
             result["history_tab"] = history_tab

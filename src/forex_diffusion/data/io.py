@@ -42,20 +42,21 @@ from ..utils.config import get_config
 COLUMNS = ["ts_utc", "open", "high", "low", "close", "volume"]
 
 # Map timeframe labels to pandas offset aliases (used for resampling)
+# Use 'min' aliases instead of deprecated 'T'
 TF_TO_PANDAS = {
-    "1m": "1T",
-    "2m": "2T",
-    "3m": "3T",
-    "4m": "4T",
-    "5m": "5T",
-    "15m": "15T",
-    "30m": "30T",
-    "60m": "60T",
-    "1h": "60T",
+    "1m": "1min",
+    "2m": "2min",
+    "3m": "3min",
+    "4m": "4min",
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "60m": "60min",
+    "1h": "60min",
     "1d": "1D",
     "1D": "1D",
-    "2h": "120T",
-    "4h": "240T",
+    "2h": "120min",
+    "4h": "240min",
 }
 
 
