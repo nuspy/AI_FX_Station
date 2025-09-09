@@ -16,6 +16,7 @@ from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 from loguru import logger
+from sqlalchemy.dialects.postgresql import Any
 
 from ..data import io as data_io
 from ..services.marketdata import AlphaVantageClient, MarketDataService
@@ -155,13 +156,62 @@ class RealTimeIngestService:
             # normalize price and timestamp
             ts_ms = None
             price = None
+
+            # If provider returns a pandas DataFrame (alpha_vantage lib with output_format="pandas"),
+            # attempt to extract price and timestamp from the last row.
+            if isinstance(data, pd.DataFrame):
+                try:
+                    last = data.iloc[-1]
+                    # common column names produced by AlphaVantage
+                    cand_cols = [
+                        "5. Exchange Rate",
+                        "Exchange Rate",
+                        "8. Bid Price",
+                        "Bid Price",
+                        "9. Ask Price",
+                        "Ask Price",
+                        "5. exchange_rate",  # fallback lowercase variants
+                    ]
+                    for c in cand_cols:
+                        if c in last.index:
+                            try:
+                                price = float(last[c])
+                                break
+                            except Exception:
+                                continue
+                    # fallback: take first numeric value in the row
+                    if price is None:
+                        for v in last:
+                            try:
+                                price = float(v)
+                                break
+                            except Exception:
+                                continue
+                    # try to parse timestamp field if present
+                    if "6. Last Refreshed" in last.index:
+                        try:
+                            dt = pd.to_datetime(last["6. Last Refreshed"], utc=True)
+                            try:
+                                ts_ms = int(dt.value // 1_000_000)
+                            except Exception:
+                                ts_ms = int(pd.Timestamp(dt).timestamp() * 1000)
+                        except Exception:
+                            ts_ms = None
+                except Exception:
+                    # fall back to other handlers below
+                    price = None
+                    ts_ms = None
+
             # data dictionaries may vary by provider
             if isinstance(data, dict):
                 # AlphaVantage get_current_price returns nested dict keys; try to parse common fields
                 if "Realtime Currency Exchange Rate" in data:
                     r = data["Realtime Currency Exchange Rate"]
-                    price = float(r.get("5. Exchange Rate") or r.get("5. Exchange Rate", 0.0))
-                    # timestamp field may exist
+                    try:
+                        price = float(r.get("5. Exchange Rate") or r.get("Exchange Rate") or 0.0)
+                    except Exception:
+                        price = None
+                    # timestamp field may exist in nested dict
                     ts_ms = None
                 elif "price" in data and "ts_utc" in data:
                     price = float(data["price"])
@@ -176,9 +226,14 @@ class RealTimeIngestService:
                             break
                         except Exception:
                             continue
+
             # fallback timestamp to now
             if ts_ms is None:
-                ts_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+                try:
+                    ts_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+                except Exception:
+                    ts_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
+
             if price is None:
                 # Log raw provider response to debug parsing issues
                 try:

@@ -291,6 +291,23 @@ def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str
 
     rows = []
     for _, r in dfv.iterrows():
+        # normalize volume: handle None or NaN safely, leave as None if absent/invalid
+        vol_raw = None
+        if "volume" in r:
+            try:
+                vol_raw = r.get("volume", None)
+            except Exception:
+                vol_raw = None
+        vol = None
+        try:
+            # treat numpy nan as missing
+            if vol_raw is not None and not (isinstance(vol_raw, float) and np.isnan(vol_raw)):
+                vol = float(vol_raw)
+            else:
+                vol = None
+        except Exception:
+            vol = None
+
         row = {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -299,7 +316,7 @@ def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str
             "high": float(r["high"]),
             "low": float(r["low"]),
             "close": float(r["close"]),
-            "volume": float(r.get("volume", math.nan)) if "volume" in r else None,
+            "volume": vol,
             "resampled": bool(resampled),
         }
         rows.append(row)

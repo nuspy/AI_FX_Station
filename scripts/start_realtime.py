@@ -28,9 +28,10 @@ except Exception as e:
     raise
 
 def main():
-    print("Initializing DBService and MarketDataService...")
+    print("Initializing DBService and MarketDataService (provider=tiingo)...")
     db = DBService()
-    msvc = MarketDataService()
+    # explicitly use Tiingo as default provider for realtime helper
+    msvc = MarketDataService(provider_name="tiingo")
     # start DBWriter if available
     db_writer = None
     try:

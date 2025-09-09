@@ -3,11 +3,11 @@ MagicForex — guida rapida (locale)
 1) Crea e attiva l'ambiente virtuale:
    python -m venv .venv; .\.venv\Scripts\Activate.ps1
    pip install -e .
+   pip install websocket-client
 
-2) Imposta variabili (PowerShell):
-   $env:DATABASE_URL = "sqlite:///./data/local.db"
-   $env:ADMIN_TOKENS = "localtoken:admin"
-   $env:ARTIFACTS_DIR = "./artifacts"
+2) Provider realtime:
+   - Default: tiingo (REST). Se provider espone WebSocket, RealTimeIngestService userà lo streaming.
+   - Puoi cambiare provider dalla UI (SignalsTab) o in configs/default.yaml -> providers.default
 
 3) Avvia GUI:
    python .\scripts\run_gui.py
@@ -15,6 +15,7 @@ MagicForex — guida rapida (locale)
 4) Test rapido DB/signals:
    python .\scripts\send_and_check_signals.py --count 5 --interval 0.2 --show 10
 
-5) Logs & debug: controlla la console per i log (DBWriter avviato dal GUI).
+5) Avvia realtime helper (foreground):
+   python .\scripts\start_realtime.py
 
 Per operazioni avanzate vedere la cartella scripts/ e configs/.

@@ -13,6 +13,14 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# load .env if present (python-dotenv)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()  # populates os.environ from .env at repo root
+except Exception:
+    # dotenv is optional; if not available we continue using env vars directly
+    pass
+
 import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
@@ -151,19 +159,30 @@ def _merge_env_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     Apply environment variable overrides for sensitive keys and common options.
     """
     providers = cfg.get("providers", {})
-    alpha = providers.get("alpha_vantage", {})
+
+    # AlphaVantage
+    alpha = providers.get("alpha_vantage", {}) or {}
     av_key = os.getenv("ALPHAVANTAGE_KEY")
     if av_key:
         alpha["key"] = av_key
         logger.debug("Overriding Alpha Vantage key from environment")
     providers["alpha_vantage"] = alpha
 
-    duk = providers.get("dukascopy", {})
+    # Dukascopy
+    duk = providers.get("dukascopy", {}) or {}
     duk_key = os.getenv("DUKASCOPY_KEY")
     if duk_key:
         duk["key"] = duk_key
         logger.debug("Overriding Dukascopy key from environment")
     providers["dukascopy"] = duk
+
+    # Tiingo (API key)
+    ti = providers.get("tiingo", {}) or {}
+    ti_key = os.getenv("TIINGO_API_KEY") or os.getenv("TIINGO_KEY")
+    if ti_key:
+        ti["key"] = ti_key
+        logger.debug("Overriding Tiingo key from environment")
+    providers["tiingo"] = ti
 
     cfg["providers"] = providers
     return cfg

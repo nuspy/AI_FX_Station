@@ -29,6 +29,121 @@ try:
 except Exception:
     _HAS_ALPHA_VANTAGE = False
 
+# optional websocket support (best-effort)
+try:
+    import websocket  # type: ignore
+    _HAS_WEBSOCKET_CLIENT = True
+except Exception:
+    _HAS_WEBSOCKET_CLIENT = False
+
+# --- Tiingo client (REST + optional WS configured externally)
+class TiingoClient:
+    """
+    Minimal Tiingo REST client for FX via Tiingo FX endpoint.
+    Fallbacks: uses httpx to query configured base_url and api key.
+    Exposes get_current_price(symbol) and get_historical(symbol,timeframe,...)
+    """
+    def __init__(self, key: Optional[str] = None, base_url: str = "https://api.tiingo.com"):
+        cfg = get_config()
+        providers_cfg = getattr(cfg, "providers", {}) if hasattr(cfg, "providers") else {}
+        ti_cfg = providers_cfg.get("tiingo", {}) if isinstance(providers_cfg, dict) else {}
+        from ..utils.user_settings import get_setting
+        user_key = get_setting("tiingo_api_key", None)
+        self.api_key = key or ti_cfg.get("key") or user_key or os.environ.get("TIINGO_API_KEY")
+        self.base_url = ti_cfg.get("base_url", base_url)
+        self._client = httpx.Client(timeout=30.0)
+
+    def _get(self, path: str, params: dict = None):
+        if params is None:
+            params = {}
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Token {self.api_key}"
+        url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
+        r = self._client.get(url, params=params, headers=headers)
+        try:
+            r.raise_for_status()
+        except Exception as e:
+            # log response body for debugging and re-raise
+            try:
+                logger.debug("Tiingo HTTP error: status=%s url=%s body=%s", r.status_code, url, r.text)
+            except Exception:
+                pass
+            raise
+        # try decode JSON and log if empty/invalid
+        try:
+            data = r.json()
+        except Exception:
+            try:
+                logger.debug("Tiingo response not JSON: status=%s url=%s body=%s", r.status_code, url, r.text)
+            except Exception:
+                pass
+            raise
+        # if data empty, log the raw body for debugging
+        try:
+            if not data:
+                logger.debug("Tiingo returned empty data for url=%s params=%s body=%s", url, params, r.text)
+        except Exception:
+            pass
+        return data
+
+    def parse_symbol_pair(self, symbol: str):
+        a, b = parse_symbol(symbol)
+        return a.lower(), b.lower()
+
+    def get_current_price(self, symbol: str) -> dict:
+        """
+        Query Tiingo FX last price endpoint if available.
+        Example endpoint used: /tiingo/fx/{pair}/prices
+        """
+        a, b = self.parse_symbol_pair(symbol)
+        path = f"tiingo/fx/{a}{b}/prices"
+        try:
+            data = self._get(path, params={"resampleFreq": "1min", "startDate": None})
+            # Tiingo returns list of price points; take last
+            if isinstance(data, list) and len(data) > 0:
+                last = data[-1]
+                return {"ts_utc": int(pd.to_datetime(last.get("date")).value // 1_000_000), "price": float(last.get("close"))}
+        except Exception:
+            # best-effort: return empty dict
+            return {}
+        return {}
+
+    def get_historical(self, symbol: str, timeframe: str, start_ts_ms: Optional[int] = None, end_ts_ms: Optional[int] = None) -> pd.DataFrame:
+        """
+        Retrieve historical data from Tiingo for FX pair.
+        Maps timeframe to daily/intraday where possible.
+        """
+        a, b = self.parse_symbol_pair(symbol)
+        path = f"tiingo/fx/{a}{b}/prices"
+        params = {}
+        # Tiingo supports startDate/endDate as YYYY-MM-DD, so convert if needed
+        if start_ts_ms is not None:
+            params["startDate"] = pd.to_datetime(start_ts_ms, unit="ms").strftime("%Y-%m-%d")
+        if end_ts_ms is not None:
+            params["endDate"] = pd.to_datetime(end_ts_ms, unit="ms").strftime("%Y-%m-%d")
+        try:
+            data = self._get(path, params=params)
+            # convert to DataFrame with ts_utc/open/high/low/close/volume
+            recs = []
+            for it in data:
+                dt = pd.to_datetime(it.get("date"))
+                ts_ms = int(dt.value // 1_000_000)
+                recs.append({
+                    "ts_utc": ts_ms,
+                    "open": float(it.get("open", it.get("close", 0.0))),
+                    "high": float(it.get("high", it.get("close", 0.0))),
+                    "low": float(it.get("low", it.get("close", 0.0))),
+                    "close": float(it.get("close", 0.0)),
+                    "volume": it.get("volume", None),
+                })
+            df = pd.DataFrame(recs)
+            return df
+        except Exception:
+            return pd.DataFrame([])
+
+# ---- Provider factory in MarketDataService
+
 
 def parse_symbol(symbol: str) -> Tuple[str, str]:
     """
@@ -199,25 +314,52 @@ class AlphaVantageClient:
 class MarketDataService:
     """
     High-level service to orchestrate data acquisition and DB ingest.
-    - select provider based on config
+    - select provider based on config (default: tiingo)
     - for each (symbol, timeframe) compute missing interval and fetch missing data
     - normalize and upsert to DB via data_io functions
     """
-    def __init__(self, database_url: Optional[str] = None):
+    def __init__(self, database_url: Optional[str] = None, provider_name: Optional[str] = None, poll_interval: float = 1.0):
         self.cfg = get_config()
         self.db_url = database_url or getattr(self.cfg.db, "database_url", None)
         if not self.db_url:
             raise ValueError("Database URL not configured")
         self.engine = create_engine(self.db_url, future=True)
-        # instantiate default provider
-        providers_cfg = getattr(self.cfg, "providers", {}) if hasattr(self.cfg, "providers") else {}
-        default = getattr(providers_cfg, "default", "alpha_vantage")
-        if default == "alpha_vantage":
+
+        # provider selection
+        provs_cfg = getattr(self.cfg, "providers", {}) if hasattr(self.cfg, "providers") else {}
+        default = provider_name or getattr(provs_cfg, "default", None) or (provs_cfg.get("default") if isinstance(provs_cfg, dict) else None) or "tiingo"
+        self._poll_interval = float(poll_interval)
+        self._provider_name = None
+        self.provider = None
+        self.set_provider(default)
+
+    def available_providers(self):
+        # list known providers
+        return ["tiingo", "alpha_vantage"]
+
+    def set_provider(self, name: str):
+        name = (name or "").lower()
+        if name == self._provider_name:
+            return
+        if name == "alpha_vantage":
             self.provider = AlphaVantageClient()
+        elif name == "tiingo":
+            self.provider = TiingoClient()
         else:
-            # fallback to alpha
-            logger.warning("Unknown provider '{}', falling back to AlphaVantage", default)
-            self.provider = AlphaVantageClient()
+            logger.warning("Unknown provider '%s', falling back to tiingo", name)
+            self.provider = TiingoClient()
+            name = "tiingo"
+        self._provider_name = name
+        logger.info("MarketDataService provider set to %s", name)
+
+    def provider_name(self) -> str:
+        return self._provider_name or "tiingo"
+
+    def poll_interval(self) -> float:
+        return self._poll_interval
+
+    def set_poll_interval(self, seconds: float):
+        self._poll_interval = float(seconds)
 
     def compute_missing_interval(self, symbol: str, timeframe: str) -> Tuple[Optional[int], int]:
         """

@@ -33,7 +33,8 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
     """
     result: dict[str, Any] = {}
     try:
-        controller = UIController(main_window=main_window, market_service=MarketDataService(), engine_url=engine_url)
+        market_service = MarketDataService()
+        controller = UIController(main_window=main_window, market_service=market_service, engine_url=engine_url)
         # bind menu signals (best-effort)
         try:
             controller.bind_menu_signals(menu_bar.signals)
@@ -73,9 +74,10 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
                 db_writer = None
         # instantiate SignalsTab with db_service if available
         try:
-            signals_tab = SignalsTab(main_window, db_service=db_service)
+            signals_tab = SignalsTab(main_window, db_service=db_service, market_service=market_service)
             layout.addWidget(signals_tab)
             result["signals_tab"] = signals_tab
+            result["market_service"] = market_service
             # refresh signals after each successful forecast if controller exists
             if "controller" in result:
                 try:

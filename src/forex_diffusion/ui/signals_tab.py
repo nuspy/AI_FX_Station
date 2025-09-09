@@ -78,6 +78,27 @@ class SignalsTab(QWidget):
         self.refresh_btn.clicked.connect(self.on_refresh_clicked)
         top_h.addWidget(self.refresh_btn)
 
+        # Provider selector + poll interval for non-streaming providers
+        try:
+            from PySide6.QtWidgets import QComboBox, QSpinBox, QLabel
+            self.provider_combo = QComboBox()
+            # will be populated if market_service provided
+            self.provider_combo.addItems(["tiingo", "alpha_vantage"])
+            top_h.addWidget(QLabel("Provider:"))
+            top_h.addWidget(self.provider_combo)
+            self.provider_apply_btn = QPushButton("Apply Provider")
+            top_h.addWidget(self.provider_apply_btn)
+            self.poll_spin = QSpinBox()
+            self.poll_spin.setRange(1, 3600)
+            self.poll_spin.setValue(1)
+            top_h.addWidget(QLabel("Poll s:"))
+            top_h.addWidget(self.poll_spin)
+            self.provider_apply_btn.clicked.connect(self.on_apply_provider)
+        except Exception:
+            self.provider_combo = None
+            self.provider_apply_btn = None
+            self.poll_spin = None
+
         self.table = QTableWidget()
         self.layout.addLayout(top_h)
         self.layout.addWidget(self.table)
@@ -127,6 +148,31 @@ class SignalsTab(QWidget):
         self.log.setReadOnly(True)
         self.log.setFixedHeight(160)
         self.layout.addWidget(self.log)
+
+    def on_apply_provider(self):
+        try:
+            svc = getattr(self, "market_service", None)
+            if svc is None:
+                # try attribute set by setup_ui
+                svc = getattr(self, "db_service", None) and getattr(self.db_service, "market_service", None)
+            if svc is None:
+                # try to import controller market_service from main app (best-effort)
+                try:
+                    from ..services.marketdata import MarketDataService
+                    svc = MarketDataService()
+                except Exception:
+                    svc = None
+            if svc is None:
+                self._log("Cannot find MarketDataService to apply provider")
+                return
+            pname = self.provider_combo.currentText() if self.provider_combo else "tiingo"
+            svc.set_provider(pname)
+            if self.poll_spin:
+                svc.set_poll_interval(self.poll_spin.value())
+            self._log(f"Provider set to {pname}, poll_interval={svc.poll_interval()}")
+        except Exception as e:
+            logger.exception("Failed to apply provider: {}", e)
+            self._log(f"Failed to apply provider: {e}")
 
         # DB and services
         self.db_service = db_service or DBService()
