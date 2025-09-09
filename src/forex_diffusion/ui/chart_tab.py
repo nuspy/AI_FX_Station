@@ -178,8 +178,22 @@ class ChartTab(QWidget):
                 row = conn.execute(stmt).fetchone()
                 if not row:
                     return
-                # normalize row to dict
-                rec = dict(row)
+                # normalize row to dict robustly (support Row._mapping and Row.keys())
+                try:
+                    if hasattr(row, "_mapping"):
+                        rec = dict(row._mapping)
+                    elif hasattr(row, "keys"):
+                        rec = {k: row[k] for k in row.keys()}
+                    else:
+                        rec = dict(row)
+                except Exception:
+                    # last resort: try to coerce via tuple->dict if possible
+                    try:
+                        rec = dict(row._asdict()) if hasattr(row, "_asdict") else dict(row)
+                    except Exception:
+                        # give up and skip
+                        logger.debug("ChartTab _poll_latest_tick: cannot convert row to dict, skipping")
+                        return
                 ts = int(rec.get("ts_utc", 0))
                 if self._last_polled_ts is None or ts > int(self._last_polled_ts):
                     self._last_polled_ts = ts

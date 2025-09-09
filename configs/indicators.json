@@ -5,7 +5,7 @@
     "color": "#ff7f0e"
   },
   "ema": {
-    "enabled": true,
+    "enabled": false,
     "span": 20,
     "color": "#ff7f0e"
   },
@@ -17,7 +17,7 @@
     "color_low": "#ff7f0e"
   },
   "rsi": {
-    "enabled": false,
+    "enabled": true,
     "period": 14,
     "color": "#d62728"
   },
