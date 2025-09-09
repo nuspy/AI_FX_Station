@@ -29,7 +29,11 @@ alembic:
   env: "production"
 
 providers:
-  default: "alpha_vantage"
+  default: "tiingo"
+  tiingo:
+    key: "${TIINGO_API_KEY:-YOUR_TIINGO_API_KEY}"
+    base_url: "https://api.tiingo.com"
+    # Tiingo rate limits and other options can be configured here if needed
   alpha_vantage:
     key: "${ALPHAVANTAGE_KEY:-YOUR_ALPHA_VANTAGE_KEY}"
     base_url: "https://www.alphavantage.co/query"
