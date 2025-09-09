@@ -73,8 +73,9 @@ class HistoryTab(QWidget):
         self._populate_empty()
 
     def _populate_empty(self):
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["id","symbol","timeframe","ts_utc","open","high","low","close"])
+        # Adjust columns to mirror market_data_candles schema (id,symbol,timeframe,ts_utc,open,high,low,close,volume,resampled)
+        self.table.setColumnCount(10)
+        self.table.setHorizontalHeaderLabels(["id","symbol","timeframe","ts_utc","open","high","low","close","volume","resampled"])
         self.table.setRowCount(0)
 
     def on_refresh(self):
@@ -83,6 +84,41 @@ class HistoryTab(QWidget):
         except Exception as e:
             logger.exception("HistoryTab refresh failed: {}", e)
             QMessageBox.warning(self, "Refresh failed", str(e))
+
+    def _row_to_dict(self, r):
+        """
+        Normalize a SQLAlchemy Row or tuple into a dict with canonical keys.
+        Supports Row._mapping if present, otherwise falls back to tuple positions.
+        """
+        try:
+            # SQLAlchemy Row supports _mapping in modern versions
+            mapping = getattr(r, "_mapping", None)
+            if mapping is not None:
+                return dict(mapping)
+        except Exception:
+            pass
+        # fallback: tuple -> map by known column order
+        try:
+            # Expected tuple layout: id,symbol,timeframe,ts_utc,open,high,low,close,volume,resampled
+            rec = {
+                "id": r[0],
+                "symbol": r[1],
+                "timeframe": r[2],
+                "ts_utc": r[3],
+                "open": r[4],
+                "high": r[5],
+                "low": r[6] if len(r) > 6 else None,
+                "close": r[7] if len(r) > 7 else None,
+                "volume": r[8] if len(r) > 8 else None,
+                "resampled": r[9] if len(r) > 9 else False,
+            }
+            return rec
+        except Exception:
+            # last resort: enumerate tuple
+            try:
+                return {str(i): v for i, v in enumerate(r)}
+            except Exception:
+                return {}
 
     def on_backfill(self):
         try:
@@ -98,6 +134,7 @@ class HistoryTab(QWidget):
                 res = {}
             self._log(f"Backfill result: {json.dumps(res)}")
             QMessageBox.information(self, "Backfill", "Backfill request completed (see log).")
+            # refresh table
             self.refresh(limit=200)
             # update chart if connected
             if self.chart_tab is not None:
@@ -111,8 +148,9 @@ class HistoryTab(QWidget):
                             stmt = select(tbl).where(tbl.c.symbol == sym).where(tbl.c.timeframe == tf).order_by(tbl.c.ts_utc.asc())
                             rows = conn.execute(stmt).fetchall()
                             import pandas as pd
-                            if rows:
-                                df = pd.DataFrame([dict(r) for r in rows])
+                            recs = [self._row_to_dict(r) for r in rows] if rows else []
+                            if recs:
+                                df = pd.DataFrame(recs)
                                 # let chart_tab know symbol/timeframe and update
                                 try:
                                     self.chart_tab.set_symbol_timeframe(self.db_service, sym, tf)
@@ -151,19 +189,24 @@ class HistoryTab(QWidget):
             # show table rows
             self.table.setRowCount(len(rows))
             for i, r in enumerate(rows):
-                self.table.setItem(i, 0, QTableWidgetItem(str(r["id"] if "id" in r else i)))
-                self.table.setItem(i, 1, QTableWidgetItem(str(r["symbol"])))
-                self.table.setItem(i, 2, QTableWidgetItem(str(r["timeframe"])))
+                recd = self._row_to_dict(r)
+                self.table.setItem(i, 0, QTableWidgetItem(str(recd.get("id", i))))
+                self.table.setItem(i, 1, QTableWidgetItem(str(recd.get("symbol", ""))))
+                self.table.setItem(i, 2, QTableWidgetItem(str(recd.get("timeframe", ""))))
                 # convert ts to local string for table too
                 try:
                     import datetime
-                    ts_local = datetime.datetime.fromtimestamp(int(r["ts_utc"]) / 1000, tz=datetime.timezone.utc).astimezone()
+                    ts_local = datetime.datetime.fromtimestamp(int(recd.get("ts_utc", 0)) / 1000, tz=datetime.timezone.utc).astimezone()
                     ts_str = ts_local.strftime("%Y-%m-%d %H:%M:%S %Z")
                 except Exception:
-                    ts_str = str(int(r["ts_utc"]))
+                    ts_str = str(int(recd.get("ts_utc", 0)))
                 self.table.setItem(i, 3, QTableWidgetItem(ts_str))
-                self.table.setItem(i, 4, QTableWidgetItem(str(r["open"])))
-                self.table.setItem(i, 5, QTableWidgetItem(str(r["high"])))
+                self.table.setItem(i, 4, QTableWidgetItem(str(recd.get("open", ""))))
+                self.table.setItem(i, 5, QTableWidgetItem(str(recd.get("high", ""))))
+                self.table.setItem(i, 6, QTableWidgetItem(str(recd.get("low", ""))))
+                self.table.setItem(i, 7, QTableWidgetItem(str(recd.get("close", ""))))
+                self.table.setItem(i, 8, QTableWidgetItem(str(recd.get("volume", ""))))
+                self.table.setItem(i, 9, QTableWidgetItem(str(recd.get("resampled", ""))))
             self.table.resizeColumnsToContents()
 
         # if chart connected, update chart with fetched rows (ascending order)
