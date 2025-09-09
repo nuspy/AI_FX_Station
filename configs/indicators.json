@@ -1,11 +1,11 @@
 {
   "sma": {
-    "enabled": false,
+    "enabled": true,
     "window": 20,
     "color": "#ff7f0e"
   },
   "ema": {
-    "enabled": false,
+    "enabled": true,
     "span": 20,
     "color": "#ff7f0e"
   },

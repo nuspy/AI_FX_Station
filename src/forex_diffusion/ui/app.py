@@ -35,10 +35,18 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
     try:
         import threading
         market_service = MarketDataService()
-        # force provider to tiingo and log
+        # force provider to tiingo and log (robust attempt)
         try:
-            market_service.set_provider("tiingo")
-            logger.info("Forced MarketDataService provider to tiingo at startup")
+            try:
+                market_service.set_provider("tiingo")
+                logger.info("Forced MarketDataService provider to tiingo at startup")
+            except Exception as e:
+                # some implementations may expose provider property or method differently; best-effort
+                try:
+                    setattr(market_service, "provider", "tiingo")
+                    logger.info("Set MarketDataService.provider attribute to 'tiingo' as fallback")
+                except Exception:
+                    logger.warning("Could not force MarketDataService provider to tiingo: {}", e)
         except Exception:
             pass
         # schedule startup backfill in background (non-blocking)

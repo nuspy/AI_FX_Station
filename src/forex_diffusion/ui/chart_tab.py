@@ -141,10 +141,82 @@ class ChartTab(QWidget):
         except Exception as e:
             logger.exception("ChartTab failed to subscribe to 'tick' events: {}", e)
 
+        # start a DB poll timer to detect external inserts (fallback when websocket not available)
+        try:
+            self._last_polled_ts = None
+            self._poll_timer = QTimer(self)
+            self._poll_timer.setInterval(1000)  # ms
+            self._poll_timer.timeout.connect(self._poll_latest_tick)
+            self._poll_timer.start()
+        except Exception as e:
+            logger.debug("ChartTab failed to start poll timer: {}", e)
+
     def set_symbol_timeframe(self, db_service, symbol: str, timeframe: str):
         self.db_service = db_service
         self.symbol = symbol
         self.timeframe = timeframe
+
+    def _poll_latest_tick(self):
+        """
+        Poll DB for latest market_data_candles row for current symbol/timeframe.
+        If a newer ts_utc found compared to self._last_polled_ts, append to _last_df and redraw.
+        This enables updates when external processes insert into the DB.
+        """
+        try:
+            if getattr(self, "db_service", None) is None or getattr(self, "symbol", None) is None:
+                return
+            meta = MetaData()
+            try:
+                meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
+            except Exception:
+                return
+            tbl = meta.tables.get("market_data_candles")
+            if tbl is None:
+                return
+            with self.db_service.engine.connect() as conn:
+                stmt = select(tbl).where(tbl.c.symbol == self.symbol).where(tbl.c.timeframe == self.timeframe).order_by(tbl.c.ts_utc.desc()).limit(1)
+                row = conn.execute(stmt).fetchone()
+                if not row:
+                    return
+                # normalize row to dict
+                rec = dict(row)
+                ts = int(rec.get("ts_utc", 0))
+                if self._last_polled_ts is None or ts > int(self._last_polled_ts):
+                    self._last_polled_ts = ts
+                    # append into _last_df
+                    try:
+                        import pandas as pd
+                        df_row = pd.DataFrame([rec])
+                        if getattr(self, "_last_df", None) is None or self._last_df.empty:
+                            self._last_df = df_row
+                        else:
+                            df_combined = pd.concat([self._last_df, df_row], ignore_index=True)
+                            df_combined = df_combined.drop_duplicates(subset=["ts_utc"], keep="last").sort_values("ts_utc").reset_index(drop=True)
+                            self._last_df = df_combined
+                    except Exception:
+                        pass
+                    # update bid/ask label if present in record
+                    try:
+                        bid = rec.get("bid", None)
+                        ask = rec.get("ask", None)
+                        price = rec.get("close", rec.get("price", None))
+                        if getattr(self, "bidask_label", None) is not None:
+                            try:
+                                bv = bid if bid is not None else price
+                                av = ask if ask is not None else price
+                                if bv is not None and av is not None:
+                                    self.bidask_label.setText(f"Bid: {float(bv):.5f}    Ask: {float(av):.5f}")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # redraw chart with new buffer
+                    try:
+                        self.update_plot(self._last_df, timeframe=self.timeframe)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug("ChartTab _poll_latest_tick exception: {}", e)
 
     # --- Mouse interaction handlers (wheel zoom on x axis, left-drag pan)
     def _on_scroll(self, event):
@@ -638,30 +710,32 @@ class ChartTab(QWidget):
     def _handle_tick(self, payload):
         """
         UI-thread: accept payload (dict-like) and append to last_df, update bid/ask label and redraw.
+        Accept ticks even when payload lacks symbol/timeframe; ignore only if payload explicitly targets different symbol/timeframe.
         """
         try:
-            # Normalize payload to dict
+            # Normalize payload to dict if possible
             if not isinstance(payload, dict):
                 try:
                     payload = dict(payload)
                 except Exception:
                     payload = {"price": payload}
-            sym = payload.get("symbol")
-            tf = payload.get("timeframe", "1m")
-            if getattr(self, "symbol", None) is None or getattr(self, "timeframe", None) is None:
-                # not configured yet
+            sym = payload.get("symbol", None)
+            tf = payload.get("timeframe", None)
+
+            # If this ChartTab has a target symbol/timeframe and the payload explicitly targets another, ignore.
+            if getattr(self, "symbol", None) is not None and sym is not None and sym != self.symbol:
                 return
-            if sym != self.symbol or tf != self.timeframe:
-                # different symbol/timeframe, ignore for display (DB still persists)
+            if getattr(self, "timeframe", None) is not None and tf is not None and tf != self.timeframe:
                 return
+
             import pandas as pd
             ts = int(payload.get("ts_utc", int(pd.Timestamp.utcnow().value // 1_000_000)))
             price = float(payload.get("price", 0.0))
             bid = payload.get("bid", None)
             ask = payload.get("ask", None)
 
+            # Append/update in-memory candle/tick buffer
             row = {"ts_utc": int(ts), "open": price, "high": price, "low": price, "close": price, "volume": None}
-            import pandas as pd
             if getattr(self, "_last_df", None) is None or self._last_df.empty:
                 self._last_df = pd.DataFrame([row])
             else:
@@ -670,20 +744,32 @@ class ChartTab(QWidget):
                 df_combined = df_combined.drop_duplicates(subset=["ts_utc"], keep="last").sort_values("ts_utc").reset_index(drop=True)
                 self._last_df = df_combined
 
-            # update bid/ask label
+            # update bid/ask label (prefer explicit bid/ask, fallback to price)
             try:
                 if getattr(self, "bidask_label", None) is not None:
                     bv = bid if bid is not None else price
                     av = ask if ask is not None else price
-                    self.bidask_label.setText(f"Bid: {float(bv):.5f}    Ask: {float(av):.5f}")
+                    try:
+                        self.bidask_label.setText(f"Bid: {float(bv):.5f}    Ask: {float(av):.5f}")
+                    except Exception:
+                        # fallback to simple repr
+                        self.bidask_label.setText(f"Bid: {bv} Ask: {av}")
             except Exception:
                 pass
 
-            # redraw
+            # redraw efficiently: update_plot will draw base and reapply indicators
             try:
-                self.update_plot(self._last_df, timeframe=self.timeframe)
+                # use draw_idle for responsiveness
+                self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
+                try:
+                    # force immediate redraw if needed
+                    self.canvas.draw_idle()
+                except Exception:
+                    pass
             except Exception as e:
                 logger.debug("Failed to update plot after tick: {}", e)
+
+            logger.debug("Handled tick payload: sym=%s tf=%s price=%s bid=%s ask=%s", sym, tf, price, bid, ask)
         except Exception as e:
             logger.exception("Error handling tick payload: {}", e)
 
