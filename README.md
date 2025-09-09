@@ -15,6 +15,11 @@ MagicForex — guida rapida (locale)
 4) Test rapido DB/signals:
    python .\scripts\send_and_check_signals.py --count 5 --interval 0.2 --show 10
 
+GUI tabs:
+ - Signals: recent signals + admin controls
+ - History: historical candles table per symbol/timeframe (Refresh, Backfill)
+ - Chart: matplotlib chart with pan/zoom (update via HistoryTab refresh or programmatically)
+
 5) Avvia realtime helper (foreground):
    python .\scripts\start_realtime.py
 

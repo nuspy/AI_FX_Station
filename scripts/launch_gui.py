@@ -4,7 +4,7 @@ launch_gui.py - cross-platform Python launcher for the GUI.
 
 Usage:
   # from project root, with .venv activated (PowerShell)
-  python .\\scripts\launch_gui.py
+  python .\\scripts\\launch_gui.py
 
 This script calls the existing scripts/run_gui.py using the current Python interpreter
 to avoid invoking a .ps1 from Python incorrectly.

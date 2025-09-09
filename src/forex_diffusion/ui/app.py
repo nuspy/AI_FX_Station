@@ -72,12 +72,28 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             except Exception as e:
                 logger.exception("Failed to initialize DBWriter: {}", e)
                 db_writer = None
-        # instantiate SignalsTab with db_service if available
+        # instantiate UI tabs: Signals, History, Chart
         try:
+            from .history_tab import HistoryTab
+            from .chart_tab import ChartTab
+            from PySide6.QtWidgets import QTabWidget
+
+            tabw = QTabWidget()
             signals_tab = SignalsTab(main_window, db_service=db_service, market_service=market_service)
-            layout.addWidget(signals_tab)
+            history_tab = HistoryTab(main_window, db_service=db_service, market_service=market_service)
+            chart_tab = ChartTab(main_window)
+
+            tabw.addTab(signals_tab, "Signals")
+            tabw.addTab(history_tab, "History")
+            tabw.addTab(chart_tab, "Chart")
+
+            layout.addWidget(tabw)
+
             result["signals_tab"] = signals_tab
+            result["history_tab"] = history_tab
+            result["chart_tab"] = chart_tab
             result["market_service"] = market_service
+
             # refresh signals after each successful forecast if controller exists
             if "controller" in result:
                 try:
