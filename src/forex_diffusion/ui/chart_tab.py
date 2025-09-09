@@ -67,7 +67,7 @@ class ChartTab(QWidget):
         # auxiliary axes for indicators that require their own y-axis (rsi, macd)
         self._aux_axes: dict[str, any] = {}
 
-        # load persisted indicators config if present
+        # load persisted indicators config if present (normalize so "enabled" flags are honored)
         try:
             from pathlib import Path
             import json
@@ -75,8 +75,17 @@ class ChartTab(QWidget):
             if cfg_path.exists():
                 try:
                     with cfg_path.open("r", encoding="utf-8") as fh:
-                        self._indicator_cfg = json.load(fh)
-                        logger.info("Loaded indicator config from %s", str(cfg_path))
+                        raw = json.load(fh)
+                        try:
+                            # normalize into canonical structure {indicator: {enabled:bool,...}}
+                            self._indicator_cfg = self._normalize_indicator_cfg(raw)
+                            try:
+                                logger.info(f"Loaded normalized indicator config from {cfg_path}")
+                            except Exception:
+                                logger.info("Loaded indicator config")
+                        except Exception:
+                            # fallback: keep raw but ensure subsequent code handles missing 'enabled'
+                            self._indicator_cfg = raw
                 except Exception:
                     self._indicator_cfg = None
             else:
@@ -84,7 +93,7 @@ class ChartTab(QWidget):
         except Exception:
             self._indicator_cfg = None
 
-        # load persisted indicators config if present
+        # load persisted indicators config if present (normalize so enabled flags are honored)
         try:
             from pathlib import Path
             import json
@@ -92,8 +101,15 @@ class ChartTab(QWidget):
             if cfg_path.exists():
                 try:
                     with cfg_path.open("r", encoding="utf-8") as fh:
-                        self._indicator_cfg = json.load(fh)
-                        logger.info("Loaded indicator config from %s", str(cfg_path))
+                        raw = json.load(fh)
+                        try:
+                            self._indicator_cfg = self._normalize_indicator_cfg(raw)
+                            try:
+                                logger.info(f"Loaded normalized indicator config from {cfg_path}")
+                            except Exception:
+                                logger.info("Loaded indicator config")
+                        except Exception:
+                            self._indicator_cfg = raw
                 except Exception:
                     self._indicator_cfg = None
             else:
@@ -466,6 +482,95 @@ class ChartTab(QWidget):
             self.canvas.draw()
         except Exception as e:
             logger.exception("Internal _apply_indicators failed: {}", e)
+
+    def update_plot(self, df: pd.DataFrame, timeframe: Optional[str] = None):
+        """
+        Public plotting entrypoint: draw base 'close' line and reapply indicators.
+        Used by HistoryTab and other callers. Safe and idempotent.
+        """
+        try:
+            self.ax.clear()
+            if df is None or getattr(df, "empty", True):
+                self.ax.set_title("No data")
+                self.canvas.draw()
+                return
+            # ensure ts_utc column exists and convert to datetimes (local tz)
+            try:
+                x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True)
+                x = x.dt.tz_convert(None)
+            except Exception:
+                x = pd.to_datetime(df.get("ts_utc", df.index))
+            try:
+                y = df["close"].astype(float)
+            except Exception:
+                # fallback: if close missing, try last column
+                try:
+                    y = df.iloc[:, -1].astype(float)
+                except Exception:
+                    y = pd.Series([0.0] * len(x))
+
+            # draw base close line (store for later removal)
+            try:
+                if getattr(self, "_base_line", None) is not None:
+                    try:
+                        self._base_line.remove()
+                    except Exception:
+                        pass
+                    self._base_line = None
+            except Exception:
+                pass
+            try:
+                self._base_line, = self.ax.plot(x, y, "-", color="black", linewidth=1.0, label="close")
+            except Exception:
+                self.ax.plot(x, y, "-", color="black", linewidth=1.0, label="close")
+
+            self.ax.set_title("Historical close")
+            # format X axis with date+time
+            try:
+                self.ax.xaxis.set_major_formatter(DateFormatter("%Y-%m-%d %H:%M:%S"))
+                self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            except Exception:
+                pass
+            try:
+                self.ax.relim()
+                self.ax.autoscale_view()
+            except Exception:
+                pass
+            self.ax.figure.autofmt_xdate()
+            self.canvas.draw()
+            # update buffer
+            self._last_df = df
+
+            # connect xlim_changed handler once
+            try:
+                if not getattr(self, "_xlim_connected", False):
+                    self.canvas.mpl_connect("xlim_changed", self._on_xlim_changed)
+                    self._xlim_connected = True
+            except Exception:
+                pass
+
+            # apply indicators if configured
+            try:
+                if getattr(self, "_indicator_cfg", None):
+                    try:
+                        # use public wrapper which normalizes and calls internal impl
+                        self.apply_indicators(self._indicator_cfg)
+                    except Exception:
+                        # best-effort: try internal
+                        try:
+                            self._apply_indicators(self._indicator_cfg)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        except Exception as e:
+            try:
+                self.ax.clear()
+                self.ax.set_title(f"Plot error: {e}")
+                self.canvas.draw()
+            except Exception:
+                pass
 
     def _on_tick_event(self, payload):
         """Schedule handling of incoming tick on UI thread."""
