@@ -151,12 +151,21 @@ class HistoryTab(QWidget):
                             recs = [self._row_to_dict(r) for r in rows] if rows else []
                             if recs:
                                 df = pd.DataFrame(recs)
-                                # let chart_tab know symbol/timeframe and update
+                                # let chart_tab know symbol/timeframe and update via public redraw
                                 try:
                                     self.chart_tab.set_symbol_timeframe(self.db_service, sym, tf)
                                 except Exception:
                                     pass
-                                self.chart_tab.update_plot(df, timeframe=tf)
+                                try:
+                                    # set internal buffer then request redraw (public wrapper)
+                                    self.chart_tab._last_df = df
+                                    self.chart_tab.redraw()
+                                except Exception:
+                                    # best-effort: try direct update_plot if available
+                                    try:
+                                        getattr(self.chart_tab, "update_plot", lambda *_: None)(df, timeframe=tf)
+                                    except Exception:
+                                        pass
                 except Exception as e:
                     logger.exception("Failed to update chart after backfill: {}", e)
         except Exception as e:
@@ -224,4 +233,13 @@ class HistoryTab(QWidget):
                     self.chart_tab.set_symbol_timeframe(self.db_service, self.symbol_combo.currentText(), self.tf_combo.currentText())
                 except Exception:
                     pass
-                self.chart_tab.update_plot(df, timeframe=self.tf_combo.currentText())
+                try:
+                    # set internal buffer then request redraw (public wrapper)
+                    self.chart_tab._last_df = df
+                    self.chart_tab.redraw()
+                except Exception:
+                    # fallback to update_plot if available
+                    try:
+                        getattr(self.chart_tab, "update_plot", lambda *_: None)(df, timeframe=self.tf_combo.currentText())
+                    except Exception:
+                        pass

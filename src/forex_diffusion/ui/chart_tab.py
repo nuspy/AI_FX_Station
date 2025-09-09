@@ -64,6 +64,42 @@ class ChartTab(QWidget):
         self._last_df = None
         # track plotted artists per indicator name so we can remove/replace them instead of duplicating
         self._indicator_artists: dict[str, list] = {}
+        # auxiliary axes for indicators that require their own y-axis (rsi, macd)
+        self._aux_axes: dict[str, any] = {}
+
+        # load persisted indicators config if present
+        try:
+            from pathlib import Path
+            import json
+            cfg_path = Path(__file__).resolve().parents[3] / "configs" / "indicators.json"
+            if cfg_path.exists():
+                try:
+                    with cfg_path.open("r", encoding="utf-8") as fh:
+                        self._indicator_cfg = json.load(fh)
+                        logger.info("Loaded indicator config from %s", str(cfg_path))
+                except Exception:
+                    self._indicator_cfg = None
+            else:
+                self._indicator_cfg = None
+        except Exception:
+            self._indicator_cfg = None
+
+        # load persisted indicators config if present
+        try:
+            from pathlib import Path
+            import json
+            cfg_path = Path(__file__).resolve().parents[3] / "configs" / "indicators.json"
+            if cfg_path.exists():
+                try:
+                    with cfg_path.open("r", encoding="utf-8") as fh:
+                        self._indicator_cfg = json.load(fh)
+                        logger.info("Loaded indicator config from %s", str(cfg_path))
+                except Exception:
+                    self._indicator_cfg = None
+            else:
+                self._indicator_cfg = None
+        except Exception:
+            self._indicator_cfg = None
 
         # Interaction state for panning
         self._is_panning = False
@@ -169,8 +205,239 @@ class ChartTab(QWidget):
                         pass
             except Exception:
                 pass
+
         except Exception:
             pass
+
+    # Public convenience methods (aliases/wrappers) to avoid AttributeError when other modules call them
+    def apply_indicators(self, cfg: dict):
+        """
+        Public wrapper to apply indicators (safe entry point).
+        """
+        try:
+            self._indicator_cfg = cfg
+            # call internal implementation
+            try:
+                self._apply_indicators(cfg)
+            except Exception as e:
+                logger.exception("apply_indicators internal failure: {}", e)
+        except Exception as e:
+            logger.exception("apply_indicators failed: {}", e)
+
+    def redraw(self):
+        """
+        Public redraw helper: replot last_df if available.
+        """
+        if getattr(self, "_last_df", None) is not None:
+            self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
+
+    def _apply_indicators(self, cfg: dict):
+        """
+        Internal: remove previous indicator artists and overlay configured indicators.
+        Does NOT redraw base 'close' line (update_plot is responsible for that).
+        Reuses auxiliary axes for indicators requiring separate y-axis (rsi, macd).
+        """
+        try:
+            if self._last_df is None or self._last_df.empty:
+                return
+            import pandas as pd
+            df = self._last_df.copy()
+            if "ts_utc" not in df.columns or "close" not in df.columns:
+                return
+            df = df.sort_values("ts_utc").reset_index(drop=True)
+            x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True).dt.tz_convert(None)
+
+            # normalize cfg: support legacy format where keys exist only if enabled
+            try:
+                norm_cfg = {}
+                for name in ["sma", "ema", "bollinger", "rsi", "macd"]:
+                    val = cfg.get(name)
+                    if isinstance(val, dict):
+                        # if 'enabled' present, keep; else treat presence as enabled
+                        enabled = bool(val.get("enabled", True)) if "enabled" in val else True
+                        # ensure keys exist with defaults
+                        if name == "sma":
+                            norm_cfg[name] = {
+                                "enabled": enabled,
+                                "window": int(val.get("window", 20)),
+                                "color": val.get("color")
+                            }
+                        elif name == "ema":
+                            norm_cfg[name] = {
+                                "enabled": enabled,
+                                "span": int(val.get("span", 20)),
+                                "color": val.get("color")
+                            }
+                        elif name == "bollinger":
+                            norm_cfg[name] = {
+                                "enabled": enabled,
+                                "window": int(val.get("window", 20)),
+                                "n_std": float(val.get("n_std", val.get("k", 2.0))),
+                                "color_up": val.get("color_up"),
+                                "color_low": val.get("color_low")
+                            }
+                        elif name == "rsi":
+                            norm_cfg[name] = {
+                                "enabled": enabled,
+                                "period": int(val.get("period", 14)),
+                                "color": val.get("color")
+                            }
+                        elif name == "macd":
+                            norm_cfg[name] = {
+                                "enabled": enabled,
+                                "fast": int(val.get("fast", 12)),
+                                "slow": int(val.get("slow", 26)),
+                                "signal": int(val.get("signal", 9)),
+                                "color": val.get("color")
+                            }
+                    else:
+                        # missing -> disabled
+                        if name == "sma":
+                            norm_cfg[name] = {"enabled": False, "window": 20, "color": None}
+                        elif name == "ema":
+                            norm_cfg[name] = {"enabled": False, "span": 20, "color": None}
+                        elif name == "bollinger":
+                            norm_cfg[name] = {"enabled": False, "window": 20, "n_std": 2.0, "color_up": None, "color_low": None}
+                        elif name == "rsi":
+                            norm_cfg[name] = {"enabled": False, "period": 14, "color": None}
+                        elif name == "macd":
+                            norm_cfg[name] = {"enabled": False, "fast": 12, "slow": 26, "signal": 9, "color": None}
+            except Exception:
+                norm_cfg = cfg
+
+            # remove existing indicator artists and clear aux axes if present
+            try:
+                for name, artists in list(self._indicator_artists.items()):
+                    for art in artists:
+                        try:
+                            art.remove()
+                        except Exception:
+                            pass
+                self._indicator_artists = {}
+                # clear aux axes lines by hiding them (do not destroy)
+                for k, ax_aux in list(self._aux_axes.items()):
+                    try:
+                        ax_aux.cla()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            def _get_color(entry, default):
+                try:
+                    if isinstance(entry, dict):
+                        return entry.get("color") or entry.get("color_up") or entry.get("color_low") or default
+                    return default
+                except Exception:
+                    return default
+
+            def _register(name: str, arts):
+                try:
+                    if name not in self._indicator_artists:
+                        self._indicator_artists[name] = []
+                    self._indicator_artists[name].extend(arts if isinstance(arts, list) else [arts])
+                except Exception:
+                    pass
+
+            # SMA
+            if "sma" in cfg:
+                try:
+                    w = int(cfg["sma"].get("window", 20))
+                    col = _get_color(cfg.get("sma"), "#1f77b4")
+                    s = sma(df["close"], w)
+                    ln, = self.ax.plot(x, s, label=f"SMA({w})", color=col, alpha=0.9)
+                    _register(f"sma_{w}_{col}", ln)
+                except Exception:
+                    pass
+
+            # EMA
+            if "ema" in cfg:
+                try:
+                    sp = int(cfg["ema"].get("span", 20))
+                    col = _get_color(cfg.get("ema"), "#ff7f0e")
+                    e = ema(df["close"], sp)
+                    ln, = self.ax.plot(x, e, label=f"EMA({sp})", color=col, alpha=0.9)
+                    _register(f"ema_{sp}_{col}", ln)
+                except Exception:
+                    pass
+
+            # Bollinger
+            if "bollinger" in cfg:
+                try:
+                    w = int(cfg["bollinger"].get("window", 20))
+                    nstd = float(cfg["bollinger"].get("n_std", 2.0))
+                    col_up = cfg["bollinger"].get("color_up") or _get_color(cfg.get("bollinger"), "#2ca02c")
+                    col_low = cfg["bollinger"].get("color_low") or _get_color(cfg.get("bollinger"), "#d62728")
+                    up, low = bollinger(df["close"], window=w, n_std=nstd)
+                    l1, = self.ax.plot(x, up, label=f"BB_up({w},{nstd})", color=col_up, alpha=0.6)
+                    l2, = self.ax.plot(x, low, label=f"BB_low({w},{nstd})", color=col_low, alpha=0.6)
+                    _register(f"bollinger_{w}_{nstd}", [l1, l2])
+                except Exception:
+                    pass
+
+            # RSI (reuse/create aux axis)
+            if "rsi" in cfg:
+                try:
+                    p = int(cfg["rsi"].get("period", 14))
+                    col = _get_color(cfg.get("rsi"), "#9467bd")
+                    r = rsi(df["close"], period=p)
+                    ax_rsi = self._aux_axes.get("rsi")
+                    if ax_rsi is None:
+                        ax_rsi = self.ax.twinx()
+                        # shift right if needed
+                        try:
+                            ax_rsi.spines["right"].set_position(("axes", 1.05))
+                        except Exception:
+                            pass
+                        self._aux_axes["rsi"] = ax_rsi
+                    # plot on ax_rsi
+                    ln, = ax_rsi.plot(x, r, label=f"RSI({p})", color=col, alpha=0.8)
+                    ax_rsi.set_ylabel("RSI")
+                    _register(f"rsi_{p}_{col}", ln)
+                except Exception:
+                    pass
+
+            # MACD (reuse/create aux axis)
+            if "macd" in cfg:
+                try:
+                    f = int(cfg["macd"].get("fast", 12))
+                    s = int(cfg["macd"].get("slow", 26))
+                    sg = int(cfg["macd"].get("signal", 9))
+                    col = _get_color(cfg.get("macd"), "#ff7f0e")
+                    m = macd(df["close"], fast=f, slow=s, signal=sg)
+                    ax_macd = self._aux_axes.get("macd")
+                    if ax_macd is None:
+                        ax_macd = self.ax.twinx()
+                        try:
+                            ax_macd.spines["right"].set_position(("axes", 1.10))
+                        except Exception:
+                            pass
+                        self._aux_axes["macd"] = ax_macd
+                    ln1, = ax_macd.plot(x, m["macd"], label=f"MACD({f},{s})", color=col, alpha=0.9)
+                    ln2, = ax_macd.plot(x, m["signal"], label=f"Signal({sg})", color="#1f77b4", alpha=0.6)
+                    _register(f"macd_{f}_{s}_{sg}", [ln1, ln2])
+                except Exception:
+                    pass
+
+            # refresh legends: combine base and aux handles
+            try:
+                handles, labels = self.ax.get_legend_handles_labels()
+                # include aux axes legends
+                for name, ax_aux in self._aux_axes.items():
+                    try:
+                        h, l = ax_aux.get_legend_handles_labels()
+                        handles += h
+                        labels += l
+                    except Exception:
+                        pass
+                if handles:
+                    self.ax.legend(handles, labels, loc="upper left", fontsize="small")
+            except Exception:
+                pass
+
+            self.canvas.draw()
+        except Exception as e:
+            logger.exception("Internal _apply_indicators failed: {}", e)
 
     def _on_tick_event(self, payload):
         """Schedule handling of incoming tick on UI thread."""
@@ -198,6 +465,7 @@ class ChartTab(QWidget):
             if sym != self.symbol or tf != self.timeframe:
                 # different symbol/timeframe, ignore for display (DB still persists)
                 return
+            import pandas as pd
             ts = int(payload.get("ts_utc", int(pd.Timestamp.utcnow().value // 1_000_000)))
             price = float(payload.get("price", 0.0))
             bid = payload.get("bid", None)
@@ -312,42 +580,134 @@ class ChartTab(QWidget):
                         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
                         self.layout.addWidget(bb)
 
-                        # load initial if provided (best-effort)
+                        # load initial if provided (best-effort) - populate all controls including Bollinger, RSI, MACD
                         if initial:
                             try:
+                                # SMA
                                 if "sma" in initial:
-                                    self.sma_cb.setChecked(True)
-                                    if "window" in initial["sma"]:
-                                        self.sma_w.setValue(int(initial["sma"]["window"]))
-                                    if "color" in initial["sma"]:
-                                        col = initial["sma"]["color"]
-                                        for idx in range(self.sma_col.count()):
-                                            if self.sma_col.itemData(idx) == col:
-                                                self.sma_col.setCurrentIndex(idx); break
+                                    try:
+                                        self.sma_cb.setChecked(True)
+                                        if "window" in initial["sma"]:
+                                            self.sma_w.setValue(int(initial["sma"]["window"]))
+                                        if "color" in initial["sma"]:
+                                            col = initial["sma"]["color"]
+                                            for idx in range(self.sma_col.count()):
+                                                if self.sma_col.itemData(idx) == col:
+                                                    self.sma_col.setCurrentIndex(idx)
+                                                    break
+                                    except Exception:
+                                        pass
+                                # EMA
                                 if "ema" in initial:
-                                    self.ema_cb.setChecked(True)
-                                    if "span" in initial["ema"]:
-                                        self.ema_span.setValue(int(initial["ema"]["span"]))
-                                    if "color" in initial["ema"]:
-                                        col = initial["ema"]["color"]
-                                        for idx in range(self.ema_col.count()):
-                                            if self.ema_col.itemData(idx) == col:
-                                                self.ema_col.setCurrentIndex(idx); break
+                                    try:
+                                        self.ema_cb.setChecked(True)
+                                        if "span" in initial["ema"]:
+                                            self.ema_span.setValue(int(initial["ema"]["span"]))
+                                        if "color" in initial["ema"]:
+                                            col = initial["ema"]["color"]
+                                            for idx in range(self.ema_col.count()):
+                                                if self.ema_col.itemData(idx) == col:
+                                                    self.ema_col.setCurrentIndex(idx)
+                                                    break
+                                    except Exception:
+                                        pass
+                                # Bollinger
+                                if "bollinger" in initial:
+                                    try:
+                                        self.bb_cb.setChecked(True)
+                                        if "window" in initial["bollinger"]:
+                                            self.bb_n.setValue(int(initial["bollinger"]["window"]))
+                                        if "n_std" in initial["bollinger"]:
+                                            self.bb_k.setText(str(initial["bollinger"]["n_std"]))
+                                        if "color_up" in initial["bollinger"]:
+                                            col = initial["bollinger"]["color_up"]
+                                            for idx in range(self.bb_col_u.count()):
+                                                if self.bb_col_u.itemData(idx) == col:
+                                                    self.bb_col_u.setCurrentIndex(idx); break
+                                        if "color_low" in initial["bollinger"]:
+                                            col = initial["bollinger"]["color_low"]
+                                            for idx in range(self.bb_col_l.count()):
+                                                if self.bb_col_l.itemData(idx) == col:
+                                                    self.bb_col_l.setCurrentIndex(idx); break
+                                    except Exception:
+                                        pass
+                                # RSI
+                                if "rsi" in initial:
+                                    try:
+                                        self.rsi_cb.setChecked(True)
+                                        if "period" in initial["rsi"]:
+                                            self.rsi_p.setValue(int(initial["rsi"]["period"]))
+                                        if "color" in initial["rsi"]:
+                                            col = initial["rsi"]["color"]
+                                            for idx in range(self.rsi_col.count()):
+                                                if self.rsi_col.itemData(idx) == col:
+                                                    self.rsi_col.setCurrentIndex(idx); break
+                                    except Exception:
+                                        pass
+                                # MACD
+                                if "macd" in initial:
+                                    try:
+                                        self.macd_cb.setChecked(True)
+                                        if "fast" in initial["macd"]:
+                                            self.macd_fast.setValue(int(initial["macd"]["fast"]))
+                                        if "slow" in initial["macd"]:
+                                            self.macd_slow.setValue(int(initial["macd"]["slow"]))
+                                        if "signal" in initial["macd"]:
+                                            self.macd_sig.setValue(int(initial["macd"]["signal"]))
+                                        if "color" in initial["macd"]:
+                                            col = initial["macd"]["color"]
+                                            for idx in range(self.macd_col.count()):
+                                                if self.macd_col.itemData(idx) == col:
+                                                    self.macd_col.setCurrentIndex(idx); break
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
 
                     def result(self):
+                        """
+                        Return a complete config dict with enabled flags and parameters for all indicators.
+                        Ensures persistence is stable and the format is consistent across sessions.
+                        """
                         out = {}
-                        if self.sma_cb.isChecked():
-                            out["sma"] = {"window": int(self.sma_w.value()), "color": self.sma_col.currentData()}
-                        if self.ema_cb.isChecked():
-                            out["ema"] = {"span": int(self.ema_span.value()), "color": self.ema_col.currentData()}
-                        if self.bb_cb.isChecked():
-                            out["bollinger"] = {"window": int(self.bb_n.value()), "n_std": float(self.bb_k.text()), "color_up": self.bb_col_u.currentData(), "color_low": self.bb_col_l.currentData()}
-                        if self.rsi_cb.isChecked():
-                            out["rsi"] = {"period": int(self.rsi_p.value()), "color": self.rsi_col.currentData()}
-                        if self.macd_cb.isChecked():
-                            out["macd"] = {"fast": int(self.macd_fast.value()), "slow": int(self.macd_slow.value()), "signal": int(self.macd_sig.value()), "color": self.macd_col.currentData()}
+                        # SMA
+                        out["sma"] = {
+                            "enabled": bool(self.sma_cb.isChecked()),
+                            "window": int(self.sma_w.value()),
+                            "color": self.sma_col.currentData()
+                        }
+                        # EMA
+                        out["ema"] = {
+                            "enabled": bool(self.ema_cb.isChecked()),
+                            "span": int(self.ema_span.value()),
+                            "color": self.ema_col.currentData()
+                        }
+                        # Bollinger
+                        try:
+                            nstd = float(self.bb_k.text())
+                        except Exception:
+                            nstd = 2.0
+                        out["bollinger"] = {
+                            "enabled": bool(self.bb_cb.isChecked()),
+                            "window": int(self.bb_n.value()),
+                            "n_std": nstd,
+                            "color_up": self.bb_col_u.currentData(),
+                            "color_low": self.bb_col_l.currentData()
+                        }
+                        # RSI
+                        out["rsi"] = {
+                            "enabled": bool(self.rsi_cb.isChecked()),
+                            "period": int(self.rsi_p.value()),
+                            "color": self.rsi_col.currentData()
+                        }
+                        # MACD
+                        out["macd"] = {
+                            "enabled": bool(self.macd_cb.isChecked()),
+                            "fast": int(self.macd_fast.value()),
+                            "slow": int(self.macd_slow.value()),
+                            "signal": int(self.macd_sig.value()),
+                            "color": self.macd_col.currentData()
+                        }
                         return out
 
                 dlg = FallbackDialog(parent=self, initial=self._indicator_cfg if getattr(self, "_indicator_cfg", None) else None)
@@ -364,6 +724,7 @@ class ChartTab(QWidget):
 
         # persist and apply
         try:
+            # persist config
             self._indicator_cfg = cfg
             from pathlib import Path
             import json
@@ -371,10 +732,18 @@ class ChartTab(QWidget):
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
             with cfg_path.open("w", encoding="utf-8") as fh:
                 json.dump(cfg, fh, indent=2)
+            try:
+                logger.info(f"Saved indicator config to {cfg_path}")
+            except Exception:
+                logger.info("Saved indicator config")
         except Exception as e:
             logger.exception("Failed to persist indicators config: {}", e)
 
         try:
-            self._apply_indicators(cfg)
+            # use public wrapper to apply indicators (ensures internal method exists)
+            try:
+                self.apply_indicators(cfg)
+            except Exception as e:
+                logger.exception("apply_indicators failed: {}", e)
         except Exception as e:
             logger.exception("Failed to apply indicators after dialog: {}", e)
