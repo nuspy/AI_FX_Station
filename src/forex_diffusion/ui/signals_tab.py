@@ -83,6 +83,15 @@ class SignalsTab(QWidget):
         except Exception:
             self.market_service = market_service
 
+        # ensure DB service is available for methods like refresh()
+        try:
+            self.db_service = db_service or DBService()
+        except Exception:
+            try:
+                self.db_service = DBService()
+            except Exception:
+                self.db_service = None
+
         # signals table and refresh
         top_h = QHBoxLayout()
         self.refresh_btn = QPushButton("Refresh Signals")
@@ -91,7 +100,7 @@ class SignalsTab(QWidget):
 
         # Provider selector + poll interval for non-streaming providers
         try:
-            from PySide6.QtWidgets import QComboBox, QSpinBox, QLabel
+            # Use widget classes imported at module level (avoid local re-import that creates locals)
             self.provider_combo = QComboBox()
             # will be populated if market_service provided
             self.provider_combo.addItems(["tiingo", "alpha_vantage"])
@@ -185,15 +194,36 @@ class SignalsTab(QWidget):
             logger.exception("Failed to apply provider: {}", e)
             self._log(f"Failed to apply provider: {e}")
 
-        # DB and services
-        self.db_service = db_service or DBService()
-        self.regime_service = RegimeService(engine=self.db_service.engine)
+        # ensure DB service and regime service are initialized safely
+        try:
+            # prefer existing self.db_service if already set by setup_ui; otherwise create one
+            self.db_service = getattr(self, "db_service", None) or DBService()
+        except Exception:
+            # fallback: create a fresh DBService or set to None
+            try:
+                self.db_service = DBService()
+            except Exception:
+                self.db_service = None
+
+        try:
+            if self.db_service is not None:
+                self.regime_service = RegimeService(engine=self.db_service.engine)
+            else:
+                self.regime_service = RegimeService()
+        except Exception:
+            # best-effort: init regime_service without engine
+            try:
+                self.regime_service = RegimeService()
+            except Exception:
+                self.regime_service = None
+
         # local scheduler/monitor (do not conflict with server instances)
         self.scheduler: Optional[RegimeScheduler] = None
         self.monitor: Optional[RegimeMonitor] = None
 
         # initialize empty table
         self._populate_empty()
+
 
     def _log(self, msg: str):
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
