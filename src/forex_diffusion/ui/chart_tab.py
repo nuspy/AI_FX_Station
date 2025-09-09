@@ -480,7 +480,14 @@ class ChartTab(QWidget):
             if "ts_utc" not in df.columns or "close" not in df.columns:
                 return
             df = df.sort_values("ts_utc").reset_index(drop=True)
-            x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True).dt.tz_convert(None)
+            x_dt = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True).dt.tz_convert(None)
+            try:
+                x_num = mdates.date2num(x_dt.to_pydatetime() if hasattr(x_dt, "to_pydatetime") else pd.to_datetime(x_dt).to_pydatetime())
+            except Exception:
+                try:
+                    x_num = [mdates.date2num(d) for d in list(x_dt)]
+                except Exception:
+                    x_num = list(range(len(df)))
 
             # normalize cfg if needed (ensure canonical structure)
             try:
@@ -528,7 +535,7 @@ class ChartTab(QWidget):
                     w = int(norm["sma"]["window"])
                     col = _get_color(norm["sma"], "#1f77b4")
                     s = sma(df["close"], w)
-                    ln, = self.ax.plot(x, s, label=f"SMA({w})", color=col, alpha=0.9)
+                    ln, = self.ax.plot(x_num, s, label=f"SMA({w})", color=col, alpha=0.9)
                     _register(f"sma_{w}_{col}", ln)
                 except Exception:
                     pass
@@ -539,7 +546,7 @@ class ChartTab(QWidget):
                     sp = int(norm["ema"]["span"])
                     col = _get_color(norm["ema"], "#ff7f0e")
                     e = ema(df["close"], sp)
-                    ln, = self.ax.plot(x, e, label=f"EMA({sp})", color=col, alpha=0.9)
+                    ln, = self.ax.plot(x_num, e, label=f"EMA({sp})", color=col, alpha=0.9)
                     _register(f"ema_{sp}_{col}", ln)
                 except Exception:
                     pass
@@ -552,8 +559,8 @@ class ChartTab(QWidget):
                     col_up = norm["bollinger"].get("color_up") or _get_color(norm.get("bollinger"), "#2ca02c")
                     col_low = norm["bollinger"].get("color_low") or _get_color(norm.get("bollinger"), "#d62728")
                     up, low = bollinger(df["close"], window=w, n_std=nstd)
-                    l1, = self.ax.plot(x, up, label=f"BB_up({w},{nstd})", color=col_up, alpha=0.6)
-                    l2, = self.ax.plot(x, low, label=f"BB_low({w},{nstd})", color=col_low, alpha=0.6)
+                    l1, = self.ax.plot(x_num, up, label=f"BB_up({w},{nstd})", color=col_up, alpha=0.6)
+                    l2, = self.ax.plot(x_num, low, label=f"BB_low({w},{nstd})", color=col_low, alpha=0.6)
                     _register(f"bollinger_{w}_{nstd}", [l1, l2])
                 except Exception:
                     pass
@@ -572,7 +579,7 @@ class ChartTab(QWidget):
                         except Exception:
                             pass
                         self._aux_axes["rsi"] = ax_rsi
-                    ln, = ax_rsi.plot(x, r, label=f"RSI({p})", color=col, alpha=0.8)
+                    ln, = ax_rsi.plot(x_num, r, label=f"RSI({p})", color=col, alpha=0.8)
                     ax_rsi.set_ylabel("RSI")
                     _register(f"rsi_{p}_{col}", ln)
                 except Exception:
@@ -594,8 +601,8 @@ class ChartTab(QWidget):
                         except Exception:
                             pass
                         self._aux_axes["macd"] = ax_macd
-                    ln1, = ax_macd.plot(x, m["macd"], label=f"MACD({f},{s})", color=col, alpha=0.9)
-                    ln2, = ax_macd.plot(x, m["signal"], label=f"Signal({sg})", color="#1f77b4", alpha=0.6)
+                    ln1, = ax_macd.plot(x_num, m["macd"], label=f"MACD({f},{s})", color=col, alpha=0.9)
+                    ln2, = ax_macd.plot(x_num, m["signal"], label=f"Signal({sg})", color="#1f77b4", alpha=0.6)
                     _register(f"macd_{f}_{s}_{sg}", [ln1, ln2])
                 except Exception:
                     pass
@@ -623,46 +630,63 @@ class ChartTab(QWidget):
     def update_plot(self, df: pd.DataFrame, timeframe: Optional[str] = None):
         """
         Public plotting entrypoint: draw base 'close' line and reapply indicators.
-        Used by HistoryTab and other callers. Safe and idempotent.
+        Uses matplotlib numeric dates for X to ensure live updates work reliably.
         """
         try:
-            self.ax.clear()
             if df is None or getattr(df, "empty", True):
-                self.ax.set_title("No data")
-                self.canvas.draw()
+                try:
+                    self.ax.set_title("No data")
+                    self.canvas.draw_idle()
+                except Exception:
+                    pass
                 return
+
             # ensure ts_utc column exists and convert to datetimes (local tz)
             try:
-                x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True)
-                x = x.dt.tz_convert(None)
+                x_dt = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True)
+                x_dt = x_dt.dt.tz_convert(None)
             except Exception:
-                x = pd.to_datetime(df.get("ts_utc", df.index))
+                x_dt = pd.to_datetime(df.get("ts_utc", df.index))
             try:
                 y = df["close"].astype(float)
             except Exception:
-                # fallback: if close missing, try last column
                 try:
                     y = df.iloc[:, -1].astype(float)
                 except Exception:
-                    y = pd.Series([0.0] * len(x))
+                    y = pd.Series([0.0] * len(x_dt))
 
-            # draw base close line (store for later removal)
+            # convert to matplotlib numeric date values
+            try:
+                x_num = mdates.date2num(x_dt.to_pydatetime() if hasattr(x_dt, "to_pydatetime") else pd.to_datetime(x_dt).to_pydatetime())
+            except Exception:
+                # fallback: try per-value conversion
+                try:
+                    x_num = [mdates.date2num(d) for d in list(x_dt)]
+                except Exception:
+                    x_num = list(range(len(y)))
+
+            # If base line exists, update its data instead of clearing axes (preserve toolbar/events)
             try:
                 if getattr(self, "_base_line", None) is not None:
                     try:
-                        self._base_line.remove()
+                        self._base_line.set_xdata(x_num)
+                        self._base_line.set_ydata(y)
                     except Exception:
-                        pass
-                    self._base_line = None
+                        try:
+                            self._base_line.remove()
+                        except Exception:
+                            pass
+                        self._base_line, = self.ax.plot(x_num, y, "-", color="black", linewidth=1.0, label="close")
+                else:
+                    self._base_line, = self.ax.plot(x_num, y, "-", color="black", linewidth=1.0, label="close")
             except Exception:
-                pass
-            try:
-                self._base_line, = self.ax.plot(x, y, "-", color="black", linewidth=1.0, label="close")
-            except Exception:
-                self.ax.plot(x, y, "-", color="black", linewidth=1.0, label="close")
+                try:
+                    self._base_line, = self.ax.plot(x_num, y, "-", color="black", linewidth=1.0, label="close")
+                except Exception:
+                    pass
 
             self.ax.set_title("Historical close")
-            # format X axis with date+time
+            # set date formatter and locator (works with numeric dates)
             try:
                 self.ax.xaxis.set_major_formatter(DateFormatter("%Y-%m-%d %H:%M:%S"))
                 self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
@@ -673,10 +697,25 @@ class ChartTab(QWidget):
                 self.ax.autoscale_view()
             except Exception:
                 pass
-            self.ax.figure.autofmt_xdate()
-            self.canvas.draw()
+
+            # non-blocking draw
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                try:
+                    self.canvas.draw()
+                except Exception:
+                    pass
+
             # update buffer
             self._last_df = df
+
+            # diagnostic log
+            try:
+                tail_preview = df.tail(3).to_dict(orient="records") if not getattr(df, "empty", True) else []
+                logger.debug("update_plot: plotted df shape=%s tail=%s", getattr(df, "shape", None), tail_preview)
+            except Exception:
+                logger.debug("update_plot: plotted df (could not stringify tail)")
 
             # connect xlim_changed handler once
             try:
@@ -773,11 +812,22 @@ class ChartTab(QWidget):
 
             # redraw efficiently: update_plot will draw base and reapply indicators
             try:
-                # use draw_idle for responsiveness
+                try:
+                    prev_len = len(self._last_df) if getattr(self, "_last_df", None) is not None else 0
+                except Exception:
+                    prev_len = None
+                logger.debug("handle_tick: updating plot, prev_len=%s", prev_len)
                 self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
                 try:
-                    # force immediate redraw if needed
+                    # request idle redraw (non-blocking)
                     self.canvas.draw_idle()
+                except Exception:
+                    try:
+                        self.canvas.draw()
+                    except Exception:
+                        pass
+                try:
+                    logger.debug("handle_tick: plot update requested, new_len=%s", len(self._last_df) if getattr(self, "_last_df", None) is not None else 0)
                 except Exception:
                     pass
             except Exception as e:
