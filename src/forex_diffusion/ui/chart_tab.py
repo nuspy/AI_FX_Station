@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 import pandas as pd
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -21,7 +21,21 @@ class ChartTab(QWidget):
         self.layout = QVBoxLayout(self)
         self.canvas = FigureCanvas(Figure(figsize=(6,4)))
         self.toolbar = NavigationToolbar(self.canvas, self)
-        self.layout.addWidget(self.toolbar)
+        # indicators button
+        try:
+            from .indicators_dialog import IndicatorsDialog
+            self.indicators_btn = QPushButton("Indicatori")
+            self.indicators_btn.clicked.connect(self._open_indicators_dialog)
+            # place toolbar and button in a horizontal layout
+            topbar = QWidget()
+            top_layout = QHBoxLayout(topbar)
+            top_layout.setContentsMargins(0, 0, 0, 0)
+            top_layout.addWidget(self.toolbar)
+            top_layout.addWidget(self.indicators_btn)
+            self.layout.addWidget(topbar)
+        except Exception:
+            # fallback: just add toolbar
+            self.layout.addWidget(self.toolbar)
         self.layout.addWidget(self.canvas)
         self.ax = self.canvas.figure.subplots()
         self.ax.set_title("Historical chart")
@@ -105,6 +119,77 @@ class ChartTab(QWidget):
             if event.button == 1:
                 self._is_panning = False
                 self._pan_start = None
+        except Exception:
+            pass
+
+    def _open_indicators_dialog(self):
+        try:
+            from .indicators_dialog import IndicatorsDialog
+            dlg = IndicatorsDialog(parent=self)
+            if dlg.exec():
+                cfg = dlg.result()
+                self._apply_indicators(cfg)
+        except Exception:
+            pass
+
+    def _apply_indicators(self, cfg: dict):
+        """
+        Compute indicators from current _last_df and overlay on axes.
+        cfg example: {'sma': {'window':20}, 'rsi': {'period':14}}
+        """
+        if self._last_df is None or self._last_df.empty:
+            return
+        try:
+            import pandas as pd
+            from ..features.indicators import sma, ema, bollinger, rsi, macd
+            df = self._last_df.copy()
+            # ensure sorted ascending and close column present
+            if "ts_utc" not in df.columns or "close" not in df.columns:
+                return
+            df = df.sort_values("ts_utc").reset_index(drop=True)
+            x = pd.to_datetime(df["ts_utc"].astype("int64"), unit="ms", utc=True).dt.tz_convert(None)
+            y = df["close"].astype(float)
+            # replot base
+            try:
+                self.ax.lines.clear()
+            except Exception:
+                pass
+            self.ax.plot(x, y, color="black", linewidth=1.0, label="close")
+            # compute/plot configured indicators
+            if "sma" in cfg:
+                w = int(cfg["sma"].get("window", 20))
+                s = sma(df["close"], w)
+                self.ax.plot(x, s, label=f"SMA({w})", alpha=0.9)
+            if "ema" in cfg:
+                sp = int(cfg["ema"].get("span", 20))
+                e = ema(df["close"], sp)
+                self.ax.plot(x, e, label=f"EMA({sp})", alpha=0.9)
+            if "bollinger" in cfg:
+                w = int(cfg["bollinger"].get("window", 20))
+                nstd = float(cfg["bollinger"].get("n_std", 2.0))
+                up, low = bollinger(df["close"], window=w, n_std=nstd)
+                self.ax.plot(x, up, label=f"BB_up({w},{nstd})", color="green", alpha=0.6)
+                self.ax.plot(x, low, label=f"BB_low({w},{nstd})", color="red", alpha=0.6)
+            if "rsi" in cfg:
+                p = int(cfg["rsi"].get("period", 14))
+                r = rsi(df["close"], period=p)
+                # plot RSI on secondary axis
+                ax2 = self.ax.twinx()
+                ax2.plot(x, r, label=f"RSI({p})", color="purple", alpha=0.8)
+                ax2.set_ylabel("RSI")
+            if "macd" in cfg:
+                f = int(cfg["macd"].get("fast", 12))
+                s = int(cfg["macd"].get("slow", 26))
+                sg = int(cfg["macd"].get("signal", 9))
+                m = macd(df["close"], fast=f, slow=s, signal=sg)
+                ax2 = self.ax.twinx()
+                ax2.plot(x, m["macd"], label=f"MACD({f},{s})", color="orange", alpha=0.9)
+                ax2.plot(x, m["signal"], label=f"Signal({sg})", color="blue", alpha=0.6)
+            try:
+                self.ax.legend(loc="upper left", fontsize="small")
+            except Exception:
+                pass
+            self.canvas.draw()
         except Exception:
             pass
 
