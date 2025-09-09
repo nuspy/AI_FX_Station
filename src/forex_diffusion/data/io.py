@@ -285,7 +285,17 @@ def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str
 
     # Validate
     dfv, vreport = validate_candles_df(df, symbol=symbol, timeframe=timeframe)
-    logger.debug("Validation report pre-upsert: {}", vreport)
+    # Sanitize validation report for logging: suppress potentially large 'gaps' details
+    try:
+        vreport_sanitized = dict(vreport) if isinstance(vreport, dict) else {"note": "invalid_vreport_type"}
+        if isinstance(vreport_sanitized, dict) and "gaps" in vreport_sanitized:
+            # remove full gaps payload and replace with a brief marker containing the count
+            n_gaps = vreport_sanitized.get("n_gaps_flagged", "?")
+            vreport_sanitized.pop("gaps", None)
+            vreport_sanitized["gaps"] = f"<suppressed {n_gaps} items>"
+    except Exception:
+        vreport_sanitized = {"note": "failed_to_sanitize_vreport"}
+    logger.debug("Validation report pre-upsert: {}", vreport_sanitized)
 
     # Prepare engine & table
     tbl = ensure_candles_table(engine)
@@ -404,6 +414,17 @@ def backfill_from_provider(
     report = upsert_candles(engine, dfv, symbol, timeframe, resampled=resampled)
     combined = {"provider_rows": len(df), "validation": vreport, "upsert": report}
 
+    # Prepare a sanitized copy for logging to avoid very large 'gaps' payloads
+    try:
+        sanitized_vreport = dict(vreport) if isinstance(vreport, dict) else {"note": "invalid_vreport_type"}
+        if isinstance(sanitized_vreport, dict) and "gaps" in sanitized_vreport:
+            n_gaps = sanitized_vreport.get("n_gaps_flagged", "?")
+            sanitized_vreport.pop("gaps", None)
+            sanitized_vreport["gaps"] = f"<suppressed {n_gaps} items>"
+        sanitized_combined = {"provider_rows": len(df), "validation": sanitized_vreport, "upsert": report}
+    except Exception:
+        sanitized_combined = {"provider_rows": len(df), "validation": {"note": "failed_to_sanitize"}, "upsert": report}
+
     # Optionally compute features and persist
     try:
         persist = False
@@ -434,5 +455,10 @@ def backfill_from_provider(
         combined["features_persisted"] = False
         combined["features_error"] = str(e)
 
-    logger.info("Backfill report for {}/{}: {}", symbol, timeframe, combined)
+    # Log sanitized report to avoid verbose gaps in logs, but return full combined for callers
+    try:
+        logger.info("Backfill report for {}/{}: {}", symbol, timeframe, sanitized_combined)
+    except Exception:
+        # fallback to logging combined if sanitized_combined missing for any reason
+        logger.info("Backfill report for {}/{}: {}", symbol, timeframe, combined)
     return combined
