@@ -391,10 +391,11 @@ class MarketDataService:
         now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
         return (t_last, now_ms)
 
-    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False) -> dict:
+    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, years: Optional[int] = None) -> dict:
         """
         Backfill symbol/timeframe from last DB timestamp to now.
         If force_full True, download full history per provider mapping (e.g., 20 years daily etc.)
+        Optional 'years' overrides the configured history_years for a full daily backfill.
         Returns QA report dict.
 
         This implementation is robust to Settings being a pydantic model or a plain dict.
@@ -436,7 +437,8 @@ class MarketDataService:
         # If no data present or force_full and timeframe daily -> request full 20y daily
         if t_last is None or force_full:
             if timeframe in ["1d", "1D", "daily"]:
-                years = int(data_cfg.get("backfill", {}).get("history_years", 20))
+                cfg_years = int(data_cfg.get("backfill", {}).get("history_years", 20))
+                years = int(years) if (years is not None) else cfg_years
                 start_ts_ms = None
                 end_ts_ms = now_ms
                 df = self.provider.get_historical(symbol=symbol, timeframe="1d", start_ts_ms=start_ts_ms, end_ts_ms=end_ts_ms)

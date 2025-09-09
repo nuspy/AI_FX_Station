@@ -33,7 +33,19 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
     """
     result: dict[str, Any] = {}
     try:
+        import threading
         market_service = MarketDataService()
+        # force provider to tiingo and log
+        try:
+            market_service.set_provider("tiingo")
+            logger.info("Forced MarketDataService provider to tiingo at startup")
+        except Exception:
+            pass
+        # schedule startup backfill in background (non-blocking)
+        try:
+            threading.Thread(target=market_service.ensure_startup_backfill, daemon=True).start()
+        except Exception:
+            pass
         controller = UIController(main_window=main_window, market_service=market_service, engine_url=engine_url)
         # bind menu signals (best-effort)
         try:
@@ -86,6 +98,12 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             tabw.addTab(signals_tab, "Signals")
             tabw.addTab(history_tab, "History")
             tabw.addTab(chart_tab, "Chart")
+
+            # link history tab to chart for automatic plotting
+            try:
+                history_tab.chart_tab = chart_tab
+            except Exception:
+                pass
 
             layout.addWidget(tabw)
 

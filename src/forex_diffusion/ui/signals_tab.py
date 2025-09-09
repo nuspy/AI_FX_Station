@@ -265,7 +265,14 @@ class SignalsTab(QWidget):
                 self.table.setRowCount(len(rows))
                 for i, r in enumerate(rows):
                     ts = int(r[0])
-                    self.table.setItem(i, 0, QTableWidgetItem(str(ts)))
+                    # convert UTC ms timestamp to local datetime string
+                    try:
+                        import datetime
+                        dt = datetime.datetime.fromtimestamp(ts / 1000, tz=datetime.timezone.utc).astimezone()
+                        ts_str = dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                    except Exception:
+                        ts_str = str(ts)
+                    self.table.setItem(i, 0, QTableWidgetItem(ts_str))
                     self.table.setItem(i, 1, QTableWidgetItem(str(r[1])))
                     self.table.setItem(i, 2, QTableWidgetItem(str(r[2])))
                     self.table.setItem(i, 3, QTableWidgetItem(str(r[3])))
