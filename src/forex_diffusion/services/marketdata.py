@@ -66,7 +66,7 @@ class TiingoClient:
         except Exception as e:
             # log response body for debugging and re-raise
             try:
-                logger.debug("Tiingo HTTP error: status=%s url=%s body=%s", r.status_code, url, r.text)
+                logger.debug("Tiingo HTTP error: status={} url={} body={}", r.status_code, url, r.text)
             except Exception:
                 pass
             raise
@@ -75,14 +75,14 @@ class TiingoClient:
             data = r.json()
         except Exception:
             try:
-                logger.debug("Tiingo response not JSON: status=%s url=%s body=%s", r.status_code, url, r.text)
+                logger.debug("Tiingo response not JSON: status={} url={} body={}", r.status_code, url, r.text)
             except Exception:
                 pass
             raise
         # if data empty, log the raw body for debugging
         try:
             if not data:
-                logger.debug("Tiingo returned empty data for url=%s params=%s body=%s", url, params, r.text)
+                logger.debug("Tiingo returned empty data for url={} params={} body={}", url, params, r.text)
         except Exception:
             pass
         return data
@@ -93,20 +93,40 @@ class TiingoClient:
 
     def get_current_price(self, symbol: str) -> dict:
         """
-        Query Tiingo FX last price endpoint if available.
-        Example endpoint used: /tiingo/fx/{pair}/prices
+        Query Tiingo for a current price. Primary try endpoint; fallback to a short historical query
+        and return the last close if available.
         """
         a, b = self.parse_symbol_pair(symbol)
         path = f"tiingo/fx/{a}{b}/prices"
         try:
+            # best-effort direct call (may be restricted); try a small params set
             data = self._get(path, params={"resampleFreq": "1min", "startDate": None})
-            # Tiingo returns list of price points; take last
             if isinstance(data, list) and len(data) > 0:
                 last = data[-1]
-                return {"ts_utc": int(pd.to_datetime(last.get("date")).value // 1_000_000), "price": float(last.get("close"))}
+                try:
+                    ts = int(pd.to_datetime(last.get("date")).value // 1_000_000)
+                    price = float(last.get("close"))
+                    return {"ts_utc": ts, "price": price}
+                except Exception:
+                    # fallthrough to historical fallback
+                    pass
         except Exception:
-            # best-effort: return empty dict
-            return {}
+            # log and fall back to historical query
+            logger.debug("Tiingo direct current price failed for %s, falling back to historical", symbol)
+
+        # Historical fallback: request recent 5 minutes (1m bars) and take last close
+        try:
+            now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+            start_ms = now_ms - 5 * 60 * 1000
+            df = self.get_historical(symbol=symbol, timeframe="1m", start_ts_ms=start_ms, end_ts_ms=now_ms)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                last = df.iloc[-1]
+                try:
+                    return {"ts_utc": int(last["ts_utc"]), "price": float(last["close"])}
+                except Exception:
+                    return {}
+        except Exception as e:
+            logger.debug("Tiingo historical fallback failed for %s: {}", symbol, e)
         return {}
 
     def get_historical(self, symbol: str, timeframe: str, start_ts_ms: Optional[int] = None, end_ts_ms: Optional[int] = None) -> pd.DataFrame:

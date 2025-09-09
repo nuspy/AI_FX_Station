@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Optional
 
 import pandas as pd
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTableWidget, QTableWidgetItem, QLabel
+from PySide6.QtWidgets import (
+    QWidget, QLabel, QVBoxLayout, QPushButton, QTableWidget, QTableWidgetItem, QLabel,
+    QTextEdit, QHBoxLayout, QMessageBox, QComboBox, QSpinBox
+)
+from PySide6.QtCore import Qt
 from loguru import logger
 from sqlalchemy import MetaData, select
 
@@ -52,6 +56,7 @@ from ..services.db_service import DBService
 from ..services.regime_service import RegimeService
 from ..services.scheduler import RegimeScheduler
 from ..services.monitor import RegimeMonitor
+from ..services.marketdata import MarketDataService
 
 
 class SignalsTab(QWidget):
@@ -64,13 +69,19 @@ class SignalsTab(QWidget):
     - Show index metrics and monitor metrics
     Logs actions into a small console area.
     """
-    def __init__(self, parent=None, db_service: Optional[DBService] = None):
+    def __init__(self, parent=None, db_service: Optional[DBService] = None, market_service: Optional[MarketDataService] = None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
 
         self.header = QLabel("Signals & Admin")
         self.header.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.header)
+
+        # keep reference to market service (allows provider switching from UI)
+        try:
+            self.market_service = market_service or MarketDataService()
+        except Exception:
+            self.market_service = market_service
 
         # signals table and refresh
         top_h = QHBoxLayout()
