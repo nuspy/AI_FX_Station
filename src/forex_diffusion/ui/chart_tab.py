@@ -5,7 +5,7 @@ from typing import Optional
 import pandas as pd
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -59,6 +59,13 @@ class ChartTab(QWidget):
             except Exception:
                 pass
         self.layout.addWidget(self.canvas)
+        # ensure canvas receives wheel/mouse events and can get focus for interactions
+        try:
+            self.canvas.setFocusPolicy(Qt.StrongFocus)
+            self.canvas.setFocus()
+            self.canvas.setMouseTracking(True)
+        except Exception:
+            pass
         self.ax = self.canvas.figure.subplots()
         self.ax.set_title("Historical chart")
         self._last_df = None
@@ -120,12 +127,9 @@ class ChartTab(QWidget):
         # Interaction state for panning
         self._is_panning = False
         self._pan_start = None  # (xpress, ypress)
-        # connect mouse events
+        # connect mouse events via helper (idempotent)
         try:
-            self.canvas.mpl_connect("scroll_event", self._on_scroll)
-            self.canvas.mpl_connect("button_press_event", self._on_button_press)
-            self.canvas.mpl_connect("motion_notify_event", self._on_motion)
-            self.canvas.mpl_connect("button_release_event", self._on_button_release)
+            self._connect_mpl_events()
         except Exception:
             pass
 
@@ -285,6 +289,53 @@ class ChartTab(QWidget):
                 logger.exception("apply_indicators internal failure: {}", e)
         except Exception as e:
             logger.exception("apply_indicators failed: {}", e)
+
+    def _connect_mpl_events(self):
+        """
+        Disconnect previous canvas cids (if any) and connect canvas mouse events for zoom & pan.
+        Stores connection ids in self._mpl_cids so we can clean them up on reconnect.
+        """
+        try:
+            # disconnect existing connections first
+            try:
+                if getattr(self, "_mpl_cids", None):
+                    for name, cid in list(self._mpl_cids.items()):
+                        try:
+                            if cid is not None:
+                                self.canvas.mpl_disconnect(cid)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            # reset registry
+            self._mpl_cids = {}
+            # connect events
+            try:
+                self._mpl_cids["scroll"] = self.canvas.mpl_connect("scroll_event", self._on_scroll)
+            except Exception:
+                self._mpl_cids["scroll"] = None
+            try:
+                self._mpl_cids["button_press"] = self.canvas.mpl_connect("button_press_event", self._on_button_press)
+            except Exception:
+                self._mpl_cids["button_press"] = None
+            try:
+                self._mpl_cids["motion"] = self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+            except Exception:
+                self._mpl_cids["motion"] = None
+            try:
+                self._mpl_cids["button_release"] = self.canvas.mpl_connect("button_release_event", self._on_button_release)
+            except Exception:
+                self._mpl_cids["button_release"] = None
+            # xlim_changed handler: ensure connected once (we keep flag)
+            try:
+                if not getattr(self, "_xlim_connected", False):
+                    cid = self.canvas.mpl_connect("xlim_changed", self._on_xlim_changed)
+                    self._mpl_cids["xlim_changed"] = cid
+                    self._xlim_connected = True
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def redraw(self):
         """
@@ -546,6 +597,11 @@ class ChartTab(QWidget):
                 if not getattr(self, "_xlim_connected", False):
                     self.canvas.mpl_connect("xlim_changed", self._on_xlim_changed)
                     self._xlim_connected = True
+            except Exception:
+                pass
+            # ensure mouse events are connected (idempotent)
+            try:
+                self._connect_mpl_events()
             except Exception:
                 pass
 
