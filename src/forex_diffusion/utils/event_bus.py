@@ -104,11 +104,21 @@ def debug_status() -> dict:
 def get_subscribers(topic: str) -> list:
     """
     Return a shallow copy of subscriber callables for a topic (thread-safe).
+    Deduplicate by identity (id) to avoid multiple invocations of the same callable.
     """
     try:
         with _registry_lock:
             lst = list(_registry.get(topic, []) )
-        return lst
+        # dedupe by id while preserving order
+        seen = set()
+        out = []
+        for cb in lst:
+            iid = id(cb)
+            if iid in seen:
+                continue
+            seen.add(iid)
+            out.append(cb)
+        return out
     except Exception as e:
         logger.exception("event_bus.get_subscribers failed for topic=%s: %s", topic, e)
         return []

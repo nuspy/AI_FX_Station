@@ -135,13 +135,14 @@ class ChartTab(QWidget):
         except Exception:
             pass
 
-        # subscribe to in-process tick events for live updates
+        # Note: ChartTab no longer subscribes directly to event_bus here to avoid
+        # cross-thread Qt calls and duplicate subscriptions when an EventBridge
+        # is registered in setup_ui. EventBridge.tickReceived will be connected
+        # to chart_tab._on_tick_event in the application setup.
         try:
-            from ..utils.event_bus import subscribe
-            subscribe("tick", self._on_tick_event)
-            logger.info("ChartTab subscribed to 'tick' events")
-        except Exception as e:
-            logger.exception("ChartTab failed to subscribe to 'tick' events: {}", e)
+            logger.debug("ChartTab will receive ticks via EventBridge (if present); not subscribing directly to event_bus")
+        except Exception:
+            pass
 
         # start a DB poll timer to detect external inserts (fallback when websocket not available)
         try:

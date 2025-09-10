@@ -159,8 +159,19 @@ class TiingoWSConnector:
                                             logger.info(f"TiingoWSConnector event_bus status after publish: {st}")
                                             subs = get_subscribers("tick")
                                             if subs:
-                                                logger.info(f"TiingoWSConnector: invoking {len(subs)} subscribers directly as fallback")
+                                                # deduplicate by identity to avoid multiple calls to same callable
+                                                uniq = []
+                                                seen = set()
                                                 for cb in subs:
+                                                    iid = id(cb)
+                                                    if iid in seen:
+                                                        continue
+                                                    seen.add(iid)
+                                                    uniq.append(cb)
+                                                if len(uniq) != len(subs):
+                                                    logger.info(f"TiingoWSConnector: removed {len(subs)-len(uniq)} duplicate subscribers before invoking")
+                                                logger.info(f"TiingoWSConnector: invoking {len(uniq)} unique subscribers directly as fallback")
+                                                for cb in uniq:
                                                     try:
                                                         # call subscriber in current thread; many subscribers (e.g. bridge._on_event) will enqueue to UI
                                                         cb(payload)
