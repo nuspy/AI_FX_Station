@@ -422,6 +422,11 @@ class ChartTab(QWidget):
                     self._xlim_connected = True
             except Exception:
                 pass
+            # diagnostic: log connected cids
+            try:
+                logger.debug("ChartTab _connect_mpl_events: cids=%s", self._mpl_cids)
+            except Exception:
+                pass
         except Exception:
             pass
 

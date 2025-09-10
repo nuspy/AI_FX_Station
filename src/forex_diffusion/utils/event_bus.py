@@ -2,21 +2,27 @@
 from __future__ import annotations
 
 """
-Thread-safe in-process event bus (pub/sub).
-Provides: subscribe(topic, callback), unsubscribe(topic, callback), publish(topic, payload).
-Callbacks are invoked synchronously in the publishing thread; exceptions in callbacks are logged and ignored.
+Thread-safe in-process event bus (queue-based).
+- publish(topic, payload) appends payload to an internal per-topic queue (safe from any thread).
+- take_pending(topic) returns and clears queued payloads (call from UI thread).
+- subscribe/unsubscribe remain for in-process direct callbacks if needed, but publish no longer calls subscribers directly.
+This avoids executing Qt-related callbacks from non-Qt threads.
 """
 
 from typing import Any, Callable, Dict, List
 import threading
 from loguru import logger
 
-# Internal registry and lock
+# Internal registry and lock for subscribers (not invoked by publish to avoid threading issues)
 _registry: Dict[str, List[Callable[[Any], None]]] = {}
 _registry_lock = threading.RLock()
 
+# Per-topic payload queues for safe cross-thread publication
+_queues: Dict[str, List[Any]] = {}
+_queues_lock = threading.RLock()
+
 def subscribe(topic: str, callback: Callable[[Any], None]) -> None:
-    """Subscribe a callable to a topic."""
+    """Register a callback (not automatically invoked by publish anymore)."""
     try:
         with _registry_lock:
             lst = _registry.setdefault(topic, [])
@@ -27,7 +33,7 @@ def subscribe(topic: str, callback: Callable[[Any], None]) -> None:
         logger.exception("event_bus.subscribe failed for topic=%s: %s", topic, e)
 
 def unsubscribe(topic: str, callback: Callable[[Any], None]) -> None:
-    """Unsubscribe a callable from a topic."""
+    """Remove a previously registered callback."""
     try:
         with _registry_lock:
             lst = _registry.get(topic)
@@ -44,18 +50,35 @@ def unsubscribe(topic: str, callback: Callable[[Any], None]) -> None:
         logger.exception("event_bus.unsubscribe failed for topic=%s: %s", topic, e)
 
 def publish(topic: str, payload: Any) -> None:
-    """Publish payload to all subscribers for the topic. Exceptions in subscribers are logged and ignored."""
+    """
+    Publish: append payload to per-topic queue.
+    Does NOT invoke subscribers directly to avoid executing UI code from non-UI threads.
+    """
     try:
-        with _registry_lock:
-            subs = list(_registry.get(topic, []))
-        logger.debug("event_bus: publish topic='{}' payload_type='{}' subscribers={}", topic, type(payload).__name__, len(subs))
-        for cb in subs:
-            try:
-                cb(payload)
-            except Exception as e:
-                logger.exception("event_bus: subscriber for topic='%s' raised: %s", topic, e)
+        with _queues_lock:
+            q = _queues.setdefault(topic, [])
+            q.append(payload)
+            sz = len(q)
+        logger.debug("event_bus: publish -> topic='{}' queued payload_type='{}' queue_size={}", topic, type(payload).__name__, sz)
     except Exception as e:
         logger.exception("event_bus.publish failed for topic=%s: %s", topic, e)
+
+def take_pending(topic: str) -> List[Any]:
+    """
+    Consume and return all pending payloads for a topic; to be called from the main/UI thread.
+    """
+    try:
+        with _queues_lock:
+            lst = _queues.get(topic, [])
+            if not lst:
+                return []
+            out = list(lst)
+            _queues[topic] = []
+        logger.debug("event_bus: take_pending -> topic='{}' returned_count={}", topic, len(out))
+        return out
+    except Exception as e:
+        logger.exception("event_bus.take_pending failed for topic=%s: %s", topic, e)
+        return []
 
 # Backwards-compatible aliases
 pub = publish

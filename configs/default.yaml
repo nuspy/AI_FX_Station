@@ -31,7 +31,7 @@ alembic:
 providers:
   default: "tiingo"
   tiingo:
-    key: "${TIINGO_API_KEY:-YOUR_TIINGO_API_KEY}"
+    key: "${TIINGO_API_KEY:d867b4314010495a5fa40593610eb3deae5e2dcd}"
     base_url: "https://api.tiingo.com"
     # Tiingo rate limits and other options can be configured here if needed
   alpha_vantage:
