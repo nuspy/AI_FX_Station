@@ -174,6 +174,61 @@ class SignalsTab(QWidget):
         self.log.setFixedHeight(160)
         self.layout.addWidget(self.log)
 
+        # --- Auto-apply provider and auto-refresh on initialisation
+        try:
+            # If market_service exists, set provider combo to its current provider
+            current_provider = None
+            try:
+                if getattr(self, "market_service", None) is not None and hasattr(self.market_service, "provider_name"):
+                    current_provider = self.market_service.provider_name()
+            except Exception:
+                current_provider = None
+            if current_provider and self.provider_combo is not None:
+                try:
+                    # set combo to current provider (best-effort)
+                    idx = self.provider_combo.findText(current_provider)
+                    if idx >= 0:
+                        self.provider_combo.setCurrentIndex(idx)
+                    else:
+                        # if not present, add and select
+                        self.provider_combo.addItem(current_provider)
+                        self.provider_combo.setCurrentText(current_provider)
+                except Exception:
+                    pass
+            # apply poll interval if available
+            try:
+                if getattr(self, "market_service", None) is not None and hasattr(self.market_service, "poll_interval") and self.poll_spin is not None:
+                    try:
+                        self.poll_spin.setValue(int(self.market_service.poll_interval()))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # apply provider and refresh signals automatically (non-blocking best-effort)
+            try:
+                self.on_apply_provider()
+            except Exception:
+                try:
+                    self._log("Auto-apply provider failed")
+                except Exception:
+                    pass
+            try:
+                # initial refresh so the table is populated on open
+                self.refresh(limit=100)
+                try:
+                    self._log("Signals auto-refreshed at startup")
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    self._log("Auto-refresh failed at startup")
+                except Exception:
+                    pass
+        except Exception:
+            # tolerate any failure here to avoid breaking UI init
+            pass
+
     def on_apply_provider(self):
         try:
             svc = getattr(self, "market_service", None)

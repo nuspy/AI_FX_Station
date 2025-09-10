@@ -2,6 +2,9 @@
 # Helper: activate .venv (PowerShell) and launch the GUI helper
 # Usage: from project root in PowerShell: .\scripts\launch_gui.ps1
 
+# clear console to remove previous logs
+cls
+
 # Ensure script runs from repo root
 $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $PSScriptRoot
