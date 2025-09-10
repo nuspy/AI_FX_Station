@@ -28,10 +28,6 @@ class EventBridge(QObject):
         try:
             # emit payload to UI; Qt will queue the signal to the object's thread (UI thread)
             self.tickReceived.emit(payload)
-            try:
-                logger.info("EventBridge emitted tickReceived for payload")
-            except Exception:
-                pass
         except Exception as e:
             try:
                 logger.exception("EventBridge failed to emit tick: {}", e)

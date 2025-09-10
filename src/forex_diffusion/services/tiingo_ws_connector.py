@@ -160,30 +160,26 @@ class TiingoWSConnector:
                                         # Diagnostic: check event_bus status and call subscribers directly as fallback
                                         try:
                                             from ..utils.event_bus import debug_status, get_subscribers
-                                            st = debug_status()
-                                            logger.info(f"TiingoWSConnector event_bus status after publish: {st}")
-                                            subs = get_subscribers("tick")
-                                            if subs:
-                                                # deduplicate by identity to avoid multiple calls to same callable
-                                                uniq = []
-                                                seen = set()
-                                                for cb in subs:
-                                                    iid = id(cb)
-                                                    if iid in seen:
-                                                        continue
-                                                    seen.add(iid)
-                                                    uniq.append(cb)
-                                                if len(uniq) != len(subs):
-                                                    logger.info(f"TiingoWSConnector: removed {len(subs)-len(uniq)} duplicate subscribers before invoking")
-                                                logger.info(f"TiingoWSConnector: invoking {len(uniq)} unique subscribers directly as fallback")
-                                                for cb in uniq:
-                                                    try:
-                                                        # call subscriber in current thread; many subscribers (e.g. bridge._on_event) will enqueue to UI
-                                                        cb(payload)
-                                                    except Exception as e:
-                                                        logger.debug("TiingoWSConnector: subscriber direct call failed: {}", e)
-                                            else:
-                                                logger.debug("TiingoWSConnector: no subscribers found in registry")
+                                            try:
+                                                st = debug_status()
+                                                subs = get_subscribers("tick")
+                                                if subs:
+                                                    # deduplicate by identity then call subscribers silently as fallback
+                                                    uniq = []
+                                                    seen = set()
+                                                    for cb in subs:
+                                                        iid = id(cb)
+                                                        if iid in seen:
+                                                            continue
+                                                        seen.add(iid)
+                                                        uniq.append(cb)
+                                                    for cb in uniq:
+                                                        try:
+                                                            cb(payload)
+                                                        except Exception:
+                                                            pass
+                                            except Exception:
+                                                pass
                                         except Exception as e:
                                             logger.debug("TiingoWSConnector: debug/fallback subscriber invocation failed: {}", e)
                                         # optional DB upsert if engine provided

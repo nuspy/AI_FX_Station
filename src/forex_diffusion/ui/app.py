@@ -254,22 +254,7 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             result["market_service"] = market_service
 
             # Debug tracer: periodically log event_bus status (queue sizes and subscriber counts)
-            try:
-                from PySide6.QtCore import QTimer
-                from ..utils.event_bus import debug_status as _eb_status
-                tracer_timer = QTimer(main_window)
-                tracer_timer.setInterval(2000)
-                def _trace_event_bus():
-                    try:
-                        st = _eb_status()
-                        logger.info(f"event_bus tracer: {st}")
-                    except Exception as e:
-                        logger.debug("event_bus tracer failed: {}", e)
-                tracer_timer.timeout.connect(_trace_event_bus)
-                tracer_timer.start()
-                result["event_bus_tracer_timer"] = tracer_timer
-            except Exception:
-                pass
+            # event_bus tracer removed to silence periodic logs
 
             # refresh signals after each successful forecast if controller exists
             if "controller" in result:

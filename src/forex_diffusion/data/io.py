@@ -295,7 +295,7 @@ def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str
             vreport_sanitized["gaps"] = f"<suppressed {n_gaps} items>"
     except Exception:
         vreport_sanitized = {"note": "failed_to_sanitize_vreport"}
-    logger.debug("Validation report pre-upsert: {}", vreport_sanitized)
+    # Validation log removed to reduce noise
 
     # Prepare engine & table
     tbl = ensure_candles_table(engine)
@@ -365,7 +365,7 @@ def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str
         "rows_upserted": upserted,
         "validation": vreport,
     }
-    logger.info("Upserted {} rows for {}/{}", inserted, symbol, timeframe)
+    # Upsert info log removed to reduce log noise
     return report
 
 

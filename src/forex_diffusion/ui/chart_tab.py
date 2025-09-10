@@ -171,10 +171,8 @@ class ChartTab(QWidget):
         """
         try:
             # diagnostic trace: show invocation and key state
-            try:
-                logger.debug(f"ChartTab._poll_latest_tick invoked last_polled_ts={getattr(self, '_last_polled_ts', None)} db_service_present={getattr(self, 'db_service', None) is not None} symbol={getattr(self, 'symbol', None)} timeframe={getattr(self, 'timeframe', None)}")
-            except Exception:
-                logger.debug("ChartTab._poll_latest_tick invoked")
+            # trace removed to reduce log verbosity; keep method lightweight
+            pass
 
             if getattr(self, "db_service", None) is None or getattr(self, "symbol", None) is None:
                 try:
@@ -441,11 +439,7 @@ class ChartTab(QWidget):
                     self._xlim_connected = True
             except Exception:
                 pass
-            # diagnostic: log connected cids
-            try:
-                logger.debug(f"ChartTab _connect_mpl_events: cids={self._mpl_cids}")
-            except Exception:
-                pass
+            # removed debug logging to reduce noise
         except Exception:
             pass
 
@@ -753,13 +747,11 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            # diagnostic log
+            # update buffer silently
             try:
                 tail_preview = df.tail(3).to_dict(orient="records") if not getattr(df, "empty", True) else []
-                logger.debug(f"update_plot: plotted df shape={getattr(df, 'shape', None)} tail={tail_preview} last_polled_ts={getattr(self, '_last_polled_ts', None)}")
             except Exception:
-                logger.debug("update_plot: plotted df (could not stringify tail)")
-
+                tail_preview = []
             # connect xlim_changed handler once
             try:
                 if not getattr(self, "_xlim_connected", False):
@@ -809,8 +801,7 @@ class ChartTab(QWidget):
         Accept ticks even when payload lacks symbol/timeframe; ignore only if payload explicitly targets different symbol/timeframe.
         """
         try:
-            logger.info("ChartTab._handle_tick invoked with payload incoming")
-            # Normalize payload to dict if possible
+            # Normalize payload to dict if possible (no logging)
             if not isinstance(payload, dict):
                 try:
                     payload = dict(payload)
@@ -818,10 +809,6 @@ class ChartTab(QWidget):
                     payload = {"price": payload}
             sym = payload.get("symbol", None)
             tf = payload.get("timeframe", None)
-            try:
-                logger.info(f"ChartTab._handle_tick normalized payload: {payload}")
-            except Exception:
-                pass
 
             # If this ChartTab has a target symbol/timeframe and the payload explicitly targets another, ignore.
             if getattr(self, "symbol", None) is not None and sym is not None and sym != self.symbol:
@@ -898,10 +885,8 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            try:
-                logger.debug(f"Handled tick payload: sym={sym} tf={tf} price={price} bid={bid} ask={ask}")
-            except Exception:
-                logger.debug("Handled tick payload (could not format values)")
+            # handled tick silently
+            pass
         except Exception as e:
             logger.exception("Error handling tick payload: {}", e)
 
