@@ -24,6 +24,8 @@ class ChartTab(QWidget):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
+        # keep reference to main window (statusBar) for visible notifications
+        self._main_window = parent
         self.layout = QVBoxLayout(self)
         self.canvas = FigureCanvas(Figure(figsize=(6,4)))
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -849,6 +851,23 @@ class ChartTab(QWidget):
                     pass
             except Exception as e:
                 logger.debug("Failed to update plot after tick: {}", e)
+
+            # UI-visible notification in main window status bar (short-lived)
+            try:
+                mw = getattr(self, "_main_window", None)
+                if mw is not None and hasattr(mw, "statusBar"):
+                    try:
+                        sb = mw.statusBar()
+                        if sb is not None:
+                            label = sym if (sym is not None) else getattr(self, "symbol", "unknown")
+                            try:
+                                sb.showMessage(f"Tick {label} {float(price):.5f}", 3000)
+                            except Exception:
+                                sb.showMessage(f"Tick {label}", 3000)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             logger.debug("Handled tick payload: sym=%s tf=%s price=%s bid=%s ask=%s", sym, tf, price, bid, ask)
         except Exception as e:

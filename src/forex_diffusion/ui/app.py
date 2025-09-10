@@ -87,9 +87,15 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
         ws_port = getattr(market_service, "_ws_port", None) or 8765
         # pass the db_service instance we just created
         local_ws = LocalWebsocketServer(host="127.0.0.1", port=ws_port, db_service=db_service)
-        local_ws.start()
-        result["local_ws"] = local_ws
-        logger.info("Started LocalWebsocketServer on port {}", ws_port)
+        try:
+            started = local_ws.start()
+            if started:
+                result["local_ws"] = local_ws
+                logger.info("Started LocalWebsocketServer on port {}", ws_port)
+            else:
+                logger.warning("LocalWebsocketServer did not start on port {} (check 'websockets' package)", ws_port)
+        except Exception as e:
+            logger.exception("Failed to start LocalWebsocketServer: {}", e)
     except Exception as e:
         logger.exception("Failed to start LocalWebsocketServer: {}", e)
 

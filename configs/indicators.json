@@ -10,7 +10,7 @@
     "color": "#ff7f0e"
   },
   "bollinger": {
-    "enabled": true,
+    "enabled": false,
     "window": 20,
     "n_std": 2.0,
     "color_up": "#1f77b4",
@@ -22,7 +22,7 @@
     "color": "#d62728"
   },
   "macd": {
-    "enabled": false,
+    "enabled": true,
     "fast": 12,
     "slow": 26,
     "signal": 9,

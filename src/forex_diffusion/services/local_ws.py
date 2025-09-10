@@ -78,15 +78,25 @@ class LocalWebsocketServer:
             loop.run_until_complete(srv.wait_closed())
             loop.close()
 
-    def start(self):
+    def start(self) -> bool:
+        """
+        Start websocket server in background thread. Returns True if server thread started, False otherwise.
+        """
         if not _HAS_WEBSOCKETS:
             logger.warning("LocalWebsocketServer not started: 'websockets' package is not installed.")
-            return
+            return False
         if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._start_loop, daemon=True)
-        self._thread.start()
+            logger.debug("LocalWebsocketServer already running (thread alive).")
+            return True
+        try:
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._start_loop, daemon=True)
+            self._thread.start()
+            logger.debug("LocalWebsocketServer thread launched.")
+            return True
+        except Exception as e:
+            logger.exception("LocalWebsocketServer failed to start thread: {}", e)
+            return False
 
     def stop(self):
         self._stop.set()
