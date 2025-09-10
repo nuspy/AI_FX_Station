@@ -150,6 +150,10 @@ class ChartTab(QWidget):
             self._poll_timer.setInterval(1000)  # ms
             self._poll_timer.timeout.connect(self._poll_latest_tick)
             self._poll_timer.start()
+            try:
+                logger.debug("ChartTab poll timer started interval=%sms timer_id=%s", self._poll_timer.interval(), id(self._poll_timer))
+            except Exception:
+                logger.debug("ChartTab poll timer started")
         except Exception as e:
             logger.debug("ChartTab failed to start poll timer: {}", e)
 
@@ -165,12 +169,26 @@ class ChartTab(QWidget):
         This enables updates when external processes insert into the DB.
         """
         try:
+            # diagnostic trace: show invocation and key state
+            try:
+                logger.debug(f"ChartTab._poll_latest_tick invoked last_polled_ts={getattr(self, '_last_polled_ts', None)} db_service_present={getattr(self, 'db_service', None) is not None} symbol={getattr(self, 'symbol', None)} timeframe={getattr(self, 'timeframe', None)}")
+            except Exception:
+                logger.debug("ChartTab._poll_latest_tick invoked")
+
             if getattr(self, "db_service", None) is None or getattr(self, "symbol", None) is None:
+                try:
+                    logger.debug("ChartTab._poll_latest_tick early exit: db_service or symbol not configured")
+                except Exception:
+                    pass
                 return
             meta = MetaData()
             try:
                 meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
             except Exception:
+                try:
+                    logger.debug("ChartTab._poll_latest_tick: metadata reflect failed")
+                except Exception:
+                    pass
                 return
             tbl = meta.tables.get("market_data_candles")
             if tbl is None:
@@ -424,7 +442,7 @@ class ChartTab(QWidget):
                 pass
             # diagnostic: log connected cids
             try:
-                logger.debug("ChartTab _connect_mpl_events: cids=%s", self._mpl_cids)
+                logger.debug(f"ChartTab _connect_mpl_events: cids={self._mpl_cids}")
             except Exception:
                 pass
         except Exception:

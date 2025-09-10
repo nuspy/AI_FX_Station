@@ -22,7 +22,7 @@
     "color": "#d62728"
   },
   "macd": {
-    "enabled": true,
+    "enabled": false,
     "fast": 12,
     "slow": 26,
     "signal": 9,

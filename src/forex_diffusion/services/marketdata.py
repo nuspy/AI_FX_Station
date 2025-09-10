@@ -8,6 +8,7 @@ Market data providers and MarketDataService.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional, Tuple
@@ -85,6 +86,7 @@ class TiingoClient:
                 logger.debug("Tiingo returned empty data for url={} params={} body={}", url, params, r.text)
         except Exception:
             pass
+
         return data
 
     def parse_symbol_pair(self, symbol: str):
@@ -371,6 +373,154 @@ class MarketDataService:
             name = "tiingo"
         self._provider_name = name
         logger.info("MarketDataService provider set to %s", name)
+
+    def start_ws_streaming(self, uri: str | None = None, tickers: Optional[list[str]] = None, threshold: str = "5") -> None:
+        """
+        Start a background thread that connects to Tiingo WebSocket and subscribes to tickers.
+        Received quotes are published via event_bus and upserted into DB as 1-row candles.
+        """
+        if getattr(self, "_ws_thread", None) and getattr(self, "_ws_thread").is_alive():
+            return
+        self._ws_stop = False
+        ws_uri = uri or "wss://api.tiingo.com/fx"
+        syms = tickers or getattr(self, "_realtime_symbols", None) or ["eurusd"]
+        try:
+            api_key = None
+            # try config / env via TiingoClient logic
+            if hasattr(self, "provider") and hasattr(self.provider, "api_key"):
+                api_key = getattr(self.provider, "api_key", None)
+            # fallback to environment variables if not present
+            if not api_key:
+                import os
+                api_key = os.environ.get("TIINGO_APIKEY") or os.environ.get("TIINGO_API_KEY") or os.environ.get("TIINGO_API")
+        except Exception:
+            api_key = None
+
+        try:
+            _logger = None
+            from loguru import logger as _logger
+            _logger.debug("WS streamer: starting with api_key_present=%s tickers=%s threshold=%s", bool(api_key), syms, threshold)
+        except Exception:
+            pass
+
+        def _ws_worker():
+            import json as _json
+            import time as _time
+            from loguru import logger as _logger
+            try:
+                from ..utils.event_bus import publish
+            except Exception:
+                publish = lambda *a, **k: None
+
+            while not getattr(self, "_ws_stop", False):
+                try:
+                    try:
+                        # lazy import websocket-client
+                        from websocket import create_connection, WebSocketException
+                    except Exception as e:
+                        _logger.warning("WS streamer: websocket-client not installed: {}", e)
+                        return
+                    ws = None
+                    try:
+                        ws = create_connection(ws_uri, timeout=10)
+                        _logger.info("WS streamer: connected to {}", ws_uri)
+                        # prepare subscribe payload per Tiingo example
+                        sub = {
+                            "eventName": "subscribe",
+                            "authorization": api_key or "",
+                            "eventData": {
+                                "thresholdLevel": str(threshold),
+                                "tickers": [str(s).lower() for s in syms] if isinstance(syms, (list, tuple)) else [str(syms).lower()]
+                            }
+                        }
+                        try:
+                            ws.send(_json.dumps(sub))
+                            _logger.debug("WS streamer: sent subscribe payload")
+                        except Exception as e:
+                            _logger.debug("WS streamer: failed to send subscribe: {}", e)
+
+                        # receive loop
+                        while not getattr(self, "_ws_stop", False):
+                            try:
+                                raw = ws.recv()
+                                if not raw:
+                                    continue
+                                try:
+                                    msg = _json.loads(raw)
+                                except Exception:
+                                    continue
+                                # Tiingo uses messageType "A" with data array for quotes
+                                try:
+                                    mtype = msg.get("messageType")
+                                    if mtype == "A":
+                                        data = msg.get("data", [])
+                                        # expected layout: ["Q", "pair", "iso_ts", size, bid, ask, ...]
+                                        if isinstance(data, list) and len(data) >= 6:
+                                            pair = data[1]  # e.g., 'eurusd'
+                                            iso_ts = data[2]
+                                            try:
+                                                # convert iso ts to ms
+                                                import pandas as _pd
+                                                ts_ms = int(_pd.to_datetime(iso_ts).value // 1_000_000)
+                                            except Exception:
+                                                ts_ms = int(time.time() * 1000)
+                                            bid = data[4]
+                                            ask = data[5]
+                                            price = bid if bid is not None else ask
+                                            payload = {"symbol": pair.upper() if isinstance(pair, str) else pair, "timeframe": "1m", "ts_utc": int(ts_ms), "price": float(price) if price is not None else None, "bid": bid, "ask": ask}
+                                            # publish to UI (thread-safe queue)
+                                            try:
+                                                publish("tick", payload)
+                                            except Exception:
+                                                pass
+                                            # upsert into DB as one-row candle (best-effort)
+                                            try:
+                                                import pandas as _pd
+                                                df = _pd.DataFrame([{"ts_utc": int(ts_ms), "open": float(price), "high": float(price), "low": float(price), "close": float(price), "volume": None}])
+                                                from ..data import io as data_io
+                                                data_io.upsert_candles(self.engine, df, payload["symbol"], "1m", resampled=False)
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    # ignore non-quote messages
+                                    pass
+                            except WebSocketException:
+                                break
+                            except Exception:
+                                break
+                    finally:
+                        try:
+                            if ws is not None:
+                                ws.close()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    # wait before reconnect
+                    try:
+                        _logger.debug("WS streamer exception, will retry in 3s: {}", e)
+                    except Exception:
+                        pass
+                    _time.sleep(3.0)
+            # exit
+            try:
+                _logger.info("WS streamer stopped")
+            except Exception:
+                pass
+
+        th = threading.Thread(target=_ws_worker, daemon=True)
+        th.start()
+        self._ws_thread = th
+
+    def stop_ws_streaming(self) -> None:
+        try:
+            self._ws_stop = True
+            if getattr(self, "_ws_thread", None) is not None:
+                try:
+                    self._ws_thread.join(timeout=1.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def provider_name(self) -> str:
         return self._provider_name or "tiingo"

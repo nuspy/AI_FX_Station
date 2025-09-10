@@ -8,6 +8,7 @@ in a safe, well-indented manner. Call setup_ui from your MainWindow or app entry
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from .signals_tab import SignalsTab
@@ -49,6 +50,16 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
                     logger.warning("Could not force MarketDataService provider to tiingo: {}", e)
         except Exception:
             pass
+
+            # Attempt to start Tiingo WebSocket streamer unconditionally (it will check env/provider for API key)
+            try:
+                try:
+                    market_service.start_ws_streaming(tickers=getattr(market_service, "_realtime_symbols", None), threshold="5")
+                    logger.info("Requested MarketDataService Tiingo WS streaming start (background thread)")
+                except Exception as e:
+                    logger.debug("Failed to request Tiingo WS streaming: {}", e)
+            except Exception:
+                pass
         # schedule startup backfill in background (non-blocking)
         try:
             threading.Thread(target=market_service.ensure_startup_backfill, daemon=True).start()
@@ -96,6 +107,20 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
                 logger.warning("LocalWebsocketServer did not start on port {} (check 'websockets' package)", ws_port)
         except Exception as e:
             logger.exception("Failed to start LocalWebsocketServer: {}", e)
+
+        # Start in-process Tiingo WS connector (for direct streaming into event_bus)
+        try:
+            from ..services.tiingo_ws_connector import TiingoWSConnector
+            try:
+                connector = TiingoWSConnector(api_key=os.environ.get("TIINGO_APIKEY") or os.environ.get("TIINGO_API_KEY"), tickers=["eurusd"], threshold="5", db_engine=db_service.engine if db_service else None)
+                connector.start()
+                result["tiingo_ws_connector"] = connector
+                logger.info("TiingoWSConnector requested to start")
+            except Exception as e:
+                logger.debug("Failed to start TiingoWSConnector: {}", e)
+        except Exception:
+            # best-effort: skip if module not present
+            pass
     except Exception as e:
         logger.exception("Failed to start LocalWebsocketServer: {}", e)
 
