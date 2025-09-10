@@ -67,6 +67,20 @@ class HistoryTab(QWidget):
         except Exception:
             self.market_service = market_service
 
+        # helper: produce symbol variants (with and without slash) to match DB stored formats
+        def _symbol_variants(s: str) -> list:
+            s = (s or "").strip()
+            if "/" in s:
+                alt = s.replace("/", "")
+                # preserve original order: exact then compact
+                return [s, alt]
+            elif len(s) == 6 and s.isalpha():
+                alt = f"{s[0:3]}/{s[3:6]}"
+                return [s, alt]
+            else:
+                return [s]
+        self._symbol_variants = _symbol_variants
+
         # linked chart tab (set by app)
         self.chart_tab = None
 
@@ -145,7 +159,9 @@ class HistoryTab(QWidget):
                     tbl = meta.tables.get("market_data_candles")
                     if tbl is not None:
                         with self.db_service.engine.connect() as conn:
-                            stmt = select(tbl).where(tbl.c.symbol == sym).where(tbl.c.timeframe == tf).order_by(tbl.c.ts_utc.asc())
+                            # use same variants method to ensure GUI sees same rows regardless of stored symbol format
+                            variants = self._symbol_variants(sym)
+                            stmt = select(tbl).where(tbl.c.symbol.in_(variants)).where(tbl.c.timeframe == tf).order_by(tbl.c.ts_utc.asc())
                             rows = conn.execute(stmt).fetchall()
                             import pandas as pd
                             recs = [self._row_to_dict(r) for r in rows] if rows else []
@@ -190,7 +206,10 @@ class HistoryTab(QWidget):
             self._populate_empty()
             return
         with self.db_service.engine.connect() as conn:
-            stmt = select(tbl).where(tbl.c.symbol == self.symbol_combo.currentText()).where(tbl.c.timeframe == self.tf_combo.currentText()).order_by(tbl.c.ts_utc.desc()).limit(limit)
+            # use symbol variants so stored formats like 'EURUSD' and 'EUR/USD' both match
+            sym = self.symbol_combo.currentText()
+            variants = self._symbol_variants(sym)
+            stmt = select(tbl).where(tbl.c.symbol.in_(variants)).where(tbl.c.timeframe == self.tf_combo.currentText()).order_by(tbl.c.ts_utc.desc()).limit(limit)
             rows = conn.execute(stmt).fetchall()
             if not rows:
                 self._populate_empty()

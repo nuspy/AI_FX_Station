@@ -185,7 +185,113 @@ class DBService:
             Column("stop_price", Float, nullable=False),
             Column("metrics", Text, nullable=True),
         )
+
+        # Ensure latents table exists (latent vectors used by ML pipeline)
+        self.latents_tbl = Table(
+            "latents",
+            meta,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("symbol", String(64), nullable=True, index=True),
+            Column("timeframe", String(16), nullable=True, index=True),
+            Column("ts_utc", Integer, nullable=False, index=True),
+            Column("model_version", String(128), nullable=True),
+            Column("latent_json", Text, nullable=False),
+            Column("regime_label", String(32), nullable=True, index=True),
+            Column("ts_created_ms", Integer, nullable=False),
+        )
+
+        # Optional aggregated ticks table
+        self.ticks_tbl = Table(
+            "ticks_aggregate",
+            meta,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("symbol", String(64), nullable=False, index=True),
+            Column("timeframe", String(16), nullable=False, index=True),
+            Column("ts_utc", Integer, nullable=False, index=True),
+            Column("tick_count", Integer, nullable=False),
+            Column("ts_created_ms", Integer, nullable=False),
+        )
+
+        # Metrics table for various operational metrics
+        self.metrics_tbl = Table(
+            "metrics",
+            meta,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("name", String(128), nullable=False, index=True),
+            Column("value", Float, nullable=False),
+            Column("labels", Text, nullable=True),
+            Column("ts_created_ms", Integer, nullable=False, index=True),
+        )
+
+        # Create all tables (idempotent)
         meta.create_all(self.engine)
+
+        # Ensure additional columns exist on existing DB (e.g. regime_label added later)
+        try:
+            self._ensure_latents_columns()
+        except Exception as _e:
+            logger.debug("Could not ensure latents additional columns: {}", _e)
+
+    def _ensure_latents_columns(self) -> None:
+        """
+        Ensure 'regime_label' column exists in latents table for existing DBs.
+        - For SQLite: use PRAGMA table_info to detect column presence and ALTER TABLE to add it.
+        - For other DBs: attempt ALTER TABLE and ignore errors (best-effort).
+        """
+        try:
+            from sqlalchemy import text
+            dialect = getattr(self.engine, "dialect", None)
+            name = dialect.name.lower() if dialect is not None else ""
+            if name == "sqlite":
+                with self.engine.connect() as conn:
+                    rows = conn.execute(text("PRAGMA table_info(latents)")).fetchall()
+                    existing_cols = [r[1] for r in rows]  # pragma returns (cid,name,type,notnull,dflt_value,pk)
+                    if "regime_label" not in existing_cols:
+                        logger.info("Adding missing column 'regime_label' to latents table (sqlite ALTER TABLE).")
+                        conn.execute(text("ALTER TABLE latents ADD COLUMN regime_label VARCHAR(32)"))
+            else:
+                # Best-effort: try to add column; ignore if fails
+                try:
+                    with self.engine.begin() as conn:
+                        conn.execute(text("ALTER TABLE latents ADD COLUMN regime_label VARCHAR(32)"))
+                except Exception:
+                    # ignore errors (column may already exist or DB not support simple ALTER)
+                    logger.debug("Non-sqlite DB: attempted to add regime_label column; ignoring errors if any.")
+        except Exception as e:
+            logger.debug("Failed to ensure latents columns: {}", e)
+
+    def update_latent_labels_bulk(self, rows: list[dict]) -> None:
+        """
+        Bulk update regime_label for latents table.
+        rows: list of dicts with keys: 'id' (int) and 'regime_label' (str)
+        Uses SQLAlchemy executemany for efficiency when supported.
+        """
+        if not rows:
+            return
+        try:
+            # Prepare payload for executemany: each entry will be bound to its id/regime_label
+            payloads = [{"id": int(r["id"]), "regime_label": r.get("regime_label")} for r in rows if "id" in r]
+            if not payloads:
+                return
+            # Use a transaction and update each row (some DBs don't support multi-row update easily)
+            with self.engine.begin() as conn:
+                # Attempt a single UPDATE per payload using executemany via text clause
+                from sqlalchemy import text
+                stmt = text("UPDATE latents SET regime_label = :regime_label WHERE id = :id")
+                conn.execute(stmt, payloads)
+        except Exception as e:
+            logger.exception("update_latent_labels_bulk failed, falling back to row-by-row update: {}", e)
+            # Fallback: update rows one by one
+            try:
+                with self.engine.begin() as conn:
+                    for r in rows:
+                        try:
+                            conn.execute(self.latents_tbl.update().where(self.latents_tbl.c.id == int(r["id"])).values(regime_label=r.get("regime_label")))
+                        except Exception:
+                            continue
+            except Exception as ex:
+                logger.exception("update_latent_labels_bulk fallback failed: {}", ex)
+                raise
 
     def write_prediction(self, symbol: str, timeframe: str, horizon: str, q05: float, q50: float, q95: float, meta: Optional[Dict] = None):
         try:

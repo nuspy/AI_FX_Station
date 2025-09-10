@@ -50,12 +50,29 @@ class RegimeService:
             ids = []
             vecs = []
             for r in rows:
-                ids.append(int(r["id"]))
+                # Support both SQLAlchemy Row with _mapping and plain tuple fallback.
                 try:
-                    vec = np.asarray(json.loads(r["latent_json"]), dtype=float)
+                    mapping = getattr(r, "_mapping", None)
+                    if mapping is not None:
+                        row_id = mapping.get("id") if "id" in mapping else mapping.get("ID") if "ID" in mapping else mapping.get(0)
+                        latent_json = mapping.get("latent_json") if "latent_json" in mapping else mapping.get("latent") if "latent" in mapping else mapping.get("latent_json")
+                    else:
+                        # tuple fallback: table layout is (id, symbol, timeframe, ts_utc, model_version, latent_json, ts_created_ms)
+                        row_id = r[0] if len(r) > 0 else None
+                        latent_json = r[5] if len(r) > 5 else None
+
+                    if row_id is None:
+                        # skip malformed row
+                        continue
+                    ids.append(int(row_id))
+                    try:
+                        vec = np.asarray(json.loads(latent_json), dtype=float) if latent_json else np.array([])
+                    except Exception:
+                        vec = np.array([])
+                    vecs.append(vec)
                 except Exception:
-                    vec = np.array([])
-                vecs.append(vec)
+                    # best-effort: skip rows that cannot be parsed
+                    continue
             # reverse to ascending time for stability
             ids = ids[::-1]
             vecs = vecs[::-1]

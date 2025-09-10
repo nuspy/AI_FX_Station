@@ -19,7 +19,7 @@ import pandas as pd
 from scipy import stats
 from loguru import logger
 
-from ..utils.config import get_config
+from forex_diffusion.utils.config import get_config
 
 # Map timeframe labels to pandas resample rules
 TF_TO_PANDAS = {
@@ -427,13 +427,20 @@ class Standardizer:
         """
         Apply standardization using fitted mu/sigma. Returns a new DataFrame.
         """
-    if self.mu is None or self.sigma is None:
-        raise RuntimeError("Standardizer must be fitted before transform")
-    tmp = df.copy()
-    for c in self.cols:
-        if c in tmp.columns:
-            tmp[c] = (tmp[c].astype(float) - self.mu[c]) / self.sigma[c]
-    return tmp
+        if self.mu is None or self.sigma is None:
+            raise RuntimeError("Standardizer must be fitted before transform")
+        tmp = df.copy()
+        for c in self.cols:
+            if c in tmp.columns:
+                tmp[c] = (tmp[c].astype(float) - self.mu[c]) / self.sigma[c]
+        return tmp
+
+    def fit_transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fit and transform in one step.
+        """
+        self.fit(df)
+        return self.transform(df)
 
 def pipeline_process(
     df: pd.DataFrame,
