@@ -502,14 +502,36 @@ def pipeline_process(
         else:
             features_df = tmp[features].copy()
 
+    # Preserve raw Hurst (non-standardized) if present under any column name containing 'hurst'
+    hurst_candidates = [c for c in features_df.columns if c != "ts_utc" and ("hurst" == c or c.endswith("_hurst") or "hurst" in c)]
+    if hurst_candidates:
+        # prefer exact 'hurst' or timeframe-prefixed '<tf>_hurst'
+        pick = None
+        if "hurst" in features_df.columns:
+            pick = "hurst"
+        else:
+            # pick the first candidate (should be deterministic)
+            pick = hurst_candidates[0]
+        try:
+            features_df["hurst_raw"] = features_df[pick].astype(float)
+        except Exception:
+            # fallback: attempt to coerce
+            features_df["hurst_raw"] = pd.to_numeric(features_df[pick], errors="coerce")
+
     # Standardization
+    # Exclude 'hurst_raw' from standardization (keep as raw)
+    feat_cols = [c for c in features_df.columns if c != "ts_utc" and c != "hurst_raw"]
     if standardizer is None:
         if standardize_on is None:
-            standardize_on = features  # default: standardize all features
+            standardize_on = feat_cols
+        else:
+            # ensure hurst_raw is not accidentally included
+            standardize_on = [c for c in standardize_on if c != "hurst_raw"]
         standardizer = Standardizer(cols=standardize_on)
         # Fit with causality: caller should pass training slice; here we fit on entire features_df for convenience
-        standardizer.fit(features_df)
-    features_df = standardizer.transform(features_df)
+        standardizer.fit(features_df[standardize_on].fillna(0.0))
+    # transform only the selected standardized columns
+    features_df.loc[:, standardize_on] = standardizer.transform(features_df[standardize_on].fillna(0.0))
 
     return features_df.reset_index(drop=True), standardizer
 
@@ -676,20 +698,49 @@ def hurst_aggvar(ts: pd.Series, min_chunks: int = 4) -> float:
 
 def hurst_feature(df: pd.DataFrame, window: int = 256, out_col: str = "hurst") -> pd.DataFrame:
     """
-    Rolling Hurst estimator applied to log-returns.
+    Rolling Hurst estimator using aggregated-variance method with R/S fallback.
+    Produces causal rolling H estimates aligned with the input series.
+    Values are clamped to [0,1]; if insufficient data returns NaN.
     """
     tmp = df.copy()
     if "r" not in tmp.columns:
         tmp = log_returns(tmp, col="close", out_col="r")
-    rs = []
-    series = tmp["r"].fillna(0.0)
-    for i in range(len(series)):
+    series = tmp["r"].fillna(0.0).to_numpy()
+    n = len(series)
+    res = np.full(n, np.nan, dtype=float)
+    # compute rolling H using hurst_aggvar primarily, fallback to _rs_hurst
+    for i in range(n):
         if i + 1 < window:
-            rs.append(float("nan"))
             continue
-        window_series = series.iloc[i + 1 - window : i + 1]
-        rs.append(hurst_aggvar(window_series))
-    tmp[out_col] = rs
+        seg = series[i + 1 - window : i + 1]
+        h_vals = []
+        try:
+            h_av = hurst_aggvar(pd.Series(seg))
+            if h_av == h_av:
+                h_vals.append(float(h_av))
+        except Exception:
+            pass
+        try:
+            h_rs = _rs_hurst(np.asarray(seg))
+            if h_rs == h_rs:
+                h_vals.append(float(h_rs))
+        except Exception:
+            pass
+        if not h_vals:
+            res[i] = float("nan")
+        else:
+            # prefer aggregated variance if available, else mean of available
+            if len(h_vals) == 1:
+                h = h_vals[0]
+            else:
+                # average the two estimators for robustness
+                h = float(np.nanmean(h_vals))
+            # clamp to [0,1] as H should lie within [0,1] in practice
+            if h != h:
+                res[i] = float("nan")
+            else:
+                res[i] = float(max(0.0, min(1.0, h)))
+    tmp[out_col] = res
     return tmp
 
 
@@ -787,7 +838,33 @@ def pipeline_process(
     tmp = macd(tmp, fast=fc.get("indicators", {}).get("macd", {}).get("fast", 12), slow=fc.get("indicators", {}).get("macd", {}).get("slow", 26), signal=fc.get("indicators", {}).get("macd", {}).get("signal", 9))
     tmp = rsi_wilder(tmp, n=fc.get("indicators", {}).get("rsi", {}).get("n", 14))
     tmp = donchian(tmp, n=fc.get("indicators", {}).get("donchian", {}).get("n", 20))
-    tmp = hurst_feature(tmp, window=fc.get("indicators", {}).get("hurst", {}).get("window", 256))
+    # use a shorter default Hurst window for intraday indicators (align with diagnostics)
+    hurst_win = int(fc.get("indicators", {}).get("hurst", {}).get("window", 64))
+    tmp = hurst_feature(tmp, window=hurst_win, out_col="hurst")
+    # compute additional raw Hurst estimators per row using same window
+    try:
+        series = tmp["r"].fillna(0.0).to_numpy()
+        n = len(series)
+        hurst_agg = np.full(n, np.nan, dtype=float)
+        hurst_rs = np.full(n, np.nan, dtype=float)
+        # compute only for indices where enough history exists
+        for i in range(n):
+            if i + 1 >= hurst_win:
+                seg = series[i + 1 - hurst_win : i + 1]
+                try:
+                    hurst_agg[i] = hurst_aggvar(pd.Series(seg))
+                except Exception:
+                    hurst_agg[i] = float("nan")
+                try:
+                    hurst_rs[i] = _rs_hurst(np.asarray(seg))
+                except Exception:
+                    hurst_rs[i] = float("nan")
+        tmp["hurst_aggvar_window"] = hurst_agg
+        tmp["hurst_rs_window"] = hurst_rs
+    except Exception:
+        tmp["hurst_aggvar_window"] = np.nan
+        tmp["hurst_rs_window"] = np.nan
+
     tmp = time_cyclic_and_session(tmp)
 
     # Define feature columns (preserve order)
