@@ -95,7 +95,7 @@ def debug_status() -> dict:
             subs_map = {k: len(v) for k, v in _registry.items()}
         with _queues_lock:
             queues_map = {k: len(v) for k, v in _queues.items()}
-        logger.debug("event_bus.debug_status: subscribers=%s queues=%s", subs_map, queues_map)
+        logger.debug(f"event_bus.debug_status: subscribers={subs_map} queues={queues_map}")
         return {"subscribers": subs_map, "queues": queues_map}
     except Exception as e:
         logger.exception("event_bus.debug_status failed: %s", e)

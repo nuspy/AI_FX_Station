@@ -1,16 +1,16 @@
 {
   "sma": {
-    "enabled": false,
+    "enabled": true,
     "window": 20,
     "color": "#ff7f0e"
   },
   "ema": {
-    "enabled": false,
+    "enabled": true,
     "span": 20,
-    "color": "#ff7f0e"
+    "color": "#9467bd"
   },
   "bollinger": {
-    "enabled": false,
+    "enabled": true,
     "window": 20,
     "n_std": 2.0,
     "color_up": "#1f77b4",

@@ -756,7 +756,7 @@ class ChartTab(QWidget):
             # diagnostic log
             try:
                 tail_preview = df.tail(3).to_dict(orient="records") if not getattr(df, "empty", True) else []
-                logger.debug("update_plot: plotted df shape=%s tail=%s last_polled_ts=%s", getattr(df, "shape", None), tail_preview, getattr(self, "_last_polled_ts", None))
+                logger.debug(f"update_plot: plotted df shape={getattr(df, 'shape', None)} tail={tail_preview} last_polled_ts={getattr(self, '_last_polled_ts', None)}")
             except Exception:
                 logger.debug("update_plot: plotted df (could not stringify tail)")
 
@@ -864,7 +864,7 @@ class ChartTab(QWidget):
                     prev_len = len(self._last_df) if getattr(self, "_last_df", None) is not None else 0
                 except Exception:
                     prev_len = None
-                logger.debug("handle_tick: updating plot, prev_len=%s", prev_len)
+                logger.debug(f"handle_tick: updating plot, prev_len={prev_len}")
                 self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
                 try:
                     # request idle redraw (non-blocking)
@@ -875,7 +875,7 @@ class ChartTab(QWidget):
                     except Exception:
                         pass
                 try:
-                    logger.debug("handle_tick: plot update requested, new_len=%s", len(self._last_df) if getattr(self, "_last_df", None) is not None else 0)
+                    logger.debug(f"handle_tick: plot update requested, new_len={len(self._last_df) if getattr(self, '_last_df', None) is not None else 0}")
                 except Exception:
                     pass
             except Exception as e:
@@ -898,7 +898,10 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            logger.debug("Handled tick payload: sym=%s tf=%s price=%s bid=%s ask=%s", sym, tf, price, bid, ask)
+            try:
+                logger.debug(f"Handled tick payload: sym={sym} tf={tf} price={price} bid={bid} ask={ask}")
+            except Exception:
+                logger.debug("Handled tick payload (could not format values)")
         except Exception as e:
             logger.exception("Error handling tick payload: {}", e)
 

@@ -79,9 +79,14 @@ class TiingoWSConnector:
                     }
                     try:
                         ws.send(json.dumps(sub))
-                        logger.info("TiingoWSConnector subscribe sent: tickers=%s threshold=%s", self.tickers, self.threshold)
+                        logger.info(f"TiingoWSConnector subscribe sent: tickers={self.tickers} threshold={self.threshold}")
+                        # Explicit trace for WSS subscription events (for diagnostics)
+                        try:
+                            logger.info(f"WSS subscription: uri={self.uri} tickers={self.tickers} threshold={self.threshold}")
+                        except Exception:
+                            logger.info("WSS subscription made (details unavailable)")
                     except Exception as e:
-                        logger.warning("TiingoWSConnector failed to send subscribe: %s", e)
+                        logger.warning(f"TiingoWSConnector failed to send subscribe: {e}")
 
                     # receive loop
                     while not self._stop.is_set():
@@ -193,7 +198,10 @@ class TiingoWSConnector:
                                 else:
                                     # log heartbeat/info at debug
                                     if msg.get("messageType") in ("I", "H"):
-                                        logger.debug("TiingoWSConnector info/heartbeat: %s", msg.get("response", msg))
+                                        try:
+                                            logger.debug(f"TiingoWSConnector info/heartbeat: {msg.get('response', msg)}")
+                                        except Exception:
+                                            logger.debug("TiingoWSConnector info/heartbeat")
                             except Exception:
                                 pass
                         except WebSocketException:
