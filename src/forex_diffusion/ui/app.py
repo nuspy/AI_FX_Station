@@ -147,6 +147,69 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             history_tab = HistoryTab(main_window, db_service=db_service, market_service=market_service)
             chart_tab = ChartTab(main_window)
 
+            # EventBridge: forward event_bus 'tick' messages into Qt main thread via a Signal
+            try:
+                from .event_bridge import EventBridge
+                from ..utils.event_bus import subscribe as _eb_subscribe
+                bridge = EventBridge(main_window)
+                # subscribe bridge._on_event to event_bus (will be called from connector thread)
+                try:
+                    _eb_subscribe("tick", bridge._on_event)
+                    logger.debug("Registered EventBridge to event_bus 'tick'")
+                except Exception as e:
+                    logger.debug("Failed to subscribe EventBridge to event_bus: {}", e)
+                # log event_bus status snapshot
+                try:
+                    from ..utils.event_bus import debug_status as _eb_status
+                    st = _eb_status()
+                    logger.info(f"event_bus status after bridge registration: {st}")
+                except Exception:
+                    pass
+                # connect Qt signal to ChartTab handler (will run in UI thread)
+                try:
+                    bridge.tickReceived.connect(lambda payload: chart_tab._on_tick_event(payload))
+                except Exception as e:
+                    logger.debug("Failed to connect EventBridge.tickReceived to chart_tab: {}", e)
+
+                # Self-test: publish a synthetic tick after 2s to verify the full delivery chain (event_bus -> bridge -> ChartTab)
+                try:
+                    from ..utils.event_bus import publish as _publish
+                    import threading as _thr
+                    import time as _time
+
+                    def _send_self_test():
+                        try:
+                            payload = {
+                                "symbol": "EUR/USD",
+                                "timeframe": "1m",
+                                "ts_utc": int(_time.time() * 1000),
+                                "price": 1.23456,
+                                "bid": 1.23450,
+                                "ask": 1.23462
+                            }
+                            try:
+                                logger.info("App self-test: publishing synthetic tick %s", payload)
+                            except Exception:
+                                pass
+                            try:
+                                _publish("tick", payload)
+                            except Exception as e:
+                                try:
+                                    logger.debug("App self-test publish failed: {}", e)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
+                    try:
+                        _thr.Timer(2.0, _send_self_test).start()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
             tabw.addTab(signals_tab, "Signals")
             tabw.addTab(history_tab, "History")
             tabw.addTab(chart_tab, "Chart")
@@ -189,6 +252,24 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             result["history_tab"] = history_tab
             result["chart_tab"] = chart_tab
             result["market_service"] = market_service
+
+            # Debug tracer: periodically log event_bus status (queue sizes and subscriber counts)
+            try:
+                from PySide6.QtCore import QTimer
+                from ..utils.event_bus import debug_status as _eb_status
+                tracer_timer = QTimer(main_window)
+                tracer_timer.setInterval(2000)
+                def _trace_event_bus():
+                    try:
+                        st = _eb_status()
+                        logger.info(f"event_bus tracer: {st}")
+                    except Exception as e:
+                        logger.debug("event_bus tracer failed: {}", e)
+                tracer_timer.timeout.connect(_trace_event_bus)
+                tracer_timer.start()
+                result["event_bus_tracer_timer"] = tracer_timer
+            except Exception:
+                pass
 
             # refresh signals after each successful forecast if controller exists
             if "controller" in result:

@@ -1,6 +1,6 @@
 {
   "sma": {
-    "enabled": true,
+    "enabled": false,
     "window": 20,
     "color": "#ff7f0e"
   },

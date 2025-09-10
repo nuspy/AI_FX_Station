@@ -59,7 +59,8 @@ def publish(topic: str, payload: Any) -> None:
             q = _queues.setdefault(topic, [])
             q.append(payload)
             sz = len(q)
-        logger.debug("event_bus: publish -> topic='{}' queued payload_type='{}' queue_size={}", topic, type(payload).__name__, sz)
+        # INFO so it's visible in standard logs and easier to trace cross-thread publishes
+        logger.info(f"event_bus: publish -> topic='{topic}' queued payload_type='{type(payload).__name__}' queue_size={sz}")
     except Exception as e:
         logger.exception("event_bus.publish failed for topic=%s: %s", topic, e)
 
@@ -84,3 +85,30 @@ def take_pending(topic: str) -> List[Any]:
 pub = publish
 sub = subscribe
 unsub = unsubscribe
+
+def debug_status() -> dict:
+    """
+    Return a diagnostic snapshot: subscriber counts and queue sizes.
+    """
+    try:
+        with _registry_lock:
+            subs_map = {k: len(v) for k, v in _registry.items()}
+        with _queues_lock:
+            queues_map = {k: len(v) for k, v in _queues.items()}
+        logger.debug("event_bus.debug_status: subscribers=%s queues=%s", subs_map, queues_map)
+        return {"subscribers": subs_map, "queues": queues_map}
+    except Exception as e:
+        logger.exception("event_bus.debug_status failed: %s", e)
+        return {"subscribers": {}, "queues": {}}
+
+def get_subscribers(topic: str) -> list:
+    """
+    Return a shallow copy of subscriber callables for a topic (thread-safe).
+    """
+    try:
+        with _registry_lock:
+            lst = list(_registry.get(topic, []) )
+        return lst
+    except Exception as e:
+        logger.exception("event_bus.get_subscribers failed for topic=%s: %s", topic, e)
+        return []

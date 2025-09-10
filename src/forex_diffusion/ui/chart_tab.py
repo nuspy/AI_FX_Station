@@ -808,6 +808,7 @@ class ChartTab(QWidget):
         Accept ticks even when payload lacks symbol/timeframe; ignore only if payload explicitly targets different symbol/timeframe.
         """
         try:
+            logger.info("ChartTab._handle_tick invoked with payload incoming")
             # Normalize payload to dict if possible
             if not isinstance(payload, dict):
                 try:
@@ -816,6 +817,10 @@ class ChartTab(QWidget):
                     payload = {"price": payload}
             sym = payload.get("symbol", None)
             tf = payload.get("timeframe", None)
+            try:
+                logger.info(f"ChartTab._handle_tick normalized payload: {payload}")
+            except Exception:
+                pass
 
             # If this ChartTab has a target symbol/timeframe and the payload explicitly targets another, ignore.
             if getattr(self, "symbol", None) is not None and sym is not None and sym != self.symbol:

@@ -89,6 +89,11 @@ class TiingoWSConnector:
                             raw = ws.recv()
                             if not raw:
                                 continue
+                            # debug-log raw message
+                            try:
+                                logger.debug(f"TiingoWSConnector raw msg: {raw}")
+                            except Exception:
+                                pass
                             try:
                                 msg = json.loads(raw)
                             except Exception:
@@ -112,12 +117,59 @@ class TiingoWSConnector:
                                         except Exception:
                                             ts_ms = int(time.time() * 1000)
                                         price = bid if bid is not None else ask
-                                        payload = {"symbol": (pair.upper() if isinstance(pair, str) else pair), "timeframe": "1m", "ts_utc": int(ts_ms), "price": float(price) if price is not None else None, "bid": bid, "ask": ask}
+
+                                        # Normalize pair format 'eurusd' -> 'EUR/USD' to match ChartTab/DB expectations
+                                        try:
+                                            if isinstance(pair, str):
+                                                p = pair.strip()
+                                                if "/" in p:
+                                                    # already contains slash
+                                                    norm_symbol = p.upper()
+                                                elif len(p) == 6 and p.isalpha():
+                                                    norm_symbol = f"{p[0:3].upper()}/{p[3:6].upper()}"
+                                                else:
+                                                    # fallback: uppercase
+                                                    norm_symbol = p.upper()
+                                            else:
+                                                norm_symbol = pair
+                                        except Exception:
+                                            norm_symbol = (pair.upper() if isinstance(pair, str) else pair)
+
+                                        payload = {"symbol": norm_symbol, "timeframe": "1m", "ts_utc": int(ts_ms), "price": float(price) if price is not None else None, "bid": bid, "ask": ask}
                                         try:
                                             publish("tick", payload)
-                                            logger.debug(f"TiingoWSConnector published tick: {payload}")
+                                            logger.info(f"TiingoWSConnector published tick: {payload}")
                                         except Exception:
                                             pass
+
+                                        # optional DB upsert if engine provided, using normalized symbol
+                                        if self._db_engine is not None:
+                                            try:
+                                                import pandas as _pd
+                                                from ..data import io as data_io
+                                                df = _pd.DataFrame([{"ts_utc": int(ts_ms), "open": float(price), "high": float(price), "low": float(price), "close": float(price), "volume": None}])
+                                                data_io.upsert_candles(self._db_engine, df, norm_symbol, "1m", resampled=False)
+                                            except Exception:
+                                                pass
+
+                                        # Diagnostic: check event_bus status and call subscribers directly as fallback
+                                        try:
+                                            from ..utils.event_bus import debug_status, get_subscribers
+                                            st = debug_status()
+                                            logger.info(f"TiingoWSConnector event_bus status after publish: {st}")
+                                            subs = get_subscribers("tick")
+                                            if subs:
+                                                logger.info(f"TiingoWSConnector: invoking {len(subs)} subscribers directly as fallback")
+                                                for cb in subs:
+                                                    try:
+                                                        # call subscriber in current thread; many subscribers (e.g. bridge._on_event) will enqueue to UI
+                                                        cb(payload)
+                                                    except Exception as e:
+                                                        logger.debug("TiingoWSConnector: subscriber direct call failed: {}", e)
+                                            else:
+                                                logger.debug("TiingoWSConnector: no subscribers found in registry")
+                                        except Exception as e:
+                                            logger.debug("TiingoWSConnector: debug/fallback subscriber invocation failed: {}", e)
                                         # optional DB upsert if engine provided
                                         if self._db_engine is not None:
                                             try:
