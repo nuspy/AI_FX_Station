@@ -710,10 +710,27 @@ class ChartTab(QWidget):
             # update buffer
             self._last_df = df
 
+            # update last polled ts so DB poller can detect new inserts (if running)
+            try:
+                if getattr(self, "_last_polled_ts", None) is None:
+                    try:
+                        self._last_polled_ts = int(self._last_df["ts_utc"].max())
+                    except Exception:
+                        self._last_polled_ts = None
+                else:
+                    try:
+                        max_ts = int(self._last_df["ts_utc"].max())
+                        if max_ts and (self._last_polled_ts is None or max_ts > self._last_polled_ts):
+                            self._last_polled_ts = max_ts
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             # diagnostic log
             try:
                 tail_preview = df.tail(3).to_dict(orient="records") if not getattr(df, "empty", True) else []
-                logger.debug("update_plot: plotted df shape=%s tail=%s", getattr(df, "shape", None), tail_preview)
+                logger.debug("update_plot: plotted df shape=%s tail=%s last_polled_ts=%s", getattr(df, "shape", None), tail_preview, getattr(self, "_last_polled_ts", None))
             except Exception:
                 logger.debug("update_plot: plotted df (could not stringify tail)")
 
