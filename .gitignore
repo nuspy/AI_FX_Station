@@ -109,3 +109,6 @@ tmp/
 # Environment files
 .env
 .env.local
+/ForexGPT.zip
+/.$mindmap.drawio.bkp
+/mindmap.drawio

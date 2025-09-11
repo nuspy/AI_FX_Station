@@ -147,6 +147,28 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             history_tab = HistoryTab(main_window, db_service=db_service, market_service=market_service)
             chart_tab = ChartTab(main_window)
 
+            # Connect ChartTab forecast requests (payload dict) to controller if controller available
+            try:
+                if "controller" in result and getattr(result["controller"], "request_forecast", None) is not None:
+                    try:
+                        chart_tab.forecastRequested.connect(result["controller"].request_forecast)
+                        logger.info("Connected chart_tab.forecastRequested -> controller.request_forecast")
+                    except Exception as e:
+                        logger.debug("Failed to connect chart_tab.forecastRequested: {}", e)
+            except Exception:
+                pass
+
+            # Also draw forecast overlay on Chart tab when ready
+            try:
+                if "controller" in result:
+                    try:
+                        result["controller"].signals.forecastReady.connect(lambda df, q: chart_tab.on_forecast_ready(df, q))
+                        logger.info("Connected controller.forecastReady -> chart_tab.on_forecast_ready")
+                    except Exception as e:
+                        logger.debug("Failed to connect forecastReady to chart tab overlay: {}", e)
+            except Exception:
+                pass
+
             # EventBridge: forward event_bus 'tick' messages into Qt main thread via a Signal
             try:
                 from .event_bridge import EventBridge

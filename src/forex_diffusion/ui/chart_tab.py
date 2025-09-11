@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 import pandas as pd
+from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, Signal
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -22,8 +23,13 @@ class ChartTab(QWidget):
     Simple matplotlib-based chart tab with pan/zoom toolbar.
     Exposes update_plot(df) where df is a DataFrame with ts_utc and close/open/high/low.
     """
+    # Qt signals must be declared at class level
+    forecastRequested = Signal(dict)
+    forecastSettingsRequested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
+
         # keep reference to main window (statusBar) for visible notifications
         self._main_window = parent
         self.layout = QVBoxLayout(self)
@@ -38,6 +44,22 @@ class ChartTab(QWidget):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.addWidget(self.toolbar)
         top_layout.addWidget(self.indicators_btn)
+
+        # Forecast controls: Settings and Execute
+
+        try:
+            self.forecast_settings_btn = QPushButton("Setting previsione")
+            self.forecast_settings_btn.setToolTip("Apri settings previsione")
+            self.forecast_settings_btn.clicked.connect(self._open_forecast_settings)
+            top_layout.addWidget(self.forecast_settings_btn)
+
+            self.forecast_btn = QPushButton("Fai previsione")
+            self.forecast_btn.setToolTip("Esegui la previsione con il modello selezionato")
+            self.forecast_btn.clicked.connect(self._on_forecast_clicked)
+            top_layout.addWidget(self.forecast_btn)
+        except Exception:
+            pass
+
         # real-time bid/ask label (initial placeholder)
         try:
             self.bidask_label = QLabel("Bid: -    Ask: -")
@@ -75,6 +97,8 @@ class ChartTab(QWidget):
         self._indicator_artists: dict[str, list] = {}
         # auxiliary axes for indicators that require their own y-axis (rsi, macd)
         self._aux_axes: dict[str, any] = {}
+        # handle to last forecast overlay line
+        self._forecast_line = None
 
         # load persisted indicators config if present (normalize so "enabled" flags are honored)
         try:
@@ -1155,3 +1179,256 @@ class ChartTab(QWidget):
                 logger.exception("Failed to force redraw after applying indicators: {}", e)
         except Exception as e:
             logger.exception("Failed to apply indicators after dialog: {}", e)
+
+    # --- Forecast overlay handlers ---
+    def _tf_to_timedelta(self, tf: str):
+        """Return pandas Timedelta from timeframe like '1m','5m','1h','1d'."""
+        try:
+            s = str(tf or "1m").strip().lower()
+            if s.endswith("m"):
+                import pandas as pd
+                return pd.to_timedelta(int(s[:-1]), unit="m")
+            if s.endswith("h"):
+                import pandas as pd
+                return pd.to_timedelta(int(s[:-1]), unit="h")
+            if s.endswith("d"):
+                import pandas as pd
+                return pd.to_timedelta(int(s[:-1]), unit="d")
+            import pandas as pd
+            return pd.to_timedelta(int(s), unit="m")
+        except Exception:
+            import pandas as pd
+            return pd.to_timedelta(1, unit="m")
+
+    def on_forecast_ready(self, df, quantiles: dict):
+        """
+        Overlay forecast line on the existing chart using q50 from quantiles.
+        Draws a gray line with 66.6% opacity starting after the last candle.
+        """
+        try:
+            import pandas as pd
+            base_df = self._last_df if getattr(self, "_last_df", None) is not None and not self._last_df.empty else df
+            if base_df is None or getattr(base_df, "empty", True):
+                try:
+                    QMessageBox.information(self, "Forecast", "Nessun dato base disponibile per disegnare la previsione.")
+                except Exception:
+                    pass
+                return
+
+            # extract y forecast (q50 default)
+            y_vals = None
+            try:
+                if isinstance(quantiles, dict):
+                    y_vals = quantiles.get("q50") or quantiles.get("median") or quantiles.get("pred") or None
+                if y_vals is None and isinstance(quantiles, (list, tuple)):
+                    y_vals = list(quantiles)
+            except Exception:
+                y_vals = None
+            if y_vals is None:
+                try:
+                    logger.debug("on_forecast_ready: quantiles did not contain q50; nothing to plot")
+                except Exception:
+                    pass
+                return
+
+            # compute future timestamps
+            try:
+                last_ts = pd.to_datetime(base_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
+            except Exception:
+                last_ts = pd.Timestamp.utcnow(tz="UTC")
+            delta = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
+            future_ts = [last_ts + delta * (i + 1) for i in range(len(y_vals))]
+
+            # remove previous forecast overlay
+            if getattr(self, "_forecast_line", None) is not None:
+                try:
+                    self._forecast_line.remove()
+                except Exception:
+                    pass
+                self._forecast_line = None
+
+            # plot forecast overlay
+            try:
+                # convert timestamps to naive for matplotlib if needed
+                x_dt = pd.to_datetime(future_ts).tz_convert(None) if hasattr(pd.Series(future_ts).dt, "tz_convert") else pd.to_datetime(future_ts)
+            except Exception:
+                x_dt = pd.to_datetime(future_ts)
+            try:
+                x_num = mdates.date2num(x_dt.to_pydatetime() if hasattr(x_dt, "to_pydatetime") else pd.to_datetime(x_dt).to_pydatetime())
+            except Exception:
+                try:
+                    x_num = [mdates.date2num(d) for d in list(x_dt)]
+                except Exception:
+                    x_num = list(range(len(y_vals)))
+
+            gray_rgb = (180/255.0, 180/255.0, 180/255.0)
+            label = "Forecast"
+            try:
+                self._forecast_line, = self.ax.plot(x_num, y_vals, color=gray_rgb, alpha=0.666, linewidth=2.0, marker="o", label=label)
+            except Exception:
+                self._forecast_line, = self.ax.plot(x_num, y_vals, color="gray", alpha=0.666, linewidth=2.0, marker="o", label=label)
+
+            # refresh legend and draw
+            try:
+                handles, labels = self.ax.get_legend_handles_labels()
+                if handles:
+                    self.ax.legend(handles, labels, loc="upper left", fontsize="small")
+            except Exception:
+                pass
+
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
+
+            # status bar hint
+            try:
+                if getattr(self, "_main_window", None) is not None and hasattr(self._main_window, "statusBar"):
+                    self._main_window.statusBar().showMessage("Forecast disegnata", 3000)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.exception("on_forecast_ready failed: {}", e)
+# --- Forecast settings dialog and trigger handlers ---
+    def _open_forecast_settings(self):
+        """
+        Open a simple forecast settings dialog and persist choices via user_settings.
+        """
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QSpinBox, QDialogButtonBox
+            from ..utils.user_settings import get_setting, set_setting
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Settings Previsione")
+            layout = QVBoxLayout(dlg)
+
+            # Model file
+            h = QHBoxLayout()
+            h.addWidget(QLabel("Model file:"))
+            model_le = QLineEdit()
+            model_le.setText(str(get_setting("forecast_model_path", "")))
+            h.addWidget(model_le)
+            browse_btn = QPushButton("Sfoglia")
+            def _browse():
+                fn, _ = QFileDialog.getOpenFileName(self, "Seleziona modello", str(Path.home()), "Model files (*.pkl *.pt *.pth);;All files (*)")
+            # Use PySide6 QFileDialog if available
+            try:
+                from PySide6.QtWidgets import QFileDialog
+                def _browse():
+                    fn, _ = QFileDialog.getOpenFileName(self, "Seleziona modello", str(Path.home()), "Model files (*.pkl *.pt *.pth);;All files (*)")
+                    if fn:
+                        model_le.setText(fn)
+            except Exception:
+                pass
+            browse_btn.clicked.connect(_browse)
+            h.addWidget(browse_btn)
+            layout.addLayout(h)
+
+            # Symbol & timeframe
+            h = QHBoxLayout()
+            h.addWidget(QLabel("Symbol:"))
+            sym_cb = QComboBox()
+            try:
+                # attempt to populate symbols from DB
+                with getattr(self, "db_service", None).engine.connect() as conn:
+                    rows = conn.execute(text("SELECT DISTINCT symbol FROM market_data_candles ORDER BY symbol")).fetchall()
+                    syms = [r._mapping["symbol"] if hasattr(r, "_mapping") else r[0] for r in rows] or ["EUR/USD"]
+            except Exception:
+                syms = ["EUR/USD"]
+            sym_cb.addItems(syms)
+            sym_cb.setCurrentText(get_setting("forecast_symbol", syms[0]))
+            h.addWidget(sym_cb)
+            h.addWidget(QLabel("Timeframe:"))
+            tf_cb = QComboBox()
+            tf_cb.addItems(["1m","5m","15m","30m","1h","4h","1d"])
+            tf_cb.setCurrentText(get_setting("forecast_timeframe", "1m"))
+            h.addWidget(tf_cb)
+            layout.addLayout(h)
+
+            # N candles and horizon
+            h = QHBoxLayout()
+            h.addWidget(QLabel("N candles:"))
+            n_spin = QSpinBox(); n_spin.setRange(32, 5000); n_spin.setValue(int(get_setting("forecast_limit_candles", 256)))
+            h.addWidget(n_spin)
+            h.addWidget(QLabel("Horizon:"))
+            hor_spin = QSpinBox(); hor_spin.setRange(1, 500); hor_spin.setValue(int(get_setting("forecast_horizon", 5)))
+            h.addWidget(hor_spin)
+            layout.addLayout(h)
+
+            # Output type
+            h = QHBoxLayout()
+            h.addWidget(QLabel("Output type:"))
+            out_cb = QComboBox(); out_cb.addItems(["returns","prices"]); out_cb.setCurrentText(get_setting("forecast_output_type","returns"))
+            h.addWidget(out_cb)
+            layout.addLayout(h)
+
+            # Buttons
+            bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+            bb.accepted.connect(dlg.accept)
+            bb.rejected.connect(dlg.reject)
+            layout.addWidget(bb)
+
+            if dlg.exec():
+                set_setting("forecast_model_path", model_le.text().strip())
+                set_setting("forecast_symbol", sym_cb.currentText())
+                set_setting("forecast_timeframe", tf_cb.currentText())
+                set_setting("forecast_limit_candles", int(n_spin.value()))
+                set_setting("forecast_horizon", int(hor_spin.value()))
+                set_setting("forecast_output_type", out_cb.currentText())
+                # update label in UI
+                try:
+                    self.forecastSettingsRequested.emit()
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                logger.exception("Failed to open forecast settings dialog: {}", e)
+            except Exception:
+                pass
+
+    def _on_forecast_clicked(self):
+        """
+        Emit forecastRequested with current persisted settings payload.
+        Controller or outer app can connect to this signal to execute forecast.
+        """
+        try:
+            from ..utils.user_settings import get_setting
+            payload = {
+                "model_path": get_setting("forecast_model_path", ""),
+                "symbol": get_setting("forecast_symbol", "EUR/USD"),
+                "timeframe": get_setting("forecast_timeframe", "1m"),
+                "limit_candles": int(get_setting("forecast_limit_candles", 256)),
+                "horizon": int(get_setting("forecast_horizon", 5)),
+                "output_type": get_setting("forecast_output_type", "returns"),
+            }
+            try:
+                try:
+                    logger.debug("ChartTab: _on_forecast_clicked building payload: %s", payload)
+                except Exception:
+                    pass
+                self.forecastRequested.emit(payload)
+                try:
+                    logger.debug("ChartTab: forecastRequested emitted")
+                except Exception:
+                    pass
+                # transient UI feedback
+                if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
+                    try:
+                        self._main_window.statusBar().showMessage("Forecast richiesto...", 3000)
+                    except Exception:
+                        pass
+            except Exception as emit_err:
+                try:
+                    logger.exception("ChartTab: failed to emit forecastRequested: %s", emit_err)
+                except Exception:
+                    pass
+                # fallback: show message box
+                try:
+                    QMessageBox.information(self, "Forecast", f"Forecast requested: {payload}")
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                logger.exception("Failed to build forecast payload: {}", e)
+            except Exception:
+                pass
