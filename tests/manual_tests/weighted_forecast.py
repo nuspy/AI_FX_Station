@@ -19,7 +19,7 @@ Features:
   --horizons "5,10,20"
 
 Usage (PowerShell):
-  .\\scripts\\weighted_forecast.ps1 -Symbol "EUR/USD" -Timeframe "1m" -Horizon 5 -Days 7 -Model ridge -Encoder none -ForecastMethod supervised
+  .\\scripts\\weihweighted_forecast.ps1 -Symbol "EUR/USD" -Timeframe "1m" -Horizon 5 -Days 7 -Model ridge -Encoder none -ForecastMethod supervised
 
 Outputs:
 - Prints metrics and, for linear models, per-feature coefficients (weights).

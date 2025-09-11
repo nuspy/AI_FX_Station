@@ -16,6 +16,9 @@ from sqlalchemy import MetaData, select
 from loguru import logger
 
 from ..features.indicators import sma, ema, bollinger, rsi, macd
+# prediction helper
+from forex_diffusion.inference.prediction import end_to_end_predict
+from ..utils.user_settings import get_setting
 
 
 class ChartTab(QWidget):
