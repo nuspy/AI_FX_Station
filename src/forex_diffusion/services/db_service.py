@@ -447,6 +447,132 @@ class DBService:
         except Exception as e:
             logger.exception("Failed to write signal: {}", e)
             raise
+
+def write_tick(self, payload: Dict[str, Any]) -> bool:
+        """
+        Insert a tick into market_data_ticks table.
+        Payload expected keys: symbol, timeframe, ts_utc (ms), price, bid, ask, volume, ts_created_ms (optional).
+        Returns True if inserted (or attempted), False on non-fatal failure.
+        """
+        try:
+            symbol = payload.get("symbol")
+            timeframe = payload.get("timeframe")
+            ts_utc = int(payload.get("ts_utc"))
+            price = payload.get("price", None)
+            bid = payload.get("bid", None)
+            ask = payload.get("ask", None)
+            volume = payload.get("volume", None)
+            created = int(payload.get("ts_created_ms", int(time.time() * 1000)))
+
+            # Try using reflected table if available on the instance
+            try:
+                tbl = getattr(self, "ticks_tbl", None)
+            except Exception:
+                tbl = None
+
+            # If ticks table attr not set, reflect metadata lazily
+            if tbl is None:
+                from sqlalchemy import MetaData
+                meta = MetaData()
+                try:
+                    meta.reflect(bind=self.engine, only=["market_data_ticks"])
+                    tbl = meta.tables.get("market_data_ticks")
+                except Exception:
+                    tbl = None
+
+            if tbl is not None:
+                # Prefer dialect-specific INSERT OR IGNORE for sqlite
+                dialect = getattr(self.engine, "name", None) or getattr(getattr(self.engine, "url", None), "drivername", None)
+                with self.engine.begin() as conn:
+                    if dialect and "sqlite" in str(dialect).lower():
+                        # sqlite: INSERT OR IGNORE
+                        conn.execute(
+                            tbl.insert().prefix_with("OR IGNORE"),
+                            {
+                                "symbol": symbol,
+                                "timeframe": timeframe,
+                                "ts_utc": ts_utc,
+                                "price": float(price) if price is not None else None,
+                                "bid": float(bid) if bid is not None else None,
+                                "ask": float(ask) if ask is not None else None,
+                                "volume": float(volume) if volume is not None else None,
+                                "ts_created_ms": created,
+                            },
+                        )
+                        return True
+                    else:
+                        # generic insert; let DB raise if duplicate (caller can ignore)
+                        try:
+                            conn.execute(
+                                tbl.insert(),
+                                {
+                                    "symbol": symbol,
+                                    "timeframe": timeframe,
+                                    "ts_utc": ts_utc,
+                                    "price": float(price) if price is not None else None,
+                                    "bid": float(bid) if bid is not None else None,
+                                    "ask": float(ask) if ask is not None else None,
+                                    "volume": float(volume) if volume is not None else None,
+                                    "ts_created_ms": created,
+                                },
+                            )
+                            return True
+                        except Exception:
+                            # likely duplicate/constraint; ignore non-fatal
+                            return False
+            else:
+                # fallback: raw SQL INSERT with OR IGNORE for sqlite
+                try:
+                    from sqlalchemy import text as _text
+                    dialect = getattr(self.engine, "name", None) or getattr(getattr(self.engine, "url", None), "drivername", None)
+                    with self.engine.begin() as conn:
+                        if dialect and "sqlite" in str(dialect).lower():
+                            stmt = _text(
+                                "INSERT OR IGNORE INTO market_data_ticks (symbol, timeframe, ts_utc, price, bid, ask, volume, ts_created_ms) "
+                                "VALUES (:symbol, :timeframe, :ts_utc, :price, :bid, :ask, :volume, :ts_created_ms)"
+                            )
+                            conn.execute(
+                                stmt,
+                                {
+                                    "symbol": symbol,
+                                    "timeframe": timeframe,
+                                    "ts_utc": ts_utc,
+                                    "price": price,
+                                    "bid": bid,
+                                    "ask": ask,
+                                    "volume": volume,
+                                    "ts_created_ms": created,
+                                },
+                            )
+                            return True
+                        else:
+                            stmt = _text(
+                                "INSERT INTO market_data_ticks (symbol, timeframe, ts_utc, price, bid, ask, volume, ts_created_ms) "
+                                "VALUES (:symbol, :timeframe, :ts_utc, :price, :bid, :ask, :volume, :ts_created_ms)"
+                            )
+                            try:
+                                conn.execute(
+                                    stmt,
+                                    {
+                                        "symbol": symbol,
+                                        "timeframe": timeframe,
+                                        "ts_utc": ts_utc,
+                                        "price": price,
+                                        "bid": bid,
+                                        "ask": ask,
+                                        "volume": volume,
+                                        "ts_created_ms": created,
+                                    },
+                                )
+                                return True
+                            except Exception:
+                                return False
+                except Exception as e:
+                    logger.exception("write_tick fallback raw SQL failed: {}", e)
+                    return False
+        except Exception as e:
+            logger.exception("write_tick failed: {}", e)
+            return False
     def write_prediction(self, symbol: str, timeframe: str, horizon: str, q05: float, q50: float, q95: float, meta: Optional[Dict] = None):
         try:
             with self.engine.begin() as conn:
