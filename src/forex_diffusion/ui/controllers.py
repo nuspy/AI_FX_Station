@@ -13,6 +13,28 @@ from loguru import logger
 from ..services.marketdata import MarketDataService
 from ..data import io as data_io
 
+import pickle
+from pathlib import Path
+
+# Import robusto della pipeline (assoluto → relativo come fallback)
+try:
+    from forex_diffusion.features.pipeline import pipeline_process
+except ImportError:
+    from ..features.pipeline import pipeline_process
+
+
+def pickle_load_safe(p: Path):
+    """
+    Carica un file pickle (tipicamente sklearn) e lo normalizza in un dict.
+    - Se il pickle è già un dict, lo ritorna.
+    - Se contiene direttamente un modello/oggetto, lo incapsula come {"model": obj}.
+    """
+    with open(p, "rb") as f:
+        obj = pickle.load(f)
+    if isinstance(obj, dict):
+        return obj
+    return {"model": obj}
+
 
 class UIControllerSignals(QObject):
     """Signals emitted by the controller to update UI."""
@@ -48,9 +70,11 @@ class ForecastWorker(QRunnable):
             # emit result for viewer/ChartTab
             self.signals.status.emit("Forecast: ready (local)")
             try:
-                logger.info("ForecastWorker: local forecast ready, df_rows=%s, q50_len=%s",
-                            len(df_local) if df_local is not None else 0,
-                            len(quantiles_local.get("q50", [])) if isinstance(quantiles_local, dict) else "n/a")
+                logger.info("ForecastWorker: local forecast ready, df_rows={}, q50_len={}", len(df_local),
+                            len(quantiles_local["q50"]))
+                logger.info(f"on_forecast_ready: detected q50 as returns -> converting to prices (last_close={last_close})")
+
+
             except Exception:
                 pass
             self.signals.forecastReady.emit(df_local, quantiles_local)
@@ -61,160 +85,225 @@ class ForecastWorker(QRunnable):
 
     def _local_infer(self):
         """
-        Fallback local inference using model file specified in payload['model_path'].
-        Returns (df_candles, quantiles_dict).
+        Fallback locale (Basic). Ritorna (df_candles, quantiles_dict).
+        Flusso: dati → pipeline → ensure → fill mancanti con μ → z-score per colonna → inferenza → horizon → prezzi → quantili.
         """
-        import pickle, traceback, numpy as np
+        import pickle
+        import numpy as np
+        import pandas as pd
+        from pathlib import Path
+
         try:
-            model_path = self.payload.get("model_path") or self.payload.get("model")
+            from loguru import logger
+        except Exception:
+            class _L:
+                def info(self, *a, **k): pass
+
+                def debug(self, *a, **k): pass
+
+                def warning(self, *a, **k): pass
+
+                def error(self, *a, **k): pass
+
+            logger = _L()
+
+        # --- import robusti ---
+        try:
+            from forex_diffusion.features.pipeline import pipeline_process
+        except Exception:
+            from ..features.pipeline import pipeline_process  # type: ignore
+
+        # ensure (se presente nel progetto)
+        ensure_features_for_prediction = None
+        try:
+            from forex_diffusion.inference.prediction_config import ensure_features_for_prediction as _ens
+            ensure_features_for_prediction = _ens
+        except Exception:
             try:
-                logger.debug("ForecastWorker._local_infer start: model_path=%s payload_keys=%s", model_path, list(self.payload.keys()))
+                from ..inference.prediction_config import ensure_features_for_prediction as _ens  # type: ignore
+                ensure_features_for_prediction = _ens
             except Exception:
-                pass
-            if not model_path:
-                raise RuntimeError("No model_path provided for local fallback")
+                ensure_features_for_prediction = None
 
-            # load recent candles from DB (limit from payload or default)
-            limit = int(self.payload.get("limit_candles", 256))
-            sym = self.payload.get("symbol", None)
-            tf = self.payload.get("timeframe", None)
-            df_candles = self._fetch_recent_candles(self.market_service.engine, sym, tf, n_bars=limit)
-            if df_candles is None or df_candles.empty:
-                raise RuntimeError("No candles available for local inference")
+        # loader pickle sicuro
+        def _pickle_load_safe(p: Path):
+            with open(p, "rb") as f:
+                obj = pickle.load(f)
+            return obj if isinstance(obj, dict) else {"model": obj}
 
-            # compute features using pipeline_process
+        # --- 1) Parametri payload ---
+        model_path = self.payload.get("model_path") or self.payload.get("model")
+        if not model_path:
+            raise RuntimeError("No model_path provided for local fallback")
+
+        limit = int(self.payload.get("limit_candles", 512))
+        sym = self.payload.get("symbol")
+        tf = (self.payload.get("timeframe") or "1m")
+        horizon = int(self.payload.get("horizon", 5))
+        output_type = str(self.payload.get("output_type", "returns")).lower()
+
+        # --- 2) Dati: ultime N candele (DEFINIZIONE SICURA DI df_candles) ---
+        df_candles = self._fetch_recent_candles(self.market_service.engine, sym, tf, n_bars=limit)
+        if df_candles is None or df_candles.empty:
+            raise RuntimeError("No candles available for local inference")
+        df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
+
+        # --- 3) Carica modello PRIMA dell'ensure (serve features_list, μ, σ) ---
+        p = Path(model_path)
+        if not p.exists():
+            raise FileNotFoundError(f"Model file not found: {p}")
+
+        suffix = p.suffix.lower()
+        if suffix in (".pt", ".pth", ".ptl"):
             try:
-                from forex_diffusion.features.pipeline import pipeline_process
+                import torch
+                raw = torch.load(str(p), map_location="cpu")
+                payload_obj = raw if isinstance(raw, dict) else {"model": raw}
             except Exception as e:
-                raise RuntimeError(f"pipeline_process import failed: {e}")
-
-            features_config = {
-                "warmup_bars": int(self.payload.get("warmup_bars", 16)),
-                "indicators": {
-                    "atr": {"n": int(self.payload.get("atr_n", 14))},
-                    "rsi": {"n": int(self.payload.get("rsi_n", 14))},
-                    "bollinger": {"n": int(self.payload.get("bb_n", 20))},
-                    "hurst": {"window": int(self.payload.get("hurst_window", 64))},
-                },
-                "standardization": {"window_bars": int(self.payload.get("rv_window", 60))}
-            }
-            feats, _ = pipeline_process(df_candles.copy(), timeframe=tf or "1m", features_config=features_config)
-            if feats.empty:
-                raise RuntimeError("No features computed for local inference")
-
-            # apply advanced ensure_features if provided in payload (adds missing engineered features)
-            ensure_cfg = self.payload.get("ensure_cfg") or self.payload.get("advanced_cfg") or None
-            if ensure_cfg:
-                try:
-                    from forex_diffusion.inference.prediction_config import ensure_features_for_prediction
-                    # features_list may not be known yet; attempt to pass union of payload.features if present else empty
-                    feats = ensure_features_for_prediction(feats, timeframe=tf or "1m", features_list=payload_obj.get("features") or [], adv_cfg=ensure_cfg)
-                except Exception:
-                    # non-fatal: continue with pipeline-produced feats
-                    try:
-                        logger.debug("ForecastWorker: ensure_features_for_prediction failed or not available")
-                    except Exception:
-                        pass
-
-            # load model payload (pickle or torch)
-            payload_obj = None
-            p = Path(model_path)
+                raise RuntimeError(f"Failed to load torch model file: {e}")
+        else:
             try:
-                payload_obj = pickle.loads(p.read_bytes())
-            except Exception:
-                try:
-                    import torch
-                    raw = torch.load(str(p))
-                    payload_obj = raw if isinstance(raw, dict) else {"model": raw}
-                except Exception as e:
-                    raise RuntimeError(f"Failed to load model file: {e}")
-
-            model = payload_obj.get("model")
-            features_list = payload_obj.get("features") or []
-            mu = payload_obj.get("std_mu", {}) or {}
-            sigma = payload_obj.get("std_sigma", {}) or {}
-
-            # Build X from last rows of feats
-            missing = [f for f in features_list if f not in feats.columns]
-            if missing:
-                try:
-                    logger.warning("ForecastWorker._local_infer: missing features, synthesizing with mu/0.0 -> %s", missing)
-                except Exception:
-                    pass
-                for col in missing:
-                    try:
-                        fill_val = float(mu.get(col, 0.0)) if isinstance(mu, dict) else 0.0
-                    except Exception:
-                        fill_val = 0.0
-                    # create constant column with same length as feats so that after standardization it tends to zero if mu provided
-                    feats[col] = fill_val
-            # ensure column order matches features_list
-            X = feats[features_list].astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-            # apply mu/sigma if present
-            for col in features_list:
-                mu_c = mu.get(col)
-                sig_c = sigma.get(col)
-                if mu_c is not None and sig_c is not None:
-                    try:
-                        denom = float(sig_c) if float(sig_c) != 0.0 else 1.0
-                        X[col] = (X[col].astype(float) - float(mu_c)) / denom
-                    except Exception:
-                        X[col] = X[col].astype(float).fillna(0.0)
-
-            X_arr = X.to_numpy(dtype=float)
-
-            # predict using sklearn-like or torch
-            preds = None
-            try:
-                import numpy as _np
-                try:
-                    import torch
-                    TORCH = True
-                except Exception:
-                    TORCH = False
-                if TORCH and (hasattr(model, "forward") or isinstance(model, __import__("torch").nn.Module)):
-                    model.eval()
-                    with __import__("torch").no_grad():
-                        t_in = __import__("torch").tensor(X_arr, dtype=__import__("torch").float32)
-                        out = model(t_in)
-                        preds = out.cpu().numpy().squeeze()
-                else:
-                    preds = np.asarray(model.predict(X_arr)).squeeze()
+                payload_obj = _pickle_load_safe(p)
             except Exception as e:
-                raise RuntimeError(f"Model predict failed: {e}")
+                raise RuntimeError(f"Failed to load pickle model file: {e}")
 
-            # build horizon sequence
-            horizon = int(self.payload.get("horizon", 5))
-            output_type = self.payload.get("output_type", "returns")
-            if getattr(preds, "ndim", 0) == 0:
-                seq = np.repeat(float(preds), horizon)
-            elif preds.ndim == 1:
-                seq = preds[-horizon:] if len(preds) >= horizon else np.concatenate([preds, np.repeat(preds[-1], horizon - len(preds))])
-            else:
-                try:
-                    seq = preds[-1].reshape(-1)[:horizon]
-                    if seq.size < horizon:
-                        seq = np.pad(seq, (0, horizon - seq.size), mode='edge')
-                except Exception:
-                    seq = np.repeat(float(np.ravel(preds)[-1]), horizon)
+        model = payload_obj.get("model")
+        features_list = payload_obj.get("features") or []
+        mu = payload_obj.get("std_mu", {}) or {}
+        sigma = payload_obj.get("std_sigma", {}) or {}
 
-            last_close = float(df_candles["close"].iat[-1])
-            if output_type == "returns":
-                prices = [last_close]
-                for r in seq:
-                    prices.append(prices[-1] * (1.0 + float(r)))
-                forecast_prices = np.array(prices[1:], dtype=float)
-            else:
-                forecast_prices = np.array(seq, dtype=float)
+        if model is None:
+            raise RuntimeError("Model payload missing 'model'")
+        if not isinstance(features_list, (list, tuple)) or len(features_list) == 0:
+            raise RuntimeError("Model payload missing 'features' list")
 
-            # build quantiles placeholder (simple deterministic offered as q50)
-            quantiles = {"q50": forecast_prices.tolist(), "q05": (forecast_prices * 0.99).tolist(), "q95": (forecast_prices * 1.01).tolist()}
+        # --- 4) Config Basic per pipeline ---
+        features_config = {
+            "warmup_bars": int(self.payload.get("warmup_bars", 16)),
+            "indicators": {
+                "atr": {"n": int(self.payload.get("atr_n", 14))},
+                "rsi": {"n": int(self.payload.get("rsi_n", 14))},
+                "bollinger": {"n": int(self.payload.get("bb_n", 20))},
+                "hurst": {"window": int(self.payload.get("hurst_window", 64))},
+            },
+            "standardization": {"window_bars": int(self.payload.get("rv_window", 60))},
+        }
 
-            return df_candles, quantiles
+        # --- LOG parametri Basic ---
+        try:
+            ind_dict = features_config.get("indicators", {})
+            logger.info(
+                "Basic forecast params: model={} symbol={} timeframe={} limit={} horizon={} "
+                "indicators_keys={} standardization.window_bars={}",
+                model_path, sym, tf, limit, horizon, list(ind_dict.keys()),
+                features_config.get("standardization", {}).get("window_bars")
+            )
+            logger.debug("Basic features_config.indicators={}", ind_dict)
         except Exception as e:
-            logger.exception("Local inference failed: %s", e)
-            raise
+            logger.debug("Basic forecast params log skipped: {}", e)
+
+        # --- 5) Pipeline ---
+        feats, _ = pipeline_process(df_candles.copy(), timeframe=tf, features_config=features_config)
+        if feats is None or feats.empty:
+            raise RuntimeError("No features computed for local inference")
+
+        # --- 6) Ensure (se disponibile) ---
+        ensure_cfg = self.payload.get("ensure_cfg") or self.payload.get("advanced_cfg") or None
+        if ensure_cfg and ensure_features_for_prediction is not None:
+            try:
+                feats = ensure_features_for_prediction(
+                    feats, timeframe=tf, features_list=features_list, adv_cfg=ensure_cfg
+                )
+            except Exception as e:
+                logger.debug("ensure_features_for_prediction failed: {}", e)
+
+        # --- 7) Colonne mancanti → fill μ; ordine colonne; sanitizzazione ---
+        missing = [c for c in features_list if c not in feats.columns]
+        if missing:
+            logger.warning("Basic: missing features will be filled with mu: {}", missing)
+            for col in missing:
+                try:
+                    fill_val = float(mu.get(col, 0.0))
+                except Exception:
+                    fill_val = 0.0
+                feats[col] = fill_val
+
+        X = (
+            feats[features_list]
+            .astype(float)
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+
+        # --- 8) Standardizzazione per colonna ---
+        for col in features_list:
+            mu_c = mu.get(col)
+            sig_c = sigma.get(col)
+            if mu_c is not None and sig_c is not None:
+                denom = float(sig_c) if float(sig_c) != 0.0 else 1.0
+                X[col] = (X[col] - float(mu_c)) / denom
+
+        X_arr = X.to_numpy(dtype=float)
+
+        # --- LOG diagnostico ---
+        try:
+            import hashlib
+            logger.info("Basic model features: count={} first10={}", len(features_list), features_list[:10])
+            logger.debug("Basic X shape={} hash={}", X_arr.shape, hashlib.md5(X_arr.tobytes()).hexdigest())
+        except Exception as e:
+            logger.debug("Basic diagnostics log skipped: {}", e)
+
+        # --- 9) Inferenza ---
+        preds = None
+        try:
+            import torch
+            if hasattr(model, "eval"):
+                model.eval()
+            with torch.no_grad():
+                t_in = torch.tensor(X_arr, dtype=torch.float32)
+                out = model(t_in)
+                preds = out.detach().cpu().numpy()
+        except Exception:
+            if hasattr(model, "predict"):
+                preds = np.asarray(model.predict(X_arr))
+            else:
+                try:
+                    preds = np.asarray([float(model)])
+                except Exception as e:
+                    raise RuntimeError(f"Unsupported model type for prediction: {e}")
+
+        preds = np.squeeze(preds)
+        if preds.size == 0:
+            raise RuntimeError("Model returned empty prediction")
+
+        # --- 10) Sequenza di lunghezza horizon ---
+        if preds.ndim == 0:
+            seq = np.repeat(float(preds), horizon)
+        elif preds.ndim == 1:
+            seq = preds[-horizon:] if preds.size >= horizon else np.concatenate(
+                [preds, np.repeat(preds[-1], horizon - preds.size)]
+            )
+        else:
+            last = preds[-1].reshape(-1)
+            seq = last[:horizon] if last.size >= horizon else np.pad(last, (0, horizon - last.size), mode="edge")
+
+        # --- 11) Prezzi e quantili ---
+        last_close = float(df_candles["close"].iat[-1])
+        if output_type == "returns":
+            prices = [last_close]
+            for r in seq:
+                prices.append(prices[-1] * (1.0 + float(r)))
+            forecast_prices = np.array(prices[1:], dtype=float)
+        else:
+            forecast_prices = np.array(seq, dtype=float)
+
+        quantiles = {
+            "q50": forecast_prices.tolist(),
+            "q05": (forecast_prices * 0.99).tolist(),
+            "q95": (forecast_prices * 1.01).tolist(),
+        }
+
+        return df_candles, quantiles
 
     def _fetch_recent_candles(self, engine, symbol: str, timeframe: str, n_bars: int = 500) -> pd.DataFrame:
         """
@@ -346,6 +435,46 @@ class UIController:
                 pass
             self.signals.error.emit(str(e))
             self.signals.status.emit("Forecast request failed")
+
+    def build_features_config_from_ensure(self, ensure_cfg: dict, *, atr_n_fallback: int = 14,
+                                          warmup_bars_fallback: int = 16) -> dict:
+        """
+        Converte un ensure_cfg (Advanced) in un features_config coerente per pipeline_process.
+        - Usa ATR(n) dal fallback (finché non metti lo slider ATR in Advanced).
+        - Mappa rsi_n, bb_n/bb_k, don_n, ema_fast/ema_slow, keltner_k, hurst_window.
+        - Usa rv_window per standardization.window_bars.
+        """
+        # fallback puliti
+        atr_n = int(self._safe_get_setting("atr_n", atr_n_fallback)) if hasattr(self,
+                                                                                "_safe_get_setting") else atr_n_fallback
+        warmup_bars = int(self._safe_get_setting("warmup_bars", warmup_bars_fallback)) if hasattr(self,
+                                                                                                  "_safe_get_setting") else warmup_bars_fallback
+
+        # estrazioni sicure
+        rsi_n = int(ensure_cfg.get("rsi_n", 14))
+        bb_n = int(ensure_cfg.get("bb_n", 20))
+        bb_k = float(ensure_cfg.get("bb_k", 2.0))
+        don_n = int(ensure_cfg.get("don_n", 20))
+        ema_fast = int(ensure_cfg.get("ema_fast", 12))
+        ema_slow = int(ensure_cfg.get("ema_slow", 26))
+        keltner_k = float(ensure_cfg.get("keltner_k", 1.5))
+        hurst_window = int(ensure_cfg.get("hurst_window", 64))
+        rv_window = int(ensure_cfg.get("rv_window", 60))
+
+        return {
+            "warmup_bars": warmup_bars,
+            "indicators": {
+                "atr": {"n": atr_n},
+                "rsi": {"n": rsi_n},
+                "bollinger": {"n": bb_n, "k": bb_k},
+                "donchian": {"n": don_n},
+                "ema": {"fast": ema_fast, "slow": ema_slow},
+                "macd": {"fast": ema_fast, "slow": ema_slow, "signal": 9},
+                "keltner": {"k": keltner_k},
+                "hurst": {"window": hurst_window},
+            },
+            "standardization": {"window_bars": rv_window},
+        }
 
     @Slot()
     def handle_calibration_requested(self):

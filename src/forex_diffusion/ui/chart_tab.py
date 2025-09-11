@@ -1465,7 +1465,7 @@ class ChartTab(QWidget):
             # If values look like returns, convert cumulatively to prices
             if treat_as_returns and last_close is not None:
                 try:
-                    logger.info("on_forecast_ready: detected q50 as returns -> converting to prices (last_close=%s)", last_close)
+                    logger.info("on_forecast_ready: detected q50 as returns -> converting to prices (last_close={})", last_close)
                 except Exception:
                     pass
                 prices = [last_close]
@@ -2034,6 +2034,7 @@ class ChartTab(QWidget):
     def _on_advanced_forecast_clicked(self):
         """
         Esegue end_to_end_predict con settaggi avanzati e disegna overlay giallo.
+        Costruisce features_config coerente a partire da ensure_cfg (Advanced) e logga i parametri effettivi.
         """
         try:
             model_path = get_setting("forecast_model_path", "")
@@ -2042,45 +2043,44 @@ class ChartTab(QWidget):
             limit = int(get_setting("forecast_limit_candles", 256))
             horizon = int(get_setting("forecast_horizon", 5))
 
-            # fetch candles (buffer or DB)
+            # fetch candles (buffer o DB)
             candles = None
             if getattr(self, "_last_df", None) is not None and not self._last_df.empty:
                 candles = self._last_df.copy().sort_values("ts_utc").reset_index(drop=True)
-                # truncate to last N if larger
                 if len(candles) > limit:
                     candles = candles.iloc[-limit:].reset_index(drop=True)
             elif getattr(self, "db_service", None) is not None:
                 try:
-                    meta = MetaData(); meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
+                    meta = MetaData();
+                    meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
                     tbl = meta.tables.get("market_data_candles")
                     if tbl is not None:
                         with self.db_service.engine.connect() as conn:
-                            stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close).where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe).order_by(tbl.c.ts_utc.desc()).limit(limit)
+                            stmt = (
+                                select(
+                                    tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume
+                                )
+                                .where((tbl.c.symbol == symbol) & (tbl.c.timeframe == timeframe))
+                                .order_by(tbl.c.ts_utc.desc())
+                                .limit(limit)
+                            )
                             rows = conn.execute(stmt).fetchall()
                             if rows:
                                 import pandas as _pd
-                                candles = _pd.DataFrame([dict(r._mapping) if hasattr(r, "_mapping") else {"ts_utc": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in rows])[::-1].reset_index(drop=True)
+                                candles = _pd.DataFrame(
+                                    [{"ts_utc": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4],
+                                      "volume": r[5]} for r in rows]
+                                )[::-1].reset_index(drop=True)
                 except Exception as e:
-                    logger.debug("Advanced forecast: DB fetch failed: %s", e)
-                    candles = None
+                    logger.debug(f"Advanced forecast: DB fetch failed: {e}")
 
             if candles is None or candles.empty:
                 QMessageBox.warning(self, "Advanced forecast", "Dati candles non disponibili.")
                 return
 
-            # pipeline features config (riuso dei setting base)
-            features_config = {
-                "warmup_bars": int(get_setting("warmup_bars", 16)),
-                "indicators": {
-                    "atr": {"n": int(get_setting("atr_n", 14))},
-                    "rsi": {"n": int(get_setting("rsi_n", 14))},
-                    "bollinger": {"n": int(get_setting("bb_n", 20))},
-                    "hurst": {"window": int(get_setting("hurst_window", 64))},
-                },
-                "standardization": {"window_bars": int(get_setting("rv_window", 60))}
-            }
-
-            # advanced ensure cfg for prediction_config
+            # ---------------------------
+            # Advanced ensure cfg (UI sliders → ensure_cfg)
+            # ---------------------------
             ensure_cfg = {
                 "std_window": int(get_setting("adv_std_window", 60)),
                 "rsi_n": int(get_setting("adv_rsi_n", 14)),
@@ -2094,25 +2094,48 @@ class ChartTab(QWidget):
                 "keltner_k": float(get_setting("adv_keltner_k", 1.5)),
             }
 
-            # log settings used for advanced forecast (interpolate values)
+            # ---------------------------
+            # Costruzione features_config COERENTE con ensure_cfg
+            # ---------------------------
+            atr_n = int(get_setting("atr_n", 14))  # ATR dal setting base (se non hai slider dedicato)
+            features_config = {
+                "warmup_bars": int(get_setting("warmup_bars", 16)),
+                "indicators": {
+                    "atr": {"n": atr_n},
+                    "rsi": {"n": ensure_cfg["rsi_n"]},
+                    "bollinger": {"n": ensure_cfg["bb_n"], "k": ensure_cfg["bb_k"]},
+                    "donchian": {"n": ensure_cfg["don_n"]},
+                    "ema": {"fast": ensure_cfg["ema_fast"], "slow": ensure_cfg["ema_slow"]},
+                    "macd": {"fast": ensure_cfg["ema_fast"], "slow": ensure_cfg["ema_slow"], "signal": 9},
+                    "keltner": {"k": ensure_cfg["keltner_k"]},
+                    "hurst": {"window": ensure_cfg["hurst_window"]},
+                },
+                "standardization": {"window_bars": ensure_cfg["rv_window"]},
+            }
+
+            # ------- LOG COMPLETO E CON VALORI REALI -------
             try:
+                ind = features_config.get("indicators", {})
+                std_w = features_config.get("standardization", {}).get("window_bars")
                 logger.info(
-                    f"Advanced forecast run: model={model_path} symbol={symbol} timeframe={timeframe} "
-                    f"limit={limit} horizon={horizon} "
-                    f"features_config={features_config} "
-                    f"ensure_cfg={ensure_cfg} "
-                    f"(std_window={ensure_cfg.get('std_window')}, rsi_n={ensure_cfg.get('rsi_n')}, bb_n={ensure_cfg.get('bb_n')}, bb_k={ensure_cfg.get('bb_k')}, "
-                    f"don_n={ensure_cfg.get('don_n')}, hurst_window={ensure_cfg.get('hurst_window')}, rv_window={ensure_cfg.get('rv_window')}, "
-                    f"ema_fast={ensure_cfg.get('ema_fast')}, ema_slow={ensure_cfg.get('ema_slow')}, keltner_k={ensure_cfg.get('keltner_k')})"
+                    "Advanced forecast run: model={model} symbol={sym} timeframe={tf} limit={lim} horizon={hz}\n"
+                    "  features_config(indicators)={ind}\n"
+                    "  standardization.window_bars={stdw}\n"
+                    "  ensure_cfg={ens}",
+                    model=model_path, sym=symbol, tf=timeframe, lim=limit, hz=horizon, ind=ind, stdw=std_w,
+                    ens=ensure_cfg
                 )
             except Exception:
-                # best-effort logging; don't block prediction on logging failure
-                try:
-                    logger.debug("Advanced forecast: logging of settings failed")
-                except Exception:
-                    pass
+                # fallback ultra-robusto con f-string (non fallisce mai sulla formattazione)
+                logger.info(
+                    "Advanced forecast run:\n"
+                    f"  model={model_path} symbol={symbol} timeframe={timeframe} limit={limit} horizon={horizon}\n"
+                    f"  features_config(indicators)={features_config.get('indicators')}\n"
+                    f"  standardization.window_bars={features_config.get('standardization', {}).get('window_bars')}\n"
+                    f"  ensure_cfg={ensure_cfg}"
+                )
 
-            # run prediction
+            # Esecuzione modello
             res = end_to_end_predict(
                 model_path=model_path,
                 candles_df=candles,
@@ -2138,9 +2161,13 @@ class ChartTab(QWidget):
 
             # draw in yellow/gold
             try:
-                import matplotlib.dates as _md
-                x_dt = pd.to_datetime(fts).tz_convert(None) if hasattr(pd.Series(fts).dt, "tz_convert") else pd.to_datetime(fts)
-                x_num = mdates.date2num(x_dt.to_pydatetime() if hasattr(x_dt, "to_pydatetime") else pd.to_datetime(x_dt).to_pydatetime())
+                x_dt = pd.to_datetime(fts)
+                try:
+                    if hasattr(pd.Series(fts).dt, "tz_convert"):
+                        x_dt = x_dt.dt.tz_convert(None)
+                except Exception:
+                    pass
+                x_num = mdates.date2num(x_dt.to_pydatetime())
             except Exception:
                 try:
                     x_num = [mdates.date2num(pd.to_datetime(t)) for t in fts]
@@ -2150,27 +2177,17 @@ class ChartTab(QWidget):
             self._adv_forecast_line, = self.ax.plot(
                 x_num,
                 list(map(float, prices)),
-                color="#FFD700",  # gold
-                alpha=0.333,
-                linewidth=8,
-                label="Advanced Forecast",
+                color="#FFD700",
+                alpha=0.9,
+                linewidth=1.8,
+                label="Advanced forecast",
             )
-            # refresh legend
             try:
-                handles, labels = self.ax.get_legend_handles_labels()
-                if handles:
-                    self.ax.legend(handles, labels, loc="upper left", fontsize="small")
+                self.ax.legend(loc="best")
             except Exception:
                 pass
-            try:
-                self.canvas.draw_idle()
-            except Exception:
-                self.canvas.draw()
-            if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
-                self._main_window.statusBar().showMessage("Advanced forecast disegnata", 3000)
+            self.canvas.draw_idle()
+
         except Exception as e:
-            logger.exception("Advanced forecast failed: {}", e)
-            try:
-                QMessageBox.critical(self, "Advanced forecast", str(e))
-            except Exception:
-                pass
+            logger.error(f"Advanced forecast failed: {e}")
+            QMessageBox.critical(self, "Advanced forecast", f"Errore: {e}")
