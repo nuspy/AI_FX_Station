@@ -147,6 +147,44 @@ class HistoryTab(QWidget):
             else:
                 res = {}
             self._log(f"Backfill result: {json.dumps(res)}")
+            # Log DB engine URL (file) to ensure same DB is used across sessions
+            try:
+                eng = getattr(self.db_service, "engine", None)
+                if eng is not None:
+                    try:
+                        # SQLAlchemy engines expose url attribute; for SQLite it shows file path
+                        url = getattr(eng, "url", None)
+                        self._log(f"Using DB engine URL: {url}")
+                        logger.info("HistoryTab: DB engine URL after backfill: {}", url)
+                    except Exception:
+                        self._log("Using DB engine: <unknown>")
+                else:
+                    self._log("DB service engine not available for verification")
+            except Exception:
+                pass
+
+            # VERIFICA POST-UPSET: conta righe nel DB per symbol/timeframe e logga
+            try:
+                from sqlalchemy import text as _text
+                with self.db_service.engine.connect() as _conn:
+                    cnt_q = _text("SELECT COUNT(1) FROM market_data_candles WHERE symbol = :s AND timeframe = :tf")
+                    try:
+                        cnt = int(_conn.execute(cnt_q, {"s": sym, "tf": tf}).scalar() or 0)
+                        self._log(f"Post-backfill DB rows for {sym} {tf}: {cnt}")
+                        if cnt == 0:
+                            # warning both in UI log and logger
+                            self._log(f"WARNING: No rows found in market_data_candles for {sym} {tf} after backfill")
+                            logger.warning("HistoryTab post-backfill verification: 0 rows for %s %s", sym, tf)
+                    except Exception as _e:
+                        logger.exception("Post-backfill verification query failed: {}", _e)
+                        self._log(f"Post-backfill verification failed: {_e}")
+            except Exception as e:
+                # best-effort: if verification cannot be performed, log debug
+                try:
+                    logger.debug("Backfill post-upsert verification skipped: {}", e)
+                except Exception:
+                    pass
+
             QMessageBox.information(self, "Backfill", "Backfill request completed (see log).")
             # refresh table
             self.refresh(limit=200)

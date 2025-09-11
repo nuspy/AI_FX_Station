@@ -412,6 +412,18 @@ def backfill_from_provider(
 
     # Upsert
     report = upsert_candles(engine, dfv, symbol, timeframe, resampled=resampled)
+
+    # LOG: explicitly record upsert details to help debug missing writes
+    try:
+        # report is expected to contain upsert metadata (inserted/updated/counts); log it plainly
+        logger.info("Backfill persistence details for %s %s: %s", symbol, timeframe, report)
+    except Exception:
+        # fallback: safe debug if formatting fails
+        try:
+            logger.debug("Backfill persistence report (raw): %s", report)
+        except Exception:
+            pass
+
     combined = {"provider_rows": len(df), "validation": vreport, "upsert": report}
 
     # Prepare a sanitized copy for logging to avoid very large 'gaps' payloads
@@ -424,6 +436,40 @@ def backfill_from_provider(
         sanitized_combined = {"provider_rows": len(df), "validation": sanitized_vreport, "upsert": report}
     except Exception:
         sanitized_combined = {"provider_rows": len(df), "validation": {"note": "failed_to_sanitize"}, "upsert": report}
+
+    # Build combined report (returned to caller)
+    combined = {"provider_rows": len(df), "validation": vreport, "upsert": report}
+
+    # Verification: query DB to confirm rows were written in the requested ts range
+    try:
+        from sqlalchemy import text as _text
+        with engine.connect() as _conn:
+            try:
+                # Count rows for symbol/timeframe in the requested inclusive range
+                cnt_stmt = _text(
+                    "SELECT COUNT(1) FROM market_data_candles WHERE symbol = :s AND timeframe = :tf AND ts_utc BETWEEN :a AND :b"
+                )
+                cnt = _conn.execute(
+                    cnt_stmt,
+                    {"s": symbol, "tf": timeframe, "a": int(start_ts_ms), "b": int(end_ts_ms)},
+                ).scalar() or 0
+                logger.info("Post-upsert DB rows for %s %s in [%s,%s]: %d", symbol, timeframe, start_ts_ms, end_ts_ms, int(cnt))
+                if int(cnt) == 0:
+                    logger.warning(
+                        "Backfill verification: no rows found in DB for %s %s in [%s,%s] after upsert. Check upsert implementation.",
+                        symbol,
+                        timeframe,
+                        start_ts_ms,
+                        end_ts_ms,
+                    )
+            except Exception as _e:
+                logger.exception("Post-upsert verification query failed: {}", _e)
+    except Exception:
+        # best-effort: ignore verification failures but log debug
+        try:
+            logger.debug("Backfill post-upsert verification skipped due to missing sqlalchemy/text import or connection issue")
+        except Exception:
+            pass
 
     # Optionally compute features and persist
     try:

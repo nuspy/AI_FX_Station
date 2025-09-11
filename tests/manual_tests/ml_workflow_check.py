@@ -18,6 +18,7 @@ This script is conservative: uses warmup reduced for testing and logs progress.
 from __future__ import annotations
 
 import sys
+from os import truncate
 from pathlib import Path
 import argparse
 import time
@@ -117,7 +118,7 @@ def main():
             logger.info("Triggering backfill (days=%d) via MarketDataService", args.days_backfill)
             try:
                 res = ms.backfill_symbol_timeframe(args.symbol, args.timeframe, force_full=False)
-                logger.info("Backfill result: %s", res)
+                logger.info("Backfill result: %s", truncate(20, res))
                 time.sleep(1.0)
                 with engine.connect() as conn:
                     cnt = conn.execute(cnt_q, {"sym": args.symbol, "tf": args.timeframe}).scalar() or 0

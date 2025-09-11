@@ -521,9 +521,64 @@ class ChartTab(QWidget):
     def redraw(self):
         """
         Public redraw helper: replot last_df if available.
+        If in-memory buffer (_last_df) is empty, try to load recent candles from DB
+        for the configured symbol/timeframe so charts show backfilled candles even
+        if live ticks are not present.
         """
-        if getattr(self, "_last_df", None) is not None:
-            self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
+        try:
+            if getattr(self, "_last_df", None) is not None and not getattr(self, "_last_df", None).empty:
+                self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
+                return
+
+            # no in-memory buffer: try to load from DB (best-effort)
+            try:
+                if getattr(self, "db_service", None) is not None and getattr(self, "symbol", None) and getattr(self, "timeframe", None):
+                    meta = MetaData()
+                    try:
+                        meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
+                    except Exception:
+                        # reflection failed -> skip DB load
+                        logger.debug("ChartTab.redraw: metadata.reflect failed, skipping DB load")
+                        return
+                    tbl = meta.tables.get("market_data_candles")
+                    if tbl is None:
+                        return
+                    # fetch recent N candles (default 500)
+                    N = 500
+                    with self.db_service.engine.connect() as conn:
+                        stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close).where(
+                            tbl.c.symbol == self.symbol
+                        ).where(
+                            tbl.c.timeframe == self.timeframe
+                        ).order_by(
+                            tbl.c.ts_utc.desc()
+                        ).limit(N)
+                        rows = conn.execute(stmt).fetchall()
+                        if rows:
+                            import pandas as _pd
+                            # rows are desc -> invert to ascending
+                            recs = [dict(r._mapping) if hasattr(r, "_mapping") else {"ts_utc": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in rows]
+                            df = _pd.DataFrame(recs[::-1]).reset_index(drop=True)
+                            self._last_df = df
+                            try:
+                                self.update_plot(self._last_df, timeframe=self.timeframe)
+                            except Exception:
+                                # best-effort: attempt direct low-level plotting
+                                try:
+                                    getattr(self, "update_plot", lambda *_: None)(self._last_df, timeframe=self.timeframe)
+                                except Exception:
+                                    pass
+                            return
+            except Exception as e:
+                logger.debug("ChartTab.redraw DB-load attempt failed: {}", e)
+                # fall through: nothing to draw
+                return
+        except Exception:
+            # silent best-effort: avoid crashing UI on redraw
+            try:
+                logger.debug("ChartTab.redraw encountered an unexpected error")
+            except Exception:
+                pass
 
     def _set_status(self, text: str, timeout_ms: int = 3000):
         """
