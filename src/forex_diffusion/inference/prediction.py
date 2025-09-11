@@ -86,11 +86,10 @@ def end_to_end_predict(
     if feats_df.empty:
         raise RuntimeError("pipeline produced empty features_df")
 
-    # ensure required features exist (time-features, hl_range, ema_slope, realized moments, etc.)
+    # ensure required features exist
     try:
         feats_df = ensure_features_for_prediction(feats_df, timeframe, features, adv_cfg=ensure_cfg)
     except Exception:
-        # non-fatal: continue with existing feats_df
         pass
 
     # build X depending on encoder
@@ -99,10 +98,15 @@ def end_to_end_predict(
         last_ts = int(candles_df["ts_utc"].iat[-1])
         db = DBService()
         with db.engine.connect() as conn:
-            r = conn.execute("SELECT latent_json FROM latents WHERE ts_utc = :t AND timeframe=:tf LIMIT 1", {"t": last_ts, "tf": timeframe}).fetchone()
+            r = conn.execute(
+                "SELECT latent_json FROM latents WHERE ts_utc = :t AND timeframe=:tf LIMIT 1",
+                {"t": last_ts, "tf": timeframe},
+            ).fetchone()
             if r is None:
-                # fallback: most recent latent for symbol/timeframe (if symbol present in settings payload)
-                r = conn.execute("SELECT latent_json FROM latents WHERE timeframe=:tf ORDER BY ts_utc DESC LIMIT 1", {"tf": timeframe}).fetchone()
+                r = conn.execute(
+                    "SELECT latent_json FROM latents WHERE timeframe=:tf ORDER BY ts_utc DESC LIMIT 1",
+                    {"tf": timeframe},
+                ).fetchone()
             if r is None:
                 raise RuntimeError("No latent vector available for query")
             try:
@@ -114,13 +118,28 @@ def end_to_end_predict(
     else:
         if not features:
             raise RuntimeError("Model payload missing 'features' list; cannot build input X")
-        last_row = feats_df.iloc[-1]
-        # after ensure_features_for_prediction, features should exist; apply std saved in payload
-        X_arr = _apply_standardization_row(last_row, std_mu, std_sigma, features)
+        # >>> FIX: build multiple rows, standardize like the simple-forecast path
+        rows_needed = max(int(horizon), 1)
+        sub_df = feats_df.tail(rows_needed).copy()
+        missing_cols = [f for f in features if f not in sub_df.columns]
+        for col in missing_cols:
+            try:
+                fill_val = float(std_mu.get(col, 0.0)) if isinstance(std_mu, dict) else 0.0
+            except Exception:
+                fill_val = 0.0
+            sub_df[col] = fill_val
+        X_df = sub_df[features].astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        for col in features:
+            mu_v = std_mu.get(col)
+            sig_v = std_sigma.get(col)
+            if mu_v is not None and sig_v is not None:
+                denom = float(sig_v) if float(sig_v) != 0.0 else 1.0
+                X_df[col] = (X_df[col] - float(mu_v)) / denom
+        X_arr = X_df.to_numpy(dtype=float)
+        # <<< FIX
 
     # predict: support sklearn-like and torch
     preds_seq = None
-    # try torch first if available and model looks like torch module
     if TORCH_AVAILABLE and (hasattr(model, "forward") or isinstance(model, object) and "torch" in str(type(model)).lower()):
         try:
             model.eval()
@@ -134,37 +153,30 @@ def end_to_end_predict(
             preds_seq = None
 
     if preds_seq is None:
-        # sklearn-like
         if hasattr(model, "predict"):
             preds = model.predict(X_arr)
             preds_seq = np.ravel(preds)
         else:
-            # model is scalar-like
             try:
                 val = float(model)
                 preds_seq = np.array([val])
             except Exception:
                 raise RuntimeError("Unsupported model type for prediction")
 
-    # interpret preds_seq: if single value, repeat for horizon; if longer, take last/horizon
+    # build horizon sequence
     if preds_seq.size == 0:
         raise RuntimeError("Model returned empty prediction")
-    if preds_seq.size == 1:
-        seq = np.repeat(float(preds_seq[0]), horizon)
+    if preds_seq.size >= horizon:
+        seq = preds_seq[-horizon:]
     else:
-        # take last contiguous entries
-        if preds_seq.size >= horizon:
-            seq = preds_seq[-horizon:]
-        else:
-            seq = np.pad(preds_seq, (horizon - preds_seq.size, 0), mode='edge')
+        seq = np.pad(preds_seq, (horizon - preds_seq.size, 0), mode="edge")
 
     last_close = float(candles_df["close"].iat[-1])
-    # compute future timestamps
     last_ts = pd.to_datetime(candles_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
     delta = timeframe_to_pandas_timedelta(timeframe)
     future_ts = [last_ts + delta * (i + 1) for i in range(len(seq))]
 
-    # convert returns to prices
+    # convert returns to prices (coerente con il percorso semplice)
     prices = []
     p = last_close
     for r in seq:
@@ -177,6 +189,7 @@ def end_to_end_predict(
         "future_ts": future_ts,
         "payload": payload,
     }
+
 
 # helpers
 
