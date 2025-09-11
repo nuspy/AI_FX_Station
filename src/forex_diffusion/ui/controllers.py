@@ -207,6 +207,53 @@ class ForecastWorker(QRunnable):
         if feats is None or feats.empty:
             raise RuntimeError("No features computed for local inference")
 
+        # --- (A) Ritorni e rolling std coerenti col modello ---
+        # r: log-returns 1-step, se non già presenti
+        if "r" not in feats.columns:
+            c = feats["close"].astype(float)
+            r = np.log(c).diff()
+            feats["r"] = r
+
+        # r_std_100: rolling std dei ritorni (default 100; consenti override via payload)
+        std_n = int(self.payload.get("std_window", 100))  # il modello chiede r_std_100 → 100 è lo standard
+        if f"r_std_{std_n}" not in feats.columns:
+            feats[f"r_std_{std_n}"] = feats["r"].rolling(std_n, min_periods=std_n // 2).std()
+
+        # Se il modello vuole ESATTAMENTE 'r_std_100' ma std_n ≠ 100, duplica/alias
+        if "r_std_100" in features_list and f"r_std_{std_n}" in feats.columns and std_n != 100:
+            feats["r_std_100"] = feats[f"r_std_{std_n}"]
+
+        # --- (B) MACD (se mancante), usando parametri ragionevoli (o payload se presenti) ---
+        if "macd" not in feats.columns:
+            ema_fast = int(self.payload.get("ema_fast", 12))
+            ema_slow = int(self.payload.get("ema_slow", 26))
+            ema_sig = int(self.payload.get("ema_signal", 9))
+            px = feats["close"].astype(float)
+            ema_f = px.ewm(span=ema_fast, adjust=False).mean()
+            ema_s = px.ewm(span=ema_slow, adjust=False).mean()
+            macd_line = ema_f - ema_s
+            macd_signal = macd_line.ewm(span=ema_sig, adjust=False).mean()
+            feats["macd"] = macd_line  # se il modello ha 'macd' come linea, questa è coerente
+
+        # --- (C) Time encodings (hour_sin/hour_cos) se mancanti ---
+        if ("hour_sin" not in feats.columns) or ("hour_cos" not in feats.columns):
+            # ts_utc in ms → datetime UTC
+            ts = pd.to_datetime(feats["ts_utc"].astype("int64"), unit="ms", utc=True)
+            minutes = ts.dt.hour * 60 + ts.dt.minute
+            theta = 2 * np.pi * (minutes / (24 * 60))
+            feats["hour_sin"] = np.sin(theta)
+            feats["hour_cos"] = np.cos(theta)
+
+        # --- (D) Session flags (Tokyo/London/NY) se mancanti ---
+        need_sessions = any(k in features_list for k in ["session_tokyo", "session_london", "session_ny"])
+        if need_sessions and not all(col in feats.columns for col in ["session_tokyo", "session_london", "session_ny"]):
+            ts = pd.to_datetime(feats["ts_utc"].astype("int64"), unit="ms", utc=True)
+            h = ts.dt.hour  # UTC; adatta se le tue sessioni sono mappate in altra tz
+            # finestre approssimative in UTC: Tokyo ~ 00–09, London ~ 07–16, NY ~ 12–21
+            feats["session_tokyo"] = ((h >= 0) & (h < 9)).astype(int)
+            feats["session_london"] = ((h >= 7) & (h < 16)).astype(int)
+            feats["session_ny"] = ((h >= 12) & (h < 21)).astype(int)
+
         # --- 6) Ensure (se disponibile) ---
         ensure_cfg = self.payload.get("ensure_cfg") or self.payload.get("advanced_cfg") or None
         if ensure_cfg and ensure_features_for_prediction is not None:
