@@ -922,10 +922,10 @@ class ChartTab(QWidget):
                         self.canvas.draw()
                     except Exception:
                         pass
-                try:
-                    logger.debug(f"handle_tick: plot update requested, new_len={len(self._last_df) if getattr(self, '_last_df', None) is not None else 0}")
-                except Exception:
-                    pass
+                # try:
+                    # pluto logger.debug(f"handle_tick: plot update requested, new_len={len(self._last_df) if getattr(self, '_last_df', None) is not None else 0}")
+                # except Exception:
+                #     pass
             except Exception as e:
                 logger.debug("Failed to update plot after tick: {}", e)
 
@@ -1267,6 +1267,76 @@ class ChartTab(QWidget):
                 except Exception:
                     pass
                 return
+
+            # Ensure numeric list (convert numpy arrays etc.)
+            try:
+                import numpy as _np
+                y_vals = list(_np.asarray(y_vals).astype(float).reshape(-1))
+            except Exception:
+                try:
+                    y_vals = [float(x) for x in y_vals]
+                except Exception:
+                    pass
+
+            # Determine if q50 are returns (small numbers, e.g. <1) or absolute prices.
+            last_close = None
+            try:
+                last_close = float(base_df["close"].iat[-1])
+            except Exception:
+                try:
+                    last_close = float(base_df.iloc[-1]["close"])
+                except Exception:
+                    last_close = None
+
+            treat_as_returns = False
+            try:
+                # Heuristic: if all |q50| < 1 => likely returns (fractions)
+                if all(abs(v) < 1.0 for v in y_vals):
+                    treat_as_returns = True
+                # If mean magnitude << last_close, also likely returns
+                elif last_close is not None:
+                    mean_abs = sum(abs(v) for v in y_vals) / max(1, len(y_vals))
+                    if mean_abs < (0.5 * last_close):
+                        # ambiguous; prefer returns only if mean_abs << last_close
+                        if mean_abs < (0.01 * last_close):
+                            treat_as_returns = True
+                # else treat as prices
+            except Exception:
+                treat_as_returns = False
+
+            # If values look like returns, convert cumulatively to prices
+            if treat_as_returns and last_close is not None:
+                try:
+                    logger.info("on_forecast_ready: detected q50 as returns -> converting to prices (last_close=%s)", last_close)
+                except Exception:
+                    pass
+                prices = [last_close]
+                for r in y_vals:
+                    try:
+                        prices.append(prices[-1] * (1.0 + float(r)))
+                    except Exception:
+                        prices.append(prices[-1])
+                y_vals = list(prices[1:])
+                # notify UI briefly
+                try:
+                    if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
+                        self._main_window.statusBar().showMessage("Forecast: q50 interpreted as returns and converted to prices", 3000)
+                except Exception:
+                    pass
+            else:
+                # If values are prices but very far from last_close, warn
+                try:
+                    if last_close is not None:
+                        max_q = max(y_vals) if y_vals else 0
+                        if max_q > (last_close * 5) or min(y_vals) < (last_close * 0.2):
+                            try:
+                                logger.warning("on_forecast_ready: q50 values appear distant from last_close (last=%s max_q50=%s)", last_close, max_q)
+                                if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
+                                    self._main_window.statusBar().showMessage("Warning: forecast scale differs strongly from last price", 4000)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
 
             # compute future timestamps
             try:

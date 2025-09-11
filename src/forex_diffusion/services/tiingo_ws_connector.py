@@ -95,10 +95,10 @@ class TiingoWSConnector:
                             if not raw:
                                 continue
                             # debug-log raw message
-                            try:
-                                logger.debug(f"TiingoWSConnector raw msg: {raw}")
-                            except Exception:
-                                pass
+                            # try:
+                                # Pluto logger.debug(f"TiingoWSConnector raw msg: {raw}")
+                            # except Exception:
+                            #     pass
                             try:
                                 msg = json.loads(raw)
                             except Exception:
