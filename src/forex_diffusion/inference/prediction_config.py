@@ -3,10 +3,10 @@
 Helper utilities to ensure required features for prediction exist for a given timeframe.
 Provides:
  - REQUIRED_FEATURES grouped by categories
- - ensure_features_for_prediction(df, timeframe, features_list): compute missing cols in-place (returns df)
+ - ensure_features_for_prediction(df, timeframe, features_list, adv_cfg): compute missing cols in-place (returns df)
 """
 from __future__ import annotations
-from typing import List, Sequence
+from typing import List, Sequence, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 
@@ -124,7 +124,7 @@ def _compute_macd_rsi_bollinger(df: pd.DataFrame, rsi_n: int = 14, bb_n: int = 2
         tmp[f"bb_pctb_{bb_n}"] = tmp[f"bb_pctb_{bb_n}"].fillna(0.5)
     return tmp
 
-def _compute_donchian_keltner_realized_hurst(df: pd.DataFrame, don_n: int = 20, hurst_window: int = 64, rv_window: int = 60) -> pd.DataFrame:
+def _compute_donchian_keltner_realized_hurst(df: pd.DataFrame, don_n: int = 20, hurst_window: int = 64, rv_window: int = 60, kelt_mult: float = 1.5) -> pd.DataFrame:
     tmp = df.copy()
     # Donchian
     if f"don_upper_{don_n}" not in tmp.columns:
@@ -134,8 +134,8 @@ def _compute_donchian_keltner_realized_hurst(df: pd.DataFrame, don_n: int = 20, 
     if "kelt_upper" not in tmp.columns:
         ema = tmp["close"].ewm(span=20, adjust=False).mean()
         atr = tmp["atr"] if "atr" in tmp.columns else _compute_basic_indicators(tmp)["atr"]
-        tmp["kelt_upper"] = ema + 1.5 * atr
-        tmp["kelt_lower"] = ema - 1.5 * atr
+        tmp["kelt_upper"] = ema + float(kelt_mult) * atr
+        tmp["kelt_lower"] = ema - float(kelt_mult) * atr
     # realized moments
     if "realized_skew" not in tmp.columns:
         r = tmp["r"].fillna(0.0)
@@ -148,13 +148,26 @@ def _compute_donchian_keltner_realized_hurst(df: pd.DataFrame, don_n: int = 20, 
         tmp["hurst"] = np.nan
     return tmp
 
-def ensure_features_for_prediction(df: pd.DataFrame, timeframe: str, features_list: Sequence[str]) -> pd.DataFrame:
+def ensure_features_for_prediction(df: pd.DataFrame, timeframe: str, features_list: Sequence[str], adv_cfg: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     """
     Ensure the DataFrame contains all features in features_list by computing common ones.
     Returns augmented DataFrame (may be the same object).
     Conservative: computes only safe, causal approximations.
+    adv_cfg keys (optional): std_window, rsi_n, bb_n, bb_k, don_n, hurst_window, rv_window, ema_fast, ema_slow, keltner_k
     """
     tmp = df.copy().reset_index(drop=True)
+    adv = adv_cfg or {}
+    std_window = int(adv.get("std_window", 60))
+    rsi_n = int(adv.get("rsi_n", 14))
+    bb_n = int(adv.get("bb_n", 20))
+    bb_k = float(adv.get("bb_k", 2.0))
+    don_n = int(adv.get("don_n", 20))
+    hurst_w = int(adv.get("hurst_window", 64))
+    rv_w = int(adv.get("rv_window", std_window))
+    ema_fast = int(adv.get("ema_fast", 12))
+    ema_slow = int(adv.get("ema_slow", 26))
+    kelt_k = float(adv.get("keltner_k", 1.5))
+
     # time features
     if any(col in features_list for col in REQUIRED_FEATURES["time"]):
         ts = tmp["ts_utc"]
@@ -164,16 +177,16 @@ def ensure_features_for_prediction(df: pd.DataFrame, timeframe: str, features_li
                 tmp[c] = tfcols[c].values
     # basic indicators and vol
     if any(col in features_list for col in REQUIRED_FEATURES["volatility"]):
-        tmp = _compute_basic_indicators(tmp, r_col="r", std_window=max(1, int(60)))
+        tmp = _compute_basic_indicators(tmp, r_col="r", std_window=max(1, int(rv_w)))
     # ema + slope
     if any(col in features_list for col in REQUIRED_FEATURES["ema"]):
-        tmp = _compute_ema_and_slope(tmp)
+        tmp = _compute_ema_and_slope(tmp, fast_span=ema_fast, slow_span=ema_slow)
     # macd, rsi, bollinger
     if any(col in features_list for col in REQUIRED_FEATURES["macd"] + REQUIRED_FEATURES["momentum"] + REQUIRED_FEATURES["bollinger"]):
-        tmp = _compute_macd_rsi_bollinger(tmp)
+        tmp = _compute_macd_rsi_bollinger(tmp, rsi_n=rsi_n, bb_n=bb_n, bb_k=bb_k)
     # donchian, keltner, realized, hurst
     if any(col in features_list for col in (REQUIRED_FEATURES["donchian"] + REQUIRED_FEATURES["keltner"] + REQUIRED_FEATURES["realized"] + REQUIRED_FEATURES["hurst"])):
-        tmp = _compute_donchian_keltner_realized_hurst(tmp, don_n=20, hurst_window=64, rv_window=60)
+        tmp = _compute_donchian_keltner_realized_hurst(tmp, don_n=don_n, hurst_window=hurst_w, rv_window=rv_w, kelt_mult=kelt_k)
     # ensure any requested features missing are added as zeros/nans
     for f in features_list:
         if f not in tmp.columns:

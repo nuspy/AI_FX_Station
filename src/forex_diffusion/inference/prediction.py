@@ -56,6 +56,7 @@ def end_to_end_predict(
     timeframe: str,
     features_config: Optional[Dict] = None,
     horizon: int = 1,
+    ensure_cfg: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """
     End-to-end predict helper.
@@ -87,7 +88,7 @@ def end_to_end_predict(
 
     # ensure required features exist (time-features, hl_range, ema_slope, realized moments, etc.)
     try:
-        feats_df = ensure_features_for_prediction(feats_df, timeframe, features)
+        feats_df = ensure_features_for_prediction(feats_df, timeframe, features, adv_cfg=ensure_cfg)
     except Exception:
         # non-fatal: continue with existing feats_df
         pass

@@ -18,7 +18,7 @@ from loguru import logger
 from ..features.indicators import sma, ema, bollinger, rsi, macd
 # prediction helper
 from forex_diffusion.inference.prediction import end_to_end_predict
-from ..utils.user_settings import get_setting
+from ..utils.user_settings import get_setting, set_setting
 
 
 class ChartTab(QWidget):
@@ -59,6 +59,17 @@ class ChartTab(QWidget):
             self.forecast_btn.setToolTip("Esegui la previsione con il modello selezionato")
             self.forecast_btn.clicked.connect(self._on_forecast_clicked)
             top_layout.addWidget(self.forecast_btn)
+
+            # Advanced settings and forecast
+            self.adv_settings_btn = QPushButton("Advanced forecast settings")
+            self.adv_settings_btn.setToolTip("Configura parametri avanzati di feature/indicatori (persistenti)")
+            self.adv_settings_btn.clicked.connect(self._open_adv_forecast_settings)
+            top_layout.addWidget(self.adv_settings_btn)
+
+            self.adv_forecast_btn = QPushButton("Advanced forecast")
+            self.adv_forecast_btn.setToolTip("Esegui la previsione (prediction.py) con settaggi avanzati; overlay giallo")
+            self.adv_forecast_btn.clicked.connect(self._on_advanced_forecast_clicked)
+            top_layout.addWidget(self.adv_forecast_btn)
 
             # Tooltip toggle (checkable)
             self.tooltip_btn = QPushButton("Tooltip")
@@ -513,6 +524,27 @@ class ChartTab(QWidget):
         """
         if getattr(self, "_last_df", None) is not None:
             self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
+
+    def _set_status(self, text: str, timeout_ms: int = 3000):
+        """
+        Safely update main window status bar and log the message.
+        Non-fatal: swallow all exceptions.
+        """
+        try:
+            try:
+                logger.info("UI status: %s", text)
+            except Exception:
+                pass
+            mw = getattr(self, "_main_window", None)
+            if mw is not None and hasattr(mw, "statusBar"):
+                try:
+                    sb = mw.statusBar()
+                    if sb is not None:
+                        sb.showMessage(str(text), int(timeout_ms))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def showEvent(self, event):
         """
@@ -1762,47 +1794,371 @@ class ChartTab(QWidget):
 
     def _on_forecast_clicked(self):
         """
-        Emit forecastRequested with current persisted settings payload.
-        Controller or outer app can connect to this signal to execute forecast.
+        Execute local end_to_end_predict using persisted settings (base + advanced).
+        Falls back to emitting forecastRequested payload when local execution not possible.
         """
         try:
-            from ..utils.user_settings import get_setting
-            payload = {
-                "model_path": get_setting("forecast_model_path", ""),
-                "symbol": get_setting("forecast_symbol", "EUR/USD"),
-                "timeframe": get_setting("forecast_timeframe", "1m"),
-                "limit_candles": int(get_setting("forecast_limit_candles", 256)),
-                "horizon": int(get_setting("forecast_horizon", 5)),
-                "output_type": get_setting("forecast_output_type", "returns"),
+            model_path = get_setting("forecast_model_path", "")
+            symbol = get_setting("forecast_symbol", "EUR/USD")
+            timeframe = get_setting("forecast_timeframe", "1m")
+            limit = int(get_setting("forecast_limit_candles", 256))
+            horizon = int(get_setting("forecast_horizon", 5))
+            output_type = get_setting("forecast_output_type", "returns")
+
+            # construct pipeline features_config from base settings
+            features_config = {
+                "warmup_bars": int(get_setting("warmup_bars", 16)),
+                "indicators": {
+                    "atr": {"n": int(get_setting("atr_n", 14))},
+                    "rsi": {"n": int(get_setting("rsi_n", 14))},
+                    "bollinger": {"n": int(get_setting("bb_n", 20))},
+                    "hurst": {"window": int(get_setting("hurst_window", 64))},
+                },
+                "standardization": {"window_bars": int(get_setting("rv_window", 60))}
             }
+
+            # advanced ensure config (prediction_config)
+            ensure_cfg = {
+                "std_window": int(get_setting("adv_std_window", 60)),
+                "rsi_n": int(get_setting("adv_rsi_n", 14)),
+                "bb_n": int(get_setting("adv_bb_n", 20)),
+                "bb_k": float(get_setting("adv_bb_k", 2.0)),
+                "don_n": int(get_setting("adv_don_n", 20)),
+                "hurst_window": int(get_setting("adv_hurst_window", 64)),
+                "rv_window": int(get_setting("adv_rv_window", 60)),
+                "ema_fast": int(get_setting("adv_ema_fast", 12)),
+                "ema_slow": int(get_setting("adv_ema_slow", 26)),
+                "keltner_k": float(get_setting("adv_keltner_k", 1.5)),
+            }
+
+            # fetch candles (prefer buffer)
+            candles = None
+            if getattr(self, "_last_df", None) is not None and not self._last_df.empty:
+                candles = self._last_df.copy().sort_values("ts_utc").reset_index(drop=True)
+                if len(candles) > limit:
+                    candles = candles.iloc[-limit:].reset_index(drop=True)
+            elif getattr(self, "db_service", None) is not None:
+                try:
+                    meta = MetaData()
+                    meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
+                    tbl = meta.tables.get("market_data_candles")
+                    if tbl is not None:
+                        with self.db_service.engine.connect() as conn:
+                            stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close).where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe).order_by(tbl.c.ts_utc.desc()).limit(limit)
+                            rows = conn.execute(stmt).fetchall()
+                            if rows:
+                                import pandas as _pd
+                                candles = _pd.DataFrame([dict(r._mapping) if hasattr(r, "_mapping") else {"ts_utc": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in rows])[::-1].reset_index(drop=True)
+                except Exception as e:
+                    logger.debug("ChartTab _on_forecast_clicked: DB fetch failed: %s", e)
+                    candles = None
+
+            if candles is None or candles.empty:
+                # delegate if no local data
+                payload = {
+                    "model_path": model_path,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "limit_candles": limit,
+                    "horizon": horizon,
+                    "output_type": output_type,
+                }
+                try:
+                    self.forecastRequested.emit(payload)
+                    self._set_status("Forecast delegated to controller (no local data)")
+                except Exception:
+                    QMessageBox.warning(self, "Forecast", "No candle data available for local forecast and cannot delegate.")
+                return
+
+            # log settings used for simple forecast (interpolate values)
             try:
+                logger.info(
+                    f"Simple forecast run: model={model_path} symbol={symbol} timeframe={timeframe} "
+                    f"limit={limit} horizon={horizon} output_type={output_type} "
+                    f"features_config={features_config} "
+                    f"ensure_cfg={ensure_cfg} "
+                    f"(std_window={ensure_cfg.get('std_window')}, rsi_n={ensure_cfg.get('rsi_n')}, bb_n={ensure_cfg.get('bb_n')}, bb_k={ensure_cfg.get('bb_k')}, "
+                    f"don_n={ensure_cfg.get('don_n')}, hurst_window={ensure_cfg.get('hurst_window')}, rv_window={ensure_cfg.get('rv_window')}, "
+                    f"ema_fast={ensure_cfg.get('ema_fast')}, ema_slow={ensure_cfg.get('ema_slow')}, keltner_k={ensure_cfg.get('keltner_k')})"
+                )
+            except Exception:
                 try:
-                    logger.debug("ChartTab: _on_forecast_clicked building payload: %s", payload)
+                    logger.debug("Simple forecast: logging of settings failed")
                 except Exception:
                     pass
-                self.forecastRequested.emit(payload)
+
+            # call prediction helper (keeps prediction logic unchanged)
+            try:
+                res = end_to_end_predict(
+                    model_path=model_path,
+                    candles_df=candles,
+                    timeframe=timeframe,
+                    features_config=features_config,
+                    horizon=horizon,
+                    ensure_cfg=ensure_cfg,
+                )
+            except Exception as e:
+                logger.exception("Local end_to_end_predict failed: %s", e)
+                # fallback to emit
+                payload = {
+                    "model_path": model_path,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "limit_candles": limit,
+                    "horizon": horizon,
+                    "output_type": output_type,
+                }
                 try:
-                    logger.debug("ChartTab: forecastRequested emitted")
+                    self.forecastRequested.emit(payload)
+                    self._set_status("Local predict failed, delegated to controller")
                 except Exception:
-                    pass
-                # transient UI feedback
-                if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
-                    try:
-                        self._main_window.statusBar().showMessage("Forecast richiesto...", 3000)
-                    except Exception:
-                        pass
-            except Exception as emit_err:
-                try:
-                    logger.exception("ChartTab: failed to emit forecastRequested: %s", emit_err)
-                except Exception:
-                    pass
-                # fallback: show message box
-                try:
-                    QMessageBox.information(self, "Forecast", f"Forecast requested: {payload}")
-                except Exception:
-                    pass
+                    QMessageBox.critical(self, "Forecast error", f"Local prediction failed: {e}")
+                return
+
+            # build quantiles (q50 from pred_prices) and reuse existing overlay logic
+            pred_prices = res.get("pred_prices")
+            future_ts = res.get("future_ts")
+            if pred_prices is None or future_ts is None:
+                QMessageBox.warning(self, "Forecast", "Model returned no prices.")
+                return
+            quantiles = {"q50": list(map(float, pred_prices)), "q05": (pred_prices * 0.995).tolist(), "q95": (pred_prices * 1.005).tolist()}
+
+            # use existing overlay routine which will handle conversion heuristics
+            try:
+                self.on_forecast_ready(candles, quantiles)
+                self._set_status("Forecast pronta (locale)")
+            except Exception as e:
+                logger.exception("Failed to overlay local forecast: %s", e)
+                QMessageBox.warning(self, "Forecast", f"Prediction succeeded but plotting failed: {e}")
         except Exception as e:
+            logger.exception("Failed to run forecast click handler: %s", e)
             try:
-                logger.exception("Failed to build forecast payload: {}", e)
+                QMessageBox.critical(self, "Forecast error", str(e))
+            except Exception:
+                pass
+
+    def _open_adv_forecast_settings(self):
+        """
+        Dialog per configurare parametri avanzati di prediction_config (persistenti).
+        """
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox, QDialogButtonBox, QWidget, QFormLayout
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Advanced forecast settings")
+            lay = QVBoxLayout(dlg)
+            form = QFormLayout()
+            # helper creators
+            def spin_int(key: str, lo: int, hi: int, step: int = 1):
+                sb = QSpinBox(); sb.setRange(lo, hi); sb.setSingleStep(step); sb.setValue(int(get_setting(key, sb.value() if key else 0) or get_setting(key, 0) or { }.get(key, 0) or int(getattr(self, key, 0))))
+                # correctly set from settings
+                try:
+                    sb.setValue(int(get_setting(key, sb.value() or lo)))
+                except Exception:
+                    pass
+                return sb
+            def spin_int_val(key: str, lo: int, hi: int, default: int):
+                sb = QSpinBox(); sb.setRange(lo, hi); sb.setValue(int(get_setting(key, default)))
+                return sb
+            def spin_float_val(key: str, lo: float, hi: float, default: float, step: float = 0.1):
+                sb = QDoubleSpinBox(); sb.setRange(lo, hi); sb.setSingleStep(step); sb.setDecimals(3); sb.setValue(float(get_setting(key, default)))
+                return sb
+
+            # fields with defaults
+            std_window = spin_int_val("adv_std_window", 2, 10000, 60)
+            rsi_n = spin_int_val("adv_rsi_n", 1, 1000, 14)
+            bb_n = spin_int_val("adv_bb_n", 1, 1000, 20)
+            bb_k = spin_float_val("adv_bb_k", 0.1, 10.0, 2.0, 0.1)
+            don_n = spin_int_val("adv_don_n", 1, 5000, 20)
+            hurst_window = spin_int_val("adv_hurst_window", 2, 10000, 64)
+            rv_window = spin_int_val("adv_rv_window", 2, 10000, 60)
+            ema_fast = spin_int_val("adv_ema_fast", 1, 10000, 12)
+            ema_slow = spin_int_val("adv_ema_slow", 1, 10000, 26)
+            keltner_k = spin_float_val("adv_keltner_k", 0.1, 10.0, 1.5, 0.1)
+
+            form.addRow(QLabel("std_window (rv)"), std_window)
+            form.addRow(QLabel("rsi_n"), rsi_n)
+            form.addRow(QLabel("bb_n"), bb_n)
+            form.addRow(QLabel("bb_k"), bb_k)
+            form.addRow(QLabel("don_n"), don_n)
+            form.addRow(QLabel("hurst_window"), hurst_window)
+            form.addRow(QLabel("rv_window"), rv_window)
+            form.addRow(QLabel("ema_fast"), ema_fast)
+            form.addRow(QLabel("ema_slow"), ema_slow)
+            form.addRow(QLabel("keltner_k"), keltner_k)
+            lay.addLayout(form)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+            lay.addWidget(buttons)
+
+            def on_save():
+                set_setting("adv_std_window", int(std_window.value()))
+                set_setting("adv_rsi_n", int(rsi_n.value()))
+                set_setting("adv_bb_n", int(bb_n.value()))
+                set_setting("adv_bb_k", float(bb_k.value()))
+                set_setting("adv_don_n", int(don_n.value()))
+                set_setting("adv_hurst_window", int(hurst_window.value()))
+                set_setting("adv_rv_window", int(rv_window.value()))
+                set_setting("adv_ema_fast", int(ema_fast.value()))
+                set_setting("adv_ema_slow", int(ema_slow.value()))
+                set_setting("adv_keltner_k", float(keltner_k.value()))
+                dlg.accept()
+                try:
+                    if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
+                        self._main_window.statusBar().showMessage("Advanced settings salvati", 3000)
+                except Exception:
+                    pass
+
+            buttons.accepted.connect(on_save)
+            buttons.rejected.connect(dlg.reject)
+            dlg.exec()
+        except Exception as e:
+            logger.exception("Advanced settings dialog failed: {}", e)
+            try:
+                QMessageBox.critical(self, "Advanced settings", str(e))
+            except Exception:
+                pass
+
+    def _on_advanced_forecast_clicked(self):
+        """
+        Esegue end_to_end_predict con settaggi avanzati e disegna overlay giallo.
+        """
+        try:
+            model_path = get_setting("forecast_model_path", "")
+            symbol = get_setting("forecast_symbol", "EUR/USD")
+            timeframe = get_setting("forecast_timeframe", "1m")
+            limit = int(get_setting("forecast_limit_candles", 256))
+            horizon = int(get_setting("forecast_horizon", 5))
+
+            # fetch candles (buffer or DB)
+            candles = None
+            if getattr(self, "_last_df", None) is not None and not self._last_df.empty:
+                candles = self._last_df.copy().sort_values("ts_utc").reset_index(drop=True)
+                # truncate to last N if larger
+                if len(candles) > limit:
+                    candles = candles.iloc[-limit:].reset_index(drop=True)
+            elif getattr(self, "db_service", None) is not None:
+                try:
+                    meta = MetaData(); meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
+                    tbl = meta.tables.get("market_data_candles")
+                    if tbl is not None:
+                        with self.db_service.engine.connect() as conn:
+                            stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close).where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe).order_by(tbl.c.ts_utc.desc()).limit(limit)
+                            rows = conn.execute(stmt).fetchall()
+                            if rows:
+                                import pandas as _pd
+                                candles = _pd.DataFrame([dict(r._mapping) if hasattr(r, "_mapping") else {"ts_utc": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in rows])[::-1].reset_index(drop=True)
+                except Exception as e:
+                    logger.debug("Advanced forecast: DB fetch failed: %s", e)
+                    candles = None
+
+            if candles is None or candles.empty:
+                QMessageBox.warning(self, "Advanced forecast", "Dati candles non disponibili.")
+                return
+
+            # pipeline features config (riuso dei setting base)
+            features_config = {
+                "warmup_bars": int(get_setting("warmup_bars", 16)),
+                "indicators": {
+                    "atr": {"n": int(get_setting("atr_n", 14))},
+                    "rsi": {"n": int(get_setting("rsi_n", 14))},
+                    "bollinger": {"n": int(get_setting("bb_n", 20))},
+                    "hurst": {"window": int(get_setting("hurst_window", 64))},
+                },
+                "standardization": {"window_bars": int(get_setting("rv_window", 60))}
+            }
+
+            # advanced ensure cfg for prediction_config
+            ensure_cfg = {
+                "std_window": int(get_setting("adv_std_window", 60)),
+                "rsi_n": int(get_setting("adv_rsi_n", 14)),
+                "bb_n": int(get_setting("adv_bb_n", 20)),
+                "bb_k": float(get_setting("adv_bb_k", 2.0)),
+                "don_n": int(get_setting("adv_don_n", 20)),
+                "hurst_window": int(get_setting("adv_hurst_window", 64)),
+                "rv_window": int(get_setting("adv_rv_window", 60)),
+                "ema_fast": int(get_setting("adv_ema_fast", 12)),
+                "ema_slow": int(get_setting("adv_ema_slow", 26)),
+                "keltner_k": float(get_setting("adv_keltner_k", 1.5)),
+            }
+
+            # log settings used for advanced forecast (interpolate values)
+            try:
+                logger.info(
+                    f"Advanced forecast run: model={model_path} symbol={symbol} timeframe={timeframe} "
+                    f"limit={limit} horizon={horizon} "
+                    f"features_config={features_config} "
+                    f"ensure_cfg={ensure_cfg} "
+                    f"(std_window={ensure_cfg.get('std_window')}, rsi_n={ensure_cfg.get('rsi_n')}, bb_n={ensure_cfg.get('bb_n')}, bb_k={ensure_cfg.get('bb_k')}, "
+                    f"don_n={ensure_cfg.get('don_n')}, hurst_window={ensure_cfg.get('hurst_window')}, rv_window={ensure_cfg.get('rv_window')}, "
+                    f"ema_fast={ensure_cfg.get('ema_fast')}, ema_slow={ensure_cfg.get('ema_slow')}, keltner_k={ensure_cfg.get('keltner_k')})"
+                )
+            except Exception:
+                # best-effort logging; don't block prediction on logging failure
+                try:
+                    logger.debug("Advanced forecast: logging of settings failed")
+                except Exception:
+                    pass
+
+            # run prediction
+            res = end_to_end_predict(
+                model_path=model_path,
+                candles_df=candles,
+                timeframe=timeframe,
+                features_config=features_config,
+                horizon=horizon,
+                ensure_cfg=ensure_cfg,
+            )
+
+            prices = res.get("pred_prices")
+            fts = res.get("future_ts")
+            if prices is None or fts is None:
+                QMessageBox.warning(self, "Advanced forecast", "Nessun risultato dal modello.")
+                return
+
+            # remove previous advanced overlay if exists
+            if hasattr(self, "_adv_forecast_line") and self._adv_forecast_line is not None:
+                try:
+                    self._adv_forecast_line.remove()
+                except Exception:
+                    pass
+                self._adv_forecast_line = None
+
+            # draw in yellow/gold
+            try:
+                import matplotlib.dates as _md
+                x_dt = pd.to_datetime(fts).tz_convert(None) if hasattr(pd.Series(fts).dt, "tz_convert") else pd.to_datetime(fts)
+                x_num = mdates.date2num(x_dt.to_pydatetime() if hasattr(x_dt, "to_pydatetime") else pd.to_datetime(x_dt).to_pydatetime())
+            except Exception:
+                try:
+                    x_num = [mdates.date2num(pd.to_datetime(t)) for t in fts]
+                except Exception:
+                    x_num = list(range(len(prices)))
+
+            self._adv_forecast_line, = self.ax.plot(
+                x_num,
+                list(map(float, prices)),
+                color="#FFD700",  # gold
+                alpha=0.9,
+                linewidth=2.2,
+                marker="o",
+                label="Advanced Forecast",
+            )
+            # refresh legend
+            try:
+                handles, labels = self.ax.get_legend_handles_labels()
+                if handles:
+                    self.ax.legend(handles, labels, loc="upper left", fontsize="small")
+            except Exception:
+                pass
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
+            if getattr(self, "_main_window", None) and hasattr(self._main_window, "statusBar"):
+                self._main_window.statusBar().showMessage("Advanced forecast disegnata", 3000)
+        except Exception as e:
+            logger.exception("Advanced forecast failed: {}", e)
+            try:
+                QMessageBox.critical(self, "Advanced forecast", str(e))
             except Exception:
                 pass
