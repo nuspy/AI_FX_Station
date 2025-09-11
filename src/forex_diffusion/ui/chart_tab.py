@@ -546,6 +546,129 @@ class ChartTab(QWidget):
         except Exception:
             pass
 
+    def _toggle_tooltip(self, checked):
+        """Enable/disable tooltip display from the toolbar button."""
+        try:
+            self._tooltip_enabled = bool(checked)
+            if not self._tooltip_enabled and getattr(self, "_tip_widget", None) is not None:
+                try:
+                    self._tip_widget.hide()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _update_cursor_tooltip(self, event):
+        """Update and position tooltip near cursor showing x/y and selected indicators."""
+        try:
+            if event is None or event.xdata is None:
+                if getattr(self, "_tip_widget", None) is not None:
+                    try:
+                        self._tip_widget.hide()
+                    except Exception:
+                        pass
+                return
+            # find nearest data index using base line xdata (if available)
+            try:
+                base_line = getattr(self, "_base_line", None)
+                if base_line is None:
+                    return
+                xdata = base_line.get_xdata()
+                ydata = base_line.get_ydata()
+                # event.xdata is matplotlib date number if numeric x; ensure comparable
+                ex = event.xdata
+                # find nearest index
+                import numpy as _np
+                idx = int(_np.argmin(_np.abs(_np.array(xdata) - ex))) if len(xdata) > 0 else 0
+                x_val_num = xdata[idx] if idx < len(xdata) else xdata[-1]
+                y_val = ydata[idx] if idx < len(ydata) else ydata[-1]
+                # convert numeric date to datetime string if needed
+                try:
+                    from matplotlib.dates import num2date
+                    dt = num2date(x_val_num)
+                    x_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    x_str = str(x_val_num)
+            except Exception:
+                x_str = ""
+                y_val = ""
+
+            # collect indicator values from plotted artists
+            entries = []
+            try:
+                for name, artists in list(self._indicator_artists.items()):
+                    for art in artists:
+                        try:
+                            xs = art.get_xdata()
+                            ys = art.get_ydata()
+                            if len(xs) == 0:
+                                continue
+                            # find nearest point by x
+                            import numpy as _np
+                            j = int(_np.argmin(_np.abs(_np.array(xs) - ex))) if len(xs) > 0 else 0
+                            val = ys[j] if j < len(ys) else None
+                            lbl = art.get_label() if hasattr(art, "get_label") else name
+                            entries.append((lbl, val))
+                        except Exception:
+                            continue
+            except Exception:
+                entries = []
+
+            # build html/text
+            try:
+                lines = [f"<b>{x_str}</b>", f"Close: {float(y_val):.6f}"]
+            except Exception:
+                lines = [f"{x_str}", f"Close: {y_val}"]
+            for lbl, val in entries:
+                try:
+                    lines.append(f"{lbl}: {float(val):.6f}")
+                except Exception:
+                    lines.append(f"{lbl}: {val}")
+            text = "<br/>".join(lines)
+
+            # position tooltip: decide left/right and up/down based on cursor fraction
+            try:
+                w = self.canvas.width()
+                h = self.canvas.height()
+                cx = event.x
+                cy = event.y
+                # horizontal: if cursor in left half -> show to right, else left
+                show_right = True if cx < (w / 2) else False
+                # vertical: if cursor in upper half -> show below, else above
+                show_below = True if cy < (h / 2) else False
+            except Exception:
+                show_right = True
+                show_below = True
+
+            # populate tip widget text and size
+            if getattr(self, "_tip_widget", None) is None:
+                return
+            try:
+                self._tip_label.setText(text)
+                self._tip_widget.adjustSize()
+            except Exception:
+                pass
+
+            # compute global position from canvas local coords
+            try:
+                from PySide6.QtCore import QPoint
+                g = self.canvas.mapToGlobal(QPoint(int(event.x), int(event.y)))
+                tw = self._tip_widget.width()
+                th = self._tip_widget.height()
+                # offsets
+                ox = 12 if show_right else - (tw + 12)
+                oy = 12 if show_below else - (th + 12)
+                target = QPoint(g.x() + ox, g.y() + oy)
+                self._tip_widget.move(target)
+                self._tip_widget.show()
+            except Exception:
+                try:
+                    self._tip_widget.show()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug("Tooltip update failed: {}", e)
+
     def showEvent(self, event):
         """
         When the Chart tab is shown, ensure the chart is populated automatically
@@ -1406,9 +1529,10 @@ class ChartTab(QWidget):
             gray_rgb = (180/255.0, 180/255.0, 180/255.0)
             label = "Forecast"
             try:
-                self._forecast_line, = self.ax.plot(x_num, y_vals, color=gray_rgb, alpha=0.666, linewidth=2.0, marker="o", label=label)
+                # draw forecast as plain line (no markers)
+                self._forecast_line, = self.ax.plot(x_num, y_vals, color=gray_rgb, alpha=0.333, linewidth=8.0, label=label)
             except Exception:
-                self._forecast_line, = self.ax.plot(x_num, y_vals, color="gray", alpha=0.666, linewidth=2.0, marker="o", label=label)
+                self._forecast_line, = self.ax.plot(x_num, y_vals, color="gray", alpha=0.333, linewidth=8.0, label=label)
 
             # refresh legend and draw
             try:
@@ -2027,9 +2151,8 @@ class ChartTab(QWidget):
                 x_num,
                 list(map(float, prices)),
                 color="#FFD700",  # gold
-                alpha=0.9,
-                linewidth=2.2,
-                marker="o",
+                alpha=0.333,
+                linewidth=8,
                 label="Advanced Forecast",
             )
             # refresh legend
