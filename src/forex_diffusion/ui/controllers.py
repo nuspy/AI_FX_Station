@@ -102,6 +102,20 @@ class ForecastWorker(QRunnable):
             if feats.empty:
                 raise RuntimeError("No features computed for local inference")
 
+            # apply advanced ensure_features if provided in payload (adds missing engineered features)
+            ensure_cfg = self.payload.get("ensure_cfg") or self.payload.get("advanced_cfg") or None
+            if ensure_cfg:
+                try:
+                    from forex_diffusion.inference.prediction_config import ensure_features_for_prediction
+                    # features_list may not be known yet; attempt to pass union of payload.features if present else empty
+                    feats = ensure_features_for_prediction(feats, timeframe=tf or "1m", features_list=payload_obj.get("features") or [], adv_cfg=ensure_cfg)
+                except Exception:
+                    # non-fatal: continue with pipeline-produced feats
+                    try:
+                        logger.debug("ForecastWorker: ensure_features_for_prediction failed or not available")
+                    except Exception:
+                        pass
+
             # load model payload (pickle or torch)
             payload_obj = None
             p = Path(model_path)

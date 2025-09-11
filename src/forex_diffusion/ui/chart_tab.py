@@ -1794,148 +1794,37 @@ class ChartTab(QWidget):
 
     def _on_forecast_clicked(self):
         """
-        Execute local end_to_end_predict using persisted settings (base + advanced).
-        Falls back to emitting forecastRequested payload when local execution not possible.
+        Simple forecast trigger: emit a minimal payload so controller handles inference
+        and ensures the controller's forecastReady signal will populate chart and table.
         """
         try:
-            model_path = get_setting("forecast_model_path", "")
-            symbol = get_setting("forecast_symbol", "EUR/USD")
-            timeframe = get_setting("forecast_timeframe", "1m")
-            limit = int(get_setting("forecast_limit_candles", 256))
-            horizon = int(get_setting("forecast_horizon", 5))
-            output_type = get_setting("forecast_output_type", "returns")
-
-            # construct pipeline features_config from base settings
-            features_config = {
-                "warmup_bars": int(get_setting("warmup_bars", 16)),
-                "indicators": {
-                    "atr": {"n": int(get_setting("atr_n", 14))},
-                    "rsi": {"n": int(get_setting("rsi_n", 14))},
-                    "bollinger": {"n": int(get_setting("bb_n", 20))},
-                    "hurst": {"window": int(get_setting("hurst_window", 64))},
-                },
-                "standardization": {"window_bars": int(get_setting("rv_window", 60))}
+            payload = {
+                "model_path": get_setting("forecast_model_path", ""),
+                "symbol": get_setting("forecast_symbol", "EUR/USD"),
+                "timeframe": get_setting("forecast_timeframe", "1m"),
+                "limit_candles": int(get_setting("forecast_limit_candles", 256)),
+                "horizon": int(get_setting("forecast_horizon", 5)),
+                "output_type": get_setting("forecast_output_type", "returns"),
             }
-
-            # advanced ensure config (prediction_config)
-            ensure_cfg = {
-                "std_window": int(get_setting("adv_std_window", 60)),
-                "rsi_n": int(get_setting("adv_rsi_n", 14)),
-                "bb_n": int(get_setting("adv_bb_n", 20)),
-                "bb_k": float(get_setting("adv_bb_k", 2.0)),
-                "don_n": int(get_setting("adv_don_n", 20)),
-                "hurst_window": int(get_setting("adv_hurst_window", 64)),
-                "rv_window": int(get_setting("adv_rv_window", 60)),
-                "ema_fast": int(get_setting("adv_ema_fast", 12)),
-                "ema_slow": int(get_setting("adv_ema_slow", 26)),
-                "keltner_k": float(get_setting("adv_keltner_k", 1.5)),
-            }
-
-            # fetch candles (prefer buffer)
-            candles = None
-            if getattr(self, "_last_df", None) is not None and not self._last_df.empty:
-                candles = self._last_df.copy().sort_values("ts_utc").reset_index(drop=True)
-                if len(candles) > limit:
-                    candles = candles.iloc[-limit:].reset_index(drop=True)
-            elif getattr(self, "db_service", None) is not None:
-                try:
-                    meta = MetaData()
-                    meta.reflect(bind=self.db_service.engine, only=["market_data_candles"])
-                    tbl = meta.tables.get("market_data_candles")
-                    if tbl is not None:
-                        with self.db_service.engine.connect() as conn:
-                            stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close).where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe).order_by(tbl.c.ts_utc.desc()).limit(limit)
-                            rows = conn.execute(stmt).fetchall()
-                            if rows:
-                                import pandas as _pd
-                                candles = _pd.DataFrame([dict(r._mapping) if hasattr(r, "_mapping") else {"ts_utc": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in rows])[::-1].reset_index(drop=True)
-                except Exception as e:
-                    logger.debug("ChartTab _on_forecast_clicked: DB fetch failed: %s", e)
-                    candles = None
-
-            if candles is None or candles.empty:
-                # delegate if no local data
-                payload = {
-                    "model_path": model_path,
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "limit_candles": limit,
-                    "horizon": horizon,
-                    "output_type": output_type,
-                }
-                try:
-                    self.forecastRequested.emit(payload)
-                    self._set_status("Forecast delegated to controller (no local data)")
-                except Exception:
-                    QMessageBox.warning(self, "Forecast", "No candle data available for local forecast and cannot delegate.")
-                return
-
-            # log settings used for simple forecast (interpolate values)
             try:
-                logger.info(
-                    f"Simple forecast run: model={model_path} symbol={symbol} timeframe={timeframe} "
-                    f"limit={limit} horizon={horizon} output_type={output_type} "
-                    f"features_config={features_config} "
-                    f"ensure_cfg={ensure_cfg} "
-                    f"(std_window={ensure_cfg.get('std_window')}, rsi_n={ensure_cfg.get('rsi_n')}, bb_n={ensure_cfg.get('bb_n')}, bb_k={ensure_cfg.get('bb_k')}, "
-                    f"don_n={ensure_cfg.get('don_n')}, hurst_window={ensure_cfg.get('hurst_window')}, rv_window={ensure_cfg.get('rv_window')}, "
-                    f"ema_fast={ensure_cfg.get('ema_fast')}, ema_slow={ensure_cfg.get('ema_slow')}, keltner_k={ensure_cfg.get('keltner_k')})"
-                )
-            except Exception:
-                try:
-                    logger.debug("Simple forecast: logging of settings failed")
-                except Exception:
-                    pass
-
-            # call prediction helper (keeps prediction logic unchanged)
-            try:
-                res = end_to_end_predict(
-                    model_path=model_path,
-                    candles_df=candles,
-                    timeframe=timeframe,
-                    features_config=features_config,
-                    horizon=horizon,
-                    ensure_cfg=ensure_cfg,
-                )
-            except Exception as e:
-                logger.exception("Local end_to_end_predict failed: %s", e)
-                # fallback to emit
-                payload = {
-                    "model_path": model_path,
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "limit_candles": limit,
-                    "horizon": horizon,
-                    "output_type": output_type,
-                }
-                try:
-                    self.forecastRequested.emit(payload)
-                    self._set_status("Local predict failed, delegated to controller")
-                except Exception:
-                    QMessageBox.critical(self, "Forecast error", f"Local prediction failed: {e}")
-                return
-
-            # build quantiles (q50 from pred_prices) and reuse existing overlay logic
-            pred_prices = res.get("pred_prices")
-            future_ts = res.get("future_ts")
-            if pred_prices is None or future_ts is None:
-                QMessageBox.warning(self, "Forecast", "Model returned no prices.")
-                return
-            quantiles = {"q50": list(map(float, pred_prices)), "q05": (pred_prices * 0.995).tolist(), "q95": (pred_prices * 1.005).tolist()}
-
-            # use existing overlay routine which will handle conversion heuristics
-            try:
-                self.on_forecast_ready(candles, quantiles)
-                self._set_status("Forecast pronta (locale)")
-            except Exception as e:
-                logger.exception("Failed to overlay local forecast: %s", e)
-                QMessageBox.warning(self, "Forecast", f"Prediction succeeded but plotting failed: {e}")
-        except Exception as e:
-            logger.exception("Failed to run forecast click handler: %s", e)
-            try:
-                QMessageBox.critical(self, "Forecast error", str(e))
+                logger.debug("ChartTab: _on_forecast_clicked building payload: %s", payload)
             except Exception:
                 pass
+            try:
+                self.forecastRequested.emit(payload)
+                try:
+                    logger.debug("ChartTab: forecastRequested emitted")
+                except Exception:
+                    pass
+                self._set_status("Forecast richiesto...")
+            except Exception as emit_err:
+                logger.exception("ChartTab: failed to emit forecastRequested: %s", emit_err)
+                try:
+                    QMessageBox.information(self, "Forecast", f"Forecast requested: {payload}")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.exception("Failed to build forecast payload: {}", e)
 
     def _open_adv_forecast_settings(self):
         """

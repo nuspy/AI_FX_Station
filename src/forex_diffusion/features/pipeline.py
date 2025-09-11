@@ -688,8 +688,16 @@ def hurst_aggvar(ts: pd.Series, min_chunks: int = 4) -> float:
         ks.append(s)
     if len(ks) < min_chunks:
         return float("nan")
-    log_vars = np.log(variances)
-    log_sizes = np.log(ks)
+    # convert to numpy arrays and filter non-positive variances to avoid log(0) warnings
+    variances_arr = np.asarray(variances, dtype=float)
+    ks_arr = np.asarray(ks, dtype=float)
+    # keep only strictly positive variances for the log regression
+    positive_mask = variances_arr > 0.0
+    if positive_mask.sum() < min_chunks:
+        # not enough valid variance points to estimate robustly
+        return float("nan")
+    log_vars = np.log(variances_arr[positive_mask])
+    log_sizes = np.log(ks_arr[positive_mask])
     # slope = 2H - 2 => H = (slope + 2)/2
     slope, intercept = np.polyfit(log_sizes, log_vars, 1)
     H = (slope + 2.0) / 2.0
