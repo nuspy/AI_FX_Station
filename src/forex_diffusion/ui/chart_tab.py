@@ -6,7 +6,7 @@ import pandas as pd
 from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal, QPoint
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -45,8 +45,7 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.toolbar)
         top_layout.addWidget(self.indicators_btn)
 
-        # Forecast controls: Settings and Execute
-
+        # Forecast controls: Settings and Execute + UI helpers
         try:
             self.forecast_settings_btn = QPushButton("Setting previsione")
             self.forecast_settings_btn.setToolTip("Apri settings previsione")
@@ -57,8 +56,39 @@ class ChartTab(QWidget):
             self.forecast_btn.setToolTip("Esegui la previsione con il modello selezionato")
             self.forecast_btn.clicked.connect(self._on_forecast_clicked)
             top_layout.addWidget(self.forecast_btn)
+
+            # Tooltip toggle (checkable)
+            self.tooltip_btn = QPushButton("Tooltip")
+            self.tooltip_btn.setCheckable(True)
+            self.tooltip_btn.setChecked(True)
+            self.tooltip_btn.setToolTip("Abilita/Disabilita mini-tooltip vicino al cursore")
+            self.tooltip_btn.clicked.connect(self._toggle_tooltip)
+            top_layout.addWidget(self.tooltip_btn)
+
+            # Reset view button
+            self.reset_view_btn = QPushButton("Reset view")
+            self.reset_view_btn.setToolTip("Ricentrare zoom/pan per mostrare tutto, incluse previsioni")
+            self.reset_view_btn.clicked.connect(self.reset_view)
+            top_layout.addWidget(self.reset_view_btn)
         except Exception:
             pass
+
+        # tooltip overlay widget (initially hidden)
+        try:
+            from PySide6.QtWidgets import QFrame
+            self._tooltip_enabled = True
+            self._tip_widget = QFrame(self)
+            self._tip_widget.setObjectName("chart_tooltip")
+            self._tip_widget.setStyleSheet("QFrame#chart_tooltip { background: #ffffff; border: 1px solid #444444; padding:6px; }")
+            self._tip_widget.setWindowFlags(Qt.ToolTip)
+            self._tip_layout = QVBoxLayout(self._tip_widget)
+            self._tip_label = QLabel("")
+            self._tip_label.setWordWrap(True)
+            self._tip_layout.addWidget(self._tip_label)
+            self._tip_widget.hide()
+        except Exception:
+            self._tip_widget = None
+            self._tooltip_enabled = False
 
         # real-time bid/ask label (initial placeholder)
         try:
@@ -314,20 +344,27 @@ class ChartTab(QWidget):
 
     def _on_motion(self, event):
         try:
-            # pan while left button pressed
-            if not self._is_panning or self._pan_start is None:
+            # if panning, do pan behaviour
+            if self._is_panning and self._pan_start is not None:
+                if event.inaxes != self.ax:
+                    return
+                xpress, ypress, (x0, x1), (y0, y1) = self._pan_start
+                dx = event.x - xpress
+                # compute shift in data coordinates using axis transform
+                inv = self.ax.transData.inverted()
+                p1 = inv.transform((xpress, 0))
+                p2 = inv.transform((event.x, 0))
+                dx_data = p2[0] - p1[0]
+                self.ax.set_xlim(x0 - dx_data, x1 - dx_data)
+                self.canvas.draw_idle()
                 return
-            if event.inaxes != self.ax:
-                return
-            xpress, ypress, (x0, x1), (y0, y1) = self._pan_start
-            dx = event.x - xpress
-            # compute shift in data coordinates using axis transform
-            inv = self.ax.transData.inverted()
-            p1 = inv.transform((xpress, 0))
-            p2 = inv.transform((event.x, 0))
-            dx_data = p2[0] - p1[0]
-            self.ax.set_xlim(x0 - dx_data, x1 - dx_data)
-            self.canvas.draw_idle()
+
+            # not panning: update tooltip if enabled
+            try:
+                if getattr(self, "_tooltip_enabled", False):
+                    self._update_cursor_tooltip(event)
+            except Exception:
+                pass
         except Exception as e:
             logger.debug("ChartTab _on_motion exception: {}", e)
 
@@ -875,7 +912,7 @@ class ChartTab(QWidget):
                     prev_len = len(self._last_df) if getattr(self, "_last_df", None) is not None else 0
                 except Exception:
                     prev_len = None
-                logger.debug(f"handle_tick: updating plot, prev_len={prev_len}")
+                # logger.debug(f"handle_tick: updating plot, prev_len={prev_len}")
                 self.update_plot(self._last_df, timeframe=getattr(self, "timeframe", None))
                 try:
                     # request idle redraw (non-blocking)
@@ -1289,6 +1326,270 @@ class ChartTab(QWidget):
                 pass
         except Exception as e:
             logger.exception("on_forecast_ready failed: {}", e)
+
+            def _toggle_tooltip(self, checked):
+                """Enable/disable tooltip display"""
+                try:
+                    self._tooltip_enabled = bool(checked)
+                    if not self._tooltip_enabled and getattr(self, "_tip_widget", None) is not None:
+                        try:
+                            self._tip_widget.hide()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            def _update_cursor_tooltip(self, event):
+                """Update and position tooltip near cursor showing x/y and selected indicators."""
+                try:
+                    if event is None or event.xdata is None:
+                        if getattr(self, "_tip_widget", None) is not None:
+                            try:
+                                self._tip_widget.hide()
+                            except Exception:
+                                pass
+                        return
+                    # find nearest data index using base line xdata (if available)
+                    try:
+                        base_line = getattr(self, "_base_line", None)
+                        if base_line is None:
+                            return
+                        xdata = base_line.get_xdata()
+                        ydata = base_line.get_ydata()
+                        # event.xdata is matplotlib date number if numeric x; ensure comparable
+                        ex = event.xdata
+                        # find nearest index
+                        import numpy as _np
+                        idx = int(_np.argmin(_np.abs(_np.array(xdata) - ex))) if len(xdata) > 0 else 0
+                        x_val_num = xdata[idx] if idx < len(xdata) else xdata[-1]
+                        y_val = ydata[idx] if idx < len(ydata) else ydata[-1]
+                        # convert numeric date to datetime string if needed
+                        try:
+                            from matplotlib.dates import num2date
+                            dt = num2date(x_val_num)
+                            x_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        except Exception:
+                            x_str = str(x_val_num)
+                    except Exception:
+                        x_str = ""
+                        y_val = ""
+
+                    # collect indicator values from plotted artists
+                    entries = []
+                    try:
+                        for name, artists in list(self._indicator_artists.items()):
+                            for art in artists:
+                                try:
+                                    xs = art.get_xdata()
+                                    ys = art.get_ydata()
+                                    if len(xs) == 0:
+                                        continue
+                                    # find nearest point by x
+                                    import numpy as _np
+                                    j = int(_np.argmin(_np.abs(_np.array(xs) - ex))) if len(xs) > 0 else 0
+                                    val = ys[j] if j < len(ys) else None
+                                    lbl = art.get_label() if hasattr(art, "get_label") else name
+                                    entries.append((lbl, val))
+                                except Exception:
+                                    continue
+                    except Exception:
+                        entries = []
+
+                    # build html/text
+                    try:
+                        lines = [f"<b>{x_str}</b>", f"Close: {float(y_val):.6f}"]
+                    except Exception:
+                        lines = [f"{x_str}", f"Close: {y_val}"]
+                    for lbl, val in entries:
+                        try:
+                            lines.append(f"{lbl}: {float(val):.6f}")
+                        except Exception:
+                            lines.append(f"{lbl}: {val}")
+                    text = "<br/>".join(lines)
+
+                    # position tooltip: decide left/right and up/down based on cursor fraction
+                    try:
+                        w = self.canvas.width()
+                        h = self.canvas.height()
+                        cx = event.x
+                        cy = event.y
+                        # horizontal: if cursor in left half -> show to right, else left
+                        show_right = True if cx < (w / 2) else False
+                        # vertical: if cursor in upper half -> show below, else above
+                        show_below = True if cy < (h / 2) else False
+                    except Exception:
+                        show_right = True
+                        show_below = True
+
+                    # populate tip widget text and size
+                    if getattr(self, "_tip_widget", None) is None:
+                        return
+                    try:
+                        self._tip_label.setText(text)
+                        self._tip_widget.adjustSize()
+                    except Exception:
+                        pass
+
+                    # compute global position from canvas local coords
+                    try:
+                        from PySide6.QtCore import QPoint
+                        g = self.canvas.mapToGlobal(QPoint(int(event.x), int(event.y)))
+                        tw = self._tip_widget.width()
+                        th = self._tip_widget.height()
+                        # offsets
+                        ox = 12 if show_right else - (tw + 12)
+                        oy = 12 if show_below else - (th + 12)
+                        target = QPoint(g.x() + ox, g.y() + oy)
+                        self._tip_widget.move(target)
+                        self._tip_widget.show()
+                    except Exception:
+                        try:
+                            self._tip_widget.show()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.debug("Tooltip update failed: {}", e)
+
+            def reset_view(self):
+                """Reset pan/zoom to show full base data and forecast (if any)."""
+                try:
+                    # compute x,y extents across base and forecast
+                    xmin, xmax, ymin, ymax = None, None, None, None
+                    try:
+                        if getattr(self, "_base_line", None) is not None:
+                            bx = _safe(self._base_line.get_xdata())
+                            by = _safe(self._base_line.get_ydata())
+                            if bx is not None and len(bx):
+                                xmin, xmax = (float(min(bx)), float(max(bx))) if xmin is None else (min(xmin, min(bx)), max(xmax, max(bx)))
+                            if by is not None and len(by):
+                                ymin, ymax = (float(min(by)), float(max(by))) if ymin is None else (min(ymin, min(by)), max(ymax, max(by)))
+                    except Exception:
+                        pass
+                    try:
+                        if getattr(self, "_forecast_line", None) is not None:
+                            fx = _safe(self._forecast_line.get_xdata())
+                            fy = _safe(self._forecast_line.get_ydata())
+                            if fx is not None and len(fx):
+                                xmin, xmax = (float(min(fx)), float(max(fx))) if xmin is None else (min(xmin, min(fx)), max(xmax, max(fx)))
+                            if fy is not None and len(fy):
+                                ymin, ymax = (float(min(fy)), float(max(fy))) if ymin is None else (min(ymin, min(fy)), max(ymax, max(fy)))
+                    except Exception:
+                        pass
+
+                    # If still None, autoscale
+                    try:
+                        def _set_xlim(x0, x1):
+                            try:
+                                self.ax.set_xlim(x0, x1)
+                            except Exception:
+                                pass
+                        def _set_ylim(y0, y1):
+                            try:
+                                self.ax.set_ylim(y0, y1)
+                            except Exception:
+                                pass
+
+                        if xmin is None or xmax is None:
+                            self.ax.relim()
+                            self.ax.autoscale_view()
+                        else:
+                            # add small margins
+                            xpad = (xmax - xmin) * 0.02 if xmax > xmin else 1.0
+                            _set_xlim(xmin - xpad, xmax + xpad)
+                        if ymin is None or ymax is None:
+                            self.ax.relim()
+                            self.ax.autoscale_view()
+                        else:
+                            ypad = (ymax - ymin) * 0.02 if ymax > ymin else 1.0
+                            _set_ylim(ymin - ypad, ymax + ypad)
+                    except Exception:
+                        try:
+                            self.ax.relim()
+                            self.ax.autoscale_view()
+                        except Exception:
+                            pass
+
+                    try:
+                        self.canvas.draw_idle()
+                    except Exception:
+                        try:
+                            self.canvas.draw()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.exception("reset_view failed: {}", e)
+
+    def show_forecast_table(self, df, quantiles: dict):
+        """
+        Open a dialog window with a table showing forecast quantiles (q05,q50,q95) and timestamps.
+        """
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QDialogButtonBox, QLabel
+            import pandas as pd
+
+            # extract q-values
+            q50 = None
+            q05 = None
+            q95 = None
+            if isinstance(quantiles, dict):
+                q50 = quantiles.get("q50")
+                q05 = quantiles.get("q05")
+                q95 = quantiles.get("q95")
+            elif isinstance(quantiles, (list, tuple)):
+                q50 = list(quantiles)
+
+            if not q50:
+                # nothing to show
+                try:
+                    logger.debug("show_forecast_table: no q50 in quantiles, aborting table display")
+                except Exception:
+                    pass
+                return
+
+            n = len(q50)
+
+            # compute future timestamps aligned with current buffer
+            try:
+                last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1] if getattr(self, "_last_df", None) is not None and not self._last_df.empty else pd.Timestamp.utcnow(tz="UTC")
+            except Exception:
+                last_ts = pd.Timestamp.utcnow(tz="UTC")
+            delta = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
+            future_ts = [last_ts + delta * (i + 1) for i in range(n)]
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Forecast Results")
+            layout = QVBoxLayout(dlg)
+
+            # optional header
+            hdr = QLabel(f"Forecast ({getattr(self, 'symbol', '')} {getattr(self, 'timeframe', '')})")
+            layout.addWidget(hdr)
+
+            table = QTableWidget()
+            table.setColumnCount(4)
+            table.setHorizontalHeaderLabels(["ts", "q05", "q50", "q95"])
+            table.setRowCount(n)
+
+            for i in range(n):
+                # timestamp formatted
+                try:
+                    ts_str = pd.to_datetime(future_ts[i]).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    ts_str = str(future_ts[i])
+                table.setItem(i, 0, QTableWidgetItem(ts_str))
+                table.setItem(i, 1, QTableWidgetItem(str(q05[i]) if q05 and i < len(q05) else ""))
+                table.setItem(i, 2, QTableWidgetItem(str(q50[i]) if q50 and i < len(q50) else ""))
+                table.setItem(i, 3, QTableWidgetItem(str(q95[i]) if q95 and i < len(q95) else ""))
+            table.resizeColumnsToContents()
+            layout.addWidget(table)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+            buttons.accepted.connect(dlg.accept)
+            layout.addWidget(buttons)
+
+            dlg.exec()
+        except Exception as e:
+            logger.exception("show_forecast_table failed: {}", e)
+
 # --- Forecast settings dialog and trigger handlers ---
     def _open_forecast_settings(self):
         """

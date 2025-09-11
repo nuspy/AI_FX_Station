@@ -158,14 +158,24 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
             except Exception:
                 pass
 
-            # Also draw forecast overlay on Chart tab when ready
+            # Also draw forecast overlay on Chart tab when ready and show table
             try:
                 if "controller" in result:
                     try:
-                        result["controller"].signals.forecastReady.connect(lambda df, q: chart_tab.on_forecast_ready(df, q))
-                        logger.info("Connected controller.forecastReady -> chart_tab.on_forecast_ready")
-                    except Exception as e:
-                        logger.debug("Failed to connect forecastReady to chart tab overlay: {}", e)
+                        # connect to overlay renderer
+                        try:
+                            result["controller"].signals.forecastReady.connect(chart_tab.on_forecast_ready)
+                            logger.info("Connected controller.forecastReady -> chart_tab.on_forecast_ready")
+                        except Exception as e:
+                            logger.debug("Failed to connect forecastReady to chart tab overlay: {}", e)
+                        # connect to table dialog
+                        try:
+                            result["controller"].signals.forecastReady.connect(chart_tab.show_forecast_table)
+                            logger.info("Connected controller.forecastReady -> chart_tab.show_forecast_table")
+                        except Exception as e:
+                            logger.debug("Failed to connect forecastReady to chart tab table: {}", e)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 

@@ -58,9 +58,8 @@ def publish(topic: str, payload: Any) -> None:
         with _queues_lock:
             q = _queues.setdefault(topic, [])
             q.append(payload)
-            sz = len(q)
-        # INFO so it's visible in standard logs and easier to trace cross-thread publishes
-        logger.info(f"event_bus: publish -> topic='{topic}' queued payload_type='{type(payload).__name__}' queue_size={sz}")
+            # queue length intentionally not logged to reduce runtime noise
+            # sz = len(q)
     except Exception as e:
         logger.exception("event_bus.publish failed for topic=%s: %s", topic, e)
 

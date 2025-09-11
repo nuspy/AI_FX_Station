@@ -143,7 +143,6 @@ class TiingoWSConnector:
                                         payload = {"symbol": norm_symbol, "timeframe": "1m", "ts_utc": int(ts_ms), "price": float(price) if price is not None else None, "bid": bid, "ask": ask}
                                         try:
                                             publish("tick", payload)
-                                            logger.info(f"TiingoWSConnector published tick: {payload}")
                                         except Exception:
                                             pass
 
