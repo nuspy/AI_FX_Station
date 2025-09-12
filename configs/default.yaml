@@ -281,7 +281,7 @@ gui:
     enable_calibrate: true
 
 logging:
-  level: "INFO"
+  level: "DEBUG"
   file:
     enabled: true
     dir: "./logs"

@@ -497,7 +497,14 @@ class MarketDataService:
                                             bid = data[4]
                                             ask = data[5]
                                             price = bid if bid is not None else ask
-                                            payload = {"symbol": pair.upper() if isinstance(pair, str) else pair, "timeframe": "1m", "ts_utc": int(ts_ms), "price": float(price) if price is not None else None, "bid": bid, "ask": ask}
+                                            payload = {
+                                                "symbol": pair.upper() if isinstance(pair, str) else pair,
+                                                "timeframe": "tick",
+                                                "ts_utc": int(ts_ms),
+                                                "price": float(price) if price is not None else None,
+                                                "bid": bid,
+                                                "ask": ask,
+                                            }
                                             # publish to UI (thread-safe queue)
                                             try:
                                                 publish("tick", payload)
@@ -506,16 +513,9 @@ class MarketDataService:
                                             # persist tick into market_data_ticks (do not compute candles here)
                                             try:
                                                 if dbs is not None:
-                                                    payload_tick = {
-                                                        "symbol": payload["symbol"],
-                                                        "timeframe": payload["timeframe"],
-                                                        "ts_utc": int(ts_ms),
-                                                        "price": float(price) if price is not None else None,
-                                                        "bid": bid,
-                                                        "ask": ask,
-                                                        "volume": None,
-                                                        "ts_created_ms": int(time.time() * 1000),
-                                                    }
+                                                    payload_tick = payload.copy()
+                                                    payload_tick["volume"] = None
+                                                    payload_tick["ts_created_ms"] = int(time.time() * 1000)
                                                     ok = dbs.write_tick(payload_tick)
                                                     if not ok:
                                                         _logger.debug("WS writer: write_tick returned False for %s %s %s", payload_tick["symbol"], payload_tick["timeframe"], payload_tick["ts_utc"])

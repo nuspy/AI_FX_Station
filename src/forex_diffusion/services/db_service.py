@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.engine import Engine
@@ -115,6 +116,9 @@ class DBService:
             Column("features_json", Text, nullable=False),
             Column("ts_created_ms", Integer, nullable=False),
         )
+        self.features_tbl.append_constraint(
+            UniqueConstraint("symbol", "timeframe", "ts_utc", name="uq_features")
+        )
         self.market_data_ticks_tbl = Table(
             "market_data_ticks",
             meta,
@@ -128,6 +132,9 @@ class DBService:
             Column("volume", Float, nullable=True),
             Column("ts_created_ms", Integer, nullable=False),
         )
+        self.market_data_ticks_tbl.append_constraint(
+            UniqueConstraint("symbol", "timeframe", "ts_utc", name="uq_market_data_ticks")
+        )
         # Optional aggregated ticks table
         self.ticks_tbl = Table(
             "ticks_aggregate",
@@ -138,6 +145,9 @@ class DBService:
             Column("ts_utc", Integer, nullable=False, index=True),
             Column("tick_count", Integer, nullable=False),
             Column("ts_created_ms", Integer, nullable=False),
+        )
+        self.ticks_tbl.append_constraint(
+            UniqueConstraint("symbol", "timeframe", "ts_utc", name="uq_ticks_aggregate")
         )
         # Metrics table for various operational metrics
         self.metrics_tbl = Table(
@@ -255,6 +265,7 @@ class DBService:
         """
         Insert a raw tick into market_data_ticks table. Handles duplicates gracefully.
         """
+        logger.debug(f"Attempting to write tick: {payload}")
         try:
             required = ["symbol", "timeframe", "ts_utc"]
             if not all(k in payload for k in required):
@@ -272,26 +283,32 @@ class DBService:
                 stmt = None
                 if dialect == "postgresql":
                     stmt = pg_insert(self.market_data_ticks_tbl).values(payload)
-                    stmt = stmt.on_conflict_do_nothing()
+                    stmt = stmt.on_conflict_do_nothing(
+                        index_elements=["symbol", "timeframe", "ts_utc"]
+                    )
                 elif dialect == "sqlite":
                     stmt = sqlite_insert(self.market_data_ticks_tbl).values(payload)
                     stmt = stmt.on_conflict_do_nothing()
 
                 if stmt is not None:
-                    conn.execute(stmt)
+                    result = conn.execute(stmt)
+                    if result.rowcount > 0:
+                        logger.debug(f"Successfully inserted tick: {payload.get('symbol')} at {payload.get('ts_utc')}")
+                    else:
+                        logger.debug(f"Tick already exists (on_conflict), skipped: {payload.get('symbol')} at {payload.get('ts_utc')}")
                 else:  # Generic fallback
                     try:
                         conn.execute(self.market_data_ticks_tbl.insert().values(payload))
+                        logger.debug(f"Successfully inserted tick (generic fallback): {payload.get('symbol')} at {payload.get('ts_utc')}")
                     except Exception as e:
                         if "UNIQUE constraint" in str(e) or "duplicate key" in str(e):
                             logger.debug(
                                 f"Duplicate tick skipped: {payload.get('symbol')} at {payload.get('ts_utc')}"
                             )
                         else:
+                            logger.exception(f"Generic insert failed for tick: {payload}")
                             raise
             return True
         except Exception as e:
-            logger.exception("write_tick failed: {}", e)
+            logger.exception(f"write_tick failed for payload {payload}: {e}")
             return False
-
-

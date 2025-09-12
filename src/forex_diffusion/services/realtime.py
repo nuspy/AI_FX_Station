@@ -143,6 +143,7 @@ class RealTimeIngestService:
             if hasattr(self.provider, "get_current_price"):
                 data = self.provider.get_current_price(symbol)
             elif hasattr(self.provider, "get_historical"):
+                logger.debug(f"Provider for {symbol} has no get_current_price, falling back to get_historical.")
                 # fallback: request very recent historical 1m bar
                 now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
                 data_df = self.provider.get_historical(symbol=symbol, timeframe=self.timeframe, start_ts_ms=now_ms - 60_000, end_ts_ms=now_ms)
@@ -151,8 +152,10 @@ class RealTimeIngestService:
                     last = data_df.iloc[-1]
                     data = {"ts_utc": int(last["ts_utc"]), "price": float(last["close"])}
             if data is None:
+                logger.debug(f"Provider returned no data for {symbol}.")
                 return
 
+            logger.debug(f"Provider data for {symbol}: {data}")
             ts_ms = None
             price = None
 
@@ -241,6 +244,7 @@ class RealTimeIngestService:
                 "volume": None,
             }
 
+            logger.debug(f"Constructed tick payload: {tick_payload}")
             dbs = DBService(engine=self.engine)
             dbs.write_tick(tick_payload)
 

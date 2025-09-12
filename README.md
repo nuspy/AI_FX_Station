@@ -14,7 +14,7 @@ MagicForex — guida rapida (locale)
 
 4) Test e Backfill:
    - Per testare la scrittura dei tick: `python .\tests\manual_tests\write_3_ticks.py`
-   - Corretta la logica di ingestione realtime: ora salva i tick grezzi e li aggrega in candele periodicamente, invece di salvare una candela per ogni tick.
+   - Corretta la logica di ingestione realtime: ora salva i tick grezzi con il timeframe corretto ('tick') e l'aggregatore li processa correttamente per creare le candele.
 
 GUI tabs:
  - Signals: recent signals + admin controls

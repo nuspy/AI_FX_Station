@@ -141,14 +141,14 @@ class AggregatorService:
             # Fetch ticks in window [start_ms, end_ms)
             try:
                 with self.engine.connect() as conn:
-                    q = "SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol = :s AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC"
+                    q = "SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol = :s AND timeframe = 'tick' AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC"
                     rows = conn.execute(pd.io.sql.text(q), {"s": symbol, "a": int(start_ms), "b": int(end_ms)}).fetchall()
             except Exception:
                 # fallback using SQLAlchemy text import
                 try:
                     from sqlalchemy import text as _text
                     with self.engine.connect() as conn:
-                        rows = conn.execute(_text("SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol = :s AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC"), {"s": symbol, "a": int(start_ms), "b": int(end_ms)}).fetchall()
+                        rows = conn.execute(_text("SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol = :s AND timeframe = 'tick' AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC"), {"s": symbol, "a": int(start_ms), "b": int(end_ms)}).fetchall()
                 except Exception as e:
                     logger.debug("AggregatorService: DB query for ticks failed: {}", e)
                     rows = []
