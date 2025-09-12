@@ -22,6 +22,7 @@ from ..utils.config import get_config
 from ..data import io as data_io
 from sqlalchemy import create_engine
 from .db_service import DBService
+from .aggregator import AggregatorService
 
 # try to import official alpha_vantage library; if not available we'll fallback to httpx
 try:
@@ -382,12 +383,31 @@ class MarketDataService:
         """
         Start a background thread that connects to Tiingo WebSocket and subscribes to tickers.
         Received quotes are published via event_bus and upserted into DB as 1-row candles.
+
+        Also start AggregatorService to periodically aggregate persisted ticks into candles.
         """
         if getattr(self, "_ws_thread", None) and getattr(self, "_ws_thread").is_alive():
             return
         self._ws_stop = False
         ws_uri = uri or "wss://api.tiingo.com/fx"
         syms = tickers or getattr(self, "_realtime_symbols", None) or ["eurusd"]
+
+        # prepare aggregator for these symbols (normalize to uppercase strings)
+        try:
+            symbols_for_agg = [s.upper() if isinstance(s, str) else s for s in (syms if isinstance(syms, (list, tuple)) else [syms])]
+        except Exception:
+            symbols_for_agg = [str(syms).upper()]
+
+        try:
+            # instantiate & start aggregator (background scheduler)
+            self._aggregator = AggregatorService(engine=self.engine, symbols=symbols_for_agg)
+            self._aggregator.start()
+        except Exception as e:
+            try:
+                logger.exception("Failed to start AggregatorService: {}", e)
+            except Exception:
+                pass
+
         try:
             api_key = None
             # try config / env via TiingoClient logic
@@ -406,6 +426,12 @@ class MarketDataService:
             _logger.debug("WS streamer: starting with api_key_present=%s tickers=%s threshold=%s", bool(api_key), syms, threshold)
         except Exception:
             pass
+
+        # create DBService instance for the worker to persist ticks
+        try:
+            dbs = DBService(engine=self.engine)
+        except Exception:
+            dbs = None
 
         def _ws_worker():
             import json as _json
@@ -477,14 +503,27 @@ class MarketDataService:
                                                 publish("tick", payload)
                                             except Exception:
                                                 pass
-                                            # upsert into DB as one-row candle (best-effort)
+                                            # persist tick into market_data_ticks (do not compute candles here)
                                             try:
-                                                import pandas as _pd
-                                                df = _pd.DataFrame([{"ts_utc": int(ts_ms), "open": float(price), "high": float(price), "low": float(price), "close": float(price), "volume": None}])
-                                                from ..data import io as data_io
-                                                data_io.upsert_candles(self.engine, df, payload["symbol"], "1m", resampled=False)
-                                            except Exception:
-                                                pass
+                                                if dbs is not None:
+                                                    payload_tick = {
+                                                        "symbol": payload["symbol"],
+                                                        "timeframe": payload["timeframe"],
+                                                        "ts_utc": int(ts_ms),
+                                                        "price": float(price) if price is not None else None,
+                                                        "bid": bid,
+                                                        "ask": ask,
+                                                        "volume": None,
+                                                        "ts_created_ms": int(time.time() * 1000),
+                                                    }
+                                                    ok = dbs.write_tick(payload_tick)
+                                                    if not ok:
+                                                        _logger.debug("WS writer: write_tick returned False for %s %s %s", payload_tick["symbol"], payload_tick["timeframe"], payload_tick["ts_utc"])
+                                            except Exception as e:
+                                                try:
+                                                    _logger.exception("WS writer: write_tick failed: {}", e)
+                                                except Exception:
+                                                    pass
                                 except Exception:
                                     # ignore non-quote messages
                                     pass
@@ -523,6 +562,15 @@ class MarketDataService:
                     self._ws_thread.join(timeout=1.0)
                 except Exception:
                     pass
+            # stop aggregator if running
+            try:
+                if getattr(self, "_aggregator", None) is not None:
+                    try:
+                        self._aggregator.stop()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -664,7 +712,10 @@ class MarketDataService:
             is_tick_like = "ts_utc" in df_src.columns and any(c in df_src.columns for c in ("price", "bid", "ask"))
             is_candle_like = "ts_utc" in df_src.columns and all(c in df_src.columns for c in ("open", "high", "low", "close"))
 
+
             if is_tick_like:
+                logger.debug(" ### Tick in tick-like format: %s", df_src)
+
                 for _, r in df_src.iterrows():
                     try:
                         ts_val = int(r.get("ts_utc"))
@@ -690,6 +741,7 @@ class MarketDataService:
                 return {"provider_rows": provider_rows, "inserted": inserted, "failed": failed}
 
             if is_candle_like:
+                logger.debug(" ### Tick in tick-like format: %s", df_src)
                 # synthesize one tick per candle (ts_utc -> price=close)
                 for _, r in df_src.iterrows():
                     try:
