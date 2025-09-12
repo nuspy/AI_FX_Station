@@ -143,7 +143,7 @@ class RealTimeIngestService:
             if hasattr(self.provider, "get_current_price"):
                 data = self.provider.get_current_price(symbol)
             elif hasattr(self.provider, "get_historical"):
-                logger.debug(f"Provider for {symbol} has no get_current_price, falling back to get_historical.")
+                logger.debug(f"TRACE: _poll_and_write_tick: Provider for {symbol} has no get_current_price, falling back to get_historical.")
                 # fallback: request very recent historical 1m bar
                 now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
                 data_df = self.provider.get_historical(symbol=symbol, timeframe=self.timeframe, start_ts_ms=now_ms - 60_000, end_ts_ms=now_ms)
@@ -152,10 +152,10 @@ class RealTimeIngestService:
                     last = data_df.iloc[-1]
                     data = {"ts_utc": int(last["ts_utc"]), "price": float(last["close"])}
             if data is None:
-                logger.debug(f"Provider returned no data for {symbol}.")
+                logger.debug(f"TRACE: _poll_and_write_tick: Provider returned no data for {symbol}.")
                 return
 
-            logger.debug(f"Provider data for {symbol}: {data}")
+            logger.debug(f"TRACE: _poll_and_write_tick: Received data from provider for {symbol}: {data}")
             ts_ms = None
             price = None
 
@@ -244,9 +244,11 @@ class RealTimeIngestService:
                 "volume": None,
             }
 
-            logger.debug(f"Constructed tick payload: {tick_payload}")
+            logger.debug(f"TRACE: _poll_and_write_tick: Constructed tick payload: {tick_payload}")
             dbs = DBService(engine=self.engine)
+            logger.debug(f"TRACE: _poll_and_write_tick: Calling dbs.write_tick for {symbol}")
             dbs.write_tick(tick_payload)
+            logger.debug(f"TRACE: _poll_and_write_tick: Returned from dbs.write_tick for {symbol}")
 
             # On first tick, set rt_start and trigger historical backfill in separate thread
             with self._lock:

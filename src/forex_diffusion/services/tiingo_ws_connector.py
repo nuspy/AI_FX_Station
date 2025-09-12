@@ -6,210 +6,125 @@ import time
 import json
 import os
 from typing import Optional, Iterable
+import pandas as pd
 from loguru import logger
 
-# try websocket-client
 try:
-    from websocket import create_connection, WebSocketException
+    import websocket
     _HAS_WS_CLIENT = True
-except Exception:
-    create_connection = None
-    WebSocketException = Exception
+except ImportError:
+    websocket = None
     _HAS_WS_CLIENT = False
 
 class TiingoWSConnector:
     """
-    Background connector to Tiingo WebSocket. Runs in a daemon thread.
-    Publishes 'tick' payloads via event_bus.publish(payload) when quotes arrive.
+    Connects to Tiingo WebSocket using an event-driven approach with WebSocketApp.
+    Handles automatic keep-alive and reconnects.
     """
-    def __init__(self, uri: str = "wss://api.tiingo.com/fx", api_key: Optional[str] = None, tickers: Optional[Iterable[str]] = None, threshold: str = "5", db_engine=None):
+    def __init__(self, uri: str = "wss://api.tiingo.com/fx", api_key: Optional[str] = None, tickers: Optional[Iterable[str]] = None, threshold: str = "5"):
         self.uri = uri
         self.api_key = api_key or os.environ.get("TIINGO_APIKEY") or os.environ.get("TIINGO_API_KEY")
         self.tickers = [str(t).lower() for t in (list(tickers) if tickers else ["eurusd"])]
         self.threshold = str(threshold)
         self._thread: Optional[threading.Thread] = None
-        self._stop = threading.Event()
-        self._db_engine = db_engine
+        self._stop_event = threading.Event()
+        self._ws_app: Optional[websocket.WebSocketApp] = None
+        try:
+            from ..utils.event_bus import publish
+            self._publish = publish
+        except ImportError:
+            self._publish = lambda *a, **k: None
 
     def start(self):
         if not _HAS_WS_CLIENT:
-            logger.warning("TiingoWSConnector not started: missing 'websocket-client' package")
-            return False
+            logger.warning("TiingoWSConnector not started: missing 'websocket' package")
+            return
         if self._thread and self._thread.is_alive():
-            return True
-        self._stop.clear()
+            return
+        self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        logger.debug("TiingoWSConnector thread launched")
-        return True
+        logger.info("TiingoWSConnector thread launched.")
 
-    def stop(self, timeout: float = 1.0):
-        try:
-            self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout=timeout)
-        except Exception:
-            pass
+    def stop(self, timeout: float = 2.0):
+        self._stop_event.set()
+        if self._ws_app:
+            self._ws_app.close()
+        if self._thread:
+            self._thread.join(timeout=timeout)
+        logger.info("TiingoWSConnector stopped.")
 
     def _run(self):
+        while not self._stop_event.is_set():
+            self._ws_app = websocket.WebSocketApp(
+                self.uri,
+                on_open=self._on_open,
+                on_message=self._on_message,
+                on_error=self._on_error,
+                on_close=self._on_close
+            )
+            # run_forever handles the connection loop, including pings and reading messages.
+            self._ws_app.run_forever(ping_interval=20, ping_timeout=10)
+            
+            if not self._stop_event.is_set():
+                logger.warning("WebSocket connection closed. Reconnecting in 5 seconds...")
+                time.sleep(5)
+
+    def _on_open(self, ws):
+        logger.info("TiingoWSConnector connection opened.")
         try:
-            from ..utils.event_bus import publish
-        except Exception:
-            publish = lambda *a, **k: None
+            sub_payload = {
+                "eventName": "subscribe",
+                "authorization": self.api_key or "",
+                "eventData": {
+                    "thresholdLevel": self.threshold,
+                    "tickers": self.tickers
+                }
+            }
+            ws.send(json.dumps(sub_payload))
+            logger.info(f"TiingoWSConnector subscribe sent: tickers={self.tickers}")
+        except Exception as e:
+            logger.exception(f"Failed to send subscribe message: {e}")
 
-        while not self._stop.is_set():
-            try:
-                logger.info("TiingoWSConnector connecting to %s", self.uri)
-                try:
-                    ws = create_connection(self.uri, timeout=10)
-                except Exception as e:
-                    logger.warning("TiingoWSConnector connection failed: %s", e)
-                    time.sleep(3.0)
-                    continue
+    def _on_message(self, ws, message):
+        try:
+            logger.info(f"TiingoWSConnector RAW: {message}")
+            msg = json.loads(message)
+            mtype = msg.get("messageType")
+            data = msg.get("data")
+            payload = None
 
-                try:
-                    # build subscribe payload
-                    sub = {
-                        "eventName": "subscribe",
-                        "authorization": self.api_key or "",
-                        "eventData": {
-                            "thresholdLevel": self.threshold,
-                            "tickers": self.tickers
-                        }
-                    }
-                    try:
-                        ws.send(json.dumps(sub))
-                        logger.info(f"TiingoWSConnector subscribe sent: tickers={self.tickers} threshold={self.threshold}")
-                        # Explicit trace for WSS subscription events (for diagnostics)
-                        try:
-                            logger.info(f"WSS subscription: uri={self.uri} tickers={self.tickers} threshold={self.threshold}")
-                        except Exception:
-                            logger.info("WSS subscription made (details unavailable)")
-                    except Exception as e:
-                        logger.warning(f"TiingoWSConnector failed to send subscribe: {e}")
+            if mtype == "A" and isinstance(data, list) and len(data) >= 6:
+                pair, iso_ts, bid, ask = data[1], data[2], data[4], data[5]
+                price = bid if bid is not None else ask
+                ts_ms = int(pd.to_datetime(iso_ts).value // 1_000_000)
+                norm_symbol = f"{pair[:3].upper()}/{pair[3:].upper()}"
+                payload = {
+                    "symbol": norm_symbol, "ts_utc": ts_ms,
+                    "price": float(price) if price is not None else None,
+                    "bid": float(bid) if bid is not None else None,
+                    "ask": float(ask) if ask is not None else None, "volume": None
+                }
+            elif mtype == "T" and isinstance(data, list) and len(data) >= 5:
+                pair, iso_ts, price, size = data[1], data[2], data[3], data[4]
+                ts_ms = int(pd.to_datetime(iso_ts).value // 1_000_000)
+                norm_symbol = f"{pair[:3].upper()}/{pair[3:].upper()}"
+                payload = {
+                    "symbol": norm_symbol, "ts_utc": ts_ms,
+                    "price": float(price) if price is not None else None,
+                    "bid": None, "ask": None, "volume": float(size) if size is not None else None
+                }
+            elif mtype in ("I", "H"):
+                logger.debug(f"TiingoWSConnector info/heartbeat: {msg.get('response', msg)}")
 
-                    # receive loop
-                    while not self._stop.is_set():
-                        try:
-                            raw = ws.recv()
-                            if not raw:
-                                continue
-                            # debug-log raw message
-                            # try:
-                                # Pluto logger.debug(f"TiingoWSConnector raw msg: {raw}")
-                            # except Exception:
-                            #     pass
-                            try:
-                                msg = json.loads(raw)
-                            except Exception:
-                                continue
-                            # handle messages: look for quote arrays ("messageType": "A")
-                            try:
-                                mtype = msg.get("messageType")
-                                if mtype == "A":
-                                    data = msg.get("data", [])
-                                    # expected layout: ["Q", "pair", "iso_ts", size, bid, ask, ...]
-                                    if isinstance(data, list) and len(data) >= 6:
-                                        pair = data[1]
-                                        iso_ts = data[2]
-                                        bid = data[4]
-                                        ask = data[5]
-                                        # convert iso_ts to ms
-                                        ts_ms = None
-                                        try:
-                                            import pandas as _pd
-                                            ts_ms = int(_pd.to_datetime(iso_ts).value // 1_000_000)
-                                        except Exception:
-                                            ts_ms = int(time.time() * 1000)
-                                        price = bid if bid is not None else ask
+            if payload:
+                self._publish("tick", payload)
 
-                                        # Normalize pair format 'eurusd' -> 'EUR/USD' to match ChartTab/DB expectations
-                                        try:
-                                            if isinstance(pair, str):
-                                                p = pair.strip()
-                                                if "/" in p:
-                                                    # already contains slash
-                                                    norm_symbol = p.upper()
-                                                elif len(p) == 6 and p.isalpha():
-                                                    norm_symbol = f"{p[0:3].upper()}/{p[3:6].upper()}"
-                                                else:
-                                                    # fallback: uppercase
-                                                    norm_symbol = p.upper()
-                                            else:
-                                                norm_symbol = pair
-                                        except Exception:
-                                            norm_symbol = (pair.upper() if isinstance(pair, str) else pair)
+        except Exception as e:
+            logger.exception(f"Error processing message: {e}")
 
-                                        payload = {"symbol": norm_symbol, "timeframe": "1m", "ts_utc": int(ts_ms), "price": float(price) if price is not None else None, "bid": bid, "ask": ask}
-                                        try:
-                                            publish("tick", payload)
-                                        except Exception:
-                                            pass
+    def _on_error(self, ws, error):
+        logger.error(f"TiingoWSConnector error: {error}")
 
-                                        # optional DB upsert if engine provided, using normalized symbol
-                                        if self._db_engine is not None:
-                                            try:
-                                                import pandas as _pd
-                                                from ..data import io as data_io
-                                                df = _pd.DataFrame([{"ts_utc": int(ts_ms), "open": float(price), "high": float(price), "low": float(price), "close": float(price), "volume": None}])
-                                                data_io.upsert_candles(self._db_engine, df, norm_symbol, "1m", resampled=False)
-                                            except Exception:
-                                                pass
-
-                                        # Diagnostic: check event_bus status and call subscribers directly as fallback
-                                        try:
-                                            from ..utils.event_bus import debug_status, get_subscribers
-                                            try:
-                                                st = debug_status()
-                                                subs = get_subscribers("tick")
-                                                if subs:
-                                                    # deduplicate by identity then call subscribers silently as fallback
-                                                    uniq = []
-                                                    seen = set()
-                                                    for cb in subs:
-                                                        iid = id(cb)
-                                                        if iid in seen:
-                                                            continue
-                                                        seen.add(iid)
-                                                        uniq.append(cb)
-                                                    for cb in uniq:
-                                                        try:
-                                                            cb(payload)
-                                                        except Exception:
-                                                            pass
-                                            except Exception:
-                                                pass
-                                        except Exception as e:
-                                            logger.debug("TiingoWSConnector: debug/fallback subscriber invocation failed: {}", e)
-                                        # optional DB upsert if engine provided
-                                        if self._db_engine is not None:
-                                            try:
-                                                import pandas as _pd
-                                                from ..data import io as data_io
-                                                df = _pd.DataFrame([{"ts_utc": int(ts_ms), "open": float(price), "high": float(price), "low": float(price), "close": float(price), "volume": None}])
-                                                data_io.upsert_candles(self._db_engine, df, payload["symbol"], "1m", resampled=False)
-                                            except Exception:
-                                                pass
-                                else:
-                                    # log heartbeat/info at debug
-                                    if msg.get("messageType") in ("I", "H"):
-                                        try:
-                                            logger.debug(f"TiingoWSConnector info/heartbeat: {msg.get('response', msg)}")
-                                        except Exception:
-                                            logger.debug("TiingoWSConnector info/heartbeat")
-                            except Exception:
-                                pass
-                        except WebSocketException:
-                            break
-                        except Exception as e:
-                            logger.debug("TiingoWSConnector recv exception: %s", e)
-                            break
-                finally:
-                    try:
-                        ws.close()
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.exception("TiingoWSConnector worker exception: {}", e)
-                time.sleep(3.0)
-        logger.info("TiingoWSConnector stopped")
+    def _on_close(self, ws, close_status_code, close_msg):
+        logger.warning(f"TiingoWSConnector connection closed: {close_status_code} - {close_msg}")

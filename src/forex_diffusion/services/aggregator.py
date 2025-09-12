@@ -3,7 +3,7 @@ Aggregator service: scheduled aggregation of market_data_ticks -> market_data_ca
 
 - Runs a background thread aligned to minute boundaries.
 - Every minute aggregates ticks into 1m candles.
-- On minute boundaries that are multiples of other TFs, also aggregate 5m,15m,30m,1h,5h,12h,1d,5d,10d,15d,30d.
+- On minute boundaries that are multiples of other TFs, also aggregate 5m,15m,30m,1h,4h,1d.
 - Uses DBService to access engine and data_io.upsert_candles to persist candles.
 """
 from __future__ import annotations
@@ -27,13 +27,8 @@ TF_RULES: Dict[str, Dict] = {
     "15m": {"rule": "15min", "minutes": 15},
     "30m": {"rule": "30min", "minutes": 30},
     "1h": {"rule": "60min", "minutes": 60},
-    "5h": {"rule": "300min", "minutes": 300},
-    "12h": {"rule": "720min", "minutes": 720},
+    "4h": {"rule": "240min", "minutes": 240},
     "1d": {"rule": "1D", "minutes": 1440},
-    "5d": {"rule": "5D", "minutes": 1440 * 5},
-    "10d": {"rule": "10D", "minutes": 1440 * 10},
-    "15d": {"rule": "15D", "minutes": 1440 * 15},
-    "30d": {"rule": "30D", "minutes": 1440 * 30},
 }
 
 
@@ -90,15 +85,16 @@ class AggregatorService:
                 minute_idx = int(pd.Timestamp(ts_now).value // 1_000_000 // 60)
                 # decide which TFs to compute now
                 tfs_to_compute = []
+                if self.run_1m:
+                    tfs_to_compute.append("1m")
                 for tf, info in TF_RULES.items():
+                    if tf == "1m": continue
                     mins = info["minutes"]
-                    if mins == 1 and not self.run_1m:
-                        continue
-                    if (minute_idx % (mins // 1)) == 0:
+                    if (minute_idx % mins) == 0:
                         tfs_to_compute.append(tf)
-                # default: always compute 1m
-                if "1m" not in tfs_to_compute:
-                    tfs_to_compute.insert(0, "1m")
+
+                if not tfs_to_compute:
+                    continue
 
                 symbols = self._symbols or self._get_symbols_from_config()
                 for sym in symbols:
@@ -129,75 +125,52 @@ class AggregatorService:
         For given symbol and list of timeframes, collect ticks for each TF window and persist candles.
         ts_now is aligned to minute boundary (UTC).
         """
-        # end timestamp (exclusive) = ts_now in ms
         end_ms = int(pd.Timestamp(ts_now).value // 1_000_000)
+        max_mins = max(TF_RULES[tf]["minutes"] for tf in tfs)
+        start_ms = end_ms - (max_mins * 60 * 1000)
+
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                q = _text("SELECT ts_utc, price, bid, ask, volume FROM market_data_ticks WHERE symbol = :s AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC")
+                rows = conn.execute(q, {"s": symbol, "a": int(start_ms), "b": int(end_ms)}).fetchall()
+        except Exception as e:
+            logger.debug("AggregatorService: DB query for ticks failed: {}", e)
+            rows = []
+
+        if not rows:
+            return
+
+        df_ticks = pd.DataFrame(rows, columns=["ts_utc", "price", "bid", "ask", "volume"])
+        df_ticks['price'] = df_ticks['price'].fillna((df_ticks['bid'] + df_ticks['ask']) / 2).ffill()
+        if df_ticks.empty or df_ticks['price'].isnull().all():
+            return
+
+        df_ticks["ts_dt"] = pd.to_datetime(df_ticks["ts_utc"].astype("int64"), unit="ms", utc=True)
+        df_ticks = df_ticks.set_index("ts_dt").sort_index()
+
         for tf in tfs:
-            info = TF_RULES.get(tf)
-            if info is None:
-                continue
-            mins = info["minutes"]
-            # start is end - mins minutes
-            start_ms = end_ms - (mins * 60 * 1000)
-            # Fetch ticks in window [start_ms, end_ms)
             try:
-                with self.engine.connect() as conn:
-                    q = "SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol = :s AND timeframe = 'tick' AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC"
-                    rows = conn.execute(pd.io.sql.text(q), {"s": symbol, "a": int(start_ms), "b": int(end_ms)}).fetchall()
-            except Exception:
-                # fallback using SQLAlchemy text import
-                try:
-                    from sqlalchemy import text as _text
-                    with self.engine.connect() as conn:
-                        rows = conn.execute(_text("SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol = :s AND timeframe = 'tick' AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC"), {"s": symbol, "a": int(start_ms), "b": int(end_ms)}).fetchall()
-                except Exception as e:
-                    logger.debug("AggregatorService: DB query for ticks failed: {}", e)
-                    rows = []
-
-            if not rows:
-                # nothing to aggregate for this TF
-                continue
-
-            # Build DataFrame
-            try:
-                recs = []
-                for r in rows:
-                    # support Row._mapping or tuple
-                    if hasattr(r, "_mapping"):
-                        m = r._mapping
-                        recs.append({"ts_utc": int(m.get("ts_utc")), "price": float(m.get("price")) if m.get("price") is not None else None, "volume": float(m.get("volume")) if m.get("volume") is not None else None})
-                    else:
-                        # tuple (ts,price,volume)
-                        tsv = int(r[0])
-                        pricev = r[1]
-                        volv = r[2] if len(r) > 2 else None
-                        recs.append({"ts_utc": int(tsv), "price": float(pricev) if pricev is not None else None, "volume": float(volv) if volv is not None else None})
-                df_ticks = pd.DataFrame(recs)
-                if df_ticks.empty:
-                    continue
-                df_ticks["ts_dt"] = pd.to_datetime(df_ticks["ts_utc"].astype("int64"), unit="ms", utc=True)
-                df_ticks = df_ticks.set_index("ts_dt").sort_index()
-                # resample by rule
-                rule = info["rule"]
-                # produce OHLCV from price series
+                rule = TF_RULES[tf]["rule"]
                 ohlc = df_ticks["price"].resample(rule, label="right", closed="right").agg(["first", "max", "min", "last"])
                 if ohlc.empty:
                     continue
-                vol = df_ticks["volume"].resample(rule, label="right", closed="right").sum() if "volume" in df_ticks.columns else None
+                
+                vol = df_ticks["volume"].resample(rule, label="right", closed="right").sum() if "volume" in df_ticks.columns and not df_ticks["volume"].isnull().all() else None
+                
                 candles = []
                 for idx, row in ohlc.iterrows():
                     if row.isnull().all():
                         continue
                     ts_ms = int(idx.tz_convert("UTC").timestamp() * 1000)
-                    o = float(row["first"]) if not pd.isna(row["first"]) else 0.0
-                    h = float(row["max"]) if not pd.isna(row["max"]) else o
-                    l = float(row["min"]) if not pd.isna(row["min"]) else o
-                    c = float(row["last"]) if not pd.isna(row["last"]) else o
+                    o, h, l, c = row["first"], row["max"], row["min"], row["last"]
                     v = float(vol.loc[idx]) if (vol is not None and idx in vol.index and not pd.isna(vol.loc[idx])) else None
                     candles.append({"ts_utc": ts_ms, "open": o, "high": h, "low": l, "close": c, "volume": v})
+                
                 if not candles:
                     continue
+
                 df_candles = pd.DataFrame(candles)
-                # resampled flag: True for aggregated from ticks (except for 1m maybe mark resampled False)
                 resampled_flag = False if tf == "1m" else True
                 rep = data_io.upsert_candles(self.engine, df_candles, symbol, tf, resampled=resampled_flag)
                 logger.info("AggregatorService: upserted %d candles for %s %s (report=%s)", len(df_candles), symbol, tf, rep)

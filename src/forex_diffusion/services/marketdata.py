@@ -365,6 +365,7 @@ class MarketDataService:
         return ["tiingo", "alpha_vantage"]
 
     def set_provider(self, name: str):
+        logger.debug(f"TRACE: MarketDataService.set_provider called with '{name}'")
         name = (name or "").lower()
         if name == self._provider_name:
             return
@@ -380,6 +381,7 @@ class MarketDataService:
         logger.info("MarketDataService provider set to %s", name)
 
     def start_ws_streaming(self, uri: str | None = None, tickers: Optional[list[str]] = None, threshold: str = "5") -> None:
+        logger.critical("CRITICAL_TRACE: MarketDataService.start_ws_streaming has been called.")
         """
         Start a background thread that connects to Tiingo WebSocket and subscribes to tickers.
         Received quotes are published via event_bus and upserted into DB as 1-row candles.
@@ -472,6 +474,7 @@ class MarketDataService:
                         # receive loop
                         while not getattr(self, "_ws_stop", False):
                             try:
+                                logger.debug("TRACE: _ws_worker: Waiting to receive message from WebSocket...")
                                 raw = ws.recv()
                                 if not raw:
                                     continue
@@ -479,6 +482,7 @@ class MarketDataService:
                                     msg = _json.loads(raw)
                                 except Exception:
                                     continue
+                                logger.debug(f"TRACE: _ws_worker: Received raw message: {raw}")
                                 # Tiingo uses messageType "A" with data array for quotes
                                 try:
                                     mtype = msg.get("messageType")
@@ -498,13 +502,14 @@ class MarketDataService:
                                             ask = data[5]
                                             price = bid if bid is not None else ask
                                             payload = {
-                                                "symbol": pair.upper() if isinstance(pair, str) else pair,
-                                                "timeframe": "tick",
+                                                "symbol": str(pair).upper(),
+                                                "timeframe": "tick",  # CRITICAL: Ensure timeframe is 'tick' for raw data
                                                 "ts_utc": int(ts_ms),
                                                 "price": float(price) if price is not None else None,
                                                 "bid": bid,
                                                 "ask": ask,
                                             }
+                                            logger.debug(f"TRACE: _ws_worker: Constructed tick payload: {payload}")
                                             # publish to UI (thread-safe queue)
                                             try:
                                                 publish("tick", payload)
@@ -516,9 +521,10 @@ class MarketDataService:
                                                     payload_tick = payload.copy()
                                                     payload_tick["volume"] = None
                                                     payload_tick["ts_created_ms"] = int(time.time() * 1000)
+                                                    logger.debug(f"TRACE: _ws_worker: Calling dbs.write_tick for {payload_tick.get('symbol')}")
                                                     ok = dbs.write_tick(payload_tick)
-                                                    if not ok:
-                                                        _logger.debug("WS writer: write_tick returned False for %s %s %s", payload_tick["symbol"], payload_tick["timeframe"], payload_tick["ts_utc"])
+                                                    _logger.debug(f"TRACE: _ws_worker: Returned from dbs.write_tick (status: {ok}) for {payload_tick.get('symbol')}")
+
                                             except Exception as e:
                                                 try:
                                                     _logger.exception("WS writer: write_tick failed: {}", e)

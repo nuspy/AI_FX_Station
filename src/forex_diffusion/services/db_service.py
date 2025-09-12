@@ -124,7 +124,6 @@ class DBService:
             meta,
             Column("id", Integer, primary_key=True, autoincrement=True),
             Column("symbol", String(64), nullable=False, index=True),
-            Column("timeframe", String(16), nullable=False, index=True),
             Column("ts_utc", Integer, nullable=False, index=True),
             Column("price", Float, nullable=True),
             Column("bid", Float, nullable=True),
@@ -133,7 +132,7 @@ class DBService:
             Column("ts_created_ms", Integer, nullable=False),
         )
         self.market_data_ticks_tbl.append_constraint(
-            UniqueConstraint("symbol", "timeframe", "ts_utc", name="uq_market_data_ticks")
+            UniqueConstraint("symbol", "ts_utc", "price", name="uq_market_data_ticks")
         )
         # Optional aggregated ticks table
         self.ticks_tbl = Table(
@@ -198,45 +197,36 @@ class DBService:
         except Exception as e:
             logger.debug("Failed to ensure latents columns: {}", e)
 
-    def write_prediction(
-            self,
-            symbol: str,
-            timeframe: str,
-            horizon: str,
-            q05: float,
-            q50: float,
-            q95: float,
-            meta: Optional[Dict] = None,
-    ):
+    def write_prediction(self, payload: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
                 conn.execute(
                     self.pred_tbl.insert().values(
-                        symbol=symbol,
-                        timeframe=timeframe,
+                        symbol=payload.get("symbol"),
+                        timeframe=payload.get("timeframe"),
                         ts_created_ms=int(time.time() * 1000),
-                        horizon=horizon,
-                        q05=float(q05),
-                        q50=float(q50),
-                        q95=float(q95),
-                        meta=json.dumps(meta) if meta is not None else None,
+                        horizon=payload.get("horizon"),
+                        q05=float(payload.get("q05", 0.0)),
+                        q50=float(payload.get("q50", 0.0)),
+                        q95=float(payload.get("q95", 0.0)),
+                        meta=json.dumps(payload.get("meta")) if payload.get("meta") is not None else None,
                     )
                 )
         except Exception as e:
             logger.exception("Failed to write prediction: {}", e)
             raise
 
-    def write_calibration_record(self, record: Dict[str, Any]):
+    def write_calibration_record(self, payload: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
                 conn.execute(
                     self.cal_tbl.insert().values(
-                        symbol=record.get("symbol"),
-                        timeframe=record.get("timeframe"),
-                        ts_created_ms=int(record.get("ts_created_ms", time.time() * 1000)),
-                        alpha=float(record.get("alpha", 0.1)),
-                        delta_global=float(record.get("delta_global", 0.0)),
-                        details=json.dumps(record.get("details", {})),
+                        symbol=payload.get("symbol"),
+                        timeframe=payload.get("timeframe"),
+                        ts_created_ms=int(payload.get("ts_created_ms", time.time() * 1000)),
+                        alpha=float(payload.get("alpha", 0.1)),
+                        delta_global=float(payload.get("delta_global", 0.0)),
+                        details=json.dumps(payload.get("details", {})),
                     )
                 )
         except Exception as e:
@@ -265,9 +255,9 @@ class DBService:
         """
         Insert a raw tick into market_data_ticks table. Handles duplicates gracefully.
         """
-        logger.debug(f"Attempting to write tick: {payload}")
+        logger.debug(f"TRACE: write_tick: Received payload: {payload}")
         try:
-            required = ["symbol", "timeframe", "ts_utc"]
+            required = ["symbol", "ts_utc"]
             if not all(k in payload for k in required):
                 logger.warning(f"write_tick missing required keys in payload: {payload}")
                 return False
@@ -282,33 +272,37 @@ class DBService:
                 dialect = self.engine.dialect.name
                 stmt = None
                 if dialect == "postgresql":
+                    logger.debug(f"TRACE: write_tick: Using PostgreSQL insert for {payload.get('symbol')}")
                     stmt = pg_insert(self.market_data_ticks_tbl).values(payload)
                     stmt = stmt.on_conflict_do_nothing(
-                        index_elements=["symbol", "timeframe", "ts_utc"]
+                        index_elements=["symbol", "ts_utc", "price"]
                     )
                 elif dialect == "sqlite":
+                    logger.debug(f"TRACE: write_tick: Using SQLite insert for {payload.get('symbol')}")
                     stmt = sqlite_insert(self.market_data_ticks_tbl).values(payload)
                     stmt = stmt.on_conflict_do_nothing()
 
                 if stmt is not None:
                     result = conn.execute(stmt)
-                    if result.rowcount > 0:
-                        logger.debug(f"Successfully inserted tick: {payload.get('symbol')} at {payload.get('ts_utc')}")
-                    else:
-                        logger.debug(f"Tick already exists (on_conflict), skipped: {payload.get('symbol')} at {payload.get('ts_utc')}")
+                    logger.debug(f"TRACE: write_tick: Dialect-specific insert executed. Rowcount: {result.rowcount}")
                 else:  # Generic fallback
+                    logger.debug(f"TRACE: write_tick: Executing generic insert for {payload.get('symbol')}")
+
                     try:
                         conn.execute(self.market_data_ticks_tbl.insert().values(payload))
-                        logger.debug(f"Successfully inserted tick (generic fallback): {payload.get('symbol')} at {payload.get('ts_utc')}")
+                        logger.debug(f"TRACE: write_tick: Generic insert executed.")
+
                     except Exception as e:
                         if "UNIQUE constraint" in str(e) or "duplicate key" in str(e):
                             logger.debug(
-                                f"Duplicate tick skipped: {payload.get('symbol')} at {payload.get('ts_utc')}"
-                            )
+                                f"TRACE: write_tick: Duplicate tick skipped via exception for {payload.get('symbol')}")
+
                         else:
-                            logger.exception(f"Generic insert failed for tick: {payload}")
+                            logger.exception(f"TRACE: write_tick: Insert failed with an unexpected error for {payload.get('symbol')}")
+
                             raise
             return True
         except Exception as e:
-            logger.exception(f"write_tick failed for payload {payload}: {e}")
+            logger.exception(f"TRACE: write_tick: write_tick failed for payload {payload}: {e}")
+
             return False
