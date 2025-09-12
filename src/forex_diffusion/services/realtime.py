@@ -1,12 +1,11 @@
 """
 Real-time ingest service.
 
-- Polls provider current price endpoint at configured interval (per-symbol)
-- Converts tick => 1-minute candle (open=high=low=close=price) at tick timestamp
-- Validates and upserts candles via data.io.upsert_candles (runs in worker thread)
-- On first tick per symbol records rt_start_ts and launches backfill for interval
-  (last_db_ts_before + 1 .. rt_start_ts - 1) in a separate thread to avoid blocking real-time ingestion.
-"""
+ - Polls a provider's current price endpoint at a configured interval.
+ - Persists the retrieved price data as a raw tick in the `market_data_ticks` table.
+ - An `AggregatorService` runs in the background to periodically build candles from these raw ticks.
+ - On the first tick for a symbol, it triggers a historical backfill to ensure data continuity.
+ """
 
 from __future__ import annotations
 
@@ -16,10 +15,11 @@ from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 from loguru import logger
-from sqlalchemy.dialects.postgresql import Any
 
 from ..data import io as data_io
-from ..services.marketdata import AlphaVantageClient, MarketDataService
+from ..services.marketdata import MarketDataService
+from ..services.db_service import DBService
+from ..services.aggregator import AggregatorService
 from ..utils.config import get_config
 
 
@@ -28,13 +28,12 @@ class RealTimeIngestService:
     Real-time ingestion and backfill coordinator.
 
     Args:
-      engine: SQLAlchemy engine
-      market_service: MarketDataService instance (provides provider client)
-      symbols: list of symbols to subscribe
-      timeframe: target candle timeframe for upsert (e.g., '1m')
-      poll_interval: seconds between provider polls per symbol
-      db_writer: optional DBWriter for async writes (used for logging only; candles upsert executed in thread)
-    """
+      engine: SQLAlchemy engine.
+       market_service: An instance of MarketDataService to interact with data providers.
+       symbols: A list of symbols to poll.
+       timeframe: The base timeframe, typically '1m'.
+       poll_interval: Seconds between polling attempts for each symbol.
+     """
     def __init__(
         self,
         engine,
@@ -42,7 +41,6 @@ class RealTimeIngestService:
         symbols: Optional[List[str]] = None,
         timeframe: str = "1m",
         poll_interval: float = 1.0,
-        db_writer: Optional[Any] = None,
     ):
         self.engine = engine
         self.cfg = get_config()
@@ -90,8 +88,9 @@ class RealTimeIngestService:
         self._first_tick_seen: Dict[str, bool] = {}
         # lock for thread-safe access
         self._lock = threading.Lock()
-        # optional background writer to persist features asynchronously
-        self.db_writer = db_writer
+        # Service to aggregate ticks into candles
+        self.aggregator_service = AggregatorService(engine=self.engine, symbols=self.symbols)
+
 
     def start(self):
         """Start background polling thread."""
@@ -112,15 +111,17 @@ class RealTimeIngestService:
                 self._last_db_ts_before[sym] = None
                 self._first_tick_seen[sym] = False
                 self._rt_start_ts[sym] = None
+        self.aggregator_service.start()
         self._thread.start()
         logger.info("RealTimeIngestService started for symbols: {}", self.symbols)
 
     def stop(self):
         """Signal stop and wait for thread to finish."""
+        self.aggregator_service.stop()
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5.0)
-        logger.info("RealTimeIngestService stopped")
+            logger.info("RealTimeIngestService stopped")
 
     def _run_loop(self):
         """Main loop: poll provider for each symbol in round-robin."""
@@ -129,17 +130,15 @@ class RealTimeIngestService:
                 if self._stop_event.is_set():
                     break
                 try:
-                    self._poll_symbol(sym)
+                    self._poll_and_write_tick(sym)
                 except Exception as e:
                     logger.exception("RealTime: polling error for {}: {}", sym, e)
                 time.sleep(self.poll_interval)
         logger.debug("RealTime polling loop exited")
 
-    def _poll_symbol(self, symbol: str):
-        """Poll provider for current price and process it."""
-        # provider may expose get_current_price or currentPrices endpoint
+    def _poll_and_write_tick(self, symbol: str):
+        """Poll provider for current price and persist it as a raw tick."""
         try:
-            # provider client interface: get_current_price(symbol) -> dict
             data = None
             if hasattr(self.provider, "get_current_price"):
                 data = self.provider.get_current_price(symbol)
@@ -153,12 +152,13 @@ class RealTimeIngestService:
                     data = {"ts_utc": int(last["ts_utc"]), "price": float(last["close"])}
             if data is None:
                 return
-            # normalize price and timestamp
+
             ts_ms = None
             price = None
 
-            # If provider returns a pandas DataFrame (alpha_vantage lib with output_format="pandas"),
-            # attempt to extract price and timestamp from the last row.
+            bid = None
+            ask = None
+
             if isinstance(data, pd.DataFrame):
                 try:
                     last = data.iloc[-1]
@@ -203,87 +203,46 @@ class RealTimeIngestService:
                     ts_ms = None
 
             # data dictionaries may vary by provider
-            if isinstance(data, dict):
+            elif isinstance(data, dict):
                 # AlphaVantage get_current_price returns nested dict keys; try to parse common fields
                 if "Realtime Currency Exchange Rate" in data:
                     r = data["Realtime Currency Exchange Rate"]
                     try:
                         price = float(r.get("5. Exchange Rate") or r.get("Exchange Rate") or 0.0)
+                        bid = float(r.get("8. Bid Price")) if r.get("8. Bid Price") else None
+                        ask = float(r.get("9. Ask Price")) if r.get("9. Ask Price") else None
+                        ts_str = r.get("6. Last Refreshed")
+                        if ts_str:
+                            ts_ms = int(pd.to_datetime(ts_str, utc=True).value // 1_000_000)
                     except Exception:
                         price = None
-                    # timestamp field may exist in nested dict
-                    ts_ms = None
                 elif "price" in data and "ts_utc" in data:
                     price = float(data["price"])
                     ts_ms = int(data["ts_utc"])
+                    bid = float(data["bid"]) if data.get("bid") else None
+                    ask = float(data["ask"]) if data.get("ask") else None
                 elif "price" in data:
                     price = float(data["price"])
-                else:
-                    # attempt to find any numeric value in dict
-                    for k, v in data.items():
-                        try:
-                            price = float(v)
-                            break
-                        except Exception:
-                            continue
 
-            # fallback timestamp to now
             if ts_ms is None:
-                try:
-                    ts_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
-                except Exception:
-                    ts_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
+                ts_ms = int(time.time() * 1000)
 
             if price is None:
-                # Log raw provider response to debug parsing issues
-                try:
-                    logger.debug("RealTime: no price found for {}. raw data: {}", symbol, data)
-                except Exception:
-                    logger.debug("RealTime: no price found for {}", symbol)
+                logger.debug("RealTime: no price found for {}. raw data: {}", symbol, data)
                 return
 
-            # Build a 1-row candle (open/high/low/close = price)
-            candle = {
+            tick_payload = {
+                "symbol": symbol,
+                "timeframe": "tick",  # Mark as a raw tick
                 "ts_utc": int(ts_ms),
-                "open": float(price),
-                "high": float(price),
-                "low": float(price),
-                "close": float(price),
+                "price": float(price),
+                "bid": bid,
+                "ask": ask,
                 "volume": None,
             }
-            df = pd.DataFrame([candle])
-            # Validate and upsert (runs in this background thread)
-            dfv, vreport = data_io.validate_candles_df(df, symbol=symbol, timeframe=self.timeframe)
-            try:
-                # upsert into DB synchronously (but we're in background thread)
-                upsert_report = data_io.upsert_candles(self.engine, dfv, symbol, self.timeframe, resampled=False)
-                logger.debug("RealTime: upsert report for {} {}: {}", symbol, self.timeframe, upsert_report)
-            except Exception as e:
-                logger.exception("RealTime: failed upsert for {}: {}", symbol, e)
 
-            # Tick counting per-minute: increment counter for minute bucket (ts minute end)
-            minute_ts = (int(ts_ms) // 60000) * 60000 + 60000  # period end
-            with self._lock:
-                prev = getattr(self, "_tick_counts", None)
-                if prev is None:
-                    self._tick_counts = {}
-                key = (symbol, minute_ts)
-                self._tick_counts[key] = self._tick_counts.get(key, 0) + 1
-                # if minute bucket complete (current ts_ms beyond minute end), persist and clear
-                # approximate: if current time > minute_ts + small slack
-                now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
-                slack = 2000  # 2 sec slack
-                if now_ms >= minute_ts + slack:
-                    count = self._tick_counts.pop(key, 0)
-                    try:
-                        if getattr(self, "db_writer", None) is not None:
-                            self.db_writer.write_tick_async(symbol=symbol, timeframe=self.timeframe, ts_utc=minute_ts, tick_count=count)
-                        else:
-                            from ..services.db_service import DBService
-                            dbs = DBService(engine=self.engine)
-                            dbs.write_tick_aggregate(symbol=symbol, timeframe=self.timeframe, ts_utc=minute_ts, tick_count=count)
-                    except Exception as e:
-                        logger.exception("RealTime: failed to persist tick aggregate for {}: {}", symbol, e)
+            dbs = DBService(engine=self.engine)
+            dbs.write_tick(tick_payload)
 
             # On first tick, set rt_start and trigger historical backfill in separate thread
             with self._lock:
@@ -305,23 +264,17 @@ class RealTimeIngestService:
 
     def _run_backfill_for_symbol(self, symbol: str, last_db_ts_before: Optional[int], rt_start_ts_ms: int):
         """
-        Perform a historical backfill for the symbol from last_db_ts_before+1 to rt_start_ts_ms-1.
-        If last_db_ts_before is None, delegate to market_service.backfill_symbol_timeframe to get full history.
-        """
+        Perform a historical backfill for the symbol using the main MarketDataService.
+         """
         try:
-            if last_db_ts_before is None:
-                logger.info("RealTime backfill: no last_db_ts for {}, triggering full backfill", symbol)
-                # force full backfill for daily/intraday split as per MarketDataService logic
-                self.market_service.backfill_symbol_timeframe(symbol, self.timeframe, force_full=True)
-                return
-            start_ms = int(last_db_ts_before) + 1
-            end_ms = int(rt_start_ts_ms) - 1
-            if end_ms <= start_ms:
-                logger.info("RealTime backfill: no gap to fill for {} (start={}, end={})", symbol, start_ms, end_ms)
-                return
-            logger.info("RealTime backfill: fetching {} {} from {} to {}", symbol, self.timeframe, start_ms, end_ms)
-            # call data_io.backfill_from_provider which downloads, validates and upserts
-            report = data_io.backfill_from_provider(self.engine, self.provider, symbol, self.timeframe, start_ts_ms=start_ms, end_ts_ms=end_ms)
-            logger.info("RealTime backfill report for {}: {}", symbol, report)
+            logger.info(f"RealTime backfill triggered for {symbol}. Delegating to MarketDataService.")
+            # The main backfill function is smart enough to find all gaps in a given window.
+            # We trigger it to ensure the history is complete up to the point real-time started.
+            # Let's use a reasonable lookback, e.g., a few months, to catch any recent gaps.
+            report = self.market_service.backfill_symbol_timeframe(
+                symbol=symbol, timeframe=self.timeframe, months=3
+            )
+            logger.info(f"RealTime backfill for {symbol} completed. Report: {report}")
+
         except Exception as e:
             logger.exception("RealTime backfill failed for {}: {}", symbol, e)

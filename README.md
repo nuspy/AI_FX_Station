@@ -12,8 +12,9 @@ MagicForex — guida rapida (locale)
 3) Avvia GUI:
    python .\scripts\run_gui.py
 
-4) Test rapido DB/signals:
-   python .\scripts\send_and_check_signals.py --count 5 --interval 0.2 --show 10
+4) Test e Backfill:
+   - Per testare la scrittura dei tick: `python .\tests\manual_tests\write_3_ticks.py`
+   - Corretta la logica di ingestione realtime: ora salva i tick grezzi e li aggrega in candele periodicamente, invece di salvare una candela per ogni tick.
 
 GUI tabs:
  - Signals: recent signals + admin controls
