@@ -21,6 +21,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from ..utils.config import get_config
 from ..data import io as data_io
 from sqlalchemy import create_engine
+from .db_service import DBService
 
 # try to import official alpha_vantage library; if not available we'll fallback to httpx
 try:
@@ -62,6 +63,9 @@ class TiingoClient:
             headers["Authorization"] = f"Token {self.api_key}"
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         r = self._client.get(url, params=params, headers=headers)
+
+        #logger.debug(params)
+
         try:
             r.raise_for_status()
         except Exception as e:
@@ -541,95 +545,292 @@ class MarketDataService:
         now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
         return (t_last, now_ms)
 
-    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, years: Optional[int] = None) -> dict:
+    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, years: Optional[int] = None, months: Optional[int] = None) -> dict:
         """
-        Backfill symbol/timeframe from last DB timestamp to now.
-        If force_full True, download full history per provider mapping (e.g., 20 years daily etc.)
-        Optional 'years' overrides the configured history_years for a full daily backfill.
-        Returns QA report dict.
-
-        This implementation is robust to Settings being a pydantic model or a plain dict.
+        Tick-first backfill:
+          - Compute candidate time window (respecting 'years' override for full history).
+          - Exclude weekend windows Fri22:00UTC -> Sun22:00UTC.
+          - Detect missing minute buckets in market_data_ticks (ts_utc//60000).
+          - For contiguous missing minute ranges, fetch ticks (provider.get_historical with 'tick' if available,
+            otherwise fetch candles and synthesize one tick per candle price=close).
+          - Persist ticks via DBService.write_tick.
+          - After ticks persisted, aggregate ticks into candles for multiple target timeframes and upsert via data_io.upsert_candles.
+        Returns a report dict with counts and per-segment info.
         """
-        cfg = self.cfg
-        # normalize data section into a plain dict for safe access
-        data_cfg = None
-        try:
-            data_cfg = getattr(cfg, "data", None)
-        except Exception:
-            data_cfg = None
-        if data_cfg is None:
+        # helpers
+        from sqlalchemy import text as _text
+        from ..services.db_service import DBService  # local import for clarity (DBService already imported at module top)
+        dbs = DBService(engine=self.engine)
+
+        def week_exclusion_segments(a_ms: int, b_ms: int):
+            """
+            Yield segments within [a_ms,b_ms) that exclude Fri22->Sun22 windows.
+            Returns list of {'start':..., 'end':...}
+            """
+            import datetime
+            out = []
+            if a_ms >= b_ms:
+                return out
+            a_dt = datetime.datetime.utcfromtimestamp(a_ms / 1000.0)
+            b_dt = datetime.datetime.utcfromtimestamp(b_ms / 1000.0)
+            cur = a_dt
+            while cur < b_dt:
+                # next Friday 22:00 UTC
+                days_to_friday = (4 - cur.weekday()) % 7
+                friday = (cur + datetime.timedelta(days=days_to_friday)).replace(hour=22, minute=0, second=0, microsecond=0)
+                if friday < cur:
+                    friday += datetime.timedelta(weeks=1)
+                seg_end_dt = min(friday, b_dt)
+                if cur < seg_end_dt:
+                    out.append({"start": int(cur.timestamp() * 1000), "end": int(seg_end_dt.timestamp() * 1000)})
+                # skip weekend window
+                weekend_end = friday + datetime.timedelta(days=2)  # sunday 22:00
+                cur = weekend_end
+                if cur < a_dt:
+                    cur = a_dt
+            return out
+
+        def existing_tick_minutes(a_ms: int, b_ms: int) -> set:
+            """
+            Return set of minute buckets (int) for which ticks exist in market_data_ticks for symbol/timeframe in [a_ms,b_ms).
+            """
             try:
-                # pydantic v2: model_dump returns dict
-                if hasattr(cfg, "model_dump"):
-                    data_cfg = cfg.model_dump().get("data", None)
-                elif isinstance(cfg, dict):
-                    data_cfg = cfg.get("data", None)
-            except Exception:
-                data_cfg = None
-        # Ensure data_cfg is a dict (fallbacks)
-        if data_cfg is None:
-            data_cfg = {}
-        if not isinstance(data_cfg, dict):
-            try:
-                data_cfg = dict(data_cfg)
-            except Exception:
-                data_cfg = {}
-
-        df_report = {"symbol": symbol, "timeframe": timeframe, "actions": []}
-        # compute last timestamp
-        t_last = data_io.get_last_ts_for_symbol_tf(self.engine, symbol, timeframe)
-        # compute now in ms robustly
-        try:
-            now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
-        except Exception:
-            now_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
-
-        # If no data present or force_full and timeframe daily -> request full 20y daily
-        if t_last is None or force_full:
-            if timeframe in ["1d", "1D", "daily"]:
-                cfg_years = int(data_cfg.get("backfill", {}).get("history_years", 20))
-                years = int(years) if (years is not None) else cfg_years
-                start_ts_ms = None
-                end_ts_ms = now_ms
-                df = self.provider.get_historical(symbol=symbol, timeframe="1d", start_ts_ms=start_ts_ms, end_ts_ms=end_ts_ms)
-                report = data_io.upsert_candles(self.engine, df, symbol, "1d", resampled=False)
-                df_report["actions"].append({"type": "full_daily_backfill", "years": years, "report": report})
-            else:
-                recent_days = int(data_cfg.get("backfill", {}).get("intraday_recent_days", 90))
-                try:
-                    start_ts = pd.Timestamp.utcnow() - pd.Timedelta(days=recent_days)
-                    start_ts_ms = int(start_ts.value // 1_000_000)
-                except Exception:
-                    start_ts_ms = int(pd.Timestamp.utcnow().timestamp() * 1000) - recent_days * 86400 * 1000
-                df = self.provider.get_historical(symbol=symbol, timeframe="1m", start_ts_ms=start_ts_ms, end_ts_ms=now_ms)
-                report = data_io.upsert_candles(self.engine, df, symbol, "1m", resampled=False)
-                df_report["actions"].append({"type": "intraday_recent_backfill", "recent_days": recent_days, "report": report})
-            return df_report
-
-        # Otherwise fetch incremental segments from last timestamp to now
-        chunk_seconds = 24 * 3600 * 7  # 7 days chunk for intraday by default
-        start_ms = t_last + 1
-        end_ms = now_ms
-        segments = []
-        cur_start = start_ms
-        while cur_start <= end_ms:
-            cur_end = cur_start + chunk_seconds * 1000 - 1
-            if cur_end > end_ms:
-                cur_end = end_ms
-            segments.append((cur_start, cur_end))
-            cur_start = cur_end + 1
-
-        for seg_start, seg_end in segments:
-            try:
-                df_seg = self.provider.get_historical(symbol=symbol, timeframe=timeframe, start_ts_ms=seg_start, end_ts_ms=seg_end)
-                if df_seg is None or df_seg.empty:
-                    df_report["actions"].append({"segment": (seg_start, seg_end), "note": "no_data"})
-                    continue
-                report = data_io.upsert_candles(self.engine, df_seg, symbol, timeframe, resampled=False)
-                df_report["actions"].append({"segment": (seg_start, seg_end), "report": report})
+                q = _text("SELECT DISTINCT (ts_utc/60000) AS m FROM market_data_ticks WHERE symbol = :s AND timeframe = :tf AND ts_utc >= :a AND ts_utc < :b")
+                with self.engine.connect() as conn:
+                    rows = conn.execute(q, {"s": symbol, "tf": timeframe, "a": int(a_ms), "b": int(b_ms)}).fetchall()
+                    return set(int(r[0]) for r in rows if r[0] is not None)
             except Exception as e:
-                logger.exception("Failed to fetch segment {}-{} for {}/{}: {}", seg_start, seg_end, symbol, timeframe, e)
-                df_report["actions"].append({"segment": (seg_start, seg_end), "error": str(e)})
+                logger.exception("Failed to query existing tick minutes: {}", e)
+                return set()
+
+        def missing_minute_ranges(a_ms: int, b_ms: int, existing_minutes: set):
+            """
+            Compute contiguous missing minute ranges (ms) within [a_ms,b_ms) given existing minute buckets.
+            Returns list of {'start':ms,'end':ms}
+            """
+            start_min = int(a_ms // 60000)
+            end_min = int((b_ms - 1) // 60000) + 1
+            missing = []
+            cur_missing_start = None
+            for m in range(start_min, end_min):
+                if m not in existing_minutes:
+                    if cur_missing_start is None:
+                        cur_missing_start = m
+                else:
+                    if cur_missing_start is not None:
+                        missing.append({"start": cur_missing_start * 60000, "end": m * 60000})
+                        cur_missing_start = None
+            if cur_missing_start is not None:
+                missing.append({"start": cur_missing_start * 60000, "end": end_min * 60000})
+            return missing
+
+        def fetch_and_persist_ticks(a_ms: int, b_ms: int) -> dict:
+            """
+            Fetch ticks for [a_ms,b_ms) using provider. If provider returns candles, synthesize ticks.
+            Persist ticks via DBService.write_tick and return counts.
+            """
+            inserted = 0
+            failed = 0
+            provider_rows = 0
+            try:
+                # prefer explicit tick endpoint
+                if hasattr(self.provider, "get_historical_ticks"):
+                    df_src = self.provider.get_historical_ticks(symbol=symbol, timeframe=timeframe, start_ts_ms=a_ms, end_ts_ms=b_ms)
+                else:
+                    # try asking for tick granularity; fall back to timeframe if provider doesn't support
+                    try:
+                        df_src = self.provider.get_historical(symbol=symbol, timeframe="tick", start_ts_ms=a_ms, end_ts_ms=b_ms)
+                    except Exception:
+                        df_src = self.provider.get_historical(symbol=symbol, timeframe=timeframe, start_ts_ms=a_ms, end_ts_ms=b_ms)
+            except Exception as e:
+                logger.exception("Provider fetch failed for %s %s [%s,%s): {}", symbol, timeframe, a_ms, b_ms, e)
+                return {"provider_rows": 0, "inserted": 0, "failed": 0, "error": str(e)}
+
+            if df_src is None:
+                return {"provider_rows": 0, "inserted": 0, "failed": 0}
+
+            if not isinstance(df_src, pd.DataFrame):
+                try:
+                    df_src = pd.DataFrame(df_src)
+                except Exception:
+                    logger.warning("Provider returned non-tabular data for [%s,%s); skipping", a_ms, b_ms)
+                    return {"provider_rows": 0, "inserted": 0, "failed": 0}
+
+            if df_src.empty:
+                return {"provider_rows": 0, "inserted": 0, "failed": 0}
+
+            provider_rows = len(df_src)
+            # Detect tick-like vs candle-like
+            is_tick_like = "ts_utc" in df_src.columns and any(c in df_src.columns for c in ("price", "bid", "ask"))
+            is_candle_like = "ts_utc" in df_src.columns and all(c in df_src.columns for c in ("open", "high", "low", "close"))
+
+            if is_tick_like:
+                for _, r in df_src.iterrows():
+                    try:
+                        ts_val = int(r.get("ts_utc"))
+                    except Exception:
+                        failed += 1
+                        continue
+                    payload_tick = {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "ts_utc": ts_val,
+                        "price": r.get("price", None),
+                        "bid": r.get("bid", None),
+                        "ask": r.get("ask", None),
+                        "volume": r.get("volume", None),
+                        "ts_created_ms": int(time.time() * 1000),
+                    }
+                    try:
+                        ok = dbs.write_tick(payload_tick)
+                        inserted += 1 if ok else 0
+                        failed += 0 if ok else 1
+                    except Exception:
+                        failed += 1
+                return {"provider_rows": provider_rows, "inserted": inserted, "failed": failed}
+
+            if is_candle_like:
+                # synthesize one tick per candle (ts_utc -> price=close)
+                for _, r in df_src.iterrows():
+                    try:
+                        ts_val = int(r.get("ts_utc"))
+                    except Exception:
+                        failed += 1
+                        continue
+                    payload_tick = {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "ts_utc": ts_val,
+                        "price": r.get("close", None),
+                        "bid": None,
+                        "ask": None,
+                        "volume": r.get("volume", None) if "volume" in r else None,
+                        "ts_created_ms": int(time.time() * 1000),
+                    }
+                    try:
+                        ok = dbs.write_tick(payload_tick)
+                        inserted += 1 if ok else 0
+                        failed += 0 if ok else 1
+                    except Exception:
+                        failed += 1
+                return {"provider_rows": provider_rows, "inserted": inserted, "failed": failed}
+
+            # unknown structure -> skip
+            logger.warning("Provider returned unexpected columns for [%s,%s): cols=%s", a_ms, b_ms, list(df_src.columns))
+            return {"provider_rows": provider_rows, "inserted": 0, "failed": provider_rows}
+
+        # Start main flow
+        df_report = {"symbol": symbol, "timeframe": timeframe, "provider_rows": 0, "ticks_inserted": 0, "candles_upserted": 0, "missing_ranges": []}
+
+        # Determine window to fill: if force_full, use years setting, otherwise use last timestamp to now
+        t_last, now_ms = self.compute_missing_interval(symbol, timeframe)
+        try:
+            # Get data config for defaults
+            data_cfg = getattr(self.cfg, "data", {}) if hasattr(self.cfg, "data") else {}
+            if isinstance(data_cfg, dict):
+                data_cfg = data_cfg
+            else:
+                data_cfg = getattr(data_cfg, "__dict__", {})
+
+            if force_full or t_last is None:
+                # limit by years param: start = now - years*365
+                years_cfg = int(years) if (years is not None) else int(
+                    data_cfg.get("backfill", {}).get("history_years", 0))
+                months_cfg = int(months) if (months is not None) else int(
+                    data_cfg.get("backfill", {}).get("history_months", 0) + years_cfg * 12)
+                end_ts_ms = now_ms
+                start_ts_ms = max(0, end_ts_ms - int(months_cfg * 30 * 24 * 3600 * 1000))
+            else:
+                start_ts_ms = int(t_last) + 1
+                end_ts_ms = now_ms
+        except Exception as e:
+            logger.debug("Error computing time window: {}", e)
+            start_ts_ms = int(t_last) + 1 if t_last is not None else None
+            end_ts_ms = now_ms
+
+        if start_ts_ms is None:
+            # fallback: request recent_days intraday
+            recent_days = int(data_cfg.get("backfill", {}).get("intraday_recent_days", 90))
+            start_ts_ms = int(pd.Timestamp.utcnow().value // 1_000_000) - recent_days * 86400 * 1000
+            end_ts_ms = now_ms
+
+        # Build segments excluding weekend windows
+        segments = week_exclusion_segments(start_ts_ms, end_ts_ms) or [{"start": start_ts_ms, "end": end_ts_ms}]
+
+        for seg in segments:
+            a = int(seg["start"]); b = int(seg["end"])
+            if b <= a:
+                continue
+            # compute existing minute buckets and missing minute ranges
+            existing = existing_tick_minutes(a, b)
+            missing_ranges = missing_minute_ranges(a, b, existing)
+            for mr in missing_ranges:
+                df_report["missing_ranges"].append(mr)
+                rep = fetch_and_persist_ticks(mr["start"], mr["end"])
+                df_report["provider_rows"] += rep.get("provider_rows", 0)
+                df_report["ticks_inserted"] += rep.get("inserted", 0)
+
+        # After ticks persisted, aggregate ticks into candles for requested timeframes
+        try:
+            # Collect ticks for the full segments
+            all_ticks_frames = []
+            for seg in segments:
+                a = int(seg["start"]); b = int(seg["end"])
+                if b <= a:
+                    continue
+                q = _text("SELECT ts_utc, price, volume FROM market_data_ticks WHERE symbol=:s AND timeframe=:tf AND ts_utc >= :a AND ts_utc < :b ORDER BY ts_utc ASC")
+                with self.engine.connect() as conn:
+                    rows = conn.execute(q, {"s": symbol, "tf": timeframe, "a": a, "b": b}).fetchall()
+                    if not rows:
+                        continue
+                    df_ticks = pd.DataFrame([dict(r._mapping) if hasattr(r, "_mapping") else {"ts_utc": r[0], "price": r[1], "volume": r[2] if len(r)>2 else None} for r in rows])
+                    all_ticks_frames.append(df_ticks)
+            if all_ticks_frames:
+                all_ticks = pd.concat(all_ticks_frames, ignore_index=True)
+                all_ticks["ts_dt"] = pd.to_datetime(all_ticks["ts_utc"].astype("int64"), unit="ms", utc=True)
+                all_ticks = all_ticks.set_index("ts_dt").sort_index()
+
+                # Define target timeframes and pandas rules
+                tf_rules = {
+                    "1m": "1min",
+                    "5m": "5min",
+                    "15m": "15min",
+                    "30m": "30min",
+                    "1h": "60min",
+                    "5h": "300min",
+                    "12h": "720min",
+                    "1d": "1D",
+                    "5d": "5D",
+                    "10d": "10D",
+                    "15d": "15D",
+                    "30d": "30D",
+                }
+
+                for tgt_tf, rule in tf_rules.items():
+                    ohlc = all_ticks["price"].resample(rule, label="right", closed="right").agg(["first", "max", "min", "last"])
+                    if ohlc.empty:
+                        continue
+                    vol = all_ticks["volume"].resample(rule, label="right", closed="right").sum() if "volume" in all_ticks.columns else None
+                    candles_rows = []
+                    for idx, row in ohlc.iterrows():
+                        if row.isnull().all():
+                            continue
+                        ts_ms = int(idx.tz_convert("UTC").timestamp() * 1000)
+                        o = float(row["first"]) if not pd.isna(row["first"]) else 0.0
+                        h = float(row["max"]) if not pd.isna(row["max"]) else o
+                        l = float(row["min"]) if not pd.isna(row["min"]) else o
+                        c = float(row["last"]) if not pd.isna(row["last"]) else o
+                        v = float(vol.loc[idx]) if (vol is not None and idx in vol.index and not pd.isna(vol.loc[idx])) else None
+                        candles_rows.append({"ts_utc": ts_ms, "open": o, "high": h, "low": l, "close": c, "volume": v})
+                    if candles_rows:
+                        df_candles = pd.DataFrame(candles_rows)
+                        rep = data_io.upsert_candles(self.engine, df_candles, symbol, tgt_tf, resampled=True)
+                        df_report["candles_upserted"] += len(df_candles)
+                        df_report.setdefault("upsert_reports", []).append({"timeframe": tgt_tf, "report": rep})
+        except Exception as e:
+            logger.exception("Aggregation/upsert ticks->candles failed: {}", e)
+            df_report["aggregate_error"] = str(e)
+
         return df_report
 
         # Otherwise fetch from t_last + delta to now

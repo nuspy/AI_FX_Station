@@ -39,9 +39,16 @@ class HistoryTab(QWidget):
         # Backfill years selector
         top.addWidget(QLabel("Years:"))
         self.years_combo = QComboBox()
-        self.years_combo.addItems([str(x) for x in [1,2,5,10,20]])
-        self.years_combo.setCurrentText("20")
+        self.years_combo.addItems([str(x) for x in [0,1,2,3,4,5,10,15,20,30]])
+        self.years_combo.setCurrentText("0")
         top.addWidget(self.years_combo)
+
+        # Backfill months selector
+        top.addWidget(QLabel("Months:"))
+        self.months_combo = QComboBox()
+        self.months_combo.addItems([str(x) for x in [0,1,2,3,4,5,6,7,8,9,10,11,12]])
+        self.months_combo.setCurrentText("0")
+        top.addWidget(self.months_combo)
 
         self.refresh_btn = QPushButton("Refresh History")
         self.refresh_btn.clicked.connect(self.on_refresh)
@@ -141,9 +148,11 @@ class HistoryTab(QWidget):
             # run backfill synchronously (quick check) - may be long
             res = {}
             years = int(self.years_combo.currentText()) if self.years_combo else None
+            months = int(self.months_combo.currentText()) if self.months_combo else None
+
             if self.market_service is not None:
                 self._log(f"Using provider '{self.market_service.provider_name()}' for backfill")
-                res = self.market_service.backfill_symbol_timeframe(sym, tf, force_full=True, years=years)
+                res = self.market_service.backfill_symbol_timeframe(sym, tf, force_full=True, months=months, years=years)
             else:
                 res = {}
             self._log(f"Backfill result: {json.dumps(res)}")

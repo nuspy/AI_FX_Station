@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from loguru import logger
 from sqlalchemy import (
@@ -312,7 +312,7 @@ class DBService:
             logger.exception("Failed to write prediction: {}", e)
             raise
 
-            def write_features_bulk(self, rows: List[Dict[str, Any]]):
+    def write_features_bulk(self, rows: List[Dict[str, Any]]):
                 """
                 Bulk insert multiple features rows in a single transaction.
                 When using Postgres, prefer COPY via STDIN for maximum throughput.
@@ -393,7 +393,7 @@ class DBService:
                         logger.exception("Failed to write_features_bulk (fallback): {}", e)
                         raise
 
-            def compact_features(self, older_than_days: int = 365):
+    def compact_features(self, older_than_days: int = 365):
                 """
                 Compact/retention policy: delete features older than older_than_days (based on ts_created_ms).
                 Returns number of rows deleted.
@@ -448,7 +448,7 @@ class DBService:
             logger.exception("Failed to write signal: {}", e)
             raise
 
-def write_tick(self, payload: Dict[str, Any]) -> bool:
+    def write_tick(self, payload: Dict[str, Any]) -> bool:
         """
         Insert a tick into market_data_ticks table.
         Payload expected keys: symbol, timeframe, ts_utc (ms), price, bid, ask, volume, ts_created_ms (optional).
@@ -573,6 +573,7 @@ def write_tick(self, payload: Dict[str, Any]) -> bool:
         except Exception as e:
             logger.exception("write_tick failed: {}", e)
             return False
+
     def write_prediction(self, symbol: str, timeframe: str, horizon: str, q05: float, q50: float, q95: float, meta: Optional[Dict] = None):
         try:
             with self.engine.begin() as conn:
@@ -590,7 +591,7 @@ def write_tick(self, payload: Dict[str, Any]) -> bool:
                 )
         except Exception as e:
             logger.exception("Failed to write prediction: {}", e)
-            raise
+        raise
 
     def write_calibration_record(self, record: Dict[str, Any]):
         try:
@@ -609,7 +610,7 @@ def write_tick(self, payload: Dict[str, Any]) -> bool:
             logger.exception("Failed to write calibration record: {}", e)
             raise
 
-    def write_signal(self, payload: Dict[str, Any]):
+def write_signal(self, payload: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
                 conn.execute(
