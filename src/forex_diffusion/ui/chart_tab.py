@@ -40,6 +40,14 @@ class ChartTab(QWidget):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.addWidget(self.toolbar)
 
+        # Symbol selector
+        from PySide6.QtWidgets import QComboBox
+        self.symbol_combo = QComboBox()
+        # Requested pairs
+        self._symbols_supported = ["AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"]
+        self.symbol_combo.addItems(self._symbols_supported)
+        top_layout.addWidget(self.symbol_combo)
+
         # Basic Forecast Buttons
         self.forecast_settings_btn = QPushButton("Prediction Settings")
         self.forecast_btn = QPushButton("Make Prediction")
@@ -51,6 +59,17 @@ class ChartTab(QWidget):
         self.adv_forecast_btn = QPushButton("Advanced Forecast")
         top_layout.addWidget(self.adv_settings_btn)
         top_layout.addWidget(self.adv_forecast_btn)
+
+        # Backfill controls moved here (from History tab)
+        self.backfill_btn = QPushButton("Backfill Missing")
+        top_layout.addWidget(self.backfill_btn)
+        from PySide6.QtWidgets import QProgressBar
+        self.backfill_progress = QProgressBar()
+        self.backfill_progress.setMaximumWidth(160)
+        self.backfill_progress.setRange(0, 100)
+        self.backfill_progress.setValue(0)
+        self.backfill_progress.setTextVisible(False)
+        top_layout.addWidget(self.backfill_progress)
 
         # Clear forecasts
         self.clear_forecasts_btn = QPushButton("Clear Forecasts")
@@ -87,7 +106,10 @@ class ChartTab(QWidget):
         self.forecast_btn.clicked.connect(self._on_forecast_clicked)
         self.adv_settings_btn.clicked.connect(self._open_adv_forecast_settings)
         self.adv_forecast_btn.clicked.connect(self._on_advanced_forecast_clicked)
+        self.backfill_btn.clicked.connect(self._on_backfill_missing_clicked)
         self.clear_forecasts_btn.clicked.connect(self.clear_all_forecasts)
+        # Symbol change
+        self.symbol_combo.currentTextChanged.connect(self._on_symbol_changed)
 
         # try to auto-connect to controller signals if available
         try:
@@ -177,6 +199,7 @@ class ChartTab(QWidget):
             q05 = quantiles.get("q05") or quantiles.get("q10")
             q95 = quantiles.get("q95") or quantiles.get("q90")
             future_ts = quantiles.get("future_ts", None)
+            label = quantiles.get("label", f"{source}")
 
             if q50 is None:
                 return
@@ -185,16 +208,22 @@ class ChartTab(QWidget):
             if future_ts:
                 x_vals = pd.to_datetime(future_ts)
             else:
-                # build future timestamps from last available ts and timeframe
                 if self._last_df is None or self._last_df.empty:
                     return
                 last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms").iat[-1]
                 td = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
                 x_vals = [last_ts + td * (i + 1) for i in range(len(q50))]
 
-            # prepare colors
-            color = "tab:orange" if source == "basic" else "tab:purple"
-            line50, = self.ax.plot(x_vals, q50, color=color, linestyle='-', label=f"Forecast q50 ({source})")
+            # deterministic color by source string
+            def _color_for(src: str) -> str:
+                palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
+                if not src:
+                    return "tab:orange"
+                h = abs(hash(src)) % len(palette)
+                return palette[h]
+            color = _color_for(quantiles.get("source", source))
+
+            line50, = self.ax.plot(x_vals, q50, color=color, linestyle='-', label=f"{label} (q50)")
             artists = [line50]
 
             if q05 is not None and q95 is not None:
@@ -203,7 +232,6 @@ class ChartTab(QWidget):
                 fill = self.ax.fill_between(x_vals, q05, q95, color=color, alpha=0.12)
                 artists.extend([line05, line95, fill])
 
-            # store forecast
             fid = time.time()
             forecast = {
                 "id": fid,
@@ -211,13 +239,10 @@ class ChartTab(QWidget):
                 "quantiles": quantiles,
                 "future_ts": future_ts,
                 "artists": artists,
-                "source": source
+                "source": quantiles.get("source", source)
             }
             self._forecasts.append(forecast)
-
-            # trim old forecasts if needed
             self._trim_forecasts()
-
             self.ax.legend()
             self.canvas.draw()
         except Exception as e:
@@ -242,6 +267,27 @@ class ChartTab(QWidget):
         self.db_service = db_service
         self.symbol = symbol
         self.timeframe = timeframe
+        # sync combo if present
+        try:
+            if hasattr(self, "symbol_combo") and symbol:
+                idx = self.symbol_combo.findText(symbol)
+                if idx >= 0:
+                    self.symbol_combo.setCurrentIndex(idx)
+        except Exception:
+            pass
+
+    def _on_symbol_changed(self, new_symbol: str):
+        """Handle symbol change from combo: update context and reload candles from DB."""
+        try:
+            if not new_symbol:
+                return
+            self.symbol = new_symbol
+            # reload last candles for this symbol/timeframe
+            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=3000)
+            if df is not None and not df.empty:
+                self.update_plot(df)
+        except Exception as e:
+            logger.exception("Failed to switch symbol: {}", e)
 
     def _open_forecast_settings(self):
         from .prediction_settings_dialog import PredictionSettingsDialog
@@ -483,4 +529,99 @@ class ChartTab(QWidget):
             self.forecastRequested.emit(payload_adv)
         except Exception as e:
             logger.exception(f"Auto forecast tick failed: {e}")
+
+    def _on_backfill_missing_clicked(self):
+        """Trigger backfill for current symbol/timeframe asynchronously with determinate progress."""
+        controller = getattr(self._main_window, "controller", None)
+        ms = getattr(controller, "market_service", None) if controller else None
+        if ms is None:
+            QMessageBox.warning(self, "Backfill", "MarketDataService non disponibile.")
+            return
+        sym = getattr(self, "symbol", None)
+        tf = getattr(self, "timeframe", None)
+        if not sym or not tf:
+            QMessageBox.information(self, "Backfill", "Imposta prima symbol e timeframe.")
+            return
+
+        from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+        class BackfillSignals(QObject):
+            progress = Signal(int)
+            finished = Signal(bool)
+
+        class BackfillJob(QRunnable):
+            def __init__(self, svc, symbol, timeframe, signals):
+                super().__init__()
+                self.svc = svc
+                self.symbol = symbol
+                self.timeframe = timeframe
+                self.signals = signals
+
+            def run(self):
+                ok = True
+                try:
+                    def _cb(pct: int):
+                        try:
+                            self.signals.progress.emit(int(pct))
+                        except Exception:
+                            pass
+                    self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb)
+                except Exception as e:
+                    ok = False
+                finally:
+                    try:
+                        self.signals.finished.emit(ok)
+                    except Exception:
+                        pass
+
+        self.setDisabled(True)
+        self.backfill_progress.setRange(0, 100)
+        self.backfill_progress.setValue(0)
+
+        self._bf_signals = BackfillSignals(self)
+        self._bf_signals.progress.connect(self.backfill_progress.setValue)
+
+        def _on_done(ok: bool):
+            try:
+                # reload candles from DB
+                df = self._load_candles_from_db(sym, tf, limit=3000)
+                if df is not None and not df.empty:
+                    self.update_plot(df)
+                if ok:
+                    QMessageBox.information(self, "Backfill", f"Backfill completato per {sym} {tf}.")
+                else:
+                    QMessageBox.warning(self, "Backfill", "Backfill fallito (vedi log).")
+            finally:
+                self.setDisabled(False)
+                self.backfill_progress.setValue(100)
+
+        self._bf_signals.finished.connect(_on_done)
+        job = BackfillJob(ms, sym, tf, self._bf_signals)
+        QThreadPool.globalInstance().start(job)
+
+    def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000):
+        """Load candles from DB to refresh chart."""
+        try:
+            controller = getattr(self._main_window, "controller", None)
+            eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
+            if eng is None:
+                return pd.DataFrame()
+            from sqlalchemy import MetaData, select
+            meta = MetaData()
+            meta.reflect(bind=eng, only=["market_data_candles"])
+            tbl = meta.tables.get("market_data_candles")
+            if tbl is None:
+                return pd.DataFrame()
+            with eng.connect() as conn:
+                stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
+                    .where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe)\
+                    .order_by(tbl.c.ts_utc.asc()).limit(limit)
+                rows = conn.execute(stmt).fetchall()
+                if not rows:
+                    return pd.DataFrame()
+                df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
+                return df
+        except Exception as e:
+            logger.exception("Load candles failed: {}", e)
+            return pd.DataFrame()
 

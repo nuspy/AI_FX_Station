@@ -28,7 +28,7 @@ class PredictionSettingsDialog(QDialog):
         self.layout = QVBoxLayout(self)
         self.form_layout = QFormLayout()
 
-        # Model Path
+        # Model Path (singolo, per compatibilità)
         self.model_path_edit = QLineEdit()
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self._browse_model_path)
@@ -36,6 +36,28 @@ class PredictionSettingsDialog(QDialog):
         model_h.addWidget(self.model_path_edit)
         model_h.addWidget(self.browse_button)
         self.form_layout.addRow("Model Path:", model_h)
+
+        # Modelli multipli: uno per riga (opzionale, ha precedenza su Model Path)
+        from PySide6.QtWidgets import QTextEdit, QGroupBox, QVBoxLayout as QV
+        models_box = QGroupBox("Modelli multipli (uno per riga)")
+        box_lay = QV(models_box)
+        self.models_edit = QTextEdit()
+        self.models_edit.setPlaceholderText("Percorso modello per riga (opzionale). Se valorizzato, verranno eseguite previsioni per ciascun modello.")
+        box_lay.addWidget(self.models_edit)
+        self.layout.addWidget(models_box)
+
+        # Tipi di previsione (selezione multipla)
+        from PySide6.QtWidgets import QCheckBox
+        types_box = QGroupBox("Tipi di previsione")
+        types_lay = QV(types_box)
+        self.type_basic_cb = QCheckBox("Basic")
+        self.type_basic_cb.setChecked(True)
+        self.type_advanced_cb = QCheckBox("Advanced")
+        self.type_rw_cb = QCheckBox("Baseline RW")
+        types_lay.addWidget(self.type_basic_cb)
+        types_lay.addWidget(self.type_advanced_cb)
+        types_lay.addWidget(self.type_rw_cb)
+        self.layout.addWidget(types_box)
 
         # Horizons
         self.horizons_edit = QLineEdit("1m, 5m, 15m")
@@ -51,6 +73,33 @@ class PredictionSettingsDialog(QDialog):
         self.conformal_checkbox = QCheckBox("Apply Conformal Calibration")
         self.conformal_checkbox.setChecked(True)
         self.form_layout.addRow(self.conformal_checkbox)
+
+        # Model weight (inference scaling)
+        from PySide6.QtWidgets import QComboBox
+        self.model_weight_combo = QComboBox()
+        for p in range(0, 101, 5):
+            self.model_weight_combo.addItem(f"{p} %", p)
+        self.model_weight_combo.setCurrentIndex(20)  # default 100%
+        self.form_layout.addRow("Model weight (%):", self.model_weight_combo)
+
+        # Indicators × Timeframes selection
+        from PySide6.QtWidgets import QGroupBox, QGridLayout, QCheckBox
+        self._indicators = ["ATR","RSI","Bollinger","MACD","Donchian","Keltner","Hurst"]
+        self._timeframes = ["1m","5m","15m","30m","1h","4h","1d"]
+        box = QGroupBox("Indicatori per Timeframe (per training/inferenza)")
+        grid = QGridLayout(box)
+        grid.addWidget(QLabel(""), 0, 0)
+        for j, tf in enumerate(self._timeframes, start=1):
+            grid.addWidget(QLabel(tf), 0, j)
+        self.indicator_checks = {}
+        for i, ind in enumerate(self._indicators, start=1):
+            grid.addWidget(QLabel(ind), i, 0)
+            self.indicator_checks[ind] = {}
+            for j, tf in enumerate(self._timeframes, start=1):
+                cb = QCheckBox()
+                self.indicator_checks[ind][tf] = cb
+                grid.addWidget(cb, i, j)
+        self.layout.addWidget(box)
 
         # --- Basic indicators (exposed to basic dialog) ---
         self.warmup_spin = QSpinBox()
@@ -153,9 +202,33 @@ class PredictionSettingsDialog(QDialog):
             with open(CONFIG_FILE, "r") as f:
                 settings = json.load(f)
             self.model_path_edit.setText(settings.get("model_path", ""))
+            # multi models
+            mpaths = settings.get("model_paths", [])
+            try:
+                self.models_edit.setPlainText("\n".join([str(p) for p in mpaths]) if mpaths else "")
+            except Exception:
+                self.models_edit.setPlainText("")
+            # forecast types
+            ftypes = set(settings.get("forecast_types", ["basic"]))
+            self.type_basic_cb.setChecked("basic" in ftypes)
+            self.type_advanced_cb.setChecked("advanced" in ftypes)
+            self.type_rw_cb.setChecked("rw" in ftypes)
+
             self.horizons_edit.setText(", ".join(settings.get("horizons", ["1m", "5m", "15m"])))
             self.n_samples_spinbox.setValue(settings.get("N_samples", 200))
             self.conformal_checkbox.setChecked(settings.get("apply_conformal", True))
+            # model weight
+            mw = int(settings.get("model_weight_pct", 100))
+            for i in range(self.model_weight_combo.count()):
+                if int(self.model_weight_combo.itemData(i)) == mw:
+                    self.model_weight_combo.setCurrentIndex(i); break
+
+            # indicators×timeframes
+            ind_tfs = settings.get("indicator_tfs", {})
+            for ind, tfmap in self.indicator_checks.items():
+                lst = ind_tfs.get(ind.lower(), [])
+                for tf, cb in tfmap.items():
+                    cb.setChecked(tf in lst)
 
             self.warmup_spin.setValue(int(settings.get("warmup_bars", 16)))
             self.atr_n_spin.setValue(int(settings.get("atr_n", 14)))
@@ -180,11 +253,34 @@ class PredictionSettingsDialog(QDialog):
 
     def save_settings(self):
         """Saves the current settings to the JSON config file."""
+        # parse multi models (one path per line)
+        models_list = []
+        try:
+            txt = self.models_edit.toPlainText().strip()
+            if txt:
+                models_list = [line.strip() for line in txt.splitlines() if line.strip()]
+        except Exception:
+            models_list = []
+
+        # forecast types
+        ftypes = []
+        if self.type_basic_cb.isChecked(): ftypes.append("basic")
+        if self.type_advanced_cb.isChecked(): ftypes.append("advanced")
+        if self.type_rw_cb.isChecked(): ftypes.append("rw")
+        if not ftypes:
+            ftypes = ["basic"]
+
         settings = {
             "model_path": self.model_path_edit.text(),
+            "model_paths": models_list,
+            "forecast_types": ftypes,
             "horizons": [h.strip() for h in self.horizons_edit.text().split(",") if h.strip()],
             "N_samples": self.n_samples_spinbox.value(),
             "apply_conformal": self.conformal_checkbox.isChecked(),
+            "model_weight_pct": int(self.model_weight_combo.currentData()),
+
+            # indicators×timeframes
+            "indicator_tfs": {ind.lower(): [tf for tf, cb in tfmap.items() if cb.isChecked()] for ind, tfmap in self.indicator_checks.items()},
 
             "warmup_bars": int(self.warmup_spin.value()),
             "atr_n": int(self.atr_n_spin.value()),

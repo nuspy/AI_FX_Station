@@ -1,97 +1,242 @@
-# src/forex_diffusion/ui/history_tab.py
+# src/forex_diffusion/ui/training_tab.py
 from __future__ import annotations
 
-from typing import Optional
-import time
 import json
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget, QTableWidgetItem, QLabel, QMessageBox, QComboBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QSpinBox,
+    QLineEdit, QGroupBox, QGridLayout, QMessageBox, QFileDialog, QTextEdit, QProgressBar
 )
 from loguru import logger
-from sqlalchemy import MetaData, select
 
-from ..services.db_service import DBService
-from ..services.marketdata import MarketDataService
+from ..utils.config import get_config
+from ..utils.user_settings import get_setting, set_setting
+from .controllers import TrainingController
 
-class HistoryTab(QWidget):
+INDICATORS = ["ATR", "RSI", "Bollinger", "MACD", "Donchian", "Keltner", "Hurst"]
+TIMEFRAMES = ["1m","5m","15m","30m","1h","4h","1d"]
+# default selection per indicator (persisted across sessions)
+DEFAULTS = {
+    "ATR": ["1m","5m","15m","30m","1h"],
+    "RSI": ["1m","5m","15m","30m","1h"],
+    "Bollinger": ["1m","5m","15m","30m"],
+    "MACD": ["5m","15m","30m","1h","4h","1d"],
+    "Donchian": ["15m","30m","1h","4h","1d"],
+    "Keltner": ["15m","30m","1h","4h","1d"],
+    "Hurst": ["30m","1h","4h","1d"],
+}
+
+class TrainingTab(QWidget):
     """
-    Shows historical candles from DB for selected symbol/timeframe.
-    Buttons:
-      - Refresh: reload latest rows
-      - Backfill: trigger market_service.backfill_symbol_timeframe for the symbol/timeframe
+    Training Tab: configure and launch model training.
+    - Selettori symbol/timeframe/giorni/horizon
+    - Griglia indicatori × timeframe con persistenza e bottoni Default per riga
+    - Scelta modello/encoder, opzionale ricerca evolutiva semplificata
+    - Avvio training asincrono con progress bar e log
     """
-    def __init__(self, parent=None, db_service: Optional[DBService] = None, market_service: Optional[MarketDataService] = None):
+    def __init__(self, parent=None):
         super().__init__(parent)
+        self.cfg = get_config()
         self.layout = QVBoxLayout(self)
+        self.controller = TrainingController(self)
+        self.controller.signals.log.connect(self._append_log)
+        self.controller.signals.progress.connect(self._on_progress)
+        self.controller.signals.finished.connect(self._on_finished)
 
+        # Top controls
         top = QHBoxLayout()
         top.addWidget(QLabel("Symbol:"))
-        self.symbol_combo = QComboBox()
-        self.symbol_combo.addItems(["EUR/USD","USD/JPY","GBP/USD"])
+        self.symbol_combo = QComboBox(); self.symbol_combo.addItems(["AUX/USD","GBP/NZD","AUD/JPY","GBP/EUR","GBP/AUD"])
         top.addWidget(self.symbol_combo)
 
-        top.addWidget(QLabel("Timeframe:"))
-        self.tf_combo = QComboBox()
-        self.tf_combo.addItems(["1m","5m","1d"])
+        top.addWidget(QLabel("Base TF:"))
+        self.tf_combo = QComboBox(); self.tf_combo.addItems(["1m","5m","15m","30m","1h","4h","1d"])
+        self.tf_combo.setCurrentText("1m")
         top.addWidget(self.tf_combo)
 
-        # Backfill years selector
-        top.addWidget(QLabel("Years:"))
-        self.years_combo = QComboBox()
-        self.years_combo.addItems([str(x) for x in [0,1,2,3,4,5,10,15,20,30]])
-        self.years_combo.setCurrentText("0")
-        top.addWidget(self.years_combo)
+        top.addWidget(QLabel("Days history:"))
+        self.days_spin = QSpinBox(); self.days_spin.setRange(1, 3650); self.days_spin.setValue(7)
+        top.addWidget(self.days_spin)
 
-        # Backfill months selector
-        top.addWidget(QLabel("Months:"))
-        self.months_combo = QComboBox()
-        self.months_combo.addItems([str(x) for x in [0,1,2,3,4,5,6,7,8,9,10,11,12]])
-        self.months_combo.setCurrentText("0")
-        top.addWidget(self.months_combo)
+        top.addWidget(QLabel("Horizon (bars):"))
+        self.horizon_spin = QSpinBox(); self.horizon_spin.setRange(1, 500); self.horizon_spin.setValue(5)
+        top.addWidget(self.horizon_spin)
 
-        self.refresh_btn = QPushButton("Refresh History")
-        self.refresh_btn.clicked.connect(self.on_refresh)
-        top.addWidget(self.refresh_btn)
+        top.addWidget(QLabel("Model:"))
+        self.model_combo = QComboBox(); self.model_combo.addItems(["ridge","lasso","elasticnet","rf"])
+        top.addWidget(self.model_combo)
 
-        self.backfill_btn = QPushButton("Backfill")
-        self.backfill_btn.clicked.connect(self.on_backfill)
-        top.addWidget(self.backfill_btn)
+        top.addWidget(QLabel("Encoder:"))
+        self.encoder_combo = QComboBox(); self.encoder_combo.addItems(["none","pca","latents"])
+        top.addWidget(self.encoder_combo)
+
+        top.addWidget(QLabel("Optimization:"))
+        self.opt_combo = QComboBox(); self.opt_combo.addItems(["none","genetic-basic","nsga2"])
+        top.addWidget(self.opt_combo)
+
+        top.addWidget(QLabel("Gen:")); self.gen_spin = QSpinBox(); self.gen_spin.setRange(1, 50); self.gen_spin.setValue(5); top.addWidget(self.gen_spin)
+        top.addWidget(QLabel("Pop:")); self.pop_spin = QSpinBox(); self.pop_spin.setRange(2, 64); self.pop_spin.setValue(8); top.addWidget(self.pop_spin)
 
         self.layout.addLayout(top)
 
-        self.table = QTableWidget()
-        self.layout.addWidget(self.table)
+        # Indicators × Timeframes grid
+        grid_box = QGroupBox("Indicatori per Timeframe (seleziona; click 'Default' per ripristinare)")
+        grid = QGridLayout(grid_box)
+        grid.addWidget(QLabel(""), 0, 0)
+        for j, tf in enumerate(TIMEFRAMES, start=1):
+            grid.addWidget(QLabel(tf), 0, j)
+        # load previous or defaults
+        saved = get_setting("training_indicator_tfs", {})
+        self.chk: Dict[str, Dict[str, object]] = {}
+        for i, ind in enumerate(INDICATORS, start=1):
+            # row title + default button
+            row_box = QHBoxLayout()
+            lbl = QLabel(ind)
+            btn = QPushButton("Default"); btn.setFixedWidth(64)
+            def _make_reset(ind_name: str):
+                return lambda: self._reset_row_to_default(ind_name)
+            btn.clicked.connect(_make_reset(ind))
+            row_box.addWidget(lbl); row_box.addWidget(btn); row_box.addStretch()
+            row_widget = QWidget(); row_widget.setLayout(row_box)
+            grid.addWidget(row_widget, i, 0)
+            self.chk[ind] = {}
+            selected = saved.get(ind, DEFAULTS.get(ind, []))
+            for j, tf in enumerate(TIMEFRAMES, start=1):
+                from PySide6.QtWidgets import QCheckBox
+                cb = QCheckBox()
+                cb.setChecked(tf in selected)
+                self.chk[ind][tf] = cb
+                grid.addWidget(cb, i, j)
+        self.layout.addWidget(grid_box)
 
-        self.db_service = db_service or DBService()
+        # Advanced params
+        adv = QHBoxLayout()
+        adv.addWidget(QLabel("warmup")); self.warmup = QSpinBox(); self.warmup.setRange(0, 5000); self.warmup.setValue(16); adv.addWidget(self.warmup)
+        adv.addWidget(QLabel("atr_n")); self.atr_n = QSpinBox(); self.atr_n.setRange(1, 500); self.atr_n.setValue(14); adv.addWidget(self.atr_n)
+        adv.addWidget(QLabel("rsi_n")); self.rsi_n = QSpinBox(); self.rsi_n.setRange(2, 500); self.rsi_n.setValue(14); adv.addWidget(self.rsi_n)
+        adv.addWidget(QLabel("bb_n")); self.bb_n = QSpinBox(); self.bb_n.setRange(2, 500); self.bb_n.setValue(20); adv.addWidget(self.bb_n)
+        adv.addWidget(QLabel("hurst_win")); self.hurst_w = QSpinBox(); self.hurst_w.setRange(8, 4096); self.hurst_w.setValue(64); adv.addWidget(self.hurst_w)
+        adv.addWidget(QLabel("rv_window")); self.rv_w = QSpinBox(); self.rv_w.setRange(1, 10000); self.rv_w.setValue(60); adv.addWidget(self.rv_w)
+        self.layout.addLayout(adv)
+
+        # Output location
+        out_h = QHBoxLayout()
+        self.out_dir = QLineEdit(str(Path(self.cfg.model.artifacts_dir if hasattr(self.cfg, "model") else "./artifacts/models")))
+        self.browse_btn = QPushButton("Scegli Cartella...")
+        self.browse_btn.clicked.connect(self._browse_out)
+        out_h.addWidget(QLabel("Output dir:"))
+        out_h.addWidget(self.out_dir); out_h.addWidget(self.browse_btn)
+        self.layout.addLayout(out_h)
+
+        # Log & progress
+        lp = QHBoxLayout()
+        self.progress = QProgressBar(); self.progress.setValue(0); self.progress.setTextVisible(True)
+        self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMinimumHeight(140)
+        lp.addWidget(self.progress, 1); lp.addWidget(self.log_view, 3)
+        self.layout.addLayout(lp)
+
+        # Actions
+        actions = QHBoxLayout()
+        self.train_btn = QPushButton("Start Training")
+        self.train_btn.clicked.connect(self._start_training)
+        actions.addWidget(self.train_btn)
+        self.layout.addLayout(actions)
+
+    def _reset_row_to_default(self, ind: str):
+        for tf, cb in self.chk[ind].items():
+            cb.setChecked(tf in DEFAULTS.get(ind, []))
+        self._persist_indicator_tfs()
+
+    def _persist_indicator_tfs(self):
+        m = {ind: [tf for tf, cb in self.chk[ind].items() if cb.isChecked()] for ind in INDICATORS}
+        set_setting("training_indicator_tfs", m)
+
+    def _browse_out(self):
+        d = QFileDialog.getExistingDirectory(self, "Scegli cartella output", self.out_dir.text())
+        if d:
+            self.out_dir.setText(d)
+
+    def _collect_indicator_tfs(self) -> Dict[str, List[str]]:
+        m: Dict[str, List[str]] = {}
+        for ind in INDICATORS:
+            tfs = [tf for tf, cb in self.chk[ind].items() if cb.isChecked()]
+            if tfs:
+                m[ind.lower()] = tfs
+        return m
+
+    def _start_training(self):
         try:
-            self.market_service = market_service or MarketDataService()
-            # ensure Tiingo is used as provider for historical data by default
-            try:
-                self.market_service.set_provider("tiingo")
-            except Exception:
-                pass
-        except Exception:
-            self.market_service = market_service
+            sym = self.symbol_combo.currentText()
+            tf = self.tf_combo.currentText()
+            days = int(self.days_spin.value())
+            horizon = int(self.horizon_spin.value())
+            model = self.model_combo.currentText()
+            encoder = self.encoder_combo.currentText()
+            ind_tfs = self._collect_indicator_tfs()
+            self._persist_indicator_tfs()
 
-        # helper: produce symbol variants (with and without slash) to match DB stored formats
-        def _symbol_variants(s: str) -> list:
-            s = (s or "").strip()
-            if "/" in s:
-                alt = s.replace("/", "")
-                # preserve original order: exact then compact
-                return [s, alt]
-            elif len(s) == 6 and s.isalpha():
-                alt = f"{s[0:3]}/{s[3:6]}"
-                return [s, alt]
+            # Build filename with parameters
+            tfs_str = "-".join(sorted(set(sum(ind_tfs.values(), [])))) if ind_tfs else "none"
+            name = f"{sym.replace('/','')}_{tf}_d{days}_h{horizon}_{model}_{encoder}_ind{len(ind_tfs)}_{tfs_str}"
+            out_dir = Path(self.out_dir.text())
+            out_dir.mkdir(parents=True, exist_ok=True)
+            # weighted_forecast.py salva il modello in artifacts/models; la UI mostra log e progresso
+
+            # Build CLI args for weighted_forecast.py
+            root = Path(__file__).resolve().parents[3]
+            script = root / "tests" / "manual_tests" / "weighted_forecast.py"
+            args = [
+                "python", str(script),
+                "--symbol", sym, "--timeframe", tf,
+                "--days", str(days),
+                "--horizon", str(horizon),
+                "--warmup_bars", str(int(self.warmup.value())),
+                "--atr_n", str(int(self.atr_n.value())),
+                "--rsi_n", str(int(self.rsi_n.value())),
+                "--bb_n", str(int(self.bb_n.value())),
+                "--hurst_window", str(int(self.hurst_w.value())),
+                "--rv_window", str(int(self.rv_w.value())),
+                "--model", model,
+                "--encoder", encoder,
+                "--forecast_method", "supervised",
+            ]
+            # Avvio async: single training o GA
+            strategy = self.opt_combo.currentText()
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            if strategy == "none":
+                self.controller.start_training(args, cwd=str(root))
+                self._append_log(f"[start] { ' '.join(args) }")
             else:
-                return [s]
-        self._symbol_variants = _symbol_variants
+                self._append_log(f"[GA start] strategy={strategy} gens={int(self.gen_spin.value())} pop={int(self.pop_spin.value())}")
+                self.controller.start_training_ga(args, cwd=str(root), strategy=strategy, generations=int(self.gen_spin.value()), pop_size=int(self.pop_spin.value()))
+        except Exception as e:
+            logger.exception("Start training error: {}", e)
+            QMessageBox.warning(self, "Training", str(e))
 
-        # linked chart tab (set by app)
-        self.chart_tab = None
+    def _append_log(self, line: str):
+        try:
+            self.log_view.append(line)
+        except Exception:
+            pass
 
-        self._populate_empty()
+    def _on_progress(self, value: int):
+        if value < 0:
+            self.progress.setRange(0, 0)  # indeterminate
+        else:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(value)
+
+    def _on_finished(self, ok: bool):
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100 if ok else 0)
+        self._append_log("[done] ok" if ok else "[done] failed")
+        if ok:
+            QMessageBox.information(self, "Training", "Training completato.")
+        else:
+            QMessageBox.warning(self, "Training", "Training fallito.")
 
     def _populate_empty(self):
         # Adjust columns to mirror market_data_candles schema (id,symbol,timeframe,ts_utc,open,high,low,close,volume,resampled)

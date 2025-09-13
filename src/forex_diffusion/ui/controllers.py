@@ -119,8 +119,12 @@ class ForecastWorker(QRunnable):
             return obj if isinstance(obj, dict) else {"model": obj}
 
         # --- 1) Parametri payload ---
+        ftype = str(self.payload.get("forecast_type", "basic")).lower()
         model_path = self.payload.get("model_path") or self.payload.get("model")
-        if not model_path:
+        # baseline RW: non richiede modello
+        if ftype == "rw":
+            model_path = model_path  # ignore if missing
+        if not model_path and ftype != "rw":
             raise RuntimeError("No model_path provided for local fallback")
 
         limit = int(self.payload.get("limit_candles", 512))
@@ -218,16 +222,23 @@ class ForecastWorker(QRunnable):
 
         # --- 9) Inferenza ---
         preds = None
-        try:
-            import torch
-            if hasattr(model, "eval"): model.eval()
-            with torch.no_grad():
-                t_in = torch.tensor(X_arr, dtype=torch.float32)
-                out = model(t_in)
-                preds = out.detach().cpu().numpy()
-        except Exception:
-            if hasattr(model, "predict"): preds = np.asarray(model.predict(X_arr))
-            else: raise RuntimeError("Unsupported model type for prediction")
+        if str(self.payload.get("forecast_type","")).lower() == "rw":
+            # simple baseline: last_close * exp(sigma_1 * sqrt(h) * Z) approximated deterministically to a small drift
+            import numpy as np
+            sigma = float(np.std(np.log(df_candles["close"]).diff().fillna(0.0).tail(256)))
+            # deterministic centerline as 0 drift (returns ~ 0)
+            preds = np.zeros((horizon_steps,), dtype=float)
+        else:
+            try:
+                import torch
+                if hasattr(model, "eval"): model.eval()
+                with torch.no_grad():
+                    t_in = torch.tensor(X_arr, dtype=torch.float32)
+                    out = model(t_in)
+                    preds = out.detach().cpu().numpy()
+            except Exception:
+                if hasattr(model, "predict"): preds = np.asarray(model.predict(X_arr))
+                else: raise RuntimeError("Unsupported model type for prediction")
 
         preds = np.squeeze(preds)
         if preds.size == 0: raise RuntimeError("Model returned empty prediction")
@@ -244,10 +255,20 @@ class ForecastWorker(QRunnable):
         
         forecast_prices = np.array(prices, dtype=float)
 
+        # Apply model weight (blend towards last_close): w in [0,1]
+        try:
+            w_pct = int(self.payload.get("model_weight_pct", 100))
+            w = max(0.0, min(1.0, float(w_pct) / 100.0))
+            forecast_prices = last_close + w * (forecast_prices - last_close)
+        except Exception:
+            pass
+
         quantiles = {
             "q50": forecast_prices.tolist(),
             "q05": (forecast_prices * 0.99).tolist(),
             "q95": (forecast_prices * 1.01).tolist(),
+            "source": str(self.payload.get("source_label") or ("advanced" if self.payload.get("advanced") else "basic")),
+            "label": str(self.payload.get("source_label") or "forecast"),
         }
 
         return df_candles, quantiles
@@ -331,28 +352,42 @@ class UIController:
     @Slot()
     def handle_forecast_requested(self):
         settings = PredictionSettingsDialog.get_settings()
-        if not settings or not settings.get("model_path"):
-            self.signals.error.emit("Prediction settings not configured or model path is missing.")
+        # accetta anche multi-modello: se entrambi vuoti -> warning
+        multi = [p for p in settings.get("model_paths", []) if p] if settings else []
+        single = settings.get("model_path") if settings else None
+        if not settings or (not multi and not single):
+            self.signals.error.emit("Prediction settings not configured or model path(s) missing.")
             self.handle_prediction_settings_requested()
             return
 
-        cfg = self.market_service.cfg if hasattr(self.market_service, "cfg") else None
-        try:
-            symbol = cfg.data.symbols[0] if (cfg and hasattr(cfg, "data") and hasattr(cfg.data, "symbols")) else "EUR/USD"
-            timeframe = (cfg.timeframes.native[0] if (cfg and hasattr(cfg, "timeframes") and hasattr(cfg.timeframes, "native")) else "1m")
-        except Exception:
-            symbol = "EUR/USD"
-            timeframe = "1m"
+        # Prefer symbol/timeframe from current ChartTab if available
+        chart_tab = getattr(self, "chart_tab", None)
+        if chart_tab and getattr(chart_tab, "symbol", None) and getattr(chart_tab, "timeframe", None):
+            symbol = chart_tab.symbol
+            timeframe = chart_tab.timeframe
+        else:
+            cfg = self.market_service.cfg if hasattr(self.market_service, "cfg") else None
+            try:
+                symbol = cfg.data.symbols[0] if (cfg and hasattr(cfg, "data") and hasattr(cfg.data, "symbols")) else "AUX/USD"
+                timeframe = (cfg.timeframes.native[0] if (cfg and hasattr(cfg, "timeframes") and hasattr(cfg.timeframes, "native")) else "1m")
+            except Exception:
+                symbol = "AUX/USD"
+                timeframe = "1m"
 
-        # Merge extended settings into payload so worker has access to indicator params and adv flags
-        payload = {
+        # lista modelli effettiva
+        models = multi if multi else [single]
+        # tipi di previsione richiesti
+        ftypes = settings.get("forecast_types", ["basic"]) or ["basic"]
+
+        base_common = {
             "symbol": symbol,
             "timeframe": timeframe,
-            "model_path": settings.get("model_path"),
             "horizons": settings.get("horizons", ["1m", "5m", "15m"]),
             "N_samples": settings.get("N_samples", 200),
             "apply_conformal": settings.get("apply_conformal", True),
-            # extended settings (if present)
+            "model_weight_pct": settings.get("model_weight_pct"),
+            "indicator_tfs": settings.get("indicator_tfs"),
+            # pipeline params
             "warmup_bars": settings.get("warmup_bars"),
             "atr_n": settings.get("atr_n"),
             "rsi_n": settings.get("rsi_n"),
@@ -364,23 +399,24 @@ class UIController:
             "hurst_window": settings.get("hurst_window"),
             "keltner_k": settings.get("keltner_k"),
             "max_forecasts": settings.get("max_forecasts"),
-            "auto_predict": settings.get("auto_predict"),
-            "auto_interval_seconds": settings.get("auto_interval_seconds"),
         }
+        # filtra None
+        base_common = {k: v for k, v in base_common.items() if v is not None}
 
-        # remove None values to keep payload tidy
-        payload = {k: v for k, v in payload.items() if v is not None}
+        self.signals.status.emit(f"Forecast requested for {symbol} {timeframe} (models={len(models)} types={','.join(ftypes)})")
 
-        self.signals.status.emit(f"Forecast requested for {symbol} {timeframe}")
-
-        try:
-            if getattr(self, "db_writer", None) is not None:
-                self.db_writer.write_prediction_async(symbol=symbol, timeframe=timeframe, horizon="request", q05=0.0, q50=0.0, q95=0.0, meta={"event": "forecast_requested", "settings": settings})
-        except Exception:
-            pass
-
-        fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
-        self.pool.start(fw)
+        # schedula una combinazione per ogni (modello, tipo)
+        import os
+        for mp in models:
+            name = os.path.basename(str(mp)) if mp else "model"
+            for t in ftypes:
+                payload = dict(base_common)
+                payload["model_path"] = mp
+                payload["advanced"] = (t.lower() == "advanced")
+                payload["forecast_type"] = t.lower()
+                payload["source_label"] = f"{name}:{t}"
+                fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
+                self.pool.start(fw)
 
     @Slot()
     def handle_calibration_requested(self):
@@ -415,3 +451,386 @@ class _IngestWorker(QRunnable):
             logger.exception("Backfill worker failed: {}", e)
             self.signals.error.emit(str(e))
             self.signals.status.emit("Backfill failed")
+
+
+# --- Training controller (async subprocess with logging/progress) ---
+
+class TrainingControllerSignals(QObject):
+    log = Signal(str)
+    progress = Signal(int)  # 0..100; -1 for indeterminate
+    finished = Signal(bool)  # ok
+
+class TrainingController(QObject):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.signals = TrainingControllerSignals()
+        self.pool = QThreadPool.globalInstance()
+
+    def start_training(self, args: list[str], cwd: Optional[str] = None):
+        """Launch training subprocess asynchronously and stream logs to signals."""
+        class _Runner(QRunnable):
+            def __init__(self, outer, args, cwd):
+                super().__init__()
+                self.outer = outer
+                self.args = args
+                self.cwd = cwd
+
+            def run(self):
+                import subprocess, sys, time
+                ok = False
+                try:
+                    self.outer.signals.progress.emit(-1)  # indeterminate
+                    p = subprocess.Popen(self.args, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                    best_r2 = None
+                    for line in iter(p.stdout.readline, ''):
+                        if not line:
+                            break
+                        self.outer.signals.log.emit(line.rstrip())
+                        # heuristic progress by R2
+                        try:
+                            if "r2=" in line.lower():
+                                import re
+                                m = re.search(r"R2=([\-0-9\.eE]+)", line)
+                                if m:
+                                    r2 = float(m.group(1))
+                                    best_r2 = r2 if (best_r2 is None or r2 > best_r2) else best_r2
+                                    self.outer.signals.log.emit(f"[metric] R2={r2:.6f}")
+                        except Exception:
+                            pass
+                    rc = p.wait()
+                    ok = (rc == 0)
+                except Exception as e:
+                    self.outer.signals.log.emit(f"[error] {e}")
+                    ok = False
+                finally:
+                    self.outer.signals.progress.emit(100 if ok else 0)
+                    self.outer.signals.finished.emit(ok)
+        self.pool.start(_Runner(self, args, cwd))
+
+    def start_training_ga(self, base_args: list[str], cwd: Optional[str], strategy: str = "genetic-basic", generations: int = 5, pop_size: int = 8):
+        """
+        Genetic optimization loop orchestrating multiple training runs.
+        - strategy:
+            * 'genetic-basic': single-obiettivo (massimizza R2)
+            * 'nsga2': multi-obiettivo con ordinamento non-dominato e crowding distance (minimizza [-R2, MAE])
+        Progress determinato su (generations * pop_size), valutando ogni individuo generato.
+        """
+        class _GAJob(QRunnable):
+            def __init__(self, outer, base_args, cwd, strategy, gens, pop):
+                super().__init__()
+                self.outer = outer
+                self.base_args = base_args
+                self.cwd = cwd
+                self.strategy = strategy
+                self.gens = max(1, int(gens))
+                self.pop = max(2, int(pop))
+
+            def _spawn_and_eval_objs(self, args) -> tuple[float, float]:
+                """
+                Esegue un run di training e ritorna (obj1, obj2) dove:
+                 - obj1 = -R2 (da minimizzare)
+                 - obj2 = MAE (da minimizzare)
+                Penalizza run falliti con valori molto alti.
+                """
+                import subprocess, re
+                r2_val = None
+                mae_val = None
+                p = subprocess.Popen(args, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in iter(p.stdout.readline, ''):
+                    if not line:
+                        break
+                    self.outer.signals.log.emit(line.rstrip())
+                    try:
+                        m1 = re.search(r"R2=([\-0-9\.eE]+)", line)
+                        if m1: r2_val = float(m1.group(1))
+                        m2 = re.search(r"MAE=([\-0-9\.eE]+)", line)
+                        if m2: mae_val = float(m2.group(1))
+                    except Exception:
+                        pass
+                rc = p.wait()
+                if rc != 0 or r2_val is None or mae_val is None:
+                    self.outer.signals.log.emit("[warn] training run failed or metrics missing; penalizing fitness")
+                    return (1e9, 1e9)
+                # obj1 = -R2 to minimize, obj2 = MAE
+                return (-float(r2_val), float(mae_val))
+
+            def _spawn_and_eval_r2(self, args) -> float:
+                import subprocess, re
+                best_r2 = None
+                p = subprocess.Popen(args, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in iter(p.stdout.readline, ''):
+                    if not line:
+                        break
+                    self.outer.signals.log.emit(line.rstrip())
+                    m = re.search(r"R2=([\-0-9\.eE]+)", line)
+                    if m:
+                        try:
+                            r2 = float(m.group(1)); best_r2 = r2 if (best_r2 is None or r2 > best_r2) else best_r2
+                        except Exception:
+                            pass
+                rc = p.wait()
+                if rc != 0:
+                    self.outer.signals.log.emit("[warn] training run failed; penalizing fitness")
+                    return -1e9
+                return best_r2 if best_r2 is not None else -1e9
+
+            def _mutate(self, conf: dict) -> dict:
+                import random
+                c = conf.copy()
+                if c.get("model") in ("ridge","lasso","elasticnet"):
+                    c["alpha"] = max(1e-6, c.get("alpha", 1.0) * (10 ** random.uniform(-0.5, 0.5)))
+                    if c["model"] == "elasticnet":
+                        c["l1_ratio"] = min(0.99, max(0.01, c.get("l1_ratio", 0.5) + random.uniform(-0.1, 0.1)))
+                elif c.get("model") == "rf":
+                    c["n_estimators"] = max(50, min(1000, int(c.get("n_estimators", 200) + random.randint(-50, 50))))
+                    md = c.get("max_depth", None)
+                    if md is None:
+                        md = 10
+                    c["max_depth"] = max(3, min(64, int(md + random.randint(-3, 3))))
+                if c.get("encoder") == "pca":
+                    c["encoder_dim"] = max(8, min(256, int(c.get("encoder_dim", 64) + (random.randint(-8, 8)))))
+                return c
+
+            def _crossover(self, a: dict, b: dict) -> dict:
+                import random
+                child = {}
+                keys = set(a.keys()).union(b.keys())
+                for k in keys:
+                    child[k] = a.get(k) if random.random() < 0.5 else b.get(k)
+                return child
+
+            def _args_from_conf_base(self, base: list[str], c: dict) -> list[str]:
+                args = list(base)
+                if "--model" in args:
+                    i = args.index("--model"); args[i+1] = c.get("model", args[i+1])
+                else:
+                    args += ["--model", c.get("model","ridge")]
+                if c.get("model") in ("ridge","lasso","elasticnet"):
+                    if "--alpha" in args:
+                        j = args.index("--alpha"); args[j+1] = str(c.get("alpha", 1.0))
+                    else:
+                        args += ["--alpha", str(c.get("alpha", 1.0))]
+                    if c.get("model") == "elasticnet":
+                        if "--l1_ratio" in args:
+                            k = args.index("--l1_ratio"); args[k+1] = str(c.get("l1_ratio", 0.5))
+                        else:
+                            args += ["--l1_ratio", str(c.get("l1_ratio", 0.5))]
+                elif c.get("model") == "rf":
+                    args += ["--n_estimators", str(c.get("n_estimators", 200))]
+                    if c.get("max_depth") is not None:
+                        args += ["--max_depth", str(c.get("max_depth"))]
+                if "--encoder" in args:
+                    i = args.index("--encoder"); args[i+1] = c.get("encoder", args[i+1])
+                else:
+                    args += ["--encoder", c.get("encoder","none")]
+                if c.get("encoder") == "pca":
+                    args += ["--encoder_dim", str(c.get("encoder_dim", 64))]
+                return args
+
+            def _non_dominated_sort(self, objs: list[tuple[float,float]]) -> list[list[int]]:
+                """
+                Fast non-dominated sorting (O(n^2)).
+                Returns list of fronts (list of indices).
+                """
+                n = len(objs)
+                S = [set() for _ in range(n)]
+                n_dom = [0]*n
+                fronts: list[list[int]] = [[]]
+                for p in range(n):
+                    for q in range(n):
+                        if p == q: 
+                            continue
+                        op = objs[p]; oq = objs[q]
+                        # p dominates q if op <= oq for all, and < for at least one
+                        if (op[0] <= oq[0] and op[1] <= oq[1]) and (op[0] < oq[0] or op[1] < oq[1]):
+                            S[p].add(q)
+                        elif (oq[0] <= op[0] and oq[1] <= op[1]) and (oq[0] < op[0] or oq[1] < op[1]):
+                            n_dom[p] += 1
+                    if n_dom[p] == 0:
+                        fronts[0].append(p)
+                i = 0
+                while i < len(fronts) and fronts[i]:
+                    next_front: list[int] = []
+                    for p in fronts[i]:
+                        for q in S[p]:
+                            n_dom[q] -= 1
+                            if n_dom[q] == 0:
+                                next_front.append(q)
+                    i += 1
+                    if next_front:
+                        fronts.append(next_front)
+                return fronts
+
+            def _crowding_distance(self, objs: list[tuple[float,float]], front: list[int]) -> dict[int, float]:
+                """
+                Crowding distance per front. Obj sono da minimizzare.
+                """
+                import math
+                if not front: 
+                    return {}
+                distances = {i: 0.0 for i in front}
+                for m in range(2):
+                    sorted_idx = sorted(front, key=lambda i: objs[i][m])
+                    fmin = objs[sorted_idx[0]][m]
+                    fmax = objs[sorted_idx[-1]][m]
+                    distances[sorted_idx[0]] = distances[sorted_idx[-1]] = math.inf
+                    if fmax == fmin:
+                        continue
+                    for k in range(1, len(sorted_idx)-1):
+                        prev = objs[sorted_idx[k-1]][m]
+                        nextv = objs[sorted_idx[k+1]][m]
+                        distances[sorted_idx[k]] += (nextv - prev) / (fmax - fmin)
+                return distances
+
+            def run(self):
+                import random, copy
+                total = self.gens * self.pop
+                done = 0
+                self.outer.signals.progress.emit(0)
+
+                # init population
+                pop: list[dict] = []
+                for i in range(self.pop):
+                    conf = {
+                        "model": random.choice(["ridge","lasso","elasticnet","rf"]),
+                        "alpha": 10 ** random.uniform(-3, 1),
+                        "l1_ratio": random.uniform(0.1, 0.9),
+                        "n_estimators": random.randint(100, 500),
+                        "max_depth": random.choice([None, 8, 12, 16, 20]),
+                        "encoder": random.choice(["none","pca"]),
+                        "encoder_dim": random.choice([32, 64, 96, 128]),
+                    }
+                    pop.append(conf)
+
+                root = None  # not used outside; args build uses base self.base_args
+
+                if self.strategy == "genetic-basic":
+                    best_conf = None
+                    best_fit = -1e12
+                    for g in range(self.gens):
+                        fits = []
+                        for i, conf in enumerate(pop):
+                            args = self._args_from_conf_base(self.base_args, conf)
+                            self.outer.signals.log.emit(f"[GA] Gen {g+1}/{self.gens} Ind {i+1}/{self.pop} -> {conf}")
+                            fit = self._spawn_and_eval_r2(args)
+                            fits.append(fit)
+                            done += 1
+                            pct = int(min(100, max(0, (done / total) * 100)))
+                            self.outer.signals.progress.emit(pct)
+                            if fit > best_fit:
+                                best_fit = fit; best_conf = copy.deepcopy(conf)
+                        ranked = sorted(zip(pop, fits), key=lambda x: x[1], reverse=True)
+                        survivors = [c for c, f in ranked[: max(2, self.pop // 2)]]
+                        next_pop = survivors[:]
+                        while len(next_pop) < self.pop:
+                            a = random.choice(survivors); b = random.choice(survivors)
+                            child = self._crossover(a, b)
+                            child = self._mutate(child)
+                            next_pop.append(child)
+                        pop = next_pop
+                    if best_conf is not None:
+                        args = self._args_from_conf_base(self.base_args, best_conf)
+                        self.outer.signals.log.emit(f"[GA] Best config: {best_conf} -> running final training")
+                        _ = self._spawn_and_eval_r2(args)
+                    self.outer.signals.finished.emit(True)
+                    return
+
+                # NSGA-II
+                # evaluate initial population
+                objs: list[tuple[float,float]] = []
+                for i, conf in enumerate(pop):
+                    args = self._args_from_conf_base(self.base_args, conf)
+                    self.outer.signals.log.emit(f"[NSGA2] Init Ind {i+1}/{self.pop} -> {conf}")
+                    o = self._spawn_and_eval_objs(args)
+                    objs.append(o)
+                    # non contiamo le init nel progresso per semplicità (oppure includere pop iniziale)
+                # start generations
+                for g in range(self.gens):
+                    # selection via crowded-comparison operator: torneo binario
+                    def _tournament_select(indices: list[int], fronts: list[list[int]], crowd: dict[int,float]) -> int:
+                        import random
+                        a, b = random.sample(indices, 2)
+                        # rank by front index
+                        def _rank(i):
+                            for r, fr in enumerate(fronts):
+                                if i in fr: return r
+                            return 1e9
+                        ra, rb = _rank(a), _rank(b)
+                        if ra < rb: return a
+                        if rb < ra: return b
+                        # tie-breaker: higher crowding wins
+                        ca, cb = crowd.get(a, 0.0), crowd.get(b, 0.0)
+                        return a if ca >= cb else b
+
+                    # build mating pool
+                    fronts = self._non_dominated_sort(objs)
+                    # compute crowding per front
+                    crowd_all: dict[int,float] = {}
+                    for fr in fronts:
+                        crowd = self._crowding_distance(objs, fr)
+                        crowd_all.update(crowd)
+                    idx_all = list(range(len(pop)))
+                    mating = []
+                    for _ in range(self.pop):
+                        sel = _tournament_select(idx_all, fronts, crowd_all)
+                        mating.append(pop[sel])
+
+                    # create offspring via crossover/mutation
+                    offspring: list[dict] = []
+                    while len(offspring) < self.pop:
+                        a = random.choice(mating); b = random.choice(mating)
+                        child = self._crossover(a, b)
+                        child = self._mutate(child)
+                        offspring.append(child)
+
+                    # evaluate offspring
+                    off_objs: list[tuple[float,float]] = []
+                    for i, conf in enumerate(offspring):
+                        args = self._args_from_conf_base(self.base_args, conf)
+                        self.outer.signals.log.emit(f"[NSGA2] Gen {g+1}/{self.gens} Off {i+1}/{self.pop} -> {conf}")
+                        o = self._spawn_and_eval_objs(args)
+                        off_objs.append(o)
+                        done += 1
+                        pct = int(min(100, max(0, (done / total) * 100)))
+                        self.outer.signals.progress.emit(pct)
+
+                    # combine population and perform non-dominated sorting
+                    union_pop = pop + offspring
+                    union_objs = objs + off_objs
+                    fronts = self._non_dominated_sort(union_objs)
+
+                    # fill next population
+                    new_pop: list[dict] = []
+                    new_objs: list[tuple[float,float]] = []
+                    for fr in fronts:
+                        if len(new_pop) + len(fr) <= self.pop:
+                            for i in fr:
+                                new_pop.append(union_pop[i])
+                                new_objs.append(union_objs[i])
+                        else:
+                            # need to select by crowding distance
+                            crowd = self._crowding_distance(union_objs, fr)
+                            # sort fr by descending crowding
+                            fr_sorted = sorted(fr, key=lambda i: crowd.get(i, 0.0), reverse=True)
+                            needed = self.pop - len(new_pop)
+                            for i in fr_sorted[:needed]:
+                                new_pop.append(union_pop[i])
+                                new_objs.append(union_objs[i])
+                            break
+                    pop, objs = new_pop, new_objs
+
+                    # log current best front summary
+                    try:
+                        best_front = fronts[0] if fronts and fronts[0] else []
+                        if best_front:
+                            bf = [(union_objs[i][0], union_objs[i][1]) for i in best_front]
+                            # remember obj1=-R2 => R2 = -obj1
+                            summary = ", ".join([f"(R2={-o1:.4f}, MAE={o2:.4e})" for o1, o2 in bf[:min(5,len(bf))]])
+                            self.outer.signals.log.emit(f"[NSGA2] Gen {g+1} best front: {summary}")
+                    except Exception:
+                        pass
+
+                # optional: final best according to a scalarization (e.g., minimize obj2 while obj1 near best)
+                self.outer.signals.finished.emit(True)
+
+        self.pool.start(_GAJob(self, base_args, cwd, strategy, generations, pop_size))

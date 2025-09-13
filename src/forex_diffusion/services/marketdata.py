@@ -132,49 +132,105 @@ class MarketDataService:
         # Default timeframes to fetch after ticks: 1m up to 1d (24h)
         self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"]
 
-    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False):
+    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None):
         """
         Backfill implementation replaced:
         - For the requested timeframe we will detect missing intervals since last candle (or from epoch if force_full)
         - We download ticks first (1min fallback), then progressively higher timeframes up to 1 day.
         - Each timeframe detects its own missing gaps and requests only those (avoiding weekend).
+        - If progress_cb provided, emits determinate progress 0..100 based on number of subranges processed.
         """
         logger.info("Starting backfill for %s %s", symbol, timeframe)
-        # overall period: from last available candle for this symbol across any timeframe? The user asked "from last candle to present per timeframe".
-        # We'll operate per-timeframe based on that timeframe's last candle.
+        # overall period
         last_ts, now_ms = self._get_last_candle_ts(symbol, timeframe)
         if force_full or last_ts is None:
-            # start from a safe default: try to fetch recent history from last formed candle only; user requested "only from last candle"
-            # If no last candle, fall back to 30 years ago cap (as user mentioned 30 years supported)
             start_ms = int((datetime.now(tz=timezone.utc) - timedelta(days=365 * 30)).timestamp() * 1000)
         else:
             start_ms = int(last_ts) + 1
 
-        # For robustness, ensure start < now
         if start_ms >= now_ms:
             logger.info("No backfill required: start >= now.")
+            if progress_cb: 
+                try: progress_cb(100)
+                except Exception: pass
             return
 
-        # For requested timeframe we will ensure ticks first (ticks => 1min fallback)
+        # Determine timeframes to process (skip 'tick')
+        if timeframe in self.timeframes_priority:
+            idx = self.timeframes_priority.index(timeframe)
+            tfs_to_process = self.timeframes_priority[1: idx + 1]
+        else:
+            tfs_to_process = ["1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"]
+
+        # Pre-compute total subranges for determinate progress
+        total_subranges = 0
         try:
-            self._ensure_ticks_then_aggregate(symbol, start_ms, now_ms)
+            # 1m ranges (ticks fallback)
+            r_1m = self._find_missing_intervals(symbol, "1m", start_ms, now_ms)
+            for (s_ms, e_ms) in r_1m:
+                total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
+            # other TFs
+            for tf in tfs_to_process:
+                if tf == "1m":
+                    continue
+                r_tf = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
+                for (s_ms, e_ms) in r_tf:
+                    total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
+        except Exception:
+            total_subranges = 0
+        processed = 0
+        def _emit_progress():
+            if progress_cb and total_subranges > 0:
+                try:
+                    pct = int(min(100, max(0, (processed / total_subranges) * 100)))
+                    progress_cb(pct)
+                except Exception:
+                    pass
+
+        # 1) Ensure ticks/1m
+        try:
+            tf = "1m"
+            missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
+            for (s_ms, e_ms) in missing_ranges:
+                subranges = time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
+                for (sub_s, sub_e) in subranges:
+                    start_date = sub_s.date().isoformat()
+                    end_date = sub_e.date().isoformat()
+                    logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
+                    df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
+                    if df is not None and not df.empty:
+                        report = data_io.upsert_candles(self.engine, df, symbol, "1m")
+                        logger.info("Upsert 1m report: %s", report)
+                    processed += 1
+                    _emit_progress()
         except Exception as e:
             logger.exception("Tick fetch/aggregation failed: %s", e)
 
-        # Now for each timeframe from 1m up to 1d (or including requested timeframe if higher), ensure its own missing ranges are fetched
-        # Determine set of timeframes to update: all timeframes up to requested timeframe in priority order
-        if timeframe in self.timeframes_priority:
-            idx = self.timeframes_priority.index(timeframe)
-            tfs_to_process = self.timeframes_priority[1: idx + 1]  # skip 'tick' entry at [0]
-        else:
-            # if unknown timeframe requested, process a safe default list
-            tfs_to_process = ["1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"]
-
+        # 2) Process other TFs autonomously
         for tf in tfs_to_process:
+            if tf == "1m":
+                continue
             try:
-                self._backfill_timeframe_autonomous(symbol, tf, start_ms, now_ms)
+                missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
+                for (s_ms, e_ms) in missing_ranges:
+                    subranges = time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
+                    for (sub_s, sub_e) in subranges:
+                        start_date = sub_s.date().isoformat()
+                        end_date = sub_e.date().isoformat()
+                        resample = self._tf_to_tiingo_resample(tf)
+                        logger.info("Requesting %s candles %s - %s for %s", tf, start_date, end_date, symbol)
+                        df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq=resample)
+                        if df is not None and not df.empty:
+                            report = data_io.upsert_candles(self.engine, df, symbol, tf)
+                            logger.info("Upsert report for %s %s: %s", symbol, tf, report)
+                        processed += 1
+                        _emit_progress()
             except Exception as e:
                 logger.exception("Backfill failed for %s %s: %s", symbol, tf, e)
+
+        if progress_cb:
+            try: progress_cb(100)
+            except Exception: pass
 
     def _ensure_ticks_then_aggregate(self, symbol: str, start_ms: int, end_ms: int):
         """
