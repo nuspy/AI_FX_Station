@@ -1,0 +1,8 @@
+{
+    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h5_ridge_none.pkl",
+    "horizons": [
+        "1m"
+    ],
+    "N_samples": 15,
+    "apply_conformal": true
+}

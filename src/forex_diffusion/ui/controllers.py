@@ -132,7 +132,24 @@ class ForecastWorker(QRunnable):
         output_type = str(self.payload.get("output_type", "returns")).lower()
 
         # --- 2) Dati: ultime N candele (DEFINIZIONE SICURA DI df_candles) ---
-        df_candles = self._fetch_recent_candles(self.market_service.engine, sym, tf, n_bars=limit)
+        # If caller supplied candles_override (testing point), use that slice directly
+        df_candles = None
+        if self.payload.get("candles_override"):
+            try:
+                import pandas as pd
+                df_candles = pd.DataFrame(self.payload.get("candles_override"))
+                if "ts_utc" in df_candles.columns:
+                    df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
+                else:
+                    raise RuntimeError("candles_override missing ts_utc")
+            except Exception as e:
+                logger.exception("Failed to use candles_override: %s", e)
+                df_candles = None
+
+        if df_candles is None or df_candles.empty:
+            # allow specifying an end timestamp (testing_point) so DB query returns up-to that moment
+            end_ts = self.payload.get("testing_point_ts", None)
+            df_candles = self._fetch_recent_candles(self.market_service.engine, sym, tf, n_bars=limit, end_ts=end_ts)
         if df_candles is None or df_candles.empty:
             raise RuntimeError("No candles available for local inference")
         df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
@@ -235,22 +252,34 @@ class ForecastWorker(QRunnable):
 
         return df_candles, quantiles
 
-    def _fetch_recent_candles(self, engine, symbol: str, timeframe: str, n_bars: int = 500) -> pd.DataFrame:
+    def _fetch_recent_candles(self, engine, symbol: str, timeframe: str, n_bars: int = 500, end_ts: Optional[int] = None) -> pd.DataFrame:
         """
         Query market_data_candles for the last n_bars for the given symbol/timeframe.
+        If end_ts is provided (ms UTC) return the last n_bars with ts_utc <= end_ts (useful for testing point).
         """
         try:
-            from sqlalchemy import MetaData, select
+            from sqlalchemy import MetaData, select, text
             meta = MetaData()
             meta.reflect(bind=engine, only=["market_data_candles"])
             tbl = meta.tables.get("market_data_candles")
-            if tbl is None: return pd.DataFrame()
+            if tbl is None:
+                return pd.DataFrame()
             with engine.connect() as conn:
-                stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
-                    .where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe)\
-                    .order_by(tbl.c.ts_utc.desc()).limit(n_bars)
-                rows = conn.execute(stmt).fetchall()
-                if not rows: return pd.DataFrame()
+                if end_ts is None:
+                    stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
+                        .where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe)\
+                        .order_by(tbl.c.ts_utc.desc()).limit(n_bars)
+                    rows = conn.execute(stmt).fetchall()
+                else:
+                    # use parameterized query for end_ts limit
+                    q = text(
+                        "SELECT ts_utc, open, high, low, close, volume FROM market_data_candles "
+                        "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc <= :end_ts "
+                        "ORDER BY ts_utc DESC LIMIT :limit"
+                    )
+                    rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "end_ts": int(end_ts), "limit": int(n_bars)}).fetchall()
+                if not rows:
+                    return pd.DataFrame()
                 df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
                 return df.sort_values("ts_utc").reset_index(drop=True)
         except Exception as e:
@@ -315,14 +344,32 @@ class UIController:
             symbol = "EUR/USD"
             timeframe = "1m"
 
+        # Merge extended settings into payload so worker has access to indicator params and adv flags
         payload = {
             "symbol": symbol,
             "timeframe": timeframe,
             "model_path": settings.get("model_path"),
             "horizons": settings.get("horizons", ["1m", "5m", "15m"]),
             "N_samples": settings.get("N_samples", 200),
-            "apply_conformal": settings.get("apply_conformal", True)
+            "apply_conformal": settings.get("apply_conformal", True),
+            # extended settings (if present)
+            "warmup_bars": settings.get("warmup_bars"),
+            "atr_n": settings.get("atr_n"),
+            "rsi_n": settings.get("rsi_n"),
+            "bb_n": settings.get("bb_n"),
+            "rv_window": settings.get("rv_window"),
+            "ema_fast": settings.get("ema_fast"),
+            "ema_slow": settings.get("ema_slow"),
+            "don_n": settings.get("don_n"),
+            "hurst_window": settings.get("hurst_window"),
+            "keltner_k": settings.get("keltner_k"),
+            "max_forecasts": settings.get("max_forecasts"),
+            "auto_predict": settings.get("auto_predict"),
+            "auto_interval_seconds": settings.get("auto_interval_seconds"),
         }
+
+        # remove None values to keep payload tidy
+        payload = {k: v for k, v in payload.items() if v is not None}
 
         self.signals.status.emit(f"Forecast requested for {symbol} {timeframe}")
 

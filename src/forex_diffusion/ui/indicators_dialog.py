@@ -162,12 +162,7 @@ class IndicatorsDialog(QDialog):
                             pass
             except Exception:
                 pass
-</llm-patch>
 
-<llm-patch path="/src/forex_diffusion/ui/chart_tab.py" matcher="BeforeAfter">
-Persist indicator config to configs/indicators.json and auto-load/apply on init
-<!--Separator-->
-Before:
 
     def result(self) -> Dict[str, Any]:
         """
