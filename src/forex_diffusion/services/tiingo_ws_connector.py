@@ -26,16 +26,19 @@ class TiingoWSConnector:
         api_key: Optional[str] = None, 
         tickers: Optional[Iterable[str]] = None, 
         chart_handler: Optional[Callable[[Any], None]] = None,
-        db_handler: Optional[Callable[[Any], None]] = None
+        db_handler: Optional[Callable[[Any], None]] = None,
+        status_handler: Optional[Callable[[str], None]] = None
     ):
         self.uri = uri
         self.api_key = api_key
         self.tickers = [str(t).lower() for t in (tickers or ["eurusd"])]
         self.chart_handler = chart_handler
         self.db_handler = db_handler
+        self.status_handler = status_handler
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._ws_app: Optional[websocket.WebSocketApp] = None
+        self._was_down = False
 
     def start(self):
         if not _HAS_WS_CLIENT:
@@ -73,13 +76,24 @@ class TiingoWSConnector:
 
     def _on_open(self, ws):
         logger.info("TiingoWSConnector connection opened.")
-        sub_payload = {
-            "eventName": "subscribe",
-            "authorization": self.api_key or "",
-            "eventData": {"thresholdLevel": "5", "tickers": self.tickers}
-        }
-        ws.send(json.dumps(sub_payload))
-        logger.info(f"TiingoWSConnector subscribe sent: tickers={self.tickers}")
+        try:
+            if self._was_down and self.status_handler:
+                try:
+                    self.status_handler("ws_restored")
+                except Exception:
+                    pass
+            self._was_down = False
+            sub_payload = {
+                "eventName": "subscribe",
+                "authorization": self.api_key or "",
+                "eventData": {"thresholdLevel": "5", "tickers": self.tickers}
+                }
+            ws.send(json.dumps(sub_payload))
+            logger.info(f"TiingoWSConnector subscribe sent: tickers={self.tickers}")
+        except Exception as e:
+            logger.warning(f"TiingoWSConnector failed to send subscribe: {e}")
+
+
 
     def _on_message(self, ws, message):
         msg = json.loads(message)
@@ -107,6 +121,18 @@ class TiingoWSConnector:
 
     def _on_error(self, ws, error):
         logger.error(f"TiingoWSConnector error: {error}")
+        try:
+            if not self._was_down and self.status_handler:
+                self.status_handler("ws_down")
+            self._was_down = True
+        except Exception:
+            pass
 
     def _on_close(self, ws, close_status_code, close_msg):
         logger.warning(f"TiingoWSConnector connection closed: {close_status_code} - {close_msg}")
+        try:
+            if not self._was_down and self.status_handler:
+                self.status_handler("ws_down")
+            self._was_down = True
+        except Exception:
+            pass

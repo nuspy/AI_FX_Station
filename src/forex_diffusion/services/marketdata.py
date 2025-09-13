@@ -132,18 +132,21 @@ class MarketDataService:
         # Default timeframes to fetch after ticks: 1m up to 1d (24h)
         self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"]
 
-    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None):
+    def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
         Backfill implementation replaced:
         - For the requested timeframe we will detect missing intervals since last candle (or from epoch if force_full)
         - We download ticks first (1min fallback), then progressively higher timeframes up to 1 day.
         - Each timeframe detects its own missing gaps and requests only those (avoiding weekend).
         - If progress_cb provided, emits determinate progress 0..100 based on number of subranges processed.
+        - If start_ms_override provided, compute gaps in [start_ms_override, now] (range mode).
         """
-        logger.info("Starting backfill for %s %s", symbol, timeframe)
+        logger.info("Starting backfill for {} {} (override={}, force_full={})", symbol, timeframe, start_ms_override, force_full)
         # overall period
         last_ts, now_ms = self._get_last_candle_ts(symbol, timeframe)
-        if force_full or last_ts is None:
+        if start_ms_override is not None:
+            start_ms = int(start_ms_override)
+        elif force_full or last_ts is None:
             start_ms = int((datetime.now(tz=timezone.utc) - timedelta(days=365 * 30)).timestamp() * 1000)
         else:
             start_ms = int(last_ts) + 1
@@ -387,3 +390,17 @@ class MarketDataService:
         except Exception as e:
             logger.exception("Failed to get last candle timestamp: %s", e)
             return (None, now_ms)
+
+    def _get_first_candle_ts(self, symbol: str) -> Optional[int]:
+        """
+        Return the earliest ts_utc across all timeframes for given symbol, or None if no candles exist.
+        """
+        try:
+            with self.engine.connect() as conn:
+                from sqlalchemy import text
+                query = text("SELECT MIN(ts_utc) FROM market_data_candles WHERE symbol = :symbol")
+                first_ts = conn.execute(query, {"symbol": symbol}).scalar_one_or_none()
+                return int(first_ts) if first_ts is not None else None
+        except Exception as e:
+            logger.exception("Failed to get first candle timestamp: %s", e)
+            return None

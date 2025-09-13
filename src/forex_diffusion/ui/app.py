@@ -86,12 +86,24 @@ def setup_ui(
     if use_test_server:
         logger.info(f"Redirecting Tiingo WebSocket to test server: {ws_uri}")
 
+    def _ws_status(msg: str):
+        try:
+            if msg == "ws_down":
+                logger.warning("Realtime WS down detected. REST fallback may be used until WS is restored.")
+                controller.signals.status.emit("Realtime: WS down (fallback REST attivo)")
+            elif msg == "ws_restored":
+                logger.info("Realtime WS restored.")
+                controller.signals.status.emit("Realtime: WS restored")
+        except Exception:
+            pass
+
     connector = TiingoWSConnector(
         uri=ws_uri,
         api_key=os.environ.get("TIINGO_APIKEY"),
         tickers=["eurusd"],
         chart_handler=chart_tab._handle_tick,
         db_handler=db_writer.write_tick_async
+        , status_handler=_ws_status
     )
     connector.start()
     result["tiingo_ws_connector"] = connector
@@ -101,6 +113,85 @@ def setup_ui(
     default_symbol = "AUX/USD"
     default_tf = "1m"
     chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
+
+    # Auto backfill on startup for all supported symbols with existing candles
+    try:
+        from PySide6.QtCore import QRunnable, QThreadPool, QObject, Signal
+        class _BFSignals(QObject):
+            progress = Signal(int)
+            status = Signal(str)
+            done = Signal()
+
+        class _BFJob(QRunnable):
+            def __init__(self, market_service, symbols, years, months, signals):
+                super().__init__()
+                self.ms = market_service
+                self.symbols = symbols
+                self.years = int(years)
+                self.months = int(months)
+                self.signals = signals
+
+            def run(self):
+                import math, time
+                total = 0
+                # compute total subranges estimate by summing across symbols later; we update per-symbol progressively
+                for sym in self.symbols:
+                    try:
+                        first_ts = self.ms._get_first_candle_ts(sym)
+                        if first_ts is None:
+                            continue
+                        total += 1
+                    except Exception:
+                        continue
+                done = 0
+                for sym in self.symbols:
+                    try:
+                        first_ts = self.ms._get_first_candle_ts(sym)
+                        if first_ts is None:
+                            # skip symbols with no candles at all
+                            self.signals.status.emit(f"[Backfill] Skip {sym}: no candles in DB")
+                            continue
+                        # compute start override from UI (0/0 -> full from first), else from now - (years, months)
+                        import datetime
+                        now_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+                        if (self.years == 0 and self.months == 0):
+                            start_ms = first_ts
+                        else:
+                            # approximate months as 30 days each
+                            days = self.years * 365 + self.months * 30
+                            start_ms = max(first_ts, now_ms - days * 24 * 3600 * 1000)
+                        self.signals.status.emit(f"[Backfill] {sym} starting range sync...")
+                        # nested progress bridge
+                        def _cb(p):
+                            try:
+                                self.signals.status.emit(f"[Backfill] {sym}: {p}%")
+                            except Exception:
+                                pass
+                        # use '1d' to cover all timeframes up to daily
+                        self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
+                    except Exception as e:
+                        try:
+                            self.signals.status.emit(f"[Backfill] {sym} failed: {e}")
+                        except Exception:
+                            pass
+                    finally:
+                        done += 1
+                        pct = int(min(100, max(0, done / max(1,total) * 100)))
+                        try:
+                            self.signals.progress.emit(pct)
+                        except Exception:
+                            pass
+                try:
+                    self.signals.done.emit()
+                except Exception:
+                    pass
+
+        bf_signals = _BFSignals()
+        bf_signals.status.connect(status_label.setText)
+        bf_signals.progress.connect(lambda p: status_label.setText(f"Backfill: {p}%"))
+        QThreadPool.globalInstance().start(_BFJob(market_service, chart_tab._symbols_supported, chart_tab.years_combo.currentText(), chart_tab.months_combo.currentText(), bf_signals))
+    except Exception as e:
+        logger.warning("Auto backfill job not started: {}", e)
 
     controller.signals.status.connect(status_label.setText)
     controller.signals.error.connect(status_label.setText)

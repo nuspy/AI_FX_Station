@@ -60,9 +60,19 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.adv_settings_btn)
         top_layout.addWidget(self.adv_forecast_btn)
 
-        # Backfill controls moved here (from History tab)
-        self.backfill_btn = QPushButton("Backfill Missing")
-        top_layout.addWidget(self.backfill_btn)
+        # Backfill range selectors (session-only; 0=full range)
+        from PySide6.QtWidgets import QLabel, QComboBox
+        top_layout.addWidget(QLabel("Years:"))
+        self.years_combo = QComboBox()
+        self.years_combo.addItems([str(x) for x in [0,1,2,3,4,5,10,15,20,30]])
+        self.years_combo.setCurrentText("0")
+        top_layout.addWidget(self.years_combo)
+
+        top_layout.addWidget(QLabel("Months:"))
+        self.months_combo = QComboBox()
+        self.months_combo.addItems([str(x) for x in [0,1,2,3,4,5,6,7,8,9,10,11,12]])
+        self.months_combo.setCurrentText("0")
+        top_layout.addWidget(self.months_combo)
         from PySide6.QtWidgets import QProgressBar
         self.backfill_progress = QProgressBar()
         self.backfill_progress.setMaximumWidth(160)
@@ -106,7 +116,6 @@ class ChartTab(QWidget):
         self.forecast_btn.clicked.connect(self._on_forecast_clicked)
         self.adv_settings_btn.clicked.connect(self._open_adv_forecast_settings)
         self.adv_forecast_btn.clicked.connect(self._on_advanced_forecast_clicked)
-        self.backfill_btn.clicked.connect(self._on_backfill_missing_clicked)
         self.clear_forecasts_btn.clicked.connect(self.clear_all_forecasts)
         # Symbol change
         self.symbol_combo.currentTextChanged.connect(self._on_symbol_changed)
