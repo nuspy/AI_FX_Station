@@ -11,9 +11,8 @@ Reads .env for:
 Sends a subscribe payload with 'authorization' and 'eventData.thresholdLevel' (string) and prints incoming messages.
 
 Usage:
-  pip install websocket-client simplejson
-  # create .env:
-  TIINGO_WS_URI=wss://api.tiingo.com/fx
+  pip install websocket-client python-dotenv
+  # create .env in project root:
   TIINGO_APIKEY=d867b4314010495a5fa40593610eb3deae5e2dcd
 
   python tests/manual_tests/tiingo_ws_test.py --duration 60
@@ -25,6 +24,13 @@ import json
 import time
 from pathlib import Path
 import sys
+import os
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    print("Missing dependency 'python-dotenv'. Install with: pip install python-dotenv")
+    sys.exit(1)
 
 # try to use simplejson for nicer dumps if present
 try:
@@ -32,22 +38,6 @@ try:
     _json_dumps = lambda o: sj.dumps(o, indent=2)
 except Exception:
     _json_dumps = lambda o: json.dumps(o, indent=2)
-
-def load_dotenv(path: Path) -> dict:
-    out = {}
-    if not path.exists():
-        return out
-    try:
-        for ln in path.read_text(encoding="utf-8").splitlines():
-            ln = ln.strip()
-            if not ln or ln.startswith("#"):
-                continue
-            if "=" in ln:
-                k, v = ln.split("=", 1)
-                out[k.strip()] = v.strip().strip('"').strip("'")
-    except Exception:
-        pass
-    return out
 
 def main():
     p = argparse.ArgumentParser()
@@ -58,9 +48,17 @@ def main():
     p.add_argument("--duration", type=float, help="Seconds to run (optional)")
     args = p.parse_args()
 
-    env = load_dotenv(Path(".env"))
-    uri = args.uri or env.get("TIINGO_WS_URI") or "wss://api.tiingo.com/fx"
-    api_key = args.apikey or env.get("TIINGO_APIKEY") or env.get("TIINGO_API_KEY")
+    # Load .env file from the project root
+    project_root = Path(__file__).resolve().parents[2]
+    dotenv_path = project_root / '.env'
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path)
+        print(f"Loaded environment variables from {dotenv_path}")
+    else:
+        print(f"Warning: .env file not found at {dotenv_path}")
+
+    uri = args.uri or os.environ.get("TIINGO_WS_URI") or "wss://api.tiingo.com/fx"
+    api_key = args.apikey or os.environ.get("TIINGO_APIKEY") or os.environ.get("TIINGO_API_KEY")
 
     if not api_key:
         print("Warning: TIINGO API key not set (pass --apikey or put TIINGO_APIKEY in .env). Attempting connect anyway.")
@@ -71,23 +69,19 @@ def main():
         print("Missing dependency 'websocket-client'. Install with: pip install websocket-client")
         raise SystemExit(1)
 
-    # thresholdLevel must be string per Tiingo docs
     threshold_str = str(args.threshold)
     tickers_arg = str(args.tickers).strip()
 
-    # interpret tickers argument: JSON array, or comma-separated list, or single token
-    tickers_value = tickers_arg
     try:
         if tickers_arg.startswith("[") and tickers_arg.endswith("]"):
             tickers_value = json.loads(tickers_arg)
         elif "," in tickers_arg:
             tickers_value = [t.strip() for t in tickers_arg.split(",") if t.strip()]
         else:
-            tickers_value = [tickers_arg]  # always send as array for Tiingo
+            tickers_value = [tickers_arg]
     except Exception:
         tickers_value = [tickers_arg]
 
-    # ensure lower-case tickers as Tiingo uses lower-case codes in examples
     try:
         tickers_value = [str(t).lower() for t in tickers_value]
     except Exception:
@@ -127,12 +121,10 @@ def main():
                     continue
                 try:
                     obj = json.loads(msg)
-                    # If array message type "A" with data like ["Q","eurnok",timestamp,...], print compactly
                     try:
                         mtype = obj.get("messageType")
                         if mtype == "A" and isinstance(obj.get("data"), list):
                             data = obj["data"]
-                            # expected layout: ["Q", "pair", "iso_ts", size, bid, ask, ...] (varies)
                             tag = data[0] if len(data) > 0 else ""
                             pair = data[1] if len(data) > 1 else ""
                             iso_ts = data[2] if len(data) > 2 else ""

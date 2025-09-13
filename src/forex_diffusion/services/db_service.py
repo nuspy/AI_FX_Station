@@ -92,7 +92,6 @@ class DBService:
             Column("stop_price", Float, nullable=False),
             Column("metrics", Text, nullable=True),
         )
-        # Ensure latents table exists (latent vectors used by ML pipeline)
         self.latents_tbl = Table(
             "latents",
             meta,
@@ -134,7 +133,6 @@ class DBService:
         self.market_data_ticks_tbl.append_constraint(
             UniqueConstraint("symbol", "ts_utc", "price", name="uq_market_data_ticks")
         )
-        # Optional aggregated ticks table
         self.ticks_tbl = Table(
             "ticks_aggregate",
             meta,
@@ -148,7 +146,6 @@ class DBService:
         self.ticks_tbl.append_constraint(
             UniqueConstraint("symbol", "timeframe", "ts_utc", name="uq_ticks_aggregate")
         )
-        # Metrics table for various operational metrics
         self.metrics_tbl = Table(
             "metrics",
             meta,
@@ -158,151 +155,56 @@ class DBService:
             Column("labels", Text, nullable=True),
             Column("ts_created_ms", Integer, nullable=False, index=True),
         )
-        # Create all tables (idempotent)
         meta.create_all(self.engine)
 
     # fmt: on
 
-    # Ensure additional columns exist on existing DB (e.g. regime_label added later)
     def _ensure_latents_columns(self) -> None:
-        """
-        Ensure 'regime_label' column exists in latents table for existing DBs.
-        """
         try:
             from sqlalchemy import text
-
-            dialect = getattr(self.engine, "dialect", None)
-            name = dialect.name.lower() if dialect is not None else ""
-            if name == "sqlite":
+            dialect = self.engine.dialect.name.lower()
+            if dialect == "sqlite":
                 with self.engine.connect() as conn:
                     rows = conn.execute(text("PRAGMA table_info(latents)")).fetchall()
-                    existing_cols = [r[1] for r in rows]
-                    if "regime_label" not in existing_cols:
-                        logger.info(
-                            "Adding missing column 'regime_label' to latents table."
-                        )
-                        conn.execute(
-                            text("ALTER TABLE latents ADD COLUMN regime_label VARCHAR(32)")
-                        )
-            else:
-                try:
-                    with self.engine.begin() as conn:
-                        conn.execute(
-                            text("ALTER TABLE latents ADD COLUMN regime_label VARCHAR(32)")
-                        )
-                except Exception:
-                    logger.debug(
-                        "Non-sqlite DB: attempted to add regime_label column; ignoring errors."
-                    )
+                    if "regime_label" not in [r[1] for r in rows]:
+                        conn.execute(text("ALTER TABLE latents ADD COLUMN regime_label VARCHAR(32)"))
         except Exception as e:
-            logger.debug("Failed to ensure latents columns: {}", e)
+            logger.debug(f"Failed to ensure latents columns: {e}")
 
     def write_prediction(self, payload: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
-                conn.execute(
-                    self.pred_tbl.insert().values(
-                        symbol=payload.get("symbol"),
-                        timeframe=payload.get("timeframe"),
-                        ts_created_ms=int(time.time() * 1000),
-                        horizon=payload.get("horizon"),
-                        q05=float(payload.get("q05", 0.0)),
-                        q50=float(payload.get("q50", 0.0)),
-                        q95=float(payload.get("q95", 0.0)),
-                        meta=json.dumps(payload.get("meta")) if payload.get("meta") is not None else None,
-                    )
-                )
+                conn.execute(self.pred_tbl.insert().values(**payload))
         except Exception as e:
-            logger.exception("Failed to write prediction: {}", e)
-            raise
+            logger.exception(f"Failed to write prediction: {e}")
 
     def write_calibration_record(self, payload: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
-                conn.execute(
-                    self.cal_tbl.insert().values(
-                        symbol=payload.get("symbol"),
-                        timeframe=payload.get("timeframe"),
-                        ts_created_ms=int(payload.get("ts_created_ms", time.time() * 1000)),
-                        alpha=float(payload.get("alpha", 0.1)),
-                        delta_global=float(payload.get("delta_global", 0.0)),
-                        details=json.dumps(payload.get("details", {})),
-                    )
-                )
+                conn.execute(self.cal_tbl.insert().values(**payload))
         except Exception as e:
-            logger.exception("Failed to write calibration record: {}", e)
-            raise
+            logger.exception(f"Failed to write calibration record: {e}")
 
     def write_signal(self, payload: Dict[str, Any]):
         try:
             with self.engine.begin() as conn:
-                conn.execute(
-                    self.sig_tbl.insert().values(
-                        symbol=payload.get("symbol"),
-                        timeframe=payload.get("timeframe"),
-                        ts_created_ms=int(time.time() * 1000),
-                        entry_price=float(payload.get("entry_price", 0.0)),
-                        target_price=float(payload.get("target_price", 0.0)),
-                        stop_price=float(payload.get("stop_price", 0.0)),
-                        metrics=json.dumps(payload.get("metrics", {})),
-                    )
-                )
+                conn.execute(self.sig_tbl.insert().values(**payload))
         except Exception as e:
-            logger.exception("Failed to write signal: {}", e)
-            raise
+            logger.exception(f"Failed to write signal: {e}")
 
     def write_tick(self, payload: Dict[str, Any]) -> bool:
-        """
-        Insert a raw tick into market_data_ticks table. Handles duplicates gracefully.
-        """
         logger.debug(f"TRACE: write_tick: Received payload: {payload}")
         try:
-            required = ["symbol", "ts_utc"]
-            if not all(k in payload for k in required):
-                logger.warning(f"write_tick missing required keys in payload: {payload}")
-                return False
-
             if "ts_created_ms" not in payload:
                 payload["ts_created_ms"] = int(time.time() * 1000)
 
             with self.engine.begin() as conn:
-                from sqlalchemy.dialects.postgresql import insert as pg_insert
                 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
-                dialect = self.engine.dialect.name
-                stmt = None
-                if dialect == "postgresql":
-                    logger.debug(f"TRACE: write_tick: Using PostgreSQL insert for {payload.get('symbol')}")
-                    stmt = pg_insert(self.market_data_ticks_tbl).values(payload)
-                    stmt = stmt.on_conflict_do_nothing(
-                        index_elements=["symbol", "ts_utc", "price"]
-                    )
-                elif dialect == "sqlite":
-                    logger.debug(f"TRACE: write_tick: Using SQLite insert for {payload.get('symbol')}")
-                    stmt = sqlite_insert(self.market_data_ticks_tbl).values(payload)
-                    stmt = stmt.on_conflict_do_nothing()
-
-                if stmt is not None:
-                    result = conn.execute(stmt)
-                    logger.debug(f"TRACE: write_tick: Dialect-specific insert executed. Rowcount: {result.rowcount}")
-                else:  # Generic fallback
-                    logger.debug(f"TRACE: write_tick: Executing generic insert for {payload.get('symbol')}")
-
-                    try:
-                        conn.execute(self.market_data_ticks_tbl.insert().values(payload))
-                        logger.debug(f"TRACE: write_tick: Generic insert executed.")
-
-                    except Exception as e:
-                        if "UNIQUE constraint" in str(e) or "duplicate key" in str(e):
-                            logger.debug(
-                                f"TRACE: write_tick: Duplicate tick skipped via exception for {payload.get('symbol')}")
-
-                        else:
-                            logger.exception(f"TRACE: write_tick: Insert failed with an unexpected error for {payload.get('symbol')}")
-
-                            raise
+                stmt = sqlite_insert(self.market_data_ticks_tbl).values(payload)
+                stmt = stmt.on_conflict_do_nothing()
+                result = conn.execute(stmt)
+                logger.debug(f"TRACE: write_tick: Insert executed. Rowcount: {result.rowcount}")
             return True
         except Exception as e:
-            logger.exception(f"TRACE: write_tick: write_tick failed for payload {payload}: {e}")
-
+            logger.exception(f"TRACE: write_tick failed for payload {payload}: {e}")
             return False

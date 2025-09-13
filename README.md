@@ -6,7 +6,7 @@ MagicForex — guida rapida (locale)
    pip install websocket-client
 
 2) Provider realtime:
-   - Default: tiingo (REST). Se provider espone WebSocket, RealTimeIngestService userà lo streaming.
+   - Default: tiingo (REST). Se provider espone WebSocket, RealTimeIngestionService userà lo streaming.
    - Puoi cambiare provider dalla UI (SignalsTab) o in configs/default.yaml -> providers.default
 
 3) Avvia GUI:

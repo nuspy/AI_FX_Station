@@ -18,7 +18,7 @@ from ..services.db_service import DBService
 from loguru import logger
 from PySide6.QtWidgets import QWidget
 
-def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engine_url: str = "http://127.0.0.1:8000") -> dict:
+def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engine_url: str = "http://127.0.0.1:8000", use_test_server: bool = False) -> dict:
     """
     Initialize UI wiring and services.
     """
@@ -26,27 +26,21 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
     result: dict[str, Any] = {}
     try:
         market_service = MarketDataService()
-        try:
-            market_service.set_provider("tiingo")
-            logger.info("Forced MarketDataService provider to tiingo at startup")
-        except Exception as e:
-            logger.warning("Could not force MarketDataService provider to tiingo: {}", e)
-
         controller = UIController(main_window=main_window, market_service=market_service, engine_url=engine_url)
         try:
             controller.bind_menu_signals(menu_bar.signals)
         except Exception as e:
-            logger.warning("Menu signals binding failed: {}", e)
+            logger.warning(f"Menu signals binding failed: {e}")
         
         result["controller"] = controller
     except Exception as e:
-        logger.exception("Failed to initialize UI controller: {}", e)
+        logger.exception(f"Failed to initialize UI controller: {e}")
 
     try:
         db_service = DBService()
         result["db_service"] = db_service
     except Exception as e:
-        logger.exception("Failed to initialize DBService: {}", e)
+        logger.exception(f"Failed to initialize DBService: {e}")
         db_service = None
 
     try:
@@ -61,7 +55,16 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
 
     try:
         from ..services.tiingo_ws_connector import TiingoWSConnector
-        connector = TiingoWSConnector(api_key=os.environ.get("TIINGO_APIKEY"), tickers=["eurusd"], threshold="5")
+        ws_uri = "ws://127.0.0.1:8766" if use_test_server else "wss://api.tiingo.com/fx"
+        if use_test_server:
+            logger.info(f"Redirecting Tiingo WebSocket to test server: {ws_uri}")
+
+        connector = TiingoWSConnector(
+            uri=ws_uri,
+            api_key=os.environ.get("TIINGO_APIKEY"), 
+            tickers=["eurusd"], 
+            threshold="5"
+        )
         connector.start()
         result["tiingo_ws_connector"] = connector
         logger.info("TiingoWSConnector requested to start")
@@ -84,8 +87,8 @@ def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engin
         from PySide6.QtWidgets import QTabWidget
 
         tabw = QTabWidget()
-        signals_tab = SignalsTab(main_window, db_service=db_service, market_service=market_service)
-        history_tab = HistoryTab(main_window, db_service=db_service, market_service=market_service)
+        signals_tab = SignalsTab(main_window, db_service=db_service)
+        history_tab = HistoryTab(main_window, db_service=db_service)
         chart_tab = ChartTab(main_window)
 
         if "controller" in result:

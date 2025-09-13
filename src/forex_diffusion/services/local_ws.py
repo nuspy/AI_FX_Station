@@ -6,98 +6,77 @@ import json
 import threading
 from typing import Optional
 
-import pandas as pd
 from loguru import logger
 
-# import websockets lazily / defensively
 try:
-    import websockets  # type: ignore
-    _HAS_WEBSOCKETS = True
-except Exception:
+    import websockets
+except ImportError:
     websockets = None
-    _HAS_WEBSOCKETS = False
 
-from ..utils.event_bus import publish
 from ..services.db_service import DBService
-from ..data import io as data_io
-
 
 class LocalWebsocketServer:
     """
-    Simple WebSocket server that accepts JSON messages with fields:
-      { "symbol": "EUR/USD", "timeframe": "1m", "ts_utc": 1660000000000, "price": 1.12345 }
-    On message it:
-      - creates a 1-row candle (open/high/low/close=price) and upserts into market_data_candles
-      - publishes an internal event 'tick' with dict(payload)
-    Runs in a background thread with its own asyncio loop.
+    A simple WebSocket server that listens for tick data, and directly persists it
+    to the database using DBService.
     """
     def __init__(self, host: str = "127.0.0.1", port: int = 8765, db_service: Optional[DBService] = None):
         self.host = host
         self.port = int(port)
         self._thread: Optional[threading.Thread] = None
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self.db_service = db_service or DBService()
 
     async def _handler(self, websocket, path):
+        """Handles incoming messages, persisting them directly."""
+        logger.info(f"LocalWS: Client connected from {path}")
         async for message in websocket:
             try:
                 data = json.loads(message)
-                # normalize expected fields
-                symbol = data.get("symbol")
-                timeframe = data.get("timeframe", "1m")
-                ts = int(data.get("ts_utc", 0))
-                price = float(data.get("price", 0.0))
-                # build candle df
-                df = pd.DataFrame([{
-                    "ts_utc": int(ts),
-                    "open": float(price),
-                    "high": float(price),
-                    "low": float(price),
-                    "close": float(price),
-                    "volume": None
-                }])
-                try:
-                    # upsert into DB
-                    data_io.upsert_candles(self.db_service.engine, df, symbol, timeframe, resampled=False)
-                except Exception as e:
-                    logger.exception("local_ws: failed to upsert candle: {}", e)
-                # publish internal event for UI subscribers
-                publish("tick", {"symbol": symbol, "timeframe": timeframe, "ts_utc": ts, "price": price})
+                if "symbol" not in data or "ts_utc" not in data:
+                    logger.warning(f"local_ws: received message without required fields: {data}")
+                    continue
+                
+                # Directly write the tick to the database
+                self.db_service.write_tick(data)
+                logger.debug(f"local_ws: Persisted tick for {data.get('symbol')}")
+
             except Exception as e:
-                logger.exception("local_ws: failed to process message: {}", e)
+                logger.exception(f"local_ws: Failed to process message: {e}")
 
     def _start_loop(self):
+        """Runs the asyncio event loop in a separate thread."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        server = websockets.serve(self._handler, self.host, self.port, loop=loop)
-        srv = loop.run_until_complete(server)
-        logger.info("LocalWebsocketServer started on ws://{}:{}", self.host, self.port)
+
+        async def server_main():
+            async with websockets.serve(self._handler, self.host, self.port):
+                logger.info(f"LocalWebsocketServer started on ws://{self.host}:{self.port}")
+                await self._stop_event.wait()
+                logger.info("LocalWebsocketServer shutting down...")
+
         try:
-            loop.run_forever()
+            loop.run_until_complete(server_main())
         finally:
-            loop.run_until_complete(srv.wait_closed())
             loop.close()
+            logger.info("LocalWebsocketServer event loop closed.")
 
     def start(self) -> bool:
-        """
-        Start websocket server in background thread. Returns True if server thread started, False otherwise.
-        """
-        if not _HAS_WEBSOCKETS:
-            logger.warning("LocalWebsocketServer not started: 'websockets' package is not installed.")
+        if not websockets:
+            logger.warning("LocalWebsocketServer not started: 'websockets' package not installed.")
             return False
         if self._thread and self._thread.is_alive():
-            logger.debug("LocalWebsocketServer already running (thread alive).")
             return True
-        try:
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._start_loop, daemon=True)
-            self._thread.start()
-            logger.debug("LocalWebsocketServer thread launched.")
-            return True
-        except Exception as e:
-            logger.exception("LocalWebsocketServer failed to start thread: {}", e)
-            return False
+        
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._start_loop, daemon=True)
+        self._thread.start()
+        logger.debug("LocalWebsocketServer thread launched.")
+        return True
 
     def stop(self):
-        self._stop.set()
-        # Stopping asyncio loop gracefully is handled by thread exit
+        logger.info("Stopping LocalWebsocketServer...")
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        logger.info("LocalWebsocketServer stopped.")

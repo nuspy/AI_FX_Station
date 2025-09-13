@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Start a local RealTimeIngestService for testing.
+Start a local RealTimeIngestionService for testing.
 
 Usage (PowerShell):
   python .\\scripts\\start_realtime.py
 Press Ctrl+C to stop.
 
-This script starts DBWriter (if available), a MarketDataService and RealTimeIngestService
+This script starts DBWriter (if available), a MarketDataService and RealTimeIngestionService
 which polls provider current price and upserts 1m candles + tick aggregates.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from loguru import logger
 try:
     from src.forex_diffusion.services.db_service import DBService
     from src.forex_diffusion.services.marketdata import MarketDataService
-    from src.forex_diffusion.services.realtime import RealTimeIngestService
+    from src.forex_diffusion.services.realtime import RealTimeIngestionService
     from src.forex_diffusion.services.db_writer import DBWriter
 except Exception as e:
     print("Failed to import project services:", e)
@@ -42,13 +42,13 @@ def main():
         print("DBWriter not started (optional):", e)
         db_writer = None
 
-    # Create RealTimeIngestService (uses config for symbols by default)
-    rt = RealTimeIngestService(engine=db.engine, market_service=msvc, timeframe="1m", poll_interval=1.0, db_writer=db_writer)
+    # Create RealTimeIngestionService (uses config for symbols by default)
+    rt = RealTimeIngestionService(engine=db.engine, market_service=msvc, timeframe="1m", poll_interval=1.0, db_writer=db_writer)
     try:
         rt.start()
-        print("RealTimeIngestService started. Poll interval:", rt.poll_interval, "s")
+        print("RealTimeIngestionService started. Poll interval:", rt.poll_interval, "s")
     except Exception as e:
-        print("Failed to start RealTimeIngestService:", e)
+        print("Failed to start RealTimeIngestionService:", e)
         if db_writer:
             db_writer.stop()
         return
