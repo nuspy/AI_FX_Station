@@ -44,7 +44,7 @@ class ChartTab(QWidget):
         from PySide6.QtWidgets import QComboBox
         self.symbol_combo = QComboBox()
         # Requested pairs
-        self._symbols_supported = ["AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"]
+        self._symbols_supported = ["EUR/USD","GBP/USD","AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"]
         self.symbol_combo.addItems(self._symbols_supported)
         top_layout.addWidget(self.symbol_combo)
 

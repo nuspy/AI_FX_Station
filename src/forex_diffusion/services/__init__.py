@@ -1,8 +1,8 @@
 # services package initializer
-from .marketdata import MarketDataService, AlphaVantageClient
+from .marketdata import MarketDataService
 from .db_service import DBService
 from .aggregator import AggregatorService
 from .realtime import RealTimeIngestionService
 
 
-__all__ = ["MarketDataService", "AlphaVantageClient", "DBService", "AggregatorService", "RealTimeIngestionService"]
+__all__ = ["MarketDataService",  "DBService", "AggregatorService", "RealTimeIngestionService"]

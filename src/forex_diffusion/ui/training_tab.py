@@ -48,7 +48,7 @@ class TrainingTab(QWidget):
         # Top controls
         top = QHBoxLayout()
         top.addWidget(QLabel("Symbol:"))
-        self.symbol_combo = QComboBox(); self.symbol_combo.addItems(["AUX/USD","GBP/NZD","AUD/JPY","GBP/EUR","GBP/AUD"])
+        self.symbol_combo = QComboBox(); self.symbol_combo.addItems(["EUR/USD","GBP/USD","AUX/USD","GBP/NZD","AUD/JPY","GBP/EUR","GBP/AUD"])
         top.addWidget(self.symbol_combo)
 
         top.addWidget(QLabel("Base TF:"))

@@ -26,7 +26,7 @@ Indice
 Apri la Tab “Training”. La UI è composta da:
 
 1) Controlli principali
-- Symbol: coppia FX su cui addestrare (selezione tra: AUX/USD, GBP/NZD, AUD/JPY, GBP/EUR, GBP/AUD).
+- Symbol: coppia FX su cui addestrare (selezione tra: EUR/USD, GBP/USD, AUX/USD, GBP/NZD, AUD/JPY, GBP/EUR, GBP/AUD).
 - Base TF: timeframe principale (es. 1m).
 - Days history: numero di giorni di storico da utilizzare.
 - Horizon (bars): orizzonte target in barre (per supervised learning).
