@@ -1,138 +1,99 @@
 """
 UI application helpers for MagicForex GUI.
-
-Provides setup_ui(...) to initialize controller, SignalsTab, DBWriter and wire signals
-in a safe, well-indented manner. Call setup_ui from your MainWindow or app entrypoint.
 """
-
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any
 
-from .signals_tab import SignalsTab
-from ..services.marketdata import MarketDataService
-from .controllers import UIController
-from ..services.db_service import DBService
 from loguru import logger
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QTabWidget
 
-def setup_ui(main_window: QWidget, layout, menu_bar, viewer, status_label, engine_url: str = "http://127.0.0.1:8000", use_test_server: bool = False) -> dict:
+from ..services.db_service import DBService
+from ..services.db_writer import DBWriter
+from ..services.marketdata import MarketDataService
+from ..services.tiingo_ws_connector import TiingoWSConnector
+from ..services.local_ws import LocalWebsocketServer
+from ..services.aggregator import AggregatorService
+from .controllers import UIController
+from .history_tab import HistoryTab
+from .signals_tab import SignalsTab
+from .chart_tab import ChartTab
+
+def setup_ui(
+    main_window: QWidget, 
+    layout, 
+    menu_bar, 
+    viewer, 
+    status_label, 
+    engine_url: str = "http://127.0.0.1:8000", 
+    use_test_server: bool = False
+) -> dict:
     """
-    Initialize UI wiring and services.
+    Initializes all UI components, services, and their connections.
     """
     logger.critical("--- EXECUTING LATEST APP.PY VERSION ---")
     result: dict[str, Any] = {}
-    try:
-        market_service = MarketDataService()
-        controller = UIController(main_window=main_window, market_service=market_service, engine_url=engine_url)
-        try:
-            controller.bind_menu_signals(menu_bar.signals)
-        except Exception as e:
-            logger.warning(f"Menu signals binding failed: {e}")
-        
-        result["controller"] = controller
-    except Exception as e:
-        logger.exception(f"Failed to initialize UI controller: {e}")
 
-    try:
-        db_service = DBService()
-        result["db_service"] = db_service
-    except Exception as e:
-        logger.exception(f"Failed to initialize DBService: {e}")
-        db_service = None
+    # --- Core Services ---
+    db_service = DBService()
+    market_service = MarketDataService(database_url=db_service.engine.url)
+    db_writer = DBWriter(db_service=db_service)
+    db_writer.start()
 
-    try:
-        from ..services.local_ws import LocalWebsocketServer
-        ws_port = 8765
-        local_ws = LocalWebsocketServer(host="127.0.0.1", port=ws_port, db_service=db_service)
-        if local_ws.start():
-            result["local_ws"] = local_ws
-            logger.info(f"Started LocalWebsocketServer on port {ws_port}")
-    except Exception as e:
-        logger.exception(f"Failed to start LocalWebsocketServer: {e}")
+    result["db_service"] = db_service
+    result["market_service"] = market_service
+    result["db_writer"] = db_writer
 
-    try:
-        from ..services.tiingo_ws_connector import TiingoWSConnector
-        ws_uri = "ws://127.0.0.1:8766" if use_test_server else "wss://api.tiingo.com/fx"
-        if use_test_server:
-            logger.info(f"Redirecting Tiingo WebSocket to test server: {ws_uri}")
+    # --- Start Aggregator Service ---
+    symbols_to_aggregate = ["EUR/USD"] # Or load from config
+    aggregator = AggregatorService(engine=db_service.engine, symbols=symbols_to_aggregate)
+    aggregator.start()
+    result["aggregator"] = aggregator
+    logger.info("AggregatorService started.")
 
-        connector = TiingoWSConnector(
-            uri=ws_uri,
-            api_key=os.environ.get("TIINGO_APIKEY"), 
-            tickers=["eurusd"], 
-            threshold="5"
-        )
-        connector.start()
-        result["tiingo_ws_connector"] = connector
-        logger.info("TiingoWSConnector requested to start")
-    except Exception as e:
-        logger.debug(f"Failed to start TiingoWSConnector: {e}")
+    # --- UI Tabs and Controller ---
+    controller = UIController(main_window=main_window, market_service=market_service, db_writer=db_writer)
+    controller.bind_menu_signals(menu_bar.signals)
+    result["controller"] = controller
 
-    db_writer = None
-    if db_service:
-        try:
-            from ..services.db_writer import DBWriter
-            db_writer = DBWriter(db_service=db_service)
-            db_writer.start()
-            result["db_writer"] = db_writer
-        except Exception as e:
-            logger.exception(f"Failed to initialize DBWriter: {e}")
+    tab_widget = QTabWidget()
+    signals_tab = SignalsTab(main_window, db_service=db_service)
+    history_tab = HistoryTab(main_window, db_service=db_service)
+    chart_tab = ChartTab(main_window)
+    
+    tab_widget.addTab(signals_tab, "Signals")
+    tab_widget.addTab(history_tab, "History")
+    tab_widget.addTab(chart_tab, "Chart")
+    layout.addWidget(tab_widget)
+    result["chart_tab"] = chart_tab
 
-    try:
-        from .history_tab import HistoryTab
-        from .chart_tab import ChartTab
-        from PySide6.QtWidgets import QTabWidget
+    # --- WebSocket and Direct Data Flow ---
+    ws_uri = "ws://127.0.0.1:8766" if use_test_server else "wss://api.tiingo.com/fx"
+    if use_test_server:
+        logger.info(f"Redirecting Tiingo WebSocket to test server: {ws_uri}")
 
-        tabw = QTabWidget()
-        signals_tab = SignalsTab(main_window, db_service=db_service)
-        history_tab = HistoryTab(main_window, db_service=db_service)
-        chart_tab = ChartTab(main_window)
+    connector = TiingoWSConnector(
+        uri=ws_uri,
+        api_key=os.environ.get("TIINGO_APIKEY"),
+        tickers=["eurusd"],
+        chart_handler=chart_tab._handle_tick,
+        db_handler=db_writer.write_tick_async
+    )
+    connector.start()
+    result["tiingo_ws_connector"] = connector
+    logger.info("TiingoWSConnector started with direct handlers for ChartTab and DBWriter.")
 
-        if "controller" in result:
-            chart_tab.forecastRequested.connect(result["controller"].handle_forecast_requested)
-            result["controller"].signals.forecastReady.connect(chart_tab.update_plot)
-            result["controller"].signals.status.connect(lambda s: status_label.setText(f"Status: {s}"))
-            result["controller"].signals.error.connect(lambda e: status_label.setText(f"Error: {e}"))
-            if db_writer:
-                result["controller"].db_writer = db_writer
+    # --- Final UI Setup ---
+    history_tab.chart_tab = chart_tab
+    default_symbol = "EUR/USD"
+    default_tf = "1m"
+    chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
+    history_tab.symbol_combo.setCurrentText(default_symbol)
+    history_tab.tf_combo.setCurrentText(default_tf)
+    history_tab.refresh(limit=500)
 
-        try:
-            from .event_bridge import EventBridge
-            from ..utils.event_bus import subscribe as _eb_subscribe
-            bridge = EventBridge(main_window)
-            _eb_subscribe("tick", bridge._on_event)
-            bridge.tickReceived.connect(chart_tab._handle_tick)
-            logger.debug("Connected EventBridge to ChartTab for UI updates.")
-            
-            if db_writer:
-                bridge.tickReceived.connect(db_writer.write_tick_async)
-                logger.debug("Connected EventBridge to DBWriter for tick persistence.")
-
-        except Exception as e:
-            logger.debug(f"Failed to set up EventBridge: {e}")
-
-        tabw.addTab(signals_tab, "Signals")
-        tabw.addTab(history_tab, "History")
-        tabw.addTab(chart_tab, "Chart")
-        layout.addWidget(tabw)
-
-        history_tab.chart_tab = chart_tab
-        default_symbol = "EUR/USD"
-        default_tf = "1m"
-        history_tab.symbol_combo.setCurrentText(default_symbol)
-        history_tab.tf_combo.setCurrentText(default_tf)
-        chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
-        history_tab.refresh(limit=500)
-
-        result["signals_tab"] = signals_tab
-        result["history_tab"] = history_tab
-        result["chart_tab"] = chart_tab
-        result["market_service"] = market_service
-
-    except Exception as e:
-        logger.exception(f"Failed to initialize UI tabs: {e}")
+    controller.signals.status.connect(status_label.setText)
+    controller.signals.error.connect(status_label.setText)
 
     return result

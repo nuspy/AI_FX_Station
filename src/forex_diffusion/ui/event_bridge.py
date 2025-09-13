@@ -8,28 +8,21 @@ from typing import Any
 class EventBridge(QObject):
     """
     Bridge between in-process event_bus and Qt main thread.
-    Subscribe event_bus to call bridge._on_event(payload).
-    The bridge emits tickReceived(payload) signal which is delivered to UI thread via Qt queued connections.
     """
     tickReceived = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        try:
-            logger.debug("EventBridge initialized")
-        except Exception:
-            pass
+        logger.debug("EventBridge initialized")
 
     def _on_event(self, payload: Any) -> None:
         """
-        Callback to be registered with event_bus.subscribe('tick', bridge._on_event).
-        Can be called from any thread; emitting a Qt Signal will deliver to UI thread.
+        Callback registered with event_bus.subscribe('tick', ...).
+        This method is called from a background thread. It emits a Qt signal,
+        which safely queues the payload for processing on the main UI thread.
         """
         try:
-            # emit payload to UI; Qt will queue the signal to the object's thread (UI thread)
+            logger.debug(f"EventBridge received event, emitting tickReceived signal...")
             self.tickReceived.emit(payload)
         except Exception as e:
-            try:
-                logger.exception("EventBridge failed to emit tick: {}", e)
-            except Exception:
-                pass
+            logger.exception(f"EventBridge failed to emit tick: {e}")

@@ -40,33 +40,38 @@ async def data_sender(websocket):
     simulators = {}
     last_heartbeat_time = time.time()
 
-    while websocket.open:
-        await asyncio.sleep(1)
-        if client_id not in SUBSCRIPTIONS:
-            continue
+    while True:
+        try:
+            await asyncio.sleep(1)
+            if client_id not in SUBSCRIPTIONS:
+                continue
 
-        for ticker in SUBSCRIPTIONS[client_id]:
-            if ticker not in simulators:
-                simulators[ticker] = MarketSimulator()
+            # Create simulators for newly subscribed tickers
+            for ticker in SUBSCRIPTIONS.get(client_id, []):
+                if ticker not in simulators:
+                    simulators[ticker] = MarketSimulator()
 
-        for ticker, simulator in simulators.items():
-            tick_data = simulator.next_tick()
-            message = {
-                "service": "fx", "messageType": "A",
-                "data": ["Q", ticker, datetime.now(timezone.utc).isoformat(), 1000000.0, tick_data["bid"], tick_data["ask"], tick_data["price"]]
-            }
-            try:
+            # Generate and send a data message for each subscribed ticker
+            for ticker, simulator in simulators.items():
+                tick_data = simulator.next_tick()
+                message = {
+                    "service": "fx", "messageType": "A",
+                    "data": ["Q", ticker, datetime.now(timezone.utc).isoformat(), 1000000.0, tick_data["bid"], tick_data["ask"], tick_data["price"]]
+                }
                 await websocket.send(json.dumps(message))
-            except websockets.ConnectionClosed:
-                break
 
-        if time.time() - last_heartbeat_time > 15:
-            heartbeat = {"response": {"code": 200, "message": "HeartBeat"}, "messageType": "H"}
-            try:
+            # Send a heartbeat every 15 seconds
+            if time.time() - last_heartbeat_time > 15:
+                heartbeat = {"response": {"code": 200, "message": "HeartBeat"}, "messageType": "H"}
                 await websocket.send(json.dumps(heartbeat))
                 last_heartbeat_time = time.time()
-            except websockets.ConnectionClosed:
-                break
+
+        except websockets.ConnectionClosed:
+            print(f"Connection closed for client {client_id}. Stopping data sender.")
+            break
+        except Exception as e:
+            print(f"Error in data_sender for client {client_id}: {e}")
+            break
 
 async def message_receiver(websocket):
     client_id = id(websocket)
@@ -90,9 +95,9 @@ async def message_receiver(websocket):
         if client_id in SUBSCRIPTIONS:
             del SUBSCRIPTIONS[client_id]
 
-async def handler(websocket, path):
+async def handler(websocket):
     client_id = id(websocket)
-    print(f"Client {client_id} connected from {path}")
+    print(f"Client {client_id} connected.")
     CONNECTED_CLIENTS.add(websocket)
     
     receiver_task = asyncio.create_task(message_receiver(websocket))
@@ -104,7 +109,8 @@ async def handler(websocket, path):
             task.cancel()
     finally:
         print(f"Client {client_id} disconnected.")
-        CONNECTED_CLIENTS.remove(websocket)
+        if websocket in CONNECTED_CLIENTS:
+            CONNECTED_CLIENTS.remove(websocket)
 
 async def main():
     parser = argparse.ArgumentParser(description="Tiingo WebSocket Simulator")

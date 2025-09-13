@@ -29,7 +29,7 @@ class LocalWebsocketServer:
 
     async def _handler(self, websocket, path):
         """Handles incoming messages, persisting them directly."""
-        logger.info(f"LocalWS: Client connected from {path}")
+        logger.critical(f"--- LOCAL_WS: NEW CLIENT CONNECTED FROM {path} ---")
         async for message in websocket:
             try:
                 data = json.loads(message)
@@ -37,7 +37,6 @@ class LocalWebsocketServer:
                     logger.warning(f"local_ws: received message without required fields: {data}")
                     continue
                 
-                # Directly write the tick to the database
                 self.db_service.write_tick(data)
                 logger.debug(f"local_ws: Persisted tick for {data.get('symbol')}")
 
@@ -53,7 +52,6 @@ class LocalWebsocketServer:
             async with websockets.serve(self._handler, self.host, self.port):
                 logger.info(f"LocalWebsocketServer started on ws://{self.host}:{self.port}")
                 await self._stop_event.wait()
-                logger.info("LocalWebsocketServer shutting down...")
 
         try:
             loop.run_until_complete(server_main())

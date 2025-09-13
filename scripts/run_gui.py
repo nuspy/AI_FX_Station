@@ -3,16 +3,6 @@
 scripts/run_gui.py
 
 Standalone runner for the MagicForex GUI.
-
-Usage:
-  # Ensure dependencies are installed
-  pip install -e .
-
-  # Run the GUI with live data
-  python scripts/run_gui.py
-
-  # Run with the integrated test server for offline development
-  python scripts/run_gui.py --testserver
 """
 from __future__ import annotations
 
@@ -32,6 +22,7 @@ project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
 from src.forex_diffusion.ui.menus import MainMenuBar
+from src.forex_diffusion.ui.viewer import ViewerWidget
 from src.forex_diffusion.ui.app import setup_ui
 
 def cleanup():
@@ -62,11 +53,8 @@ def main():
             if not simulator_script_path.exists():
                 raise FileNotFoundError(f"Simulator script not found at {simulator_script_path}")
             
-            # Launch the simulator in a new process
             simulator_process = subprocess.Popen([sys.executable, str(simulator_script_path)])
             logger.info(f"Launched Tiingo simulator process (PID: {simulator_process.pid})")
-            
-            # Register the cleanup function to run on exit
             atexit.register(cleanup)
 
         except Exception as e:
@@ -78,7 +66,7 @@ def main():
     app = QApplication(sys.argv)
     main_win = QMainWindow()
     main_win.setWindowTitle("Forex-Diffusion")
-    main_win.setGeometry(100, 100, 1200, 800)
+    main_win.setGeometry(100, 100, 1600, 900)
 
     central_widget = QWidget()
     main_win.setCentralWidget(central_widget)
@@ -92,12 +80,13 @@ def main():
     status_bar.addWidget(status_label)
     main_win.setStatusBar(status_bar)
 
-    # The viewer is now managed internally by the ChartTab, so we pass None.
+    viewer = ViewerWidget()
+    
     setup_ui(
         main_window=main_win, 
         layout=layout, 
         menu_bar=menu_bar, 
-        viewer=None, 
+        viewer=viewer, 
         status_label=status_label,
         use_test_server=args.testserver
     )
