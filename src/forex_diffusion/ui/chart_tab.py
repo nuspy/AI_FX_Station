@@ -8,7 +8,7 @@ import time
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSpinBox
+    QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem
 )
 from PySide6.QtCore import QTimer, Qt, Signal
 from matplotlib.figure import Figure
@@ -68,7 +68,7 @@ class ChartTab(QWidget):
         self.years_combo.setCurrentText("0")
         top_layout.addWidget(self.years_combo)
 
-        top_layout.addWidget(QLabel("Months:"))
+        top_layout.addWidget(QLabel("Months :"))
         self.months_combo = QComboBox()
         self.months_combo.addItems([str(x) for x in [0,1,2,3,4,5,6,7,8,9,10,11,12]])
         self.months_combo.setCurrentText("0")
@@ -129,34 +129,110 @@ class ChartTab(QWidget):
             pass
 
     def _handle_tick(self, payload: dict):
-        """Receives tick data, updates the internal DataFrame, and redraws the chart."""
+        """Receives tick data, updates chart buffer, market watch, and redraws."""
         try:
             if not isinstance(payload, dict):
                 return
-
-            new_row = pd.DataFrame([payload])
-            self._last_df = pd.concat([self._last_df, new_row], ignore_index=True)
-            self._last_df.drop_duplicates(subset=['ts_utc'], keep='last', inplace=True)
-
-            # Preserve zoom/pan: read limits before clear
+            sym = payload.get("symbol") or getattr(self, "symbol", None)
+            # Market watch update
             try:
-                prev_xlim = self.ax.get_xlim()
-                prev_ylim = self.ax.get_ylim()
+                px = payload.get("price")
+                if px is not None and sym:
+                    for i in range(self.market_watch.count()):
+                        it = self.market_watch.item(i)
+                        if it and it.text().split()[0] == sym:
+                            it.setText(f"{sym}  {px:.5f}")
             except Exception:
-                prev_xlim = None
-                prev_ylim = None
+                pass
 
-            # Crucial fix: Call update_plot to redraw the chart with the new data
-            self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
-
-            if payload.get('bid') is not None and payload.get('ask') is not None:
+            # Update chart only for current symbol
+            if sym and sym == getattr(self, "symbol", None):
+                new_row = pd.DataFrame([payload])
+                self._last_df = pd.concat([self._last_df, new_row], ignore_index=True)
+                self._last_df.drop_duplicates(subset=['ts_utc'], keep='last', inplace=True)
                 try:
-                    self.bidask_label.setText(f"Bid: {payload['bid']:.5f}    Ask: {payload['ask']:.5f}")
+                    prev_xlim = self.ax.get_xlim(); prev_ylim = self.ax.get_ylim()
                 except Exception:
-                    self.bidask_label.setText(f"Bid: {payload.get('bid')}    Ask: {payload.get('ask')}")
+                    prev_xlim = prev_ylim = None
+                self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
 
+                if payload.get('bid') is not None and payload.get('ask') is not None:
+                    try:
+                        self.bidask_label.setText(f"Bid: {payload['bid']:.5f}    Ask: {payload['ask']:.5f}")
+                    except Exception:
+                        self.bidask_label.setText(f"Bid: {payload.get('bid')}    Ask: {payload.get('ask')}")
         except Exception as e:
             logger.exception(f"Failed to handle tick: {e}")
+
+    def _set_drawing_mode(self, mode: Optional[str]):
+        self._drawing_mode = mode
+        self._pending_points.clear()
+
+    def _on_canvas_click(self, event):
+        # drawing tools
+        if self._drawing_mode == "hline" and event and event.ydata is not None:
+            y = event.ydata
+            ln = self.ax.axhline(y, color="#9bdcff", linestyle="--", alpha=0.7)
+            self.canvas.draw()
+            self._pending_points.clear()
+            return
+        if self._drawing_mode == "trend" and event and event.xdata is not None and event.ydata is not None:
+            self._pending_points.append((event.xdata, event.ydata))
+            if len(self._pending_points) == 2:
+                (x1, y1), (x2, y2) = self._pending_points
+                self.ax.plot([mdates.num2date(x1), mdates.num2date(x2)], [y1, y2], color="#ff9bdc", linewidth=1.5)
+                self.canvas.draw()
+                self._pending_points.clear()
+                return
+        # testing point (Alt/Shift already implemented above in previous patch)
+        # fall through to existing Alt/Shift logic
+        try:
+            return super()._on_canvas_click(event)  # type: ignore
+        except Exception:
+            # ignore if super implementation not present in MRO
+            pass
+
+    def _open_trade_dialog(self):
+        try:
+            from .trade_dialog import TradeDialog
+            symbols = self._symbols_supported
+            cur = getattr(self, "symbol", symbols[0])
+            dlg = TradeDialog(self, symbols=symbols, current_symbol=cur)
+            if dlg.exec() == QDialog.Accepted:
+                order = dlg.get_order()
+                # place order via broker
+                try:
+                    ok, oid = self.broker.place_order(order)
+                    if ok:
+                        QMessageBox.information(self, "Order", f"Order placed (id={oid})")
+                    else:
+                        QMessageBox.warning(self, "Order", f"Order rejected: {oid}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Order", str(e))
+        except Exception as e:
+            logger.exception("Trade dialog failed: {}", e)
+
+    def _refresh_orders(self):
+        """Pull open orders from broker and refresh the table."""
+        try:
+            orders = self.broker.get_open_orders()
+            self.orders_table.setRowCount(len(orders))
+            for r, o in enumerate(orders):
+                vals = [
+                    str(o.get("id","")),
+                    o.get("time",""),
+                    o.get("symbol",""),
+                    o.get("side","") + " " + o.get("type",""),
+                    str(o.get("volume","")),
+                    f"{o.get('price','')}",
+                    f"{o.get('sl','')}",
+                    f"{o.get('tp','')}",
+                    o.get("status","")
+                ]
+                for c, v in enumerate(vals):
+                    self.orders_table.setItem(r, c, QTableWidgetItem(str(v)))
+        except Exception:
+            pass
 
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
         if df is None or df.empty:
