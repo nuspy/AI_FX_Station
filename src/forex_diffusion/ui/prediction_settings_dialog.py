@@ -23,14 +23,25 @@ class PredictionSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Prediction Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(520)
+        # make window compact (scrollable content)
+        try:
+            self.resize(720, 600)
+        except Exception:
+            pass
 
-        self.layout = QVBoxLayout(self)
+        # Root layout + scroll area with content
+        from PySide6.QtWidgets import QScrollArea, QWidget
+        self._root_layout = QVBoxLayout(self)
+        content = QWidget(self)
+        self.layout = QVBoxLayout(content)
         self.form_layout = QFormLayout()
 
         # Model Path (singolo, per compatibilità)
         self.model_path_edit = QLineEdit()
+        self.model_path_edit.setToolTip("Percorso del file modello da usare per l'inferenza.\nSupporto tipico: PyTorch (.pt/.pth) o pickle di modelli sklearn.\nSe è valorizzato 'Modelli multipli', questo campo è ignorato.")
         self.browse_button = QPushButton("Browse...")
+        self.browse_button.setToolTip("Sfoglia e seleziona un file modello da disco.")
         self.browse_button.clicked.connect(self._browse_model_path)
         model_h = QHBoxLayout()
         model_h.addWidget(self.model_path_edit)
@@ -40,20 +51,22 @@ class PredictionSettingsDialog(QDialog):
         # Modelli multipli: uno per riga (opzionale, ha precedenza su Model Path)
         from PySide6.QtWidgets import QTextEdit, QGroupBox, QVBoxLayout as QV
         models_box = QGroupBox("Modelli multipli (uno per riga)")
+        models_box.setToolTip("Inserisci uno o più percorsi di modelli (uno per riga). Verrà lanciata una previsione per ciascun modello selezionato.\nSe compilato, ha precedenza su 'Model Path'.")
         box_lay = QV(models_box)
         self.models_edit = QTextEdit()
         self.models_edit.setPlaceholderText("Percorso modello per riga (opzionale). Se valorizzato, verranno eseguite previsioni per ciascun modello.")
+        self.models_edit.setToolTip("Ogni riga deve contenere un percorso file valido a un modello. I modelli verranno eseguiti in parallelo.")
         box_lay.addWidget(self.models_edit)
         self.layout.addWidget(models_box)
 
         # Tipi di previsione (selezione multipla)
         from PySide6.QtWidgets import QCheckBox
         types_box = QGroupBox("Tipi di previsione")
+        types_box.setToolTip("Seleziona il tipo di previsione:\n- Basic: pipeline standard con indicatori e standardizzazione.\n- Advanced: come Basic, ma abilita opzioni/feature aggiuntive.\n- Baseline RW: baseline Random Walk/zero-drift (nessun modello richiesto).")
         types_lay = QV(types_box)
-        self.type_basic_cb = QCheckBox("Basic")
-        self.type_basic_cb.setChecked(True)
-        self.type_advanced_cb = QCheckBox("Advanced")
-        self.type_rw_cb = QCheckBox("Baseline RW")
+        self.type_basic_cb = QCheckBox("Basic"); self.type_basic_cb.setChecked(True); self.type_basic_cb.setToolTip("Basic: usa la pipeline standard e il modello selezionato.")
+        self.type_advanced_cb = QCheckBox("Advanced"); self.type_advanced_cb.setToolTip("Advanced: come Basic con opzioni extra (EMA, Hurst, Donchian, Keltner, ecc.).")
+        self.type_rw_cb = QCheckBox("Baseline RW"); self.type_rw_cb.setToolTip("Baseline RW: previsione di riferimento a drift nullo. Non richiede un modello.")
         types_lay.addWidget(self.type_basic_cb)
         types_lay.addWidget(self.type_advanced_cb)
         types_lay.addWidget(self.type_rw_cb)
@@ -61,17 +74,20 @@ class PredictionSettingsDialog(QDialog):
 
         # Horizons
         self.horizons_edit = QLineEdit("1m, 5m, 15m")
+        self.horizons_edit.setToolTip("Orizzonti temporali di previsione, separati da virgola (es.: 1m, 5m, 15m).\nVengono convertiti in passi rispetto al timeframe corrente.")
         self.form_layout.addRow("Horizons (comma-separated):", self.horizons_edit)
 
         # N_samples
         self.n_samples_spinbox = QSpinBox()
         self.n_samples_spinbox.setRange(1, 10000)
         self.n_samples_spinbox.setValue(200)
+        self.n_samples_spinbox.setToolTip("Numero di campioni/forward-pass per stimare i quantili.\nValori più alti aumentano stabilità ma richiedono più tempo.")
         self.form_layout.addRow("Number of Samples (N_samples):", self.n_samples_spinbox)
 
         # Conformal Calibration
         self.conformal_checkbox = QCheckBox("Apply Conformal Calibration")
         self.conformal_checkbox.setChecked(True)
+        self.conformal_checkbox.setToolTip("Applica calibrazione conformale per intervalli predittivi affidabili.\nSe attiva, i quantili (q05, q95) vengono corretti in base a una stima di errore fuori campione.")
         self.form_layout.addRow(self.conformal_checkbox)
 
         # Model weight (inference scaling)
@@ -80,6 +96,7 @@ class PredictionSettingsDialog(QDialog):
         for p in range(0, 101, 5):
             self.model_weight_combo.addItem(f"{p} %", p)
         self.model_weight_combo.setCurrentIndex(20)  # default 100%
+        self.model_weight_combo.setToolTip("Peso con cui fondere la previsione col prezzo attuale:\n0% = ignora modello (resta ultimo close); 100% = usa la previsione al 100%.")
         self.form_layout.addRow("Model weight (%):", self.model_weight_combo)
 
         # Indicators × Timeframes selection
@@ -87,6 +104,7 @@ class PredictionSettingsDialog(QDialog):
         self._indicators = ["ATR","RSI","Bollinger","MACD","Donchian","Keltner","Hurst"]
         self._timeframes = ["1m","5m","15m","30m","1h","4h","1d"]
         box = QGroupBox("Indicatori per Timeframe (per training/inferenza)")
+        box.setToolTip("Seleziona quali indicatori includere per ciascun timeframe nella pipeline.\nDurante il training/inf. questi flag controllano quali feature vengono calcolate.")
         grid = QGridLayout(box)
         grid.addWidget(QLabel(""), 0, 0)
         for j, tf in enumerate(self._timeframes, start=1):
@@ -105,52 +123,62 @@ class PredictionSettingsDialog(QDialog):
         self.warmup_spin = QSpinBox()
         self.warmup_spin.setRange(1, 500)
         self.warmup_spin.setValue(16)
+        self.warmup_spin.setToolTip("Numero di barre iniziali da scartare/riscaldare per gli indicatori.\nValori maggiori stabilizzano le feature all'inizio della serie.")
         self.form_layout.addRow("Warmup Bars:", self.warmup_spin)
 
         self.atr_n_spin = QSpinBox()
         self.atr_n_spin.setRange(1, 200)
         self.atr_n_spin.setValue(14)
+        self.atr_n_spin.setToolTip("Lunghezza media per l'Average True Range (misura di volatilità).")
         self.form_layout.addRow("ATR n:", self.atr_n_spin)
 
         self.rsi_n_spin = QSpinBox()
         self.rsi_n_spin.setRange(2, 200)
         self.rsi_n_spin.setValue(14)
+        self.rsi_n_spin.setToolTip("Numero di periodi per il Relative Strength Index (momento).")
         self.form_layout.addRow("RSI n:", self.rsi_n_spin)
 
         self.bb_n_spin = QSpinBox()
         self.bb_n_spin.setRange(2, 200)
         self.bb_n_spin.setValue(20)
+        self.bb_n_spin.setToolTip("Finestra per le Bande di Bollinger (deviazioni standard su media mobile).")
         self.form_layout.addRow("Bollinger window n:", self.bb_n_spin)
 
         self.rv_window_spin = QSpinBox()
         self.rv_window_spin.setRange(1, 1000)
         self.rv_window_spin.setValue(60)
+        self.rv_window_spin.setToolTip("Finestra per stimare la Realized Volatility/standardizzazione.\nControlla la scala delle feature in pipeline.")
         self.form_layout.addRow("RV window:", self.rv_window_spin)
 
         # --- Advanced indicators ---
         self.ema_fast_spin = QSpinBox()
         self.ema_fast_spin.setRange(1, 200)
         self.ema_fast_spin.setValue(12)
+        self.ema_fast_spin.setToolTip("Span della EMA veloce per trend/momentum.")
         self.form_layout.addRow("EMA fast span:", self.ema_fast_spin)
 
         self.ema_slow_spin = QSpinBox()
         self.ema_slow_spin.setRange(1, 400)
         self.ema_slow_spin.setValue(26)
+        self.ema_slow_spin.setToolTip("Span della EMA lenta per trend/momentum.")
         self.form_layout.addRow("EMA slow span:", self.ema_slow_spin)
 
         self.don_n_spin = QSpinBox()
         self.don_n_spin.setRange(1, 400)
         self.don_n_spin.setValue(20)
+        self.don_n_spin.setToolTip("Finestra per il canale di Donchian (massimi/minimi su n barre).")
         self.form_layout.addRow("Donchian n:", self.don_n_spin)
 
         self.hurst_window_spin = QSpinBox()
         self.hurst_window_spin.setRange(1, 1024)
         self.hurst_window_spin.setValue(64)
+        self.hurst_window_spin.setToolTip("Window per la stima dell'esponente di Hurst (mean-reversion vs. trending).")
         self.form_layout.addRow("Hurst window:", self.hurst_window_spin)
 
         self.keltner_k_spin = QSpinBox()
         self.keltner_k_spin.setRange(1, 10)
         self.keltner_k_spin.setValue(1)
+        self.keltner_k_spin.setToolTip("Moltiplicatore per le Keltner Channels (ampiezza del canale rispetto all'ATR).")
         self.form_layout.addRow("Keltner multiplier (k):", self.keltner_k_spin)
 
         # max forecasts
@@ -182,7 +210,19 @@ class PredictionSettingsDialog(QDialog):
         self.button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        self.layout.addWidget(self.button_box)
+
+        # Install scroll area
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        # 'content' è il QWidget su cui abbiamo costruito self.layout
+        try:
+            content = self.layout.parentWidget()
+            scroll.setWidget(content)
+        except Exception:
+            scroll.setWidget(self)
+        self._root_layout.addWidget(scroll)
+        self._root_layout.addWidget(self.button_box)
 
         self.load_settings()
 

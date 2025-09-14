@@ -159,6 +159,13 @@ class ForecastWorker(QRunnable):
         df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
 
         # --- 3) Carica modello PRIMA dell'ensure (serve features_list, μ, σ) ---
+        # reduce thread contention in BLAS/torch to keep UI responsive
+        try:
+            import os as _os_env
+            _os_env.environ.setdefault("OMP_NUM_THREADS", "1")
+            _os_env.environ.setdefault("MKL_NUM_THREADS", "1")
+        except Exception:
+            pass
         p = Path(model_path)
         if not p.exists():
             raise FileNotFoundError(f"Model file not found: {p}")
@@ -167,6 +174,11 @@ class ForecastWorker(QRunnable):
         if suffix in (".pt", ".pth", ".ptl"):
             try:
                 import torch
+                # keep torch single-thread for UI responsiveness
+                try:
+                    torch.set_num_threads(1)
+                except Exception:
+                    pass
                 raw = torch.load(str(p), map_location="cpu")
                 payload_obj = raw if isinstance(raw, dict) else {"model": raw}
             except Exception as e:
@@ -318,7 +330,19 @@ class UIController:
         self.engine_url = engine_url
         self.signals = UIControllerSignals()
         self.pool = QThreadPool.globalInstance()
+        # limit forecast concurrency to keep UI responsive
+        try:
+            self.pool.setMaxThreadCount(max(2, min(self.pool.maxThreadCount(), 4)))
+        except Exception:
+            pass
         self.db_writer = db_writer
+        # track active forecasts (avoid overlapping advanced jobs)
+        self._forecast_active = 0
+        try:
+            self.signals.forecastReady.connect(self._on_forecast_finished)
+            self.signals.error.connect(self._on_forecast_failed)
+        except Exception:
+            pass
 
     def bind_menu_signals(self, menu_signals):
         """
@@ -335,6 +359,12 @@ class UIController:
         # File->Settings
         try:
             menu_signals.settingsRequested.connect(self.handle_settings_requested)
+        except Exception:
+            pass
+        # ensure completion/error signals are handled (decrement active)
+        try:
+            self.signals.forecastReady.connect(self._on_forecast_finished)
+            self.signals.error.connect(self._on_forecast_failed)
         except Exception:
             pass
 
@@ -420,8 +450,31 @@ class UIController:
                 payload["advanced"] = (t.lower() == "advanced")
                 payload["forecast_type"] = t.lower()
                 payload["source_label"] = f"{name}:{t}"
+                # limit candles to keep inference lightweight
+                payload.setdefault("limit_candles", 512)
+                # throttle advanced: allow only one at a time
+                if payload["advanced"] and self._forecast_active >= 1:
+                    self.signals.status.emit(f"Forecast skipped (advanced busy): {payload['source_label']}")
+                    continue
                 fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
+                self._forecast_active += 1
                 self.pool.start(fw)
+
+    @Slot(object, object)
+    def _on_forecast_finished(self, df, quantiles):
+        # one forecast completed
+        try:
+            self._forecast_active = max(0, self._forecast_active - 1)
+            self.signals.status.emit("Forecast: done")
+        except Exception:
+            pass
+
+    @Slot(str)
+    def _on_forecast_failed(self, msg: str):
+        try:
+            self._forecast_active = max(0, self._forecast_active - 1)
+        except Exception:
+            pass
 
     @Slot(dict)
     def handle_forecast_payload(self, payload: dict):
@@ -457,8 +510,15 @@ class UIController:
                 self.signals.error.emit("Missing model_path. Open Prediction Settings.")
                 return
 
+            # throttle: avoid overlapping advanced jobs
+            if bool(payload.get("advanced", False)) and self._forecast_active >= 1:
+                self.signals.status.emit("Forecast: advanced already running, skipping.")
+                return
+
             self.signals.status.emit(f"Forecast (payload) for {payload.get('symbol')} {payload.get('timeframe')} [{payload.get('source_label')}]")
+            payload.setdefault("limit_candles", 512)
             fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
+            self._forecast_active += 1
             self.pool.start(fw)
         except Exception as e:
             logger.exception("handle_forecast_payload failed: {}", e)

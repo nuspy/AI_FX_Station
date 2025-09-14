@@ -28,6 +28,8 @@ class ChartTab(QWidget):
     Preserves zoom/pan when updating and supports multiple forecast overlays.
     """
     forecastRequested = Signal(dict)
+    tickArrived = Signal(dict)
+    tickArrived = Signal(dict)
 
     def __init__(self, parent=None, viewer=None):
         super().__init__(parent)
@@ -253,17 +255,55 @@ class ChartTab(QWidget):
         self._orders_timer.timeout.connect(self._refresh_orders)
         self._orders_timer.start()
 
+        # Realtime throttling: batch ticks and redraw ~5 FPS
+        self._rt_dirty = False
+        self._rt_timer = QTimer(self)
+        self._rt_timer.setInterval(200)
+        self._rt_timer.timeout.connect(self._rt_flush)
+        self._rt_timer.start()
+
+        # Ensure tick handling runs on GUI thread
+        try:
+            self.tickArrived.connect(self._on_tick_main)
+        except Exception:
+            pass
+
+        # Realtime redraw throttling (batch ticks and redraw ~5 fps)
+        self._rt_dirty = False
+        self._rt_timer = QTimer(self)
+        self._rt_timer.setInterval(200)
+        self._rt_timer.timeout.connect(self._rt_flush)
+        self._rt_timer.start()
+
+        # Ensure tick handling runs on GUI thread
+        try:
+            self.tickArrived.connect(self._on_tick_main)
+        except Exception:
+            pass
+
         # Buttons signals
         self.trade_btn.clicked.connect(self._open_trade_dialog)
         self.backfill_btn.clicked.connect(self._on_backfill_missing_clicked)
 
-        # Mouse interaction: Alt+Click => TestingPoint basic; Shift+Alt+Click => TestingPoint advanced
-        # connect matplotlib canvas mouse press
+        # Mouse interaction:
+        # - Alt+Click => TestingPoint basic; Shift+Alt+Click => advanced (già gestito da _on_canvas_click)
+        # - Wheel zoom centrato sul mouse
+        # - Right button drag: orizzontale = zoom X (tempo); verticale = zoom Y (prezzo)
+        self._rbtn_drag = False
+        self._drag_last = None  # (x_px, y_px)
+        self._drag_axis = None  # "x" | "y" determinata dal movimento prevalente
+
         try:
+            # conserva il gestore esistente per strumenti/testing (left click)
             self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
+            # nuovi handler UX
+            self.canvas.mpl_connect("button_press_event", self._on_mouse_press)
+            self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
+            self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
+            self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
         except Exception:
             # if connection fails, continue without interactive testing feature
-            logger.debug("Failed to connect mpl mouse event for testing point.")
+            logger.debug("Failed to connect mpl mouse events for zoom/pan.")
 
         # --- Signal Connections ---
         self.forecast_settings_btn.clicked.connect(self._open_forecast_settings)
@@ -283,7 +323,14 @@ class ChartTab(QWidget):
             pass
 
     def _handle_tick(self, payload: dict):
-        """Receives tick data, updates chart buffer, market watch, and redraws."""
+        """Thread-safe entrypoint: enqueue tick to GUI thread."""
+        try:
+            self.tickArrived.emit(payload)
+        except Exception as e:
+            logger.exception("Failed to emit tick: {}", e)
+
+    def _on_tick_main(self, payload: dict):
+        """GUI-thread handler: aggiorna Market Watch e buffer, delega il redraw al throttler."""
         try:
             if not isinstance(payload, dict):
                 return
@@ -299,24 +346,58 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            # Update chart only for current symbol
+            # Update chart buffer only for current symbol
             if sym and sym == getattr(self, "symbol", None):
-                new_row = pd.DataFrame([payload])
-                self._last_df = pd.concat([self._last_df, new_row], ignore_index=True)
-                self._last_df.drop_duplicates(subset=['ts_utc'], keep='last', inplace=True)
                 try:
-                    prev_xlim = self.ax.get_xlim(); prev_ylim = self.ax.get_ylim()
+                    new_row = pd.DataFrame([payload])
+                    # normalize types
+                    new_row["ts_utc"] = pd.to_numeric(new_row["ts_utc"], errors="coerce").astype("Int64")
+                    self._last_df = pd.concat([self._last_df, new_row], ignore_index=True)
+                    # drop NaN/dup, sort and trim buffer
+                    self._last_df["ts_utc"] = pd.to_numeric(self._last_df["ts_utc"], errors="coerce").astype("Int64")
+                    self._last_df.dropna(subset=["ts_utc"], inplace=True)
+                    self._last_df["ts_utc"] = self._last_df["ts_utc"].astype("int64")
+                    self._last_df.drop_duplicates(subset=["ts_utc"], keep="last", inplace=True)
+                    self._last_df.sort_values("ts_utc", inplace=True)
+                    # keep last N rows to avoid heavy redraws
+                    N = 10000
+                    if len(self._last_df) > N:
+                        self._last_df = self._last_df.iloc[-N:].copy()
                 except Exception:
-                    prev_xlim = prev_ylim = None
-                self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+                    pass
 
-                if payload.get('bid') is not None and payload.get('ask') is not None:
+                # update bid/ask label
+                try:
+                    if payload.get('bid') is not None and payload.get('ask') is not None:
+                        self.bidask_label.setText(f"Bid: {float(payload['bid']):.5f}    Ask: {float(payload['ask']):.5f}")
+                except Exception:
                     try:
-                        self.bidask_label.setText(f"Bid: {payload['bid']:.5f}    Ask: {payload['ask']:.5f}")
-                    except Exception:
                         self.bidask_label.setText(f"Bid: {payload.get('bid')}    Ask: {payload.get('ask')}")
+                    except Exception:
+                        pass
+
+                # mark dirty for throttled redraw
+                self._rt_dirty = True
         except Exception as e:
-            logger.exception(f"Failed to handle tick: {e}")
+            logger.exception("Failed to handle tick on GUI: {}", e)
+
+    def _rt_flush(self):
+        """Throttled redraw preserving zoom/pan."""
+        try:
+            if not getattr(self, "_rt_dirty", False):
+                return
+            self._rt_dirty = False
+            # preserve current view
+            try:
+                prev_xlim = self.ax.get_xlim()
+                prev_ylim = self.ax.get_ylim()
+            except Exception:
+                prev_xlim = prev_ylim = None
+            # redraw base chart (quantiles overlay mantenuti da _forecasts)
+            if self._last_df is not None and not self._last_df.empty:
+                self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+        except Exception as e:
+            logger.exception("Realtime flush failed: {}", e)
 
     def _set_drawing_mode(self, mode: Optional[str]):
         self._drawing_mode = mode
@@ -765,7 +846,11 @@ class ChartTab(QWidget):
                         txt.set_draggable(True)
                     except Exception:
                         pass
-                    self.canvas.draw()
+                    # non bloccare il main loop: draw_idle
+                    try:
+                        self.canvas.draw_idle()
+                    except Exception:
+                        self.canvas.draw()
                     return
 
             # TestingPoint logic (requires Alt)
@@ -884,6 +969,108 @@ class ChartTab(QWidget):
 
         except Exception as e:
             logger.exception(f"Error in canvas click handler: {e}")
+
+    # --- Mouse UX: zoom con rotellina e tasto destro (drag) ---
+    def _on_scroll_zoom(self, event):
+        try:
+            if event is None or event.inaxes != self.ax:
+                return
+            # fattore di zoom: up=in, down=out
+            step = 0.85
+            factor = step if getattr(event, "button", None) == "up" else (1.0 / step)
+            cx = event.xdata
+            cy = event.ydata
+            self._zoom_axis("x", cx, factor)
+            self._zoom_axis("y", cy, factor)
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
+        except Exception:
+            pass
+
+    def _on_mouse_press(self, event):
+        try:
+            # right button only, dentro agli assi
+            if event is None or getattr(event, "button", None) != 3 or event.inaxes != self.ax:
+                return
+            self._rbtn_drag = True
+            self._drag_last = (event.x, event.y)  # pixel coordinates
+            self._drag_axis = None  # decideremo al primo movimento
+        except Exception:
+            pass
+
+    def _on_mouse_move(self, event):
+        try:
+            if not self._rbtn_drag or event is None or event.inaxes != self.ax or self._drag_last is None:
+                return
+            x0, y0 = self._drag_last
+            dx = event.x - x0
+            dy = event.y - y0
+            # determina asse predominante al primo movimento significativo
+            if self._drag_axis is None:
+                if abs(dx) > abs(dy) * 1.2:
+                    self._drag_axis = "x"
+                elif abs(dy) > abs(dx) * 1.2:
+                    self._drag_axis = "y"
+                else:
+                    # movimento troppo piccolo / diagonale: attendi
+                    return
+            # mappa delta pixel -> fattore di zoom (esponenziale dolce)
+            # dx > 0 (drag a destra) => zoom in (factor < 1) su X; dy < 0 (drag in su) => zoom in su Y
+            if self._drag_axis == "x":
+                factor = (0.90 ** (dx / 20.0)) if dx != 0 else 1.0
+                cx = event.xdata if event.xdata is not None else sum(self.ax.get_xlim()) / 2.0
+                self._zoom_axis("x", cx, factor)
+            else:
+                factor = (0.90 ** (-dy / 20.0)) if dy != 0 else 1.0
+                cy = event.ydata if event.ydata is not None else sum(self.ax.get_ylim()) / 2.0
+                self._zoom_axis("y", cy, factor)
+            self._drag_last = (event.x, event.y)
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
+        except Exception:
+            pass
+
+    def _on_mouse_release(self, event):
+        try:
+            if getattr(event, "button", None) == 3:
+                self._rbtn_drag = False
+                self._drag_last = None
+                self._drag_axis = None
+        except Exception:
+            pass
+
+    def _zoom_axis(self, axis: str, center: float, factor: float):
+        """Zoom helper: scala i limiti attorno a 'center' con 'factor' (factor<1=zoom-in)."""
+        try:
+            if axis == "x":
+                xmin, xmax = self.ax.get_xlim()
+                if center is None:
+                    center = (xmin + xmax) * 0.5
+                # evita limiti degeneri
+                w = max(1e-9, (xmax - xmin))
+                new_w = max(1e-9, w * float(factor))
+                # mantieni il centro fisso
+                left = center - (center - xmin) * (new_w / w)
+                right = center + (xmax - center) * (new_w / w)
+                # proteggi da invertimenti
+                if right - left > 1e-12:
+                    self.ax.set_xlim(left, right)
+            elif axis == "y":
+                ymin, ymax = self.ax.get_ylim()
+                if center is None:
+                    center = (ymin + ymax) * 0.5
+                h = max(1e-12, (ymax - ymin))
+                new_h = max(1e-12, h * float(factor))
+                bottom = center - (center - ymin) * (new_h / h)
+                top = center + (ymax - center) * (new_h / h)
+                if top - bottom > 1e-12:
+                    self.ax.set_ylim(bottom, top)
+        except Exception:
+            pass
 
     def _on_forecast_clicked(self):
         from .prediction_settings_dialog import PredictionSettingsDialog

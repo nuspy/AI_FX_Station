@@ -39,7 +39,11 @@ class TrainingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cfg = get_config()
-        self.layout = QVBoxLayout(self)
+        # Root + scrollable page (to keep tab compact on small screens)
+        from PySide6.QtWidgets import QScrollArea, QWidget
+        self._root = QVBoxLayout(self)
+        page = QWidget(self)
+        self.layout = QVBoxLayout(page)
         self.controller = TrainingController(self)
         self.controller.signals.log.connect(self._append_log)
         self.controller.signals.progress.connect(self._on_progress)
@@ -47,42 +51,63 @@ class TrainingTab(QWidget):
 
         # Top controls
         top = QHBoxLayout()
-        top.addWidget(QLabel("Symbol:"))
+        lbl_sym = QLabel("Symbol:"); lbl_sym.setToolTip("Coppia valutaria da usare per il training.")
+        top.addWidget(lbl_sym)
         self.symbol_combo = QComboBox(); self.symbol_combo.addItems(["EUR/USD","GBP/USD","AUX/USD","GBP/NZD","AUD/JPY","GBP/EUR","GBP/AUD"])
+        self.symbol_combo.setToolTip("Seleziona il simbolo per cui addestrare il modello.")
         top.addWidget(self.symbol_combo)
 
-        top.addWidget(QLabel("Base TF:"))
+        lbl_tf = QLabel("Base TF:"); lbl_tf.setToolTip("Timeframe base della serie su cui costruire le feature.")
+        top.addWidget(lbl_tf)
         self.tf_combo = QComboBox(); self.tf_combo.addItems(["1m","5m","15m","30m","1h","4h","1d"])
         self.tf_combo.setCurrentText("1m")
+        self.tf_combo.setToolTip("Timeframe delle barre usate per il training.")
         top.addWidget(self.tf_combo)
 
-        top.addWidget(QLabel("Days history:"))
+        lbl_days = QLabel("Days history:"); lbl_days.setToolTip("Numero di giorni storici da usare per l'addestramento.")
+        top.addWidget(lbl_days)
         self.days_spin = QSpinBox(); self.days_spin.setRange(1, 3650); self.days_spin.setValue(7)
+        self.days_spin.setToolTip("Maggiore è il valore, più dati verranno usati (training più lungo).")
         top.addWidget(self.days_spin)
 
-        top.addWidget(QLabel("Horizon (bars):"))
+        lbl_h = QLabel("Horizon (bars):"); lbl_h.setToolTip("Orizzonte in barre da prevedere durante il training.")
+        top.addWidget(lbl_h)
         self.horizon_spin = QSpinBox(); self.horizon_spin.setRange(1, 500); self.horizon_spin.setValue(5)
+        self.horizon_spin.setToolTip("Numero di passi futuri/target usati in fase di training.")
         top.addWidget(self.horizon_spin)
 
-        top.addWidget(QLabel("Model:"))
+        lbl_m = QLabel("Model:"); lbl_m.setToolTip("Tipo di modello supervisato da addestrare.")
+        top.addWidget(lbl_m)
         self.model_combo = QComboBox(); self.model_combo.addItems(["ridge","lasso","elasticnet","rf"])
+        self.model_combo.setToolTip("Scegli l'algoritmo di base (regressione lineare regolarizzata o Random Forest).")
         top.addWidget(self.model_combo)
 
-        top.addWidget(QLabel("Encoder:"))
+        lbl_e = QLabel("Encoder:"); lbl_e.setToolTip("Preprocessore/encoder opzionale per ridurre dimensionalità o apprendere rappresentazioni.")
+        top.addWidget(lbl_e)
         self.encoder_combo = QComboBox(); self.encoder_combo.addItems(["none","pca","latents"])
+        self.encoder_combo.setToolTip("PCA riduce la dimensione delle feature. 'latents' richiede un encoder già definito.")
         top.addWidget(self.encoder_combo)
 
-        top.addWidget(QLabel("Optimization:"))
+        lbl_opt = QLabel("Optimization:"); lbl_opt.setToolTip("Ricerca automatica dell'ipermodello:\n- none: nessuna ottimizzazione\n- genetic-basic: ricerca genetica su R2\n- nsga2: ottimizzazione multi-obiettivo (R2/MAE)")
+        top.addWidget(lbl_opt)
         self.opt_combo = QComboBox(); self.opt_combo.addItems(["none","genetic-basic","nsga2"])
+        self.opt_combo.setToolTip("Seleziona se e come ottimizzare automaticamente gli iperparametri.")
         top.addWidget(self.opt_combo)
 
-        top.addWidget(QLabel("Gen:")); self.gen_spin = QSpinBox(); self.gen_spin.setRange(1, 50); self.gen_spin.setValue(5); top.addWidget(self.gen_spin)
-        top.addWidget(QLabel("Pop:")); self.pop_spin = QSpinBox(); self.pop_spin.setRange(2, 64); self.pop_spin.setValue(8); top.addWidget(self.pop_spin)
+        lbl_gen = QLabel("Gen:"); lbl_gen.setToolTip("Numero di generazioni dell'algoritmo genetico.")
+        top.addWidget(lbl_gen)
+        self.gen_spin = QSpinBox(); self.gen_spin.setRange(1, 50); self.gen_spin.setValue(5); self.gen_spin.setToolTip("Quante iterazioni evolutive eseguire.")
+        top.addWidget(self.gen_spin)
+        lbl_pop = QLabel("Pop:"); lbl_pop.setToolTip("Dimensione della popolazione per la ricerca evolutiva.")
+        top.addWidget(lbl_pop)
+        self.pop_spin = QSpinBox(); self.pop_spin.setRange(2, 64); self.pop_spin.setValue(8); self.pop_spin.setToolTip("Quanti candidati valutare per generazione.")
+        top.addWidget(self.pop_spin)
 
         self.layout.addLayout(top)
 
         # Indicators × Timeframes grid
         grid_box = QGroupBox("Indicatori per Timeframe (seleziona; click 'Default' per ripristinare)")
+        grid_box.setToolTip("Seleziona gli indicatori da calcolare per ciascun timeframe durante il training.\nI pulsanti 'Default' ripristinano le selezioni consigliate per indicatore.")
         grid = QGridLayout(grid_box)
         grid.addWidget(QLabel(""), 0, 0)
         for j, tf in enumerate(TIMEFRAMES, start=1):
@@ -113,13 +138,29 @@ class TrainingTab(QWidget):
 
         # Advanced params
         adv = QHBoxLayout()
-        adv.addWidget(QLabel("warmup")); self.warmup = QSpinBox(); self.warmup.setRange(0, 5000); self.warmup.setValue(16); adv.addWidget(self.warmup)
-        adv.addWidget(QLabel("atr_n")); self.atr_n = QSpinBox(); self.atr_n.setRange(1, 500); self.atr_n.setValue(14); adv.addWidget(self.atr_n)
-        adv.addWidget(QLabel("rsi_n")); self.rsi_n = QSpinBox(); self.rsi_n.setRange(2, 500); self.rsi_n.setValue(14); adv.addWidget(self.rsi_n)
-        adv.addWidget(QLabel("bb_n")); self.bb_n = QSpinBox(); self.bb_n.setRange(2, 500); self.bb_n.setValue(20); adv.addWidget(self.bb_n)
-        adv.addWidget(QLabel("hurst_win")); self.hurst_w = QSpinBox(); self.hurst_w.setRange(8, 4096); self.hurst_w.setValue(64); adv.addWidget(self.hurst_w)
-        adv.addWidget(QLabel("rv_window")); self.rv_w = QSpinBox(); self.rv_w.setRange(1, 10000); self.rv_w.setValue(60); adv.addWidget(self.rv_w)
+        lbl_wu = QLabel("warmup"); lbl_wu.setToolTip("Barre di warmup per stabilizzare gli indicatori prima del training.")
+        adv.addWidget(lbl_wu); self.warmup = QSpinBox(); self.warmup.setRange(0, 5000); self.warmup.setValue(16); self.warmup.setToolTip("Quante barre iniziali considerare come 'preriscaldamento'."); adv.addWidget(self.warmup)
+        lbl_atr = QLabel("atr_n"); lbl_atr.setToolTip("Finestra dell'ATR (volatilità).")
+        adv.addWidget(lbl_atr); self.atr_n = QSpinBox(); self.atr_n.setRange(1, 500); self.atr_n.setValue(14); self.atr_n.setToolTip("Numero di periodi per l'ATR."); adv.addWidget(self.atr_n)
+        lbl_rsi = QLabel("rsi_n"); lbl_rsi.setToolTip("Finestra RSI (momento).")
+        adv.addWidget(lbl_rsi); self.rsi_n = QSpinBox(); self.rsi_n.setRange(2, 500); self.rsi_n.setValue(14); self.rsi_n.setToolTip("Numero di periodi per l'RSI."); adv.addWidget(self.rsi_n)
+        lbl_bb = QLabel("bb_n"); lbl_bb.setToolTip("Finestra per Bande di Bollinger.")
+        adv.addWidget(lbl_bb); self.bb_n = QSpinBox(); self.bb_n.setRange(2, 500); self.bb_n.setValue(20); self.bb_n.setToolTip("Numero di barre per calcolare le bande di Bollinger."); adv.addWidget(self.bb_n)
+        lbl_hu = QLabel("hurst_win"); lbl_hu.setToolTip("Window per l'esponente di Hurst.")
+        adv.addWidget(lbl_hu); self.hurst_w = QSpinBox(); self.hurst_w.setRange(8, 4096); self.hurst_w.setValue(64); self.hurst_w.setToolTip("Lunghezza finestra per stimare 'H'."); adv.addWidget(self.hurst_w)
+        lbl_rv = QLabel("rv_window"); lbl_rv.setToolTip("Finestra per stima di volatilità/standardizzazione.")
+        adv.addWidget(lbl_rv); self.rv_w = QSpinBox(); self.rv_w.setRange(1, 10000); self.rv_w.setValue(60); self.rv_w.setToolTip("Barre usate per normalizzare/standardizzare le feature."); adv.addWidget(self.rv_w)
         self.layout.addLayout(adv)
+
+        # Install scroll area into root
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        try:
+            scroll.setWidget(page)
+        except Exception:
+            pass
+        self._root.addWidget(scroll)
 
         # Output location
         out_h = QHBoxLayout()
