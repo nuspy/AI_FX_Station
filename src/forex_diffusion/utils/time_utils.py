@@ -11,17 +11,20 @@ WEEKEND_END_HOUR = 22    # Sunday 22:00 UTC
 # Mapping of internal timeframe labels to pandas freq strings (used for expected timestamps)
 TF_TO_PANDAS = {
     "tick": None,
-    "1m": "1T",
-    "2m": "2T",
-    "3m": "3T",
-    "4m": "4T",
-    "5m": "5T",
-    "15m": "15T",
-    "30m": "30T",
-    "60m": "60T",
-    "1h": "60T",
-    "2h": "120T",
-    "4h": "240T",
+    # minuti -> 'min'
+    "1m": "1min",
+    "2m": "2min",
+    "3m": "3min",
+    "4m": "4min",
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "60m": "60min",
+    # ore -> 'h'
+    "1h": "1h",
+    "2h": "2h",
+    "4h": "4h",
+    # giorni
     "1d": "1D",
     "1D": "1D",
     "7d": "7D",
@@ -123,11 +126,11 @@ def tf_to_pandas_freq(tf: str) -> str:
     tf = tf.strip()
     if tf in TF_TO_PANDAS:
         return TF_TO_PANDAS[tf]
-    # try simple heuristics
+    # simple heuristics with modern aliases
     if tf.endswith("m"):
-        return f"{int(tf[:-1])}T"
+        return f"{int(tf[:-1])}min"
     if tf.endswith("h"):
-        return f"{int(tf[:-1])}H"
+        return f"{int(tf[:-1])}h"
     if tf.endswith("d"):
         return f"{int(tf[:-1])}D"
     raise ValueError(f"Unsupported timeframe: {tf}")

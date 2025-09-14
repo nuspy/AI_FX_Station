@@ -423,6 +423,47 @@ class UIController:
                 fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
                 self.pool.start(fw)
 
+    @Slot(dict)
+    def handle_forecast_payload(self, payload: dict):
+        """
+        Avvia una previsione usando il payload emesso dalla ChartTab (basic/advanced).
+        Unisce le PredictionSettings correnti e imposta symbol/timeframe se mancanti.
+        """
+        try:
+            settings = PredictionSettingsDialog.get_settings() or {}
+            # symbol/timeframe dal chart se non presenti
+            chart_tab = getattr(self, "chart_tab", None)
+            if chart_tab:
+                payload.setdefault("symbol", getattr(chart_tab, "symbol", None))
+                payload.setdefault("timeframe", getattr(chart_tab, "timeframe", None))
+            # modello: usa quello nel payload o quello delle settings
+            if not payload.get("model_path"):
+                if settings.get("model_path"):
+                    payload["model_path"] = settings.get("model_path")
+            # horizons e altri parametri di default
+            payload.setdefault("horizons", settings.get("horizons", ["1m", "5m", "15m"]))
+            payload.setdefault("N_samples", settings.get("N_samples", 200))
+            payload.setdefault("apply_conformal", settings.get("apply_conformal", True))
+            # tipo (basic/advanced) e label
+            adv = bool(payload.get("advanced", False))
+            payload.setdefault("forecast_type", "advanced" if adv else "basic")
+            payload.setdefault("source_label", "advanced" if adv else "basic")
+
+            # verifiche minime
+            if not payload.get("symbol") or not payload.get("timeframe"):
+                self.signals.error.emit("Missing symbol/timeframe for forecast.")
+                return
+            if not payload.get("model_path") and payload.get("forecast_type") != "rw":
+                self.signals.error.emit("Missing model_path. Open Prediction Settings.")
+                return
+
+            self.signals.status.emit(f"Forecast (payload) for {payload.get('symbol')} {payload.get('timeframe')} [{payload.get('source_label')}]")
+            fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
+            self.pool.start(fw)
+        except Exception as e:
+            logger.exception("handle_forecast_payload failed: {}", e)
+            self.signals.error.emit(str(e))
+
     @Slot()
     def handle_calibration_requested(self):
         self.signals.status.emit("Calibration requested (not implemented).")

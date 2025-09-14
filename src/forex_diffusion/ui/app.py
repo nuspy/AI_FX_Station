@@ -56,6 +56,11 @@ def setup_ui(
     controller = UIController(main_window=main_window, market_service=market_service, db_writer=db_writer)
     controller.bind_menu_signals(menu_bar.signals)
     result["controller"] = controller
+    try:
+        # expose controller on main window so tabs can reach market_service
+        setattr(main_window, "controller", controller)
+    except Exception:
+        pass
 
     tab_widget = QTabWidget()
     signals_tab = SignalsTab(main_window, db_service=db_service)
@@ -69,11 +74,24 @@ def setup_ui(
     result["chart_tab"] = chart_tab
     result["training_tab"] = training_tab
     result["tab_widget"] = tab_widget
+    try:
+        controller.chart_tab = chart_tab
+    except Exception:
+        pass
     # expose chart_tab on controller for symbol/timeframe discovery
     try:
         controller.chart_tab = chart_tab
     except Exception:
         pass
+    # connect ChartTab forecast requests to controller handler, and results back to the chart
+    try:
+        chart_tab.forecastRequested.connect(controller.handle_forecast_payload)
+    except Exception:
+        logger.warning("Failed to connect chart_tab.forecastRequested")
+    try:
+        controller.signals.forecastReady.connect(chart_tab.on_forecast_ready)
+    except Exception:
+        logger.warning("Failed to connect controller.forecastReady to chart")
 
     # bring Training tab to front on menu->Train
     try:
@@ -89,8 +107,10 @@ def setup_ui(
     def _ws_status(msg: str):
         try:
             if msg == "ws_down":
-                logger.warning("Realtime WS down detected. REST fallback may be used until WS is restored.")
-                controller.signals.status.emit("Realtime: WS down (fallback REST attivo)")
+                logger.warning("Realtime WS down detected. REST fallback is DISABLED.")
+                controller.signals.status.emit("Realtime: WS down (no REST fallback)")
+                #controller.signals.status.emit("Realtime: WS down (fallback REST attivo)")
+
             elif msg == "ws_restored":
                 logger.info("Realtime WS restored.")
                 controller.signals.status.emit("Realtime: WS restored")
@@ -195,5 +215,31 @@ def setup_ui(
 
     controller.signals.status.connect(status_label.setText)
     controller.signals.error.connect(status_label.setText)
+
+    # --- Graceful shutdown on app exit ---
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        def _graceful_shutdown():
+            try:
+                logger.info("Shutting down services...")
+                try:
+                    connector.stop()
+                except Exception:
+                    pass
+                try:
+                    aggregator.stop()
+                except Exception:
+                    pass
+                try:
+                    db_writer.stop()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        if app is not None:
+            app.aboutToQuit.connect(_graceful_shutdown)
+    except Exception:
+        pass
 
     return result

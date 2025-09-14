@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem,
     QSplitter, QListWidget, QListWidgetItem, QTableWidget
 )
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal, QSize
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -32,6 +32,13 @@ class ChartTab(QWidget):
     def __init__(self, parent=None, viewer=None):
         super().__init__(parent)
         self._main_window = parent
+        # drawing/tools state
+        self._drawing_mode: Optional[str] = None
+        self._pending_points: List = []
+        self._trend_points: List = []
+        self._rect_points: List = []
+        self._fib_points: List = []
+        self._orders_visible: bool = True
         self.layout = QVBoxLayout(self)
         self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -39,7 +46,25 @@ class ChartTab(QWidget):
         # --- Toolbar Setup ---
         topbar = QWidget()
         top_layout = QHBoxLayout(topbar)
-        top_layout.setContentsMargins(0, 0, 0, 0)
+        # margini/spacing compatti per ridurre l'altezza
+        top_layout.setContentsMargins(4, 1, 4, 1)
+        top_layout.setSpacing(4)
+        # rendi la NavigationToolbar compatta
+        try:
+            self.toolbar.setIconSize(QSize(16, 16))
+            self.toolbar.setStyleSheet("QToolBar{spacing:2px; padding:0px; margin:0px;}")
+            self.toolbar.setMovable(False)
+            self.toolbar.setFloatable(False)
+            self.toolbar.setMaximumHeight(26)
+        except Exception:
+            pass
+        # stile compatto solo per i widget dentro la topbar
+        topbar.setStyleSheet("""
+            QPushButton, QComboBox, QToolButton { padding: 2px 6px; min-height: 22px; }
+            QLabel { padding: 0px; margin: 0px; }
+        """)
+        # altezza massima della barra poco sopra i bottoni
+        topbar.setMaximumHeight(32)
         top_layout.addWidget(self.toolbar)
 
         # Symbol selector
@@ -62,26 +87,14 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.adv_settings_btn)
         top_layout.addWidget(self.adv_forecast_btn)
 
-        # Drawing tools
-        self.btn_cross = QPushButton("Cross")
-        self.btn_hline = QPushButton("H-Line")
-        self.btn_trend = QPushButton("Trend")
-        self.btn_rect = QPushButton("Rect")
-        self.btn_fib = QPushButton("Fib")
-        self.btn_label = QPushButton("Label")
-        for b in (self.btn_cross, self.btn_hline, self.btn_trend, self.btn_rect, self.btn_fib, self.btn_label):
-            top_layout.addWidget(b)
-        self.btn_cross.clicked.connect(lambda: self._set_drawing_mode(None))
-        self.btn_hline.clicked.connect(lambda: self._set_drawing_mode("hline"))
-        self.btn_trend.clicked.connect(lambda: self._set_drawing_mode("trend"))
-        self.btn_rect.clicked.connect(lambda: self._set_drawing_mode("rect"))
-        self.btn_fib.clicked.connect(lambda: self._set_drawing_mode("fib"))
-        self.btn_label.clicked.connect(lambda: self._set_drawing_mode("label"))
-
-        # Colors dialog
-        self.colors_btn = QPushButton("Colors")
-        self.colors_btn.clicked.connect(self._open_color_settings)
-        top_layout.addWidget(self.colors_btn)
+        # Toggle per barra Drawing (icone sopra al grafico)
+        from PySide6.QtWidgets import QToolButton
+        self.toggle_drawbar_btn = QToolButton()
+        self.toggle_drawbar_btn.setText("Draw")
+        self.toggle_drawbar_btn.setCheckable(True)
+        self.toggle_drawbar_btn.setChecked(True)
+        self.toggle_drawbar_btn.setToolTip("Mostra/Nascondi barra di disegno")
+        top_layout.addWidget(self.toggle_drawbar_btn)
 
         # Backfill range selectors (session-only; 0=full range)
         from PySide6.QtWidgets import QLabel, QComboBox
@@ -134,6 +147,55 @@ class ChartTab(QWidget):
 
         self.layout.addWidget(topbar)
 
+        # Drawing bar (icone) subito sopra il grafico
+        from PySide6.QtWidgets import QToolButton
+        from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+        from PySide6.QtWidgets import QStyle
+        drawbar = QWidget()
+        dlay = QHBoxLayout(drawbar); dlay.setContentsMargins(4, 2, 4, 2)
+        # Nav buttons
+        self.tb_home = QToolButton(); self.tb_home.setToolTip("Reset view"); self.tb_home.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.tb_pan = QToolButton(); self.tb_pan.setToolTip("Pan"); self.tb_pan.setCheckable(True); self.tb_pan.setIcon(self.style().standardIcon(QStyle.SP_ArrowUp))
+        self.tb_zoom = QToolButton(); self.tb_zoom.setToolTip("Zoom"); self.tb_zoom.setCheckable(True); self.tb_zoom.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
+        for b in (self.tb_home, self.tb_pan, self.tb_zoom):
+            dlay.addWidget(b)
+        dlay.addSpacing(12)
+        # Drawing tools (icone provvisorie)
+        self.tb_cross = QToolButton(); self.tb_cross.setToolTip("Cross"); self.tb_cross.setIcon(self.style().standardIcon(QStyle.SP_DialogYesButton))
+        self.tb_hline = QToolButton(); self.tb_hline.setToolTip("H-Line"); self.tb_hline.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
+        self.tb_trend = QToolButton(); self.tb_trend.setToolTip("Trend"); self.tb_trend.setIcon(self.style().standardIcon(QStyle.SP_ArrowRight))
+        self.tb_rect = QToolButton(); self.tb_rect.setToolTip("Rect"); self.tb_rect.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        self.tb_fib = QToolButton(); self.tb_fib.setToolTip("Fib"); self.tb_fib.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        self.tb_label = QToolButton(); self.tb_label.setToolTip("Label"); self.tb_label.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+        # Colors come tool sulla drawbar
+        self.tb_colors = QToolButton(); self.tb_colors.setToolTip("Color/CSS Settings"); self.tb_colors.setIcon(self.style().standardIcon(QStyle.SP_DriveDVDIcon))
+        self.tb_colors.clicked.connect(self._open_color_settings)
+        # Toggle Orders visibilità
+        self.tb_orders = QToolButton(); self.tb_orders.setToolTip("Show/Hide Orders"); self.tb_orders.setCheckable(True); self.tb_orders.setChecked(True)
+        self.tb_orders.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
+        self.tb_orders.toggled.connect(self._toggle_orders)
+
+        # Aggiunta ordinata dei tools (evita doppioni dei primi tre già inseriti)
+        for b in (self.tb_cross, self.tb_hline, self.tb_trend, self.tb_rect, self.tb_fib, self.tb_label, self.tb_colors, self.tb_orders):
+            dlay.addWidget(b)
+        dlay.addStretch()
+        # conserva la barra per inserirla nello splitter sopra al grafico
+        self._drawbar = drawbar
+
+        # Connessioni nav/drawing
+        self.tb_home.clicked.connect(self._on_nav_home)
+        self.tb_pan.clicked.connect(self._on_nav_pan)
+        self.tb_zoom.clicked.connect(self._on_nav_zoom)
+        self.tb_cross.clicked.connect(lambda: self._set_drawing_mode(None))
+        self.tb_hline.clicked.connect(lambda: self._set_drawing_mode("hline"))
+        self.tb_trend.clicked.connect(lambda: self._set_drawing_mode("trend"))
+        self.tb_rect.clicked.connect(lambda: self._set_drawing_mode("rect"))
+        self.tb_fib.clicked.connect(lambda: self._set_drawing_mode("fib"))
+        self.tb_label.clicked.connect(lambda: self._set_drawing_mode("label"))
+
+        # Toggle drawbar visibility
+        self.toggle_drawbar_btn.toggled.connect(self._toggle_drawbar)
+
         # Splitter: Market Watch | (Chart + Orders)
         splitter = QSplitter(Qt.Horizontal)
         # left: market watch
@@ -141,14 +203,18 @@ class ChartTab(QWidget):
         for s in self._symbols_supported:
             QListWidgetItem(f"{s}  -", self.market_watch)
         splitter.addWidget(self.market_watch)
-        # right: vertical with chart and orders table
+        # right: vertical with (drawbar+chart) and orders table
         right_vert = QSplitter(Qt.Vertical)
-        # chart
+        # inner splitter: drawbar | chart canvas
+        chart_area = QSplitter(Qt.Vertical)
+        chart_area.setHandleWidth(4); chart_area.setOpaqueResize(True)
+        self._chart_area = chart_area
+        chart_area.addWidget(self._drawbar)
         chart_wrap = QWidget()
-        cw_lay = QVBoxLayout(chart_wrap)
-        cw_lay.setContentsMargins(0, 0, 0, 0)
+        cw_lay = QVBoxLayout(chart_wrap); cw_lay.setContentsMargins(0, 0, 0, 0)
         cw_lay.addWidget(self.canvas)
-        right_vert.addWidget(chart_wrap)
+        chart_area.addWidget(chart_wrap)
+        right_vert.addWidget(chart_area)
         # orders table
         self.orders_table = QTableWidget(0, 9)
         self.orders_table.setHorizontalHeaderLabels(["ID","Time","Symbol","Type","Volume","Price","SL","TP","Status"])
@@ -156,6 +222,12 @@ class ChartTab(QWidget):
         splitter.addWidget(right_vert)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 5)
+        # Splitter handles/movimento per tutti
+        splitter.setHandleWidth(6); splitter.setOpaqueResize(True)
+        right_vert.setHandleWidth(6); right_vert.setOpaqueResize(True)
+        # Splitter handles/movimento
+        splitter.setHandleWidth(6); splitter.setOpaqueResize(True)
+        right_vert.setHandleWidth(6); right_vert.setOpaqueResize(True)
         self.layout.addWidget(splitter)
 
         self.ax = self.canvas.figure.subplots()
@@ -322,75 +394,142 @@ class ChartTab(QWidget):
 
         self._last_df = df.copy()
 
-        # preserve previous limits if provided
-        try:
-            prev_xlim = restore_xlim if restore_xlim is not None else self.ax.get_xlim()
-            prev_ylim = restore_ylim if restore_ylim is not None else self.ax.get_ylim()
-        except Exception:
-            prev_xlim = None
-            prev_ylim = None
+        # preserve previous limits only if explicitly provided
+        prev_xlim = restore_xlim if restore_xlim is not None else None
+        prev_ylim = restore_ylim if restore_ylim is not None else None
 
         self.ax.clear()
 
-        x_dt = pd.to_datetime(df["ts_utc"], unit="ms")
+        # Clean and normalize data for plotting (align x/y, drop NaN, sort by time)
+        try:
+            df2 = df.copy()
+            y_col = 'close' if 'close' in df2.columns else 'price'
+            df2["ts_utc"] = pd.to_numeric(df2["ts_utc"], errors="coerce")
+            df2[y_col] = pd.to_numeric(df2[y_col], errors="coerce")
+            df2 = df2.dropna(subset=["ts_utc", y_col]).reset_index(drop=True)
+            df2["ts_utc"] = df2["ts_utc"].astype("int64")
+            df2 = df2.sort_values("ts_utc").reset_index(drop=True)
 
-        # Use 'close' for candles, fallback to 'price' for ticks
-        y_col = 'close' if 'close' in df.columns else 'price'
+            # build x (naive datetime for matplotlib) and y aligned
+            x_dt = pd.to_datetime(df2["ts_utc"], unit="ms", utc=True)
+            try:
+                x_dt = x_dt.tz_localize(None)
+            except Exception:
+                pass
+            y_vals = df2[y_col].astype(float).to_numpy()
+        except Exception as e:
+            logger.exception("Failed to normalize data for plotting: {}", e)
+            return
+
+        if len(x_dt) == 0 or len(y_vals) == 0:
+            logger.info("Nothing to plot after cleaning ({} {}).", getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
+            return
+
         price_color = self._get_color("price_color", "#e0e0e0" if getattr(self, "_is_dark", True) else "#000000")
-        self.ax.plot(x_dt, df[y_col], color=price_color, label="Price")
+        self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
 
         if quantiles:
             self._plot_forecast_overlay(quantiles)
 
         self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}")
+        # assi/ticks colorati da settings
+        axes_col = self._get_color("axes_color", "#cfd6e1")
+        try:
+            self.ax.tick_params(colors=axes_col)
+            self.ax.xaxis.label.set_color(axes_col)
+            self.ax.yaxis.label.set_color(axes_col)
+            for spine in self.ax.spines.values():
+                spine.set_color(axes_col)
+        except Exception:
+            pass
         self.ax.legend()
         self.ax.figure.autofmt_xdate()
 
-        # restore limits to preserve zoom/pan
+        # restore limits (only if requested), else autoscale to data
         try:
             if prev_xlim is not None:
                 self.ax.set_xlim(prev_xlim)
             if prev_ylim is not None:
                 self.ax.set_ylim(prev_ylim)
+            if prev_xlim is None and prev_ylim is None:
+                self.ax.relim()
+                self.ax.autoscale_view()
         except Exception:
             pass
 
-        self.canvas.draw()
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            self.canvas.draw()
+        try:
+            logger.info("Plotted {} points for {} {}", len(y_vals), getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
+        except Exception:
+            pass
 
     # --- Theme helpers ---
-    def _apply_theme(self, theme: str):
-        t = (theme or "Dark").lower()
-        self._is_dark = (t == "dark")
-        if self._is_dark:
-            self.setStyleSheet("""
-            QWidget { background-color: #0f1115; color: #e0e0e0; }
-            QPushButton, QComboBox { background-color: #1c1f26; color: #e0e0e0; border: 1px solid #2a2f3a; padding: 4px 8px; border-radius: 4px; }
-            QPushButton:hover { background-color: #242a35; }
-            QTableWidget, QListWidget { background-color: #12151b; color: #d0d0d0; gridline-color: #2a2f3a; }
-            QHeaderView::section { background-color: #1a1e25; color: #bfbfbf; border: 0px; }
-            """)
-            try:
-                self.canvas.figure.set_facecolor("#0f1115")
-                self.ax.set_facecolor("#0f1115")
-            except Exception:
-                pass
-        else:
-            self.setStyleSheet("""
-            QWidget { background-color: #f3f5f8; color: #1a1e25; }
-            QPushButton, QComboBox { background: #ffffff; color: #1a1e25; border: 1px solid #cfd6e1; padding: 4px 8px; border-radius: 4px; }
-            QTableWidget, QListWidget { background: #ffffff; color: #1a1e25; gridline-color: #cfd6e1; }
-            QHeaderView::section { background: #e8edf4; color: #1a1e25; border: 0px; }
-            """)
-            try:
-                self.canvas.figure.set_facecolor("#ffffff")
-                self.ax.set_facecolor("#ffffff")
-            except Exception:
-                pass
-        set_setting("ui_theme", "Dark" if self._is_dark else "Light")
+    def _on_nav_home(self):
         try:
-            self.canvas.draw()
+            self.toolbar.home()
         except Exception:
             pass
+
+    def _on_nav_pan(self, checked: bool):
+        try:
+            # disattiva zoom se pan attivo
+            if checked and hasattr(self, "tb_zoom"):
+                self.tb_zoom.setChecked(False)
+            self.toolbar.pan()
+        except Exception:
+            pass
+
+    def _on_nav_zoom(self, checked: bool):
+        try:
+            # disattiva pan se zoom attivo
+            if checked and hasattr(self, "tb_pan"):
+                self.tb_pan.setChecked(False)
+            self.toolbar.zoom()
+        except Exception:
+            pass
+
+    def _apply_theme(self, theme: str):
+        from PySide6.QtGui import QPalette, QColor
+        from PySide6.QtWidgets import QApplication
+        t = (theme or "Dark").lower()
+        self._is_dark = (t == "dark")
+        app = QApplication.instance()
+        # Colori da settings (con fallback per dark/light)
+        window_bg = self._get_color("window_bg", "#0f1115" if self._is_dark else "#f3f5f8")
+        panel_bg = self._get_color("panel_bg", "#12151b" if self._is_dark else "#ffffff")
+        text_color = self._get_color("text_color", "#e0e0e0" if self._is_dark else "#1a1e25")
+        chart_bg = self._get_color("chart_bg", "#0f1115" if self._is_dark else "#ffffff")
+        base_css = f"""
+        QWidget {{ background-color: {window_bg}; color: {text_color}; }}
+        QPushButton, QComboBox, QToolButton {{ background-color: {('#1c1f26' if self._is_dark else '#ffffff')}; color: {text_color}; border: 1px solid {('#2a2f3a' if self._is_dark else '#cfd6e1')}; padding: 4px 8px; border-radius: 4px; }}
+        QPushButton:hover, QToolButton:hover {{ background-color: {('#242a35' if self._is_dark else '#eaeef4')}; }}
+        QTableWidget, QListWidget {{ background-color: {panel_bg}; color: {text_color}; gridline-color: {('#2a2f3a' if self._is_dark else '#cfd6e1')}; }}
+        QHeaderView::section {{ background-color: {('#1a1e25' if self._is_dark else '#e8edf4')}; color: {text_color}; border: 0px; }}
+        """
+        custom_qss = get_setting("custom_qss", "")
+        if app:
+            app.setStyleSheet(base_css + "\n" + (custom_qss or ""))
+            pal = QPalette()
+            pal.setColor(QPalette.Window, QColor(window_bg))
+            pal.setColor(QPalette.WindowText, QColor(text_color))
+            pal.setColor(QPalette.Base, QColor(panel_bg))
+            pal.setColor(QPalette.AlternateBase, QColor(panel_bg))
+            pal.setColor(QPalette.Text, QColor(text_color))
+            pal.setColor(QPalette.Button, QColor(panel_bg))
+            pal.setColor(QPalette.ButtonText, QColor(text_color))
+            app.setPalette(pal)
+        # colori figure
+        try:
+            self.canvas.figure.set_facecolor(chart_bg)
+            self.ax.set_facecolor(chart_bg)
+        except Exception:
+            pass
+        set_setting("ui_theme", "Dark" if self._is_dark else "Light")
+        try: self.canvas.draw()
+        except Exception: pass
 
     def _get_color(self, key: str, default: str) -> str:
         try:
@@ -406,8 +545,25 @@ class ChartTab(QWidget):
                 # re-draw to apply new colors
                 if self._last_df is not None and not self._last_df.empty:
                     self.update_plot(self._last_df)
+                # ri-applica il tema per aggiornare QSS/palette
+                self._apply_theme(self.theme_combo.currentText())
         except Exception as e:
             QMessageBox.warning(self, "Colors", str(e))
+
+    def _toggle_drawbar(self, visible: bool):
+        try:
+            if hasattr(self, "_drawbar") and self._drawbar is not None:
+                self._drawbar.setVisible(bool(visible))
+        except Exception:
+            pass
+
+    def _toggle_orders(self, visible: bool):
+        try:
+            self._orders_visible = bool(visible)
+            if hasattr(self, "orders_table") and self.orders_table is not None:
+                self.orders_table.setVisible(self._orders_visible)
+        except Exception:
+            pass
 
     def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
         """
@@ -495,6 +651,24 @@ class ChartTab(QWidget):
                     self.symbol_combo.setCurrentIndex(idx)
         except Exception:
             pass
+        # compute view range from UI (Years/Months) and load initial candles
+        try:
+            from datetime import datetime, timezone, timedelta
+            yrs = int(self.years_combo.currentText() or "0") if hasattr(self, "years_combo") else 0
+            mos = int(self.months_combo.currentText() or "0") if hasattr(self, "months_combo") else 0
+            days = yrs * 365 + mos * 30
+            start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
+        except Exception:
+            start_ms_view = None
+        try:
+            df = self._load_candles_from_db(self.symbol, self.timeframe, limit=3000, start_ms=start_ms_view)
+            if df is not None and not df.empty:
+                self.update_plot(df)
+                logger.info("Plotted {} points for {} {}", len(df), self.symbol, self.timeframe)
+            else:
+                logger.info("No candles found in DB for {} {}", self.symbol, self.timeframe)
+        except Exception as e:
+            logger.exception("Initial load failed: {}", e)
 
     def _on_symbol_changed(self, new_symbol: str):
         """Handle symbol change from combo: update context and reload candles from DB."""
@@ -502,8 +676,16 @@ class ChartTab(QWidget):
             if not new_symbol:
                 return
             self.symbol = new_symbol
-            # reload last candles for this symbol/timeframe
-            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=3000)
+            # reload last candles for this symbol/timeframe (respect view range)
+            from datetime import datetime, timezone, timedelta
+            try:
+                yrs = int(self.years_combo.currentText() or "0")
+                mos = int(self.months_combo.currentText() or "0")
+                days = yrs * 365 + mos * 30
+                start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
+            except Exception:
+                start_ms_view = None
+            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=3000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
         except Exception as e:
@@ -612,7 +794,7 @@ class ChartTab(QWidget):
 
             # convert xdata (matplotlib float date) to utc ms
             try:
-                import matplotlib.dates as mdates
+                # use global mdates imported at module level
                 from datetime import timezone
                 dt = mdates.num2date(event.xdata)
                 # ensure timezone-aware UTC
@@ -811,6 +993,28 @@ class ChartTab(QWidget):
             QMessageBox.information(self, "Backfill", "Imposta prima symbol e timeframe.")
             return
 
+        # compute start override from UI years/months (if >0)
+        try:
+            yrs = int(self.years_combo.currentText() or "0")
+            mos = int(self.months_combo.currentText() or "0")
+        except Exception:
+            yrs = 0; mos = 0
+        start_override = None
+        if yrs > 0 or mos > 0:
+            from datetime import datetime, timezone, timedelta
+            days = yrs * 365 + mos * 30
+            start_dt = datetime.now(timezone.utc) - timedelta(days=days)
+            start_override = int(start_dt.timestamp() * 1000)
+            try:
+                logger.info("Backfill requested via UI: Years={}, Months={} -> start={} (UTC)", yrs, mos, start_dt.isoformat())
+            except Exception:
+                pass
+        else:
+            try:
+                logger.info("Backfill requested via UI: Years=0, Months=0 -> no override (service decides from last candle)")
+            except Exception:
+                pass
+
         from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
         class BackfillSignals(QObject):
@@ -818,11 +1022,12 @@ class ChartTab(QWidget):
             finished = Signal(bool)
 
         class BackfillJob(QRunnable):
-            def __init__(self, svc, symbol, timeframe, signals):
+            def __init__(self, svc, symbol, timeframe, start_override, signals):
                 super().__init__()
                 self.svc = svc
                 self.symbol = symbol
                 self.timeframe = timeframe
+                self.start_override = start_override
                 self.signals = signals
 
             def run(self):
@@ -833,7 +1038,7 @@ class ChartTab(QWidget):
                             self.signals.progress.emit(int(pct))
                         except Exception:
                             pass
-                    self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb)
+                    self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
                 except Exception as e:
                     ok = False
                 finally:
@@ -851,8 +1056,16 @@ class ChartTab(QWidget):
 
         def _on_done(ok: bool):
             try:
-                # reload candles from DB
-                df = self._load_candles_from_db(sym, tf, limit=3000)
+                # reload last candles for the current view range
+                from datetime import datetime, timezone, timedelta
+                try:
+                    yrs_v = int(self.years_combo.currentText() or "0")
+                    mos_v = int(self.months_combo.currentText() or "0")
+                    days_v = yrs_v * 365 + mos_v * 30
+                    start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days_v)).timestamp() * 1000) if days_v > 0 else None
+                except Exception:
+                    start_ms_view = None
+                df = self._load_candles_from_db(sym, tf, limit=3000, start_ms=start_ms_view)
                 if df is not None and not df.empty:
                     self.update_plot(df)
                 if ok:
@@ -864,30 +1077,53 @@ class ChartTab(QWidget):
                 self.backfill_progress.setValue(100)
 
         self._bf_signals.finished.connect(_on_done)
-        job = BackfillJob(ms, sym, tf, self._bf_signals)
+        job = BackfillJob(ms, sym, tf, start_override, self._bf_signals)
         QThreadPool.globalInstance().start(job)
 
-    def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000):
+    def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None):
         """Load candles from DB to refresh chart."""
         try:
             controller = getattr(self._main_window, "controller", None)
             eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
             if eng is None:
                 return pd.DataFrame()
-            from sqlalchemy import MetaData, select
+            from sqlalchemy import MetaData, select, and_
             meta = MetaData()
             meta.reflect(bind=eng, only=["market_data_candles"])
             tbl = meta.tables.get("market_data_candles")
             if tbl is None:
                 return pd.DataFrame()
             with eng.connect() as conn:
+                cond = and_(tbl.c.symbol == symbol, tbl.c.timeframe == timeframe)
+                if start_ms is not None:
+                    cond = and_(cond, tbl.c.ts_utc >= int(start_ms))
+                # prendi le barre più recenti e poi ordinale ASC per il plot
                 stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
-                    .where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe)\
-                    .order_by(tbl.c.ts_utc.asc()).limit(limit)
+                    .where(cond).order_by(tbl.c.ts_utc.desc()).limit(limit)
                 rows = conn.execute(stmt).fetchall()
                 if not rows:
                     return pd.DataFrame()
                 df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
+                # typing e ordinamento ASC
+                try:
+                    df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("Int64")
+                    for c in ["open","high","low","close","volume"]:
+                        if c in df.columns:
+                            df[c] = pd.to_numeric(df[c], errors="coerce")
+                    df = df.dropna(subset=["ts_utc"]).reset_index(drop=True)
+                    df["ts_utc"] = df["ts_utc"].astype("int64")
+                    df = df.sort_values("ts_utc").reset_index(drop=True)
+                    # drop duplicates on timestamp to avoid multi-insert artifacts
+                    before = len(df)
+                    df = df.drop_duplicates(subset=["ts_utc"], keep="last").reset_index(drop=True)
+                    trimmed = before - len(df)
+                    if trimmed > 0:
+                        try:
+                            logger.info("Trimmed {} duplicate bars for {} {}", trimmed, symbol, timeframe)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 return df
         except Exception as e:
             logger.exception("Load candles failed: {}", e)
