@@ -332,6 +332,11 @@ class UIController:
         menu_signals.realtimeToggled.connect(self.handle_realtime_toggled)
         menu_signals.configRequested.connect(self.handle_config_requested)
         menu_signals.predictionSettingsRequested.connect(self.handle_prediction_settings_requested)
+        # File->Settings
+        try:
+            menu_signals.settingsRequested.connect(self.handle_settings_requested)
+        except Exception:
+            pass
 
     @Slot()
     def handle_prediction_settings_requested(self):
@@ -434,9 +439,18 @@ class UIController:
     def handle_config_requested(self):
         self.signals.status.emit("Config requested (not implemented).")
 
+    @Slot()
+    def handle_settings_requested(self):
+        try:
+            from .settings_dialog import SettingsDialog
+            dlg = SettingsDialog(self.main_window)
+            dlg.exec()
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
 
 class _IngestWorker(QRunnable):
-    """Worker that runs MarketDataService.ensure_startup_backfill in background."""
+    """Worker that runs backfill over configured symbols/timeframes with progress."""
     def __init__(self, market_service: MarketDataService, signals: UIControllerSignals):
         super().__init__()
         self.market_service = market_service
@@ -445,8 +459,19 @@ class _IngestWorker(QRunnable):
     def run(self):
         try:
             self.signals.status.emit("Backfill: running...")
-            reports = self.market_service.ensure_startup_backfill()
-            self.signals.status.emit(f"Backfill: completed ({len(reports)} reports)")
+            # symbols from settings or safe defaults
+            try:
+                from ..utils.user_settings import get_setting
+                symbols = get_setting("user_symbols", []) or ["EUR/USD","GBP/USD","AUX/USD","GBP/NZD","AUD/JPY","GBP/EUR","GBP/AUD"]
+            except Exception:
+                symbols = ["EUR/USD"]
+            for sym in symbols:
+                def _cb(pct: int, s=sym):
+                    try: self.signals.status.emit(f"Backfill {s}: {pct}%")
+                    except Exception: pass
+                # use '1d' to process all lower TFs up to daily
+                self.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb)
+            self.signals.status.emit("Backfill: completed")
         except Exception as e:
             logger.exception("Backfill worker failed: {}", e)
             self.signals.error.emit(str(e))

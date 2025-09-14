@@ -21,7 +21,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.resize(560, 540)
+        self.resize(600, 600)
         layout = QVBoxLayout(self)
 
         # Provider/API keys
@@ -38,6 +38,18 @@ class SettingsDialog(QDialog):
         # Broker mode
         self.broker_mode = QComboBox(); self.broker_mode.addItems(["paper","ib","mt4","mt5"])
         form.addRow(QLabel("Broker Mode:"), self.broker_mode)
+
+        # Accounts (simulato)
+        self.acc_name = QLineEdit(); self.acc_name.setPlaceholderText("default")
+        self.acc_currency = QLineEdit(); self.acc_currency.setPlaceholderText("USD")
+        self.acc_balance = QLineEdit(); self.acc_balance.setPlaceholderText("100000")
+        self.acc_leverage = QLineEdit(); self.acc_leverage.setPlaceholderText("30")
+        self.acc_tiingo = QLineEdit(); self.acc_tiingo.setPlaceholderText("Account Tiingo API key (optional)")
+        form.addRow(QLabel("Active Account:"), self.acc_name)
+        form.addRow(QLabel("Currency:"), self.acc_currency)
+        form.addRow(QLabel("Balance:"), self.acc_balance)
+        form.addRow(QLabel("Leverage:"), self.acc_leverage)
+        form.addRow(QLabel("Account Tiingo Key:"), self.acc_tiingo)
 
         # IB credentials
         self.ib_host = QLineEdit(); self.ib_host.setPlaceholderText("127.0.0.1")
@@ -84,6 +96,13 @@ class SettingsDialog(QDialog):
         self.admin_input.setText(str(admin))
         # broker
         self.broker_mode.setCurrentText(str(get_setting("broker_mode","paper")))
+        # account
+        self.acc_name.setText(str(get_setting("active_account","default")))
+        self.acc_currency.setText(str(get_setting("account_currency","USD")))
+        self.acc_balance.setText(str(get_setting("account_balance","100000")))
+        self.acc_leverage.setText(str(get_setting("account_leverage","30")))
+        self.acc_tiingo.setText(str(get_setting("account_tiingo_api_key","")))
+        # IB / MT
         self.ib_host.setText(str(get_setting("ib_host","127.0.0.1")))
         self.ib_port.setText(str(get_setting("ib_port","7497")))
         self.ib_client.setText(str(get_setting("ib_client_id","1")))
@@ -99,6 +118,13 @@ class SettingsDialog(QDialog):
             set_setting("tiingo_api_key", self.tiingo_input.text().strip())
             set_setting("admin_tokens", self.admin_input.text().strip())
             set_setting("broker_mode", self.broker_mode.currentText())
+            # account
+            set_setting("active_account", self.acc_name.text().strip() or "default")
+            set_setting("account_currency", self.acc_currency.text().strip() or "USD")
+            set_setting("account_balance", self.acc_balance.text().strip() or "100000")
+            set_setting("account_leverage", self.acc_leverage.text().strip() or "30")
+            set_setting("account_tiingo_api_key", self.acc_tiingo.text().strip())
+            # IB / MT
             set_setting("ib_host", self.ib_host.text().strip())
             set_setting("ib_port", self.ib_port.text().strip())
             set_setting("ib_client_id", self.ib_client.text().strip())

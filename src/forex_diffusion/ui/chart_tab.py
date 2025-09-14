@@ -8,7 +8,8 @@ import time
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem
+    QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem,
+    QSplitter, QListWidget, QListWidgetItem, QTableWidget
 )
 from PySide6.QtCore import QTimer, Qt, Signal
 from matplotlib.figure import Figure
@@ -19,6 +20,7 @@ from matplotlib.dates import DateFormatter
 from loguru import logger
 
 from ..utils.user_settings import get_setting, set_setting
+from ..services.brokers import get_broker_service
 
 class ChartTab(QWidget):
     """
@@ -54,11 +56,32 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.forecast_settings_btn)
         top_layout.addWidget(self.forecast_btn)
 
-        # Advanced Forecast Buttons (Restored)
+        # Advanced Forecast Buttons
         self.adv_settings_btn = QPushButton("Advanced Settings")
         self.adv_forecast_btn = QPushButton("Advanced Forecast")
         top_layout.addWidget(self.adv_settings_btn)
         top_layout.addWidget(self.adv_forecast_btn)
+
+        # Drawing tools
+        self.btn_cross = QPushButton("Cross")
+        self.btn_hline = QPushButton("H-Line")
+        self.btn_trend = QPushButton("Trend")
+        self.btn_rect = QPushButton("Rect")
+        self.btn_fib = QPushButton("Fib")
+        self.btn_label = QPushButton("Label")
+        for b in (self.btn_cross, self.btn_hline, self.btn_trend, self.btn_rect, self.btn_fib, self.btn_label):
+            top_layout.addWidget(b)
+        self.btn_cross.clicked.connect(lambda: self._set_drawing_mode(None))
+        self.btn_hline.clicked.connect(lambda: self._set_drawing_mode("hline"))
+        self.btn_trend.clicked.connect(lambda: self._set_drawing_mode("trend"))
+        self.btn_rect.clicked.connect(lambda: self._set_drawing_mode("rect"))
+        self.btn_fib.clicked.connect(lambda: self._set_drawing_mode("fib"))
+        self.btn_label.clicked.connect(lambda: self._set_drawing_mode("label"))
+
+        # Colors dialog
+        self.colors_btn = QPushButton("Colors")
+        self.colors_btn.clicked.connect(self._open_color_settings)
+        top_layout.addWidget(self.colors_btn)
 
         # Backfill range selectors (session-only; 0=full range)
         from PySide6.QtWidgets import QLabel, QComboBox
@@ -68,11 +91,17 @@ class ChartTab(QWidget):
         self.years_combo.setCurrentText("0")
         top_layout.addWidget(self.years_combo)
 
-        top_layout.addWidget(QLabel("Months :"))
+        top_layout.addWidget(QLabel("Months:"))
         self.months_combo = QComboBox()
         self.months_combo.addItems([str(x) for x in [0,1,2,3,4,5,6,7,8,9,10,11,12]])
         self.months_combo.setCurrentText("0")
         top_layout.addWidget(self.months_combo)
+
+        # Backfill button + progress
+        self.backfill_btn = QPushButton("Backfill")
+        self.backfill_btn.setToolTip("Scarica storico per il range selezionato (Years/Months) per il simbolo corrente")
+        top_layout.addWidget(self.backfill_btn)
+
         from PySide6.QtWidgets import QProgressBar
         self.backfill_progress = QProgressBar()
         self.backfill_progress.setMaximumWidth(160)
@@ -89,8 +118,45 @@ class ChartTab(QWidget):
         self.bidask_label = QLabel("Bid: -    Ask: -")
         self.bidask_label.setStyleSheet("font-weight: bold;")
         top_layout.addWidget(self.bidask_label)
+        # Trade button on toolbar
+        self.trade_btn = QPushButton("Trade")
+        top_layout.addWidget(self.trade_btn)
+
+        # Theme switch
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Dark", "Light"])
+        self.theme_combo.setCurrentText(get_setting("ui_theme", "Dark"))
+        top_layout.addWidget(QLabel("Theme:"))
+        top_layout.addWidget(self.theme_combo)
+        self.theme_combo.currentTextChanged.connect(self._apply_theme)
+        # apply at startup
+        self._apply_theme(self.theme_combo.currentText())
+
         self.layout.addWidget(topbar)
-        self.layout.addWidget(self.canvas)
+
+        # Splitter: Market Watch | (Chart + Orders)
+        splitter = QSplitter(Qt.Horizontal)
+        # left: market watch
+        self.market_watch = QListWidget()
+        for s in self._symbols_supported:
+            QListWidgetItem(f"{s}  -", self.market_watch)
+        splitter.addWidget(self.market_watch)
+        # right: vertical with chart and orders table
+        right_vert = QSplitter(Qt.Vertical)
+        # chart
+        chart_wrap = QWidget()
+        cw_lay = QVBoxLayout(chart_wrap)
+        cw_lay.setContentsMargins(0, 0, 0, 0)
+        cw_lay.addWidget(self.canvas)
+        right_vert.addWidget(chart_wrap)
+        # orders table
+        self.orders_table = QTableWidget(0, 9)
+        self.orders_table.setHorizontalHeaderLabels(["ID","Time","Symbol","Type","Volume","Price","SL","TP","Status"])
+        right_vert.addWidget(self.orders_table)
+        splitter.addWidget(right_vert)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 5)
+        self.layout.addWidget(splitter)
 
         self.ax = self.canvas.figure.subplots()
         self._last_df = pd.DataFrame()
@@ -98,10 +164,26 @@ class ChartTab(QWidget):
         self._forecasts: List[Dict] = []
         self.max_forecasts = int(get_setting("max_forecasts", 5))
 
+        # Broker (simulato)
+        try:
+            self.broker = get_broker_service()
+        except Exception:
+            self.broker = None
+
         # Auto-forecast timer
         self._auto_timer = QTimer(self)
         self._auto_timer.setInterval(int(get_setting("auto_interval_seconds", 60) * 1000))
         self._auto_timer.timeout.connect(self._auto_forecast_tick)
+
+        # Orders refresh timer
+        self._orders_timer = QTimer(self)
+        self._orders_timer.setInterval(1500)
+        self._orders_timer.timeout.connect(self._refresh_orders)
+        self._orders_timer.start()
+
+        # Buttons signals
+        self.trade_btn.clicked.connect(self._open_trade_dialog)
+        self.backfill_btn.clicked.connect(self._on_backfill_missing_clicked)
 
         # Mouse interaction: Alt+Click => TestingPoint basic; Shift+Alt+Click => TestingPoint advanced
         # connect matplotlib canvas mouse press
@@ -254,7 +336,8 @@ class ChartTab(QWidget):
 
         # Use 'close' for candles, fallback to 'price' for ticks
         y_col = 'close' if 'close' in df.columns else 'price'
-        self.ax.plot(x_dt, df[y_col], color="black", label="Price")
+        price_color = self._get_color("price_color", "#e0e0e0" if getattr(self, "_is_dark", True) else "#000000")
+        self.ax.plot(x_dt, df[y_col], color=price_color, label="Price")
 
         if quantiles:
             self._plot_forecast_overlay(quantiles)
@@ -273,6 +356,58 @@ class ChartTab(QWidget):
             pass
 
         self.canvas.draw()
+
+    # --- Theme helpers ---
+    def _apply_theme(self, theme: str):
+        t = (theme or "Dark").lower()
+        self._is_dark = (t == "dark")
+        if self._is_dark:
+            self.setStyleSheet("""
+            QWidget { background-color: #0f1115; color: #e0e0e0; }
+            QPushButton, QComboBox { background-color: #1c1f26; color: #e0e0e0; border: 1px solid #2a2f3a; padding: 4px 8px; border-radius: 4px; }
+            QPushButton:hover { background-color: #242a35; }
+            QTableWidget, QListWidget { background-color: #12151b; color: #d0d0d0; gridline-color: #2a2f3a; }
+            QHeaderView::section { background-color: #1a1e25; color: #bfbfbf; border: 0px; }
+            """)
+            try:
+                self.canvas.figure.set_facecolor("#0f1115")
+                self.ax.set_facecolor("#0f1115")
+            except Exception:
+                pass
+        else:
+            self.setStyleSheet("""
+            QWidget { background-color: #f3f5f8; color: #1a1e25; }
+            QPushButton, QComboBox { background: #ffffff; color: #1a1e25; border: 1px solid #cfd6e1; padding: 4px 8px; border-radius: 4px; }
+            QTableWidget, QListWidget { background: #ffffff; color: #1a1e25; gridline-color: #cfd6e1; }
+            QHeaderView::section { background: #e8edf4; color: #1a1e25; border: 0px; }
+            """)
+            try:
+                self.canvas.figure.set_facecolor("#ffffff")
+                self.ax.set_facecolor("#ffffff")
+            except Exception:
+                pass
+        set_setting("ui_theme", "Dark" if self._is_dark else "Light")
+        try:
+            self.canvas.draw()
+        except Exception:
+            pass
+
+    def _get_color(self, key: str, default: str) -> str:
+        try:
+            return str(get_setting(key, default))
+        except Exception:
+            return default
+
+    def _open_color_settings(self):
+        try:
+            from .color_settings_dialog import ColorSettingsDialog
+            dlg = ColorSettingsDialog(self)
+            if dlg.exec():
+                # re-draw to apply new colors
+                if self._last_df is not None and not self._last_df.empty:
+                    self.update_plot(self._last_df)
+        except Exception as e:
+            QMessageBox.warning(self, "Colors", str(e))
 
     def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
         """
@@ -394,16 +529,64 @@ class ChartTab(QWidget):
 
     def _on_canvas_click(self, event):
         """
-        Handle mouse click on canvas:
-        - Alt + Click => basic testing forecast from TestingPoint (same X coordinate)
-        - Shift + Alt + Click => advanced testing forecast
-        Builds candles_override (list of dicts) with the N previous candles up to TestingPoint and emits forecastRequested.
+        Drawing tools + TestingPoint:
+        - Se drawing_mode attivo: disegna H-Line, Trend, Rect, Fib, Label.
+        - Con Alt+Click: TestingPoint basic; Shift+Alt+Click: advanced.
         """
         try:
-            # require valid xdata and left mouse button (button==1)
-            if event is None or event.xdata is None or getattr(event, "button", None) != 1:
+            if event is None or getattr(event, "button", None) != 1:
                 return
 
+            # If drawing mode is active handle first
+            if self._drawing_mode and event.xdata is not None and event.ydata is not None:
+                import matplotlib.patches as patches
+                if self._drawing_mode == "hline":
+                    ln = self.ax.axhline(event.ydata, color=self._get_color("hline_color", "#9bdcff"), linestyle="--", alpha=0.8)
+                    self.canvas.draw()
+                    return
+                if self._drawing_mode == "trend":
+                    if not hasattr(self, "_trend_points"):
+                        self._trend_points = []
+                    self._trend_points.append((event.xdata, event.ydata))
+                    if len(self._trend_points) == 2:
+                        (x1, y1), (x2, y2) = self._trend_points
+                        self.ax.plot([mdates.num2date(x1), mdates.num2date(x2)], [y1, y2], color=self._get_color("trend_color", "#ff9bdc"), linewidth=1.5)
+                        self.canvas.draw()
+                        self._trend_points = []
+                    return
+                if self._drawing_mode == "rect":
+                    if not hasattr(self, "_rect_points"):
+                        self._rect_points = []
+                    self._rect_points.append((event.xdata, event.ydata))
+                    if len(self._rect_points) == 2:
+                        (x1, y1), (x2, y2) = self._rect_points
+                        xmin, xmax = sorted([x1, x2]); ymin, ymax = sorted([y1, y2])
+                        rect = patches.Rectangle((mdates.num2date(xmin), ymin), mdates.num2num(mdates.num2date(xmax)) - mdates.num2num(mdates.num2date(xmin)), ymax - ymin, fill=False, edgecolor=self._get_color("rect_color", "#f0c674"), linewidth=1.2)
+                        self.ax.add_patch(rect); self.canvas.draw(); self._rect_points = []
+                    return
+                if self._drawing_mode == "fib":
+                    if not hasattr(self, "_fib_points"):
+                        self._fib_points = []
+                    self._fib_points.append((event.xdata, event.ydata))
+                    if len(self._fib_points) == 2:
+                        (x1, y1), (x2, y2) = self._fib_points
+                        levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+                        a, b = (y1, y2) if y2 > y1 else (y2, y1)
+                        for lv in levels:
+                            y = a + lv * (b - a)
+                            self.ax.axhline(y, color=self._get_color("fib_color", "#9fe6a0"), alpha=0.6, linestyle=":")
+                        self.canvas.draw(); self._fib_points = []
+                    return
+                if self._drawing_mode == "label":
+                    txt = self.ax.text(mdates.num2date(event.xdata), event.ydata, "Label", color=self._get_color("label_color", "#ffd479"))
+                    try:
+                        txt.set_draggable(True)
+                    except Exception:
+                        pass
+                    self.canvas.draw()
+                    return
+
+            # TestingPoint logic (requires Alt)
             # GUI event gives access to modifiers
             modifiers = None
             try:
