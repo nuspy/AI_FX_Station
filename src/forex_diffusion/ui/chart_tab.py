@@ -275,6 +275,18 @@ class ChartTab(QWidget):
         self._rt_timer.timeout.connect(self._rt_flush)
         self._rt_timer.start()
 
+        # Pan (LMB) state
+        self._lbtn_pan = False
+        self._pan_last_xy = None  # (xdata, ydata)
+
+        # Dynamic data cache state
+        self._current_cache_tf: Optional[str] = None
+        self._current_cache_range: Optional[tuple[int, int]] = None  # (start_ms, end_ms)
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.setInterval(250)
+        self._reload_timer.timeout.connect(self._reload_view_window)
+
         # Ensure tick handling runs on GUI thread
         try:
             self.tickArrived.connect(self._on_tick_main)
@@ -296,13 +308,12 @@ class ChartTab(QWidget):
         try:
             # conserva il gestore esistente per strumenti/testing (left click)
             self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
-            # nuovi handler UX
+            # nuovi handler UX (pan/zoom)
             self.canvas.mpl_connect("button_press_event", self._on_mouse_press)
             self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
             self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
             self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
         except Exception:
-            # if connection fails, continue without interactive testing feature
             logger.debug("Failed to connect mpl mouse events for zoom/pan.")
 
         # --- Signal Connections ---
@@ -986,60 +997,102 @@ class ChartTab(QWidget):
                 self.canvas.draw_idle()
             except Exception:
                 self.canvas.draw()
+            # ricarica dati coerenti con il nuovo zoom
+            self._schedule_view_reload()
         except Exception:
             pass
 
     def _on_mouse_press(self, event):
         try:
-            # right button only, dentro agli assi
-            if event is None or getattr(event, "button", None) != 3 or event.inaxes != self.ax:
+            if event is None or event.inaxes != self.ax:
                 return
-            self._rbtn_drag = True
-            self._drag_last = (event.x, event.y)  # pixel coordinates
-            self._drag_axis = None  # decideremo al primo movimento
+            # Left button: PAN (se nessun drawing tool attivo e nessun Alt)
+            if getattr(event, "button", None) == 1:
+                if not getattr(self, "_drawing_mode", None):
+                    # evita conflitti coi testing point (Alt)
+                    try:
+                        if event.guiEvent and event.guiEvent.modifiers() & Qt.AltModifier:
+                            return
+                    except Exception:
+                        pass
+                    self._lbtn_pan = True
+                    self._pan_last_xy = (event.xdata, event.ydata)
+                    return
+            # Right button: prepara zoom assiale
+            if getattr(event, "button", None) == 3:
+                self._rbtn_drag = True
+                self._drag_last = (event.x, event.y)  # pixel coordinates
+                self._drag_axis = None  # decideremo al primo movimento
         except Exception:
             pass
 
     def _on_mouse_move(self, event):
         try:
-            if not self._rbtn_drag or event is None or event.inaxes != self.ax or self._drag_last is None:
+            if event is None or event.inaxes != self.ax:
                 return
-            x0, y0 = self._drag_last
-            dx = event.x - x0
-            dy = event.y - y0
-            # determina asse predominante al primo movimento significativo
-            if self._drag_axis is None:
-                if abs(dx) > abs(dy) * 1.2:
-                    self._drag_axis = "x"
-                elif abs(dy) > abs(dx) * 1.2:
-                    self._drag_axis = "y"
-                else:
-                    # movimento troppo piccolo / diagonale: attendi
+            # PAN con LMB: sposta i limiti in base allo spostamento del cursore in coordinate dati
+            if self._lbtn_pan and self._pan_last_xy is not None:
+                x_last, y_last = self._pan_last_xy
+                if event.xdata is None or event.ydata is None or x_last is None or y_last is None:
                     return
-            # mappa delta pixel -> fattore di zoom (esponenziale dolce)
-            # dx > 0 (drag a destra) => zoom in (factor < 1) su X; dy < 0 (drag in su) => zoom in su Y
-            if self._drag_axis == "x":
-                factor = (0.90 ** (dx / 20.0)) if dx != 0 else 1.0
-                cx = event.xdata if event.xdata is not None else sum(self.ax.get_xlim()) / 2.0
-                self._zoom_axis("x", cx, factor)
-            else:
-                factor = (0.90 ** (-dy / 20.0)) if dy != 0 else 1.0
-                cy = event.ydata if event.ydata is not None else sum(self.ax.get_ylim()) / 2.0
-                self._zoom_axis("y", cy, factor)
-            self._drag_last = (event.x, event.y)
-            try:
-                self.canvas.draw_idle()
-            except Exception:
-                self.canvas.draw()
+                dx = event.xdata - x_last
+                dy = event.ydata - y_last
+                xmin, xmax = self.ax.get_xlim()
+                ymin, ymax = self.ax.get_ylim()
+                # sposta inverso del movimento (trascinando a destra "porti" i dati verso sinistra)
+                self.ax.set_xlim(xmin - dx, xmax - dx)
+                self.ax.set_ylim(ymin - dy, ymax - dy)
+                self._pan_last_xy = (event.xdata, event.ydata)
+                try:
+                    self.canvas.draw_idle()
+                except Exception:
+                    self.canvas.draw()
+                return
+
+            # ZOOM con RMB (asse X o Y)
+            if self._rbtn_drag and self._drag_last is not None:
+                x0, y0 = self._drag_last
+                dx = event.x - x0
+                dy = event.y - y0
+                # determina asse predominante al primo movimento significativo
+                if self._drag_axis is None:
+                    if abs(dx) > abs(dy) * 1.2:
+                        self._drag_axis = "x"
+                    elif abs(dy) > abs(dx) * 1.2:
+                        self._drag_axis = "y"
+                    else:
+                        return
+                # mappa delta pixel -> fattore di zoom
+                if self._drag_axis == "x":
+                    factor = (0.90 ** (dx / 20.0)) if dx != 0 else 1.0
+                    cx = event.xdata if event.xdata is not None else sum(self.ax.get_xlim()) / 2.0
+                    self._zoom_axis("x", cx, factor)
+                else:
+                    factor = (0.90 ** (-dy / 20.0)) if dy != 0 else 1.0
+                    cy = event.ydata if event.ydata is not None else sum(self.ax.get_ylim()) / 2.0
+                    self._zoom_axis("y", cy, factor)
+                self._drag_last = (event.x, event.y)
+                try:
+                    self.canvas.draw_idle()
+                except Exception:
+                    self.canvas.draw()
         except Exception:
             pass
 
     def _on_mouse_release(self, event):
         try:
-            if getattr(event, "button", None) == 3:
+            btn = getattr(event, "button", None)
+            if btn == 3:
                 self._rbtn_drag = False
                 self._drag_last = None
                 self._drag_axis = None
+                # reload dati dopo zoom
+                self._schedule_view_reload()
+            if btn == 1:
+                self._lbtn_pan = False
+                self._pan_last_xy = None
+                # reload dati dopo pan
+                self._schedule_view_reload()
         except Exception:
             pass
 
@@ -1050,13 +1103,10 @@ class ChartTab(QWidget):
                 xmin, xmax = self.ax.get_xlim()
                 if center is None:
                     center = (xmin + xmax) * 0.5
-                # evita limiti degeneri
                 w = max(1e-9, (xmax - xmin))
                 new_w = max(1e-9, w * float(factor))
-                # mantieni il centro fisso
                 left = center - (center - xmin) * (new_w / w)
                 right = center + (xmax - center) * (new_w / w)
-                # proteggi da invertimenti
                 if right - left > 1e-12:
                     self.ax.set_xlim(left, right)
             elif axis == "y":
@@ -1071,6 +1121,88 @@ class ChartTab(QWidget):
                     self.ax.set_ylim(bottom, top)
         except Exception:
             pass
+
+    def _schedule_view_reload(self):
+        """Throttle view-window reload after user interaction."""
+        try:
+            self._reload_timer.stop()
+            self._reload_timer.start()
+        except Exception:
+            pass
+
+    def _resolution_for_span(self, ms_span: int) -> str:
+        """Pick best timeframe by visible span (ms)."""
+        try:
+            mins = max(1, int(ms_span / 60000))
+            # mapping: <=30m -> 1m; <=5h -> 5m; <=24h -> 15m; <=7d -> 1h; >7d -> 4h
+            if mins <= 30:
+                return "1m"   # ticks storici non disponibili in DB: usiamo 1m
+            if mins <= 5 * 60:
+                return "5m"
+            if mins <= 24 * 60:
+                return "15m"
+            if mins <= 7 * 24 * 60:
+                return "1h"
+            return "4h"
+        except Exception:
+            return "15m"
+
+    def _reload_view_window(self):
+        """Reload only data covering [view_left .. view_right] plus one span of history."""
+        try:
+            # get current view in data coordinates
+            xlim = self.ax.get_xlim()
+            if not xlim or xlim[0] >= xlim[1]:
+                return
+            # matplotlib date floats -> UTC ms
+            import matplotlib.dates as mdates
+            left_dt = mdates.num2date(xlim[0])
+            right_dt = mdates.num2date(xlim[1])
+            # ensure UTC ms
+            from datetime import timezone
+            if left_dt.tzinfo is None:
+                left_dt = left_dt.replace(tzinfo=timezone.utc)
+            else:
+                left_dt = left_dt.astimezone(timezone.utc)
+            if right_dt.tzinfo is None:
+                right_dt = right_dt.replace(tzinfo=timezone.utc)
+            else:
+                right_dt = right_dt.astimezone(timezone.utc)
+            left_ms = int(left_dt.timestamp() * 1000)
+            right_ms = int(right_dt.timestamp() * 1000)
+            span = max(1, right_ms - left_ms)
+            start_ms = max(0, left_ms - span)  # una finestra “cache” a sinistra
+            end_ms = right_ms
+
+            tf_req = self._resolution_for_span(span)
+            sym = getattr(self, "symbol", None)
+            if not sym or not tf_req:
+                return
+
+            # se cache già copre bene, skip
+            if self._current_cache_tf == tf_req and self._current_cache_range:
+                c0, c1 = self._current_cache_range
+                if start_ms >= c0 and end_ms <= c1:
+                    return  # nulla da fare
+
+            # carica da DB solo la finestra necessaria
+            df = self._load_candles_from_db(sym, tf_req, limit=50000, start_ms=start_ms, end_ms=end_ms)
+            if df is None or df.empty:
+                return
+
+            # aggiorna cache state
+            self._current_cache_tf = tf_req
+            self._current_cache_range = (int(df["ts_utc"].iat[0]), int(df["ts_utc"].iat[-1]))
+
+            # ridisegna preservando i limiti attuali
+            try:
+                prev_xlim = self.ax.get_xlim()
+                prev_ylim = self.ax.get_ylim()
+            except Exception:
+                prev_xlim = prev_ylim = None
+            self.update_plot(df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+        except Exception as e:
+            logger.exception("View-window reload failed: {}", e)
 
     def _on_forecast_clicked(self):
         from .prediction_settings_dialog import PredictionSettingsDialog
@@ -1225,10 +1357,20 @@ class ChartTab(QWidget):
                             self.signals.progress.emit(int(pct))
                         except Exception:
                             pass
+                    # Enable REST backfill only for this explicit request
+                    try:
+                        setattr(self.svc, "rest_enabled", True)
+                    except Exception:
+                        pass
                     self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
                 except Exception as e:
                     ok = False
                 finally:
+                    # Always disable REST backfill after completion
+                    try:
+                        setattr(self.svc, "rest_enabled", False)
+                    except Exception:
+                        pass
                     try:
                         self.signals.finished.emit(ok)
                     except Exception:
@@ -1267,8 +1409,8 @@ class ChartTab(QWidget):
         job = BackfillJob(ms, sym, tf, start_override, self._bf_signals)
         QThreadPool.globalInstance().start(job)
 
-    def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None):
-        """Load candles from DB to refresh chart."""
+    def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None, end_ms: Optional[int] = None):
+        """Load candles from DB for symbol/timeframe, optionally constraining [start_ms, end_ms]."""
         try:
             controller = getattr(self._main_window, "controller", None)
             eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
@@ -1281,10 +1423,13 @@ class ChartTab(QWidget):
             if tbl is None:
                 return pd.DataFrame()
             with eng.connect() as conn:
-                cond = and_(tbl.c.symbol == symbol, tbl.c.timeframe == timeframe)
+                conds = [tbl.c.symbol == symbol, tbl.c.timeframe == timeframe]
                 if start_ms is not None:
-                    cond = and_(cond, tbl.c.ts_utc >= int(start_ms))
-                # prendi le barre più recenti e poi ordinale ASC per il plot
+                    conds.append(tbl.c.ts_utc >= int(start_ms))
+                if end_ms is not None:
+                    conds.append(tbl.c.ts_utc <= int(end_ms))
+                cond = and_(*conds)
+                # prendi le barre più recenti nel range e poi ordinale ASC per il plot
                 stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
                     .where(cond).order_by(tbl.c.ts_utc.desc()).limit(limit)
                 rows = conn.execute(stmt).fetchall()

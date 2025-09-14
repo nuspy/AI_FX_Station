@@ -163,6 +163,8 @@ class MarketDataService:
         # Default timeframes to fetch after ticks: 1m up to 1d (24h)
         # Note: "60m" is an alias of "1h" -> keep only "1h" to avoid duplicates
         self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+            # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
+        self.rest_enabled: bool = False
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
@@ -174,6 +176,13 @@ class MarketDataService:
         - If start_ms_override provided, compute gaps in [start_ms_override, now] (range mode).
         """
         logger.info("Starting backfill for {} {} (override={}, force_full={})", symbol, timeframe, start_ms_override, force_full)
+        # Guard: block any REST backfill unless explicitly enabled (UI backfill button)
+        if not getattr(self, "rest_enabled", False):
+            logger.info("REST backfill disabled; skipping backfill for {} {}.", symbol, timeframe)
+            if progress_cb:
+                try: progress_cb(100)
+                except Exception: pass
+            return
         # overall period
         last_ts, now_ms = self._get_last_candle_ts(symbol, timeframe)
         try:
