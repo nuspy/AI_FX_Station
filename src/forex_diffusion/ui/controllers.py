@@ -131,7 +131,10 @@ class ForecastWorker(QRunnable):
         sym = self.payload.get("symbol")
         tf = (self.payload.get("timeframe") or "1m")
         horizons = self.payload.get("horizons", ["5m"])
-        # Number of forecast points = number of horizons if list, else derive from first item
+        # requested time (point 0 on the plot)
+        from datetime import datetime, timezone
+        requested_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        # number of forecast points
         try:
             if isinstance(horizons, (list, tuple)) and len(horizons) > 0:
                 horizon_steps = len(horizons)
@@ -260,7 +263,14 @@ class ForecastWorker(QRunnable):
                 else: raise RuntimeError("Unsupported model type for prediction")
 
         preds = np.squeeze(preds)
-        if preds.size == 0: raise RuntimeError("Model returned empty prediction")
+        if preds.size == 0:
+            raise RuntimeError("Model returned empty prediction")
+        # diagnostics
+        try:
+            tail = preds[-min(5, preds.size):].tolist() if preds.size > 0 else []
+            logger.info("Forecast debug: preds.size={}, std={:.6g}, tail={}", int(preds.size), float(np.std(preds)), tail)
+        except Exception:
+            pass
 
         # --- 10) Sequenza di lunghezza horizon ---
         seq = preds[-horizon_steps:] if preds.size >= horizon_steps else np.pad(preds, (0, horizon_steps - preds.size), mode='edge')
@@ -268,11 +278,28 @@ class ForecastWorker(QRunnable):
         # --- 11) Prezzi e quantili ---
         last_close = float(df_candles["close"].iat[-1])
         if output_type == "returns":
-            prices = [last_close * (1.0 + r) for r in seq]
+            # interpret seq as per-step returns and compose cumulatively
+            seq_arr = np.array(seq, dtype=float)
+            cum = np.cumprod(1.0 + seq_arr)
+            prices = (last_close * cum).tolist()
         else:
-            prices = seq.tolist()
-        
+            prices = np.array(seq, dtype=float).tolist()
+
         forecast_prices = np.array(prices, dtype=float)
+
+        # fallback: if prices are (near) constant, inject small drift estimated from recent returns
+        try:
+            if not np.any(np.isfinite(forecast_prices)) or np.allclose(forecast_prices, forecast_prices[0], rtol=0.0, atol=1e-12):
+                # estimate drift from recent log returns
+                logret = np.log(np.maximum(1e-12, df_candles["close"].astype(float))).diff().dropna()
+                mu_drift = float(logret.tail(256).mean() if len(logret) > 0 else 0.0)
+                step = np.exp(mu_drift) - 1.0
+                drift_seq = np.cumprod(1.0 + np.full(int(horizon_steps), step, dtype=float))
+                fallback_prices = last_close * drift_seq
+                logger.info("Forecast fallback applied: step_drift={:.6g}, last_close={:.6g}", step, last_close)
+                forecast_prices = fallback_prices.astype(float)
+        except Exception:
+            pass
 
         # Apply model weight (blend towards last_close): w in [0,1]
         try:
@@ -282,46 +309,97 @@ class ForecastWorker(QRunnable):
         except Exception:
             pass
 
-        # Build future_ts aligned to horizons (UTC ms)
-        try:
-            last_dt = pd.to_datetime(int(df_candles["ts_utc"].iat[-1]), unit="ms", utc=True)
-        except Exception:
-            last_dt = pd.Timestamp.utcnow().tz_localize("UTC")
+        # (rimosso: generazione future_ts da last_dt e relativo ensure)
+        # Nota: future_ts viene generato più sotto a partire da requested_at_ms.
+        # Ciò garantisce che il punto 0 corrisponda al momento della richiesta.
+
+        # Build future_ts (UTC ms) from requested_at_ms and requested horizons
         future_ts_list: list[int] = []
         try:
+            base = pd.to_datetime(requested_at_ms, unit="ms", utc=True)
             if isinstance(horizons, (list, tuple)) and len(horizons) > 0:
                 for h in horizons:
                     try:
-                        dt = last_dt + pd.to_timedelta(str(h))
+                        dt = base + pd.to_timedelta(str(h))
                     except Exception:
-                        dt = last_dt
+                        dt = base
                     future_ts_list.append(int(dt.value // 1_000_000))
             else:
-                # fallback: uniform steps of base tf
                 step = pd.to_timedelta(tf)
-                future_ts_list = [int((last_dt + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
+                future_ts_list = [int((base + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
         except Exception:
-            # final guard: produce monotonic timestamps
+            base = pd.to_datetime(requested_at_ms, unit="ms", utc=True)
             step = pd.to_timedelta(tf) if tf else pd.to_timedelta("1m")
-            future_ts_list = [int((last_dt + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
+            future_ts_list = [int((base + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
 
-        # Ensure sizes match (pad/trim if needed)
+        # Ensure sizes match (pad/trim)
         if forecast_prices.size != len(future_ts_list):
-            if forecast_prices.size < len(future_ts_list):
-                # pad by repeating last value
+            if forecast_prices.size == 0:
+                forecast_prices = np.array([last_close] * len(future_ts_list), dtype=float)
+            elif forecast_prices.size < len(future_ts_list):
                 pad = len(future_ts_list) - forecast_prices.size
-                if forecast_prices.size == 0:
-                    forecast_prices = np.array([last_close] * len(future_ts_list), dtype=float)
-                else:
-                    forecast_prices = np.concatenate([forecast_prices, np.repeat(forecast_prices[-1], pad)])
+                forecast_prices = np.concatenate([forecast_prices, np.repeat(forecast_prices[-1], pad)])
             else:
                 forecast_prices = forecast_prices[: len(future_ts_list)]
 
+        # Log series to help diagnose (time, price)
+        try:
+            times_iso = pd.to_datetime(future_ts_list, unit="ms", utc=True).tz_convert(None).astype(str).tolist()
+            pairs = list(zip(times_iso, forecast_prices.astype(float).round(10).tolist()))
+            logger.info("Forecast series ({} pts): {}", len(pairs), pairs)
+        except Exception:
+            pass
+
+        # --- Quantiles q05/q95: bande da volatilità (meta residual_std -> fallback a log-returns) ---
+        try:
+            meta = {}
+            try:
+                # if model payload embeds meta
+                meta = payload_obj.get("meta", {}) if isinstance(payload_obj, dict) else {}
+            except Exception:
+                meta = {}
+            # base sigma: prefer residual_std/meta, else std dei log-returns recenti
+            resid_std = meta.get("residual_std") or meta.get("resid_std") or None
+            if resid_std is None:
+                logret = np.log(np.maximum(1e-12, df_candles["close"].astype(float))).diff().dropna()
+                resid_std = float(logret.tail(512).std() if len(logret) > 0 else 0.0)
+            sigma_base = max(1e-8, float(resid_std))
+            # z per ~90% (più conservativo di 1.0)
+            apply_conf = bool(self.payload.get("apply_conformal", True))
+            z = 1.645 if apply_conf else 1.0
+            n = len(forecast_prices)
+            k = np.arange(1, n + 1, dtype=float)
+            # ampiezza percentuale cresce con sqrt(h)
+            band_rel = z * sigma_base * np.sqrt(k)
+            # limiti percentuali ragionevoli per evitare bande assurde
+            band_rel = np.clip(band_rel, 1e-6, 0.2)  # max 20% a orizzonti lunghi
+            q50_arr = forecast_prices.astype(float)
+            q05_arr = q50_arr * (1.0 - band_rel)
+            q95_arr = q50_arr * (1.0 + band_rel)
+            # prezzi non negativi
+            q05_arr = np.maximum(1e-12, q05_arr)
+            q95_arr = np.maximum(1e-12, q95_arr)
+            try:
+                logger.info("Quantiles debug: z={}, sigma_base={:.6g}, q50_head={}, q05_head={}, q95_head={}",
+                            z, sigma_base,
+                            q50_arr[:3].round(8).tolist(),
+                            q05_arr[:3].round(8).tolist(),
+                            q95_arr[:3].round(8).tolist())
+            except Exception:
+                pass
+            q05_list = q05_arr.tolist()
+            q95_list = q95_arr.tolist()
+        except Exception:
+            # fallback minimo: ±1% come prima, se qualcosa fallisce
+            q05_list = (forecast_prices * 0.99).tolist()
+            q95_list = (forecast_prices * 1.01).tolist()
+
         quantiles = {
             "q50": forecast_prices.tolist(),
-            "q05": (forecast_prices * 0.99).tolist(),
-            "q95": (forecast_prices * 1.01).tolist(),
+            "q05": q05_list,
+            "q95": q95_list,
             "future_ts": future_ts_list,
+            "requested_at_ms": int(requested_at_ms),
             "source": str(self.payload.get("source_label") or ("advanced" if self.payload.get("advanced") else "basic")),
             "label": str(self.payload.get("source_label") or "forecast"),
         }
@@ -613,8 +691,19 @@ class _IngestWorker(QRunnable):
                 def _cb(pct: int, s=sym):
                     try: self.signals.status.emit(f"Backfill {s}: {pct}%")
                     except Exception: pass
-                # use '1d' to process all lower TFs up to daily
-                self.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb)
+                # abilita REST per la durata del backfill di questo simbolo
+                try:
+                    setattr(self.market_service, "rest_enabled", True)
+                except Exception:
+                    pass
+                try:
+                    # use '1d' to process all lower TFs up to daily
+                    self.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb)
+                finally:
+                    try:
+                        setattr(self.market_service, "rest_enabled", False)
+                    except Exception:
+                        pass
             self.signals.status.emit("Backfill: completed")
         except Exception as e:
             logger.exception("Backfill worker failed: {}", e)

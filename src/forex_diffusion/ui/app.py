@@ -187,8 +187,19 @@ def setup_ui(
                                 self.signals.status.emit(f"[Backfill] {sym}: {p}%")
                             except Exception:
                                 pass
-                        # use '1d' to cover all timeframes up to daily
-                        self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
+                        # abilita REST solo per la durata di questo backfill
+                        try:
+                            setattr(self.ms, "rest_enabled", True)
+                        except Exception:
+                            pass
+                        try:
+                            # use '1d' to cover all timeframes up to daily
+                            self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
+                        finally:
+                            try:
+                                setattr(self.ms, "rest_enabled", False)
+                            except Exception:
+                                pass
                     except Exception as e:
                         try:
                             self.signals.status.emit(f"[Backfill] {sym} failed: {e}")

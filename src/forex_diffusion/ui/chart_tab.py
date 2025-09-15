@@ -78,7 +78,7 @@ class ChartTab(QWidget):
         # Timeframe selector (with 'auto')
         top_layout.addWidget(QLabel("TF:"))
         self.tf_combo = QComboBox()
-        self.tf_combo.addItems(["auto","1m","5m","15m","30m","1h","4h","1d"])
+        self.tf_combo.addItems(["auto","tick","1m","5m","15m","30m","1h","4h","1d"])
         self.tf_combo.setCurrentText("auto")
         self.tf_combo.setToolTip("Seleziona il timeframe di visualizzazione. 'auto' sceglie il TF in base allo zoom.")
         top_layout.addWidget(self.tf_combo)
@@ -710,6 +710,12 @@ class ChartTab(QWidget):
         Plot quantiles on the chart. quantiles expected to have keys 'q50','q05','q95'
         Each value can be a list/array of floats. Optionally 'future_ts' can provide UTC ms or datetimes.
         """
+
+        try:
+            logger.info("Q95: ", quantiles.get("q95")  )
+        except Exception:
+            pass
+
         try:
             # extract and coerce to arrays
             q50 = quantiles.get("q50")
@@ -729,18 +735,13 @@ class ChartTab(QWidget):
             future_ts = quantiles.get("future_ts", None)
             x_vals = None
             if future_ts is not None:
+                # accetta lista di ms o datetime-like
                 try:
-                    # accept list of ints(ms) or datetimes
-                    x_vals = pd.to_datetime(future_ts, unit="ms", utc=True, errors="ignore")
+                    x_vals = pd.to_datetime(future_ts, unit="ms", utc=True)
                 except Exception:
-                    x_vals = pd.to_datetime(future_ts, utc=True, errors="coerce")
-            if x_vals is None is False:
-                try:
-                    x_vals = pd.to_datetime(x_vals, utc=True)
-                except Exception:
-                    pass
-            if x_vals is None:
-                # fallback: derive from last observed ts and current tf
+                    x_vals = pd.to_datetime(future_ts, utc=True)
+            else:
+                # fallback: deriva da ultimo ts e TF corrente
                 if self._last_df is None or self._last_df.empty:
                     return
                 try:
@@ -772,6 +773,20 @@ class ChartTab(QWidget):
             if len(x_vals) != n:
                 x_vals = x_vals[:n]
 
+            # prepend point 0 (t0 = requested_at_ms) con last_close
+            try:
+                req_ms = quantiles.get("requested_at_ms", None)
+                if req_ms is not None:
+                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
+                    last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
+                    import numpy as _np
+                    q50_arr = _np.insert(q50_arr, 0, last_close)
+                    if q05_arr is not None: q05_arr = _np.insert(q05_arr, 0, last_close)
+                    if q95_arr is not None: q95_arr = _np.insert(q95_arr, 0, last_close)
+            except Exception:
+                pass
+
             # color by source
             def _color_for(src: str) -> str:
                 palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
@@ -780,6 +795,14 @@ class ChartTab(QWidget):
                 h = abs(hash(src)) % len(palette)
                 return palette[h]
             color = _color_for(quantiles.get("source", source))
+
+            # log (time, price) pairs to diagnose
+            try:
+                times_iso = pd.Series(pd.to_datetime(x_vals)).astype(str).tolist()
+                pairs = list(zip(times_iso, [float(v) for v in q50_arr.tolist()]))
+                logger.info("Plot forecast ({} pts): {}", len(pairs), pairs)
+            except Exception:
+                pass
 
             line50, = self.ax.plot(x_vals, q50_arr, color=color, linestyle='-', label=f"{label} (q50)")
             artists = [line50]
@@ -1523,7 +1546,10 @@ class ChartTab(QWidget):
         QThreadPool.globalInstance().start(job)
 
     def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None, end_ms: Optional[int] = None):
-        """Load candles from DB for symbol/timeframe, optionally constraining [start_ms, end_ms]."""
+        """Load data from DB for symbol/timeframe, optionally constraining [start_ms, end_ms].
+        - If timeframe == 'tick': read from market_data_ticks and map to (ts_utc, price).
+        - Else: read candles from market_data_candles as before.
+        """
         try:
             controller = getattr(self._main_window, "controller", None)
             eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
@@ -1531,45 +1557,102 @@ class ChartTab(QWidget):
                 return pd.DataFrame()
             from sqlalchemy import MetaData, select, and_
             meta = MetaData()
-            meta.reflect(bind=eng, only=["market_data_candles"])
-            tbl = meta.tables.get("market_data_candles")
-            if tbl is None:
-                return pd.DataFrame()
-            with eng.connect() as conn:
-                conds = [tbl.c.symbol == symbol, tbl.c.timeframe == timeframe]
-                if start_ms is not None:
-                    conds.append(tbl.c.ts_utc >= int(start_ms))
-                if end_ms is not None:
-                    conds.append(tbl.c.ts_utc <= int(end_ms))
-                cond = and_(*conds)
-                # prendi le barre più recenti nel range e poi ordinale ASC per il plot
-                stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
-                    .where(cond).order_by(tbl.c.ts_utc.desc()).limit(limit)
-                rows = conn.execute(stmt).fetchall()
-                if not rows:
+            if str(timeframe).lower() == "tick":
+                # --- load ticks ---
+                meta.reflect(bind=eng, only=["market_data_ticks"])
+                tkt = meta.tables.get("market_data_ticks")
+                if tkt is None:
                     return pd.DataFrame()
-                df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
-                # typing e ordinamento ASC
-                try:
-                    df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("Int64")
-                    for c in ["open","high","low","close","volume"]:
-                        if c in df.columns:
-                            df[c] = pd.to_numeric(df[c], errors="coerce")
-                    df = df.dropna(subset=["ts_utc"]).reset_index(drop=True)
-                    df["ts_utc"] = df["ts_utc"].astype("int64")
-                    df = df.sort_values("ts_utc").reset_index(drop=True)
-                    # drop duplicates on timestamp to avoid multi-insert artifacts
-                    before = len(df)
-                    df = df.drop_duplicates(subset=["ts_utc"], keep="last").reset_index(drop=True)
-                    trimmed = before - len(df)
-                    if trimmed > 0:
-                        try:
-                            logger.info("Trimmed {} duplicate bars for {} {}", trimmed, symbol, timeframe)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                return df
+                with eng.connect() as conn:
+                    conds = [tkt.c.symbol == symbol]
+                    if start_ms is not None:
+                        conds.append(tkt.c.ts_utc >= int(start_ms))
+                    if end_ms is not None:
+                        conds.append(tkt.c.ts_utc <= int(end_ms))
+                    cond = and_(*conds)
+                    stmt = select(tkt.c.ts_utc, tkt.c.price, getattr(tkt.c, "bid", None), getattr(tkt.c, "ask", None))\
+                        .where(cond).order_by(tkt.c.ts_utc.desc()).limit(limit)
+                    rows = conn.execute(stmt).fetchall()
+                    if not rows:
+                        return pd.DataFrame()
+                    # rows may be tuples with (ts_utc, price, bid, ask) depending on schema
+                    # Build price column: prefer 'price', else (bid+ask)/2
+                    try:
+                        # convert to DataFrame with robust column naming
+                        cols = ["ts_utc", "price", "bid", "ask"]
+                        df = pd.DataFrame(rows, columns=cols[:len(rows[0])])
+                    except Exception:
+                        # fallback: coerce manually
+                        recs = []
+                        for r in rows:
+                            try:
+                                tsu = int(r[0])
+                                pr = float(r[1]) if len(r) > 1 and r[1] is not None else None
+                                bd = float(r[2]) if len(r) > 2 and r[2] is not None else None
+                                ak = float(r[3]) if len(r) > 3 and r[3] is not None else None
+                                if pr is None and (bd is not None and ak is not None):
+                                    pr = (bd + ak) / 2.0
+                                recs.append({"ts_utc": tsu, "price": pr, "bid": bd, "ask": ak})
+                            except Exception:
+                                continue
+                        df = pd.DataFrame(recs)
+                    # typing + clean + ASC order + dedup on ts_utc
+                    try:
+                        df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("Int64")
+                        if "price" in df.columns:
+                            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+                        if "bid" in df.columns:
+                            df["bid"] = pd.to_numeric(df["bid"], errors="coerce")
+                        if "ask" in df.columns:
+                            df["ask"] = pd.to_numeric(df["ask"], errors="coerce")
+                        df = df.dropna(subset=["ts_utc", "price"]).reset_index(drop=True)
+                        df["ts_utc"] = df["ts_utc"].astype("int64")
+                        df = df.sort_values("ts_utc").reset_index(drop=True)
+                        df = df.drop_duplicates(subset=["ts_utc"], keep="last").reset_index(drop=True)
+                    except Exception:
+                        pass
+                    return df[["ts_utc", "price"] + ([c for c in ["bid","ask"] if c in df.columns])]
+            else:
+                # --- load candles ---
+                meta.reflect(bind=eng, only=["market_data_candles"])
+                tbl = meta.tables.get("market_data_candles")
+                if tbl is None:
+                    return pd.DataFrame()
+                with eng.connect() as conn:
+                    conds = [tbl.c.symbol == symbol, tbl.c.timeframe == timeframe]
+                    if start_ms is not None:
+                        conds.append(tbl.c.ts_utc >= int(start_ms))
+                    if end_ms is not None:
+                        conds.append(tbl.c.ts_utc <= int(end_ms))
+                    cond = and_(*conds)
+                    # prendi le barre più recenti nel range e poi ordinale ASC per il plot
+                    stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
+                        .where(cond).order_by(tbl.c.ts_utc.desc()).limit(limit)
+                    rows = conn.execute(stmt).fetchall()
+                    if not rows:
+                        return pd.DataFrame()
+                    df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
+                    # typing e ordinamento ASC
+                    try:
+                        df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("Int64")
+                        for c in ["open","high","low","close","volume"]:
+                            if c in df.columns:
+                                df[c] = pd.to_numeric(df[c], errors="coerce")
+                        df = df.dropna(subset=["ts_utc"]).reset_index(drop=True)
+                        df["ts_utc"] = df["ts_utc"].astype("int64")
+                        df = df.sort_values("ts_utc").reset_index(drop=True)
+                        # drop duplicates on timestamp to avoid multi-insert artifacts
+                        before = len(df)
+                        df = df.drop_duplicates(subset=["ts_utc"], keep="last").reset_index(drop=True)
+                        trimmed = before - len(df)
+                        if trimmed > 0:
+                            try:
+                                logger.info("Trimmed {} duplicate bars for {} {}", trimmed, symbol, timeframe)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    return df
         except Exception as e:
             logger.exception("Load candles failed: {}", e)
             return pd.DataFrame()
