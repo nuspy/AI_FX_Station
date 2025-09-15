@@ -9,7 +9,7 @@ import time
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem,
-    QSplitter, QListWidget, QListWidgetItem, QTableWidget
+    QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSize
 from matplotlib.figure import Figure
@@ -69,12 +69,23 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.toolbar)
 
         # Symbol selector
-        from PySide6.QtWidgets import QComboBox
         self.symbol_combo = QComboBox()
         # Requested pairs
         self._symbols_supported = ["EUR/USD","GBP/USD","AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"]
         self.symbol_combo.addItems(self._symbols_supported)
         top_layout.addWidget(self.symbol_combo)
+
+        # Timeframe selector (with 'auto')
+        top_layout.addWidget(QLabel("TF:"))
+        self.tf_combo = QComboBox()
+        self.tf_combo.addItems(["auto","1m","5m","15m","30m","1h","4h","1d"])
+        self.tf_combo.setCurrentText("auto")
+        self.tf_combo.setToolTip("Seleziona il timeframe di visualizzazione. 'auto' sceglie il TF in base allo zoom.")
+        top_layout.addWidget(self.tf_combo)
+        # Label di stato TF effettivo
+        self.tf_used_label = QLabel("TF used: -")
+        top_layout.addWidget(self.tf_used_label)
+        self.tf_combo.currentTextChanged.connect(lambda _: self._schedule_view_reload())
 
         # Basic Forecast Buttons
         self.forecast_settings_btn = QPushButton("Prediction Settings")
@@ -98,7 +109,6 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.toggle_drawbar_btn)
 
         # Backfill range selectors (session-only; 0=full range)
-        from PySide6.QtWidgets import QLabel, QComboBox
         top_layout.addWidget(QLabel("Years:"))
         self.years_combo = QComboBox()
         self.years_combo.addItems([str(x) for x in [0,1,2,3,4,5,10,15,20,30]])
@@ -276,13 +286,6 @@ class ChartTab(QWidget):
             self.tickArrived.connect(self._on_tick_main)
         except Exception:
             pass
-
-        # Realtime redraw throttling (batch ticks and redraw ~5 fps)
-        self._rt_dirty = False
-        self._rt_timer = QTimer(self)
-        self._rt_timer.setInterval(200)
-        self._rt_timer.timeout.connect(self._rt_flush)
-        self._rt_timer.start()
 
         # Stato rendering prezzo e artist
         self._price_mode = "candles"   # "line" | "candles"
@@ -705,29 +708,71 @@ class ChartTab(QWidget):
     def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
         """
         Plot quantiles on the chart. quantiles expected to have keys 'q50','q05','q95'
-        Each value can be a list/array of floats. Optionally 'future_ts' can provide datetimes.
+        Each value can be a list/array of floats. Optionally 'future_ts' can provide UTC ms or datetimes.
         """
         try:
+            # extract and coerce to arrays
             q50 = quantiles.get("q50")
             q05 = quantiles.get("q05") or quantiles.get("q10")
             q95 = quantiles.get("q95") or quantiles.get("q90")
-            future_ts = quantiles.get("future_ts", None)
-            label = quantiles.get("label", f"{source}")
+            label = str(quantiles.get("label", f"{source}"))
 
             if q50 is None:
                 return
 
-            # x positions
-            if future_ts:
-                x_vals = pd.to_datetime(future_ts)
-            else:
+            import numpy as np
+            q50_arr = np.asarray(q50, dtype=float).flatten()
+            q05_arr = np.asarray(q05, dtype=float).flatten() if q05 is not None else None
+            q95_arr = np.asarray(q95, dtype=float).flatten() if q95 is not None else None
+
+            # build x positions from future_ts or from last ts + tf
+            future_ts = quantiles.get("future_ts", None)
+            x_vals = None
+            if future_ts is not None:
+                try:
+                    # accept list of ints(ms) or datetimes
+                    x_vals = pd.to_datetime(future_ts, unit="ms", utc=True, errors="ignore")
+                except Exception:
+                    x_vals = pd.to_datetime(future_ts, utc=True, errors="coerce")
+            if x_vals is None is False:
+                try:
+                    x_vals = pd.to_datetime(x_vals, utc=True)
+                except Exception:
+                    pass
+            if x_vals is None:
+                # fallback: derive from last observed ts and current tf
                 if self._last_df is None or self._last_df.empty:
                     return
-                last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms").iat[-1]
+                try:
+                    last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
+                except Exception:
+                    last_ts = pd.Timestamp.utcnow().tz_localize("UTC")
                 td = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
-                x_vals = [last_ts + td * (i + 1) for i in range(len(q50))]
+                x_vals = [last_ts + td * (i + 1) for i in range(len(q50_arr))]
 
-            # deterministic color by source string
+            # normalize to naive datetimes for Matplotlib
+            try:
+                x_vals = pd.to_datetime(x_vals, utc=True).tz_localize(None)
+            except Exception:
+                try:
+                    x_vals = pd.to_datetime(x_vals).tz_localize(None)
+                except Exception:
+                    pass
+
+            # align lengths
+            n = min(len(x_vals), len(q50_arr))
+            if n == 0:
+                return
+            if len(q50_arr) != n:
+                q50_arr = q50_arr[:n]
+            if q05_arr is not None and len(q05_arr) != n:
+                q05_arr = q05_arr[:n]
+            if q95_arr is not None and len(q95_arr) != n:
+                q95_arr = q95_arr[:n]
+            if len(x_vals) != n:
+                x_vals = x_vals[:n]
+
+            # color by source
             def _color_for(src: str) -> str:
                 palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
                 if not src:
@@ -736,13 +781,13 @@ class ChartTab(QWidget):
                 return palette[h]
             color = _color_for(quantiles.get("source", source))
 
-            line50, = self.ax.plot(x_vals, q50, color=color, linestyle='-', label=f"{label} (q50)")
+            line50, = self.ax.plot(x_vals, q50_arr, color=color, linestyle='-', label=f"{label} (q50)")
             artists = [line50]
 
-            if q05 is not None and q95 is not None:
-                line05, = self.ax.plot(x_vals, q05, color=color, linestyle='--', alpha=0.8, label=None)
-                line95, = self.ax.plot(x_vals, q95, color=color, linestyle='--', alpha=0.8, label=None)
-                fill = self.ax.fill_between(x_vals, q05, q95, color=color, alpha=0.12)
+            if q05_arr is not None and q95_arr is not None:
+                line05, = self.ax.plot(x_vals, q05_arr, color=color, linestyle='--', alpha=0.8, label=None)
+                line95, = self.ax.plot(x_vals, q95_arr, color=color, linestyle='--', alpha=0.8, label=None)
+                fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12)
                 artists.extend([line05, line95, fill])
 
             fid = time.time()
@@ -750,14 +795,31 @@ class ChartTab(QWidget):
                 "id": fid,
                 "created_at": fid,
                 "quantiles": quantiles,
-                "future_ts": future_ts,
+                "future_ts": quantiles.get("future_ts"),
                 "artists": artists,
                 "source": quantiles.get("source", source)
             }
             self._forecasts.append(forecast)
             self._trim_forecasts()
-            self.ax.legend()
-            self.canvas.draw()
+            # unique legend
+            try:
+                handles, labels = self.ax.get_legend_handles_labels()
+                uniq = {}
+                for h, l in zip(handles, labels):
+                    if not l:
+                        continue
+                    if l not in uniq:
+                        uniq[l] = h
+                self.ax.legend(list(uniq.values()), list(uniq.keys()))
+            except Exception:
+                try:
+                    self.ax.legend()
+                except Exception:
+                    pass
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
         except Exception as e:
             logger.exception(f"Failed to plot forecast overlay: {e}")
 
@@ -1219,7 +1281,9 @@ class ChartTab(QWidget):
             start_ms = max(0, left_ms - span)  # una finestra “cache” a sinistra
             end_ms = right_ms
 
-            tf_req = self._resolution_for_span(span)
+            # pick timeframe: combo or auto
+            tf_sel = getattr(self, "tf_combo", None).currentText() if hasattr(self, "tf_combo") else "auto"
+            tf_req = self._resolution_for_span(span) if (not tf_sel or tf_sel == "auto") else tf_sel
             sym = getattr(self, "symbol", None)
             if not sym or not tf_req:
                 return
@@ -1246,6 +1310,10 @@ class ChartTab(QWidget):
             except Exception:
                 prev_xlim = prev_ylim = None
             self.update_plot(df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+            try:
+                self.tf_used_label.setText(f"TF used: {tf_req}")
+            except Exception:
+                pass
         except Exception as e:
             logger.exception("View-window reload failed: {}", e)
 

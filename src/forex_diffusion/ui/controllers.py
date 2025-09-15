@@ -131,7 +131,14 @@ class ForecastWorker(QRunnable):
         sym = self.payload.get("symbol")
         tf = (self.payload.get("timeframe") or "1m")
         horizons = self.payload.get("horizons", ["5m"])
-        horizon_steps = int(pd.Timedelta(horizons[0]).total_seconds() / pd.Timedelta(tf).total_seconds()) if horizons else 5
+        # Number of forecast points = number of horizons if list, else derive from first item
+        try:
+            if isinstance(horizons, (list, tuple)) and len(horizons) > 0:
+                horizon_steps = len(horizons)
+            else:
+                horizon_steps = int(pd.Timedelta(horizons[0]).total_seconds() / pd.Timedelta(tf).total_seconds()) if horizons else 5
+        except Exception:
+            horizon_steps = max(1, len(horizons) if isinstance(horizons, (list, tuple)) else 5)
 
         output_type = str(self.payload.get("output_type", "returns")).lower()
 
@@ -275,10 +282,46 @@ class ForecastWorker(QRunnable):
         except Exception:
             pass
 
+        # Build future_ts aligned to horizons (UTC ms)
+        try:
+            last_dt = pd.to_datetime(int(df_candles["ts_utc"].iat[-1]), unit="ms", utc=True)
+        except Exception:
+            last_dt = pd.Timestamp.utcnow().tz_localize("UTC")
+        future_ts_list: list[int] = []
+        try:
+            if isinstance(horizons, (list, tuple)) and len(horizons) > 0:
+                for h in horizons:
+                    try:
+                        dt = last_dt + pd.to_timedelta(str(h))
+                    except Exception:
+                        dt = last_dt
+                    future_ts_list.append(int(dt.value // 1_000_000))
+            else:
+                # fallback: uniform steps of base tf
+                step = pd.to_timedelta(tf)
+                future_ts_list = [int((last_dt + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
+        except Exception:
+            # final guard: produce monotonic timestamps
+            step = pd.to_timedelta(tf) if tf else pd.to_timedelta("1m")
+            future_ts_list = [int((last_dt + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
+
+        # Ensure sizes match (pad/trim if needed)
+        if forecast_prices.size != len(future_ts_list):
+            if forecast_prices.size < len(future_ts_list):
+                # pad by repeating last value
+                pad = len(future_ts_list) - forecast_prices.size
+                if forecast_prices.size == 0:
+                    forecast_prices = np.array([last_close] * len(future_ts_list), dtype=float)
+                else:
+                    forecast_prices = np.concatenate([forecast_prices, np.repeat(forecast_prices[-1], pad)])
+            else:
+                forecast_prices = forecast_prices[: len(future_ts_list)]
+
         quantiles = {
             "q50": forecast_prices.tolist(),
             "q05": (forecast_prices * 0.99).tolist(),
             "q95": (forecast_prices * 1.01).tolist(),
+            "future_ts": future_ts_list,
             "source": str(self.payload.get("source_label") or ("advanced" if self.payload.get("advanced") else "basic")),
             "label": str(self.payload.get("source_label") or "forecast"),
         }
