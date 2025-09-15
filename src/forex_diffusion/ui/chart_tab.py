@@ -804,8 +804,26 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            line50, = self.ax.plot(x_vals, q50_arr, color=color, linestyle='-', label=f"{label} (q50)")
+            # linea di previsione con marker sui punti
+            line50, = self.ax.plot(
+                x_vals, q50_arr,
+                color=color, linestyle='-',
+                marker='o', markersize=3.5,
+                markerfacecolor=color, markeredgecolor=color,
+                alpha=0.95,
+                label=f"{label} (q50)"
+            )
             artists = [line50]
+
+            # evidenzia il punto 0 (istante richiesta) con marker più grande
+            try:
+                req_ms = quantiles.get("requested_at_ms", None)
+                if req_ms is not None and len(q50_arr) > 0:
+                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
+                    m0 = self.ax.scatter([t0], [float(q50_arr[0])], s=28, color=color, edgecolor='white', linewidths=0.8, zorder=3.5)
+                    artists.append(m0)
+            except Exception:
+                pass
 
             if q05_arr is not None and q95_arr is not None:
                 line05, = self.ax.plot(x_vals, q05_arr, color=color, linestyle='--', alpha=0.8, label=None)
