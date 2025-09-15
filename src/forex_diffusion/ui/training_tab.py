@@ -49,6 +49,10 @@ class TrainingTab(QWidget):
         self.controller.signals.progress.connect(self._on_progress)
         self.controller.signals.finished.connect(self._on_finished)
 
+        # pending meta for current training run
+        self._pending_meta: Optional[Dict] = None
+        self._pending_out_dir: Optional[Path] = None
+
         # Top controls
         top = QHBoxLayout()
         lbl_sym = QLabel("Symbol:"); lbl_sym.setToolTip("Coppia valutaria da usare per il training.")
@@ -243,6 +247,37 @@ class TrainingTab(QWidget):
                 "--encoder", encoder,
                 "--forecast_method", "supervised",
             ]
+
+            # Prepare meta for this run (to be attached after finish)
+            try:
+                from datetime import datetime, timezone
+                meta = {
+                    "symbol": sym,
+                    "base_timeframe": tf,
+                    "days_history": int(days),
+                    "horizon_bars": int(horizon),
+                    "model_type": model,
+                    "encoder": encoder,
+                    "indicator_tfs": self._collect_indicator_tfs(),
+                    "advanced_params": {
+                        "warmup_bars": int(self.warmup.value()),
+                        "atr_n": int(self.atr_n.value()),
+                        "rsi_n": int(self.rsi_n.value()),
+                        "bb_n": int(self.bb_n.value()),
+                        "hurst_window": int(self.hurst_w.value()),
+                        "rv_window": int(self.rv_w.value()),
+                    },
+                    "optimization": self.opt_combo.currentText(),
+                    "generations": int(self.gen_spin.value()),
+                    "population": int(self.pop_spin.value()),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self._pending_meta = meta
+                self._pending_out_dir = out_dir
+                self._append_log(f"[meta] prepared: {meta}")
+            except Exception:
+                self._pending_meta = None
+                self._pending_out_dir = None
             # Avvio async: single training o GA
             strategy = self.opt_combo.currentText()
             self.progress.setRange(0, 100)
@@ -263,6 +298,19 @@ class TrainingTab(QWidget):
         except Exception:
             pass
 
+    def _find_latest_model_file(self, out_dir: Path) -> Optional[Path]:
+        """Find the most recently modified model file (.pt/.pth/.pkl/.pickle) in out_dir."""
+        try:
+            cand = []
+            for ext in ("*.pt","*.pth","*.pkl","*.pickle"):
+                cand += list(out_dir.glob(ext))
+            if not cand:
+                return None
+            cand.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            return cand[0]
+        except Exception:
+            return None
+
     def _on_progress(self, value: int):
         if value < 0:
             self.progress.setRange(0, 0)  # indeterminate
@@ -275,6 +323,19 @@ class TrainingTab(QWidget):
         self.progress.setValue(100 if ok else 0)
         self._append_log("[done] ok" if ok else "[done] failed")
         if ok:
+            # Attach meta to latest model file in out_dir (sidecar JSON)
+            try:
+                if self._pending_out_dir and self._pending_out_dir.exists() and isinstance(self._pending_meta, dict):
+                    latest = self._find_latest_model_file(self._pending_out_dir)
+                    if latest:
+                        sidecar = latest.with_suffix(latest.suffix + ".meta.json")
+                        import json
+                        sidecar.write_text(json.dumps(self._pending_meta, indent=2), encoding="utf-8")
+                        self._append_log(f"[meta] saved sidecar: {sidecar}")
+                    else:
+                        self._append_log("[meta] no model file found to attach meta")
+            except Exception as e:
+                self._append_log(f"[meta] save failed: {e}")
             QMessageBox.information(self, "Training", "Training completato.")
         else:
             QMessageBox.warning(self, "Training", "Training fallito.")

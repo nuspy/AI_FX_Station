@@ -43,9 +43,17 @@ class PredictionSettingsDialog(QDialog):
         self.browse_button = QPushButton("Browse...")
         self.browse_button.setToolTip("Sfoglia e seleziona un file modello da disco.")
         self.browse_button.clicked.connect(self._browse_model_path)
+        self.info_button = QPushButton("Model Info")
+        self.info_button.setToolTip("Mostra i metadati salvati nel file modello o nel sidecar .meta.json")
+        self.info_button.clicked.connect(self._show_model_info)
+        self.loadmeta_button = QPushButton("Carica parametri")
+        self.loadmeta_button.setToolTip("Carica i parametri base (horizons, indicatori, finestre) dai metadati del modello")
+        self.loadmeta_button.clicked.connect(self._load_model_defaults)
         model_h = QHBoxLayout()
         model_h.addWidget(self.model_path_edit)
         model_h.addWidget(self.browse_button)
+        model_h.addWidget(self.info_button)
+        model_h.addWidget(self.loadmeta_button)
         self.form_layout.addRow("Model Path:", model_h)
 
         # Modelli multipli: uno per riga (opzionale, ha precedenza su Model Path)
@@ -228,10 +236,121 @@ class PredictionSettingsDialog(QDialog):
 
     def _browse_model_path(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Model File", "", "PyTorch Models (*.pt *.pth);;All Files (*)"
+            self, "Select Model File", "", "Model Files (*.pt *.pth *.pkl *.pickle);;All Files (*)"
         )
         if path:
             self.model_path_edit.setText(path)
+
+    def _load_model_meta(self, path: str) -> Dict[str, Any]:
+        """Try to load meta from sidecar (path.meta.json) or from inside model (pickle/torch dict)."""
+        from pathlib import Path
+        import json
+        p = Path(path) if path else None
+        if not p or not p.exists():
+            return {}
+        # 1) sidecar
+        side = Path(str(p) + ".meta.json")
+        if side.exists():
+            try:
+                return json.loads(side.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        # 2) embedded
+        try:
+            if p.suffix.lower() in (".pkl", ".pickle"):
+                import pickle
+                with open(p, "rb") as f:
+                    obj = pickle.load(f)
+                if isinstance(obj, dict):
+                    return obj.get("meta", {})
+            elif p.suffix.lower() in (".pt", ".pth"):
+                try:
+                    import torch  # type: ignore
+                except Exception:
+                    torch = None
+                if torch is not None:
+                    ckpt = torch.load(str(p), map_location="cpu")
+                    if isinstance(ckpt, dict):
+                        return ckpt.get("meta", {})
+        except Exception:
+            pass
+        return {}
+
+    def _show_model_info(self):
+        """Open a popup with model meta if available."""
+        from PySide6.QtWidgets import QMessageBox
+        import json
+        path = self.model_path_edit.text().strip()
+        meta = self._load_model_meta(path)
+        if not meta:
+            QMessageBox.information(self, "Model Info", "Nessun metadato trovato (né sidecar né embedded).")
+            return
+        try:
+            text = json.dumps(meta, indent=2, ensure_ascii=False)
+        except Exception:
+            text = str(meta)
+        QMessageBox.information(self, "Model Info", text)
+
+    def _apply_model_defaults_from_meta(self, meta: Dict[str, Any]):
+        """Apply common defaults from meta to dialog fields."""
+        try:
+            # horizons
+            hz = meta.get("horizons") or meta.get("default_horizons")
+            if isinstance(hz, (list, tuple)):
+                self.horizons_edit.setText(", ".join([str(x) for x in hz]))
+            # N_samples, conformal, weight
+            if "N_samples" in meta:
+                self.n_samples_spinbox.setValue(int(meta.get("N_samples", self.n_samples_spinbox.value())))
+            if "apply_conformal" in meta:
+                self.conformal_checkbox.setChecked(bool(meta.get("apply_conformal", self.conformal_checkbox.isChecked())))
+            if "model_weight_pct" in meta:
+                # try to match the combo data
+                target = int(meta.get("model_weight_pct", 100))
+                for i in range(self.model_weight_combo.count()):
+                    if int(self.model_weight_combo.itemData(i)) == target:
+                        self.model_weight_combo.setCurrentIndex(i); break
+
+            # advanced params
+            adv = meta.get("advanced_params", {})
+            def _set_spin(spin, key, cast=int):
+                try:
+                    if key in adv:
+                        spin.setValue(cast(adv[key]))
+                except Exception:
+                    pass
+            _set_spin(self.warmup_spin, "warmup_bars")
+            _set_spin(self.atr_n_spin, "atr_n")
+            _set_spin(self.rsi_n_spin, "rsi_n")
+            _set_spin(self.bb_n_spin, "bb_n")
+            _set_spin(self.hurst_window_spin, "hurst_window")
+            _set_spin(self.rv_window_spin, "rv_window")
+
+            # indicator × timeframes
+            ind_tfs = meta.get("indicator_tfs", {})
+            if isinstance(ind_tfs, dict) and hasattr(self, "indicator_checks"):
+                for ind, tfmap in self.indicator_checks.items():
+                    lst = ind_tfs.get(ind.lower()) or ind_tfs.get(ind) or []
+                    for tf, cb in tfmap.items():
+                        try:
+                            cb.setChecked(tf in lst)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def _load_model_defaults(self):
+        """Load meta and apply as dialog defaults."""
+        from PySide6.QtWidgets import QMessageBox
+        path = self.model_path_edit.text().strip()
+        if not path:
+            QMessageBox.information(self, "Carica parametri", "Seleziona prima un Model Path.")
+            return
+        meta = self._load_model_meta(path)
+        if not meta:
+            QMessageBox.information(self, "Carica parametri", "Nessun metadato trovato per questo modello.")
+            return
+        self._apply_model_defaults_from_meta(meta)
+        QMessageBox.information(self, "Carica parametri", "Parametri base caricati dal modello.")
 
     def load_settings(self):
         """Loads settings from the JSON config file."""
