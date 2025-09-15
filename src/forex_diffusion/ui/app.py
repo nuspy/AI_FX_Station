@@ -130,7 +130,7 @@ def setup_ui(
     logger.info("TiingoWSConnector started with direct handlers for ChartTab and DBWriter.")
 
     # --- Final UI Setup ---
-    default_symbol = "AUX/USD"
+    default_symbol = "EUR/USD"
     default_tf = "1m"
     chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
 

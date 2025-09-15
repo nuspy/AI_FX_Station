@@ -29,7 +29,6 @@ class ChartTab(QWidget):
     """
     forecastRequested = Signal(dict)
     tickArrived = Signal(dict)
-    tickArrived = Signal(dict)
 
     def __init__(self, parent=None, viewer=None):
         super().__init__(parent)
@@ -128,6 +127,16 @@ class ChartTab(QWidget):
         # Clear forecasts
         self.clear_forecasts_btn = QPushButton("Clear Forecasts")
         top_layout.addWidget(self.clear_forecasts_btn)
+
+        # Toggle prezzo: Candles/Line (manuale)
+        from PySide6.QtWidgets import QToolButton
+        self.mode_btn = QToolButton()
+        self.mode_btn.setCheckable(True)
+        self.mode_btn.setText("Candles")  # checked => candles, unchecked => line
+        self.mode_btn.setToolTip("Commuta visualizzazione prezzo: Candles (candele OHLC) / Line (linea).")
+        self.mode_btn.setChecked(True)
+        self.mode_btn.toggled.connect(self._on_mode_toggled)
+        top_layout.addWidget(self.mode_btn)
 
         top_layout.addStretch()
         self.bidask_label = QLabel("Bid: -    Ask: -")
@@ -275,6 +284,11 @@ class ChartTab(QWidget):
         self._rt_timer.timeout.connect(self._rt_flush)
         self._rt_timer.start()
 
+        # Stato rendering prezzo e artist
+        self._price_mode = "candles"   # "line" | "candles"
+        self._price_line = None
+        self._candle_artists: list = []
+
         # Pan (LMB) state
         self._lbtn_pan = False
         self._pan_last_xy = None  # (xdata, ydata)
@@ -357,23 +371,27 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            # Update chart buffer only for current symbol
+            # Update chart buffer only for current symbol (O(1) append)
             if sym and sym == getattr(self, "symbol", None):
                 try:
-                    new_row = pd.DataFrame([payload])
-                    # normalize types
-                    new_row["ts_utc"] = pd.to_numeric(new_row["ts_utc"], errors="coerce").astype("Int64")
-                    self._last_df = pd.concat([self._last_df, new_row], ignore_index=True)
-                    # drop NaN/dup, sort and trim buffer
-                    self._last_df["ts_utc"] = pd.to_numeric(self._last_df["ts_utc"], errors="coerce").astype("Int64")
-                    self._last_df.dropna(subset=["ts_utc"], inplace=True)
-                    self._last_df["ts_utc"] = self._last_df["ts_utc"].astype("int64")
-                    self._last_df.drop_duplicates(subset=["ts_utc"], keep="last", inplace=True)
-                    self._last_df.sort_values("ts_utc", inplace=True)
-                    # keep last N rows to avoid heavy redraws
-                    N = 10000
-                    if len(self._last_df) > N:
-                        self._last_df = self._last_df.iloc[-N:].copy()
+                    ts = int(payload.get("ts_utc"))
+                    y = payload.get("close", payload.get("price"))
+                    # se buffer vuoto: crea
+                    if self._last_df is None or self._last_df.empty:
+                        self._last_df = pd.DataFrame([{"ts_utc": ts, "price": y}])
+                    else:
+                        last_ts = int(self._last_df["ts_utc"].iloc[-1])
+                        if ts > last_ts:
+                            # append
+                            self._last_df.loc[len(self._last_df)] = {"ts_utc": ts, "price": y}
+                            # trim buffer
+                            if len(self._last_df) > 10000:
+                                self._last_df = self._last_df.iloc[-10000:].reset_index(drop=True)
+                        elif ts == last_ts:
+                            # update last row
+                            col = "close" if "close" in self._last_df.columns else "price"
+                            self._last_df.at[len(self._last_df)-1, col] = y
+                        # se ts < last_ts, ignora (fuori ordine)
                 except Exception:
                     pass
 
@@ -490,8 +508,6 @@ class ChartTab(QWidget):
         prev_xlim = restore_xlim if restore_xlim is not None else None
         prev_ylim = restore_ylim if restore_ylim is not None else None
 
-        self.ax.clear()
-
         # Clean and normalize data for plotting (align x/y, drop NaN, sort by time)
         try:
             df2 = df.copy()
@@ -517,14 +533,29 @@ class ChartTab(QWidget):
             logger.info("Nothing to plot after cleaning ({} {}).", getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
             return
 
+        # Ensure single price line artist exists and update it (do not clear overlays)
         price_color = self._get_color("price_color", "#e0e0e0" if getattr(self, "_is_dark", True) else "#000000")
-        self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
+        if not hasattr(self, "_price_line") or self._price_line is None:
+            try:
+                self._price_line, = self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
+            except Exception:
+                self._price_line = None
+        else:
+            try:
+                self._price_line.set_data(x_dt, y_vals)
+                self._price_line.set_color(price_color)
+                self._price_line.set_visible(True)
+            except Exception:
+                try:
+                    self._price_line, = self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
+                except Exception:
+                    self._price_line = None
 
         if quantiles:
             self._plot_forecast_overlay(quantiles)
 
+        # title and axes cosmetics
         self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}")
-        # assi/ticks colorati da settings
         axes_col = self._get_color("axes_color", "#cfd6e1")
         try:
             self.ax.tick_params(colors=axes_col)
@@ -534,7 +565,6 @@ class ChartTab(QWidget):
                 spine.set_color(axes_col)
         except Exception:
             pass
-        self.ax.legend()
         self.ax.figure.autofmt_xdate()
 
         # restore limits (only if requested), else autoscale to data
@@ -557,6 +587,21 @@ class ChartTab(QWidget):
             logger.info("Plotted {} points for {} {}", len(y_vals), getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
         except Exception:
             pass
+
+    def _on_mode_toggled(self, checked: bool):
+        """Manual switch placeholder (candles disabled)."""
+        try:
+            # Always render as line after rollback; keep placeholder to avoid wiring issues.
+            if self._last_df is not None and not self._last_df.empty:
+                prev_xlim = self.ax.get_xlim() if hasattr(self.ax, "get_xlim") else None
+                prev_ylim = self.ax.get_ylim() if hasattr(self.ax, "get_ylim") else None
+                self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+        except Exception:
+            pass
+
+    def _render_candles(self, df2: pd.DataFrame):
+        """Disabled candle renderer (rollback)."""
+        return
 
     # --- Theme helpers ---
     def _on_nav_home(self):

@@ -50,9 +50,9 @@ class TiingoClient:
             logger.warning("Tiingo API key not configured; requests may fail.")
         self._client = httpx.Client(timeout=timeout)
         # provider symbol aliases (only for REST requests)
-        self._aliases: Dict[str, str] = {
-            "AUX/USD": "XAU/USD",  # internal alias -> provider known pair
-        }
+        #self._aliases: Dict[str, str] = {
+        #    "AUX/USD": "XAU/USD",  # internal alias -> provider known pair
+        #}
 
     def _fib_waits(self, max_attempts: int):
         a, b = 1, 1
