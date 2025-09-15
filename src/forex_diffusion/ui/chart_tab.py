@@ -134,6 +134,11 @@ class ChartTab(QWidget):
         self.backfill_btn.setToolTip("Scarica storico per il range selezionato (Years/Months) per il simbolo corrente")
         top_layout.addWidget(self.backfill_btn)
 
+        # Build Latents (PCA)
+        self.build_latents_btn = QPushButton("Build Latents")
+        self.build_latents_btn.setToolTip("Costruisci latents PCA dalle feature storiche per il simbolo/TF correnti")
+        top_layout.addWidget(self.build_latents_btn)
+
         from PySide6.QtWidgets import QProgressBar
         self.backfill_progress = QProgressBar()
         self.backfill_progress.setMaximumWidth(160)
@@ -321,6 +326,7 @@ class ChartTab(QWidget):
         # Buttons signals
         self.trade_btn.clicked.connect(self._open_trade_dialog)
         self.backfill_btn.clicked.connect(self._on_backfill_missing_clicked)
+        self.build_latents_btn.clicked.connect(self._on_build_latents_clicked)
 
         # Mouse interaction:
         # - Alt+Click => TestingPoint basic; Shift+Alt+Click => advanced (già gestito da _on_canvas_click)
@@ -486,6 +492,31 @@ class ChartTab(QWidget):
                     QMessageBox.warning(self, "Order", str(e))
         except Exception as e:
             logger.exception("Trade dialog failed: {}", e)
+
+    def _on_build_latents_clicked(self):
+        """Prompt PCA dim and launch latents build via controller."""
+        try:
+            from PySide6.QtWidgets import QInputDialog
+            sym = getattr(self, "symbol", None)
+            tf = getattr(self, "timeframe", None)
+            if not sym or not tf:
+                QMessageBox.information(self, "Latents", "Imposta prima symbol e timeframe.")
+                return
+            dim, ok = QInputDialog.getInt(self, "Build Latents (PCA)", "Components (dim):", 64, 2, 512, 1)
+            if not ok:
+                return
+            # optional: history size
+            bars, ok2 = QInputDialog.getInt(self, "Build Latents (PCA)", "History bars to use:", 100000, 1000, 1000000, 1000)
+            if not ok2:
+                bars = 100000
+            controller = getattr(self._main_window, "controller", None)
+            if controller and hasattr(controller, "handle_build_latents"):
+                controller.handle_build_latents(sym, tf, pca_dim=int(dim), n_bars=int(bars))
+                QMessageBox.information(self, "Latents", f"Build latents avviato per {sym} {tf} (PCA dim={dim}).")
+            else:
+                QMessageBox.warning(self, "Latents", "Controller non disponibile.")
+        except Exception as e:
+            QMessageBox.warning(self, "Latents", str(e))
 
     def _refresh_orders(self):
         """Pull open orders from broker and refresh the table."""

@@ -544,6 +544,18 @@ class UIController:
     def handle_train_requested(self):
         self.signals.status.emit("Train requested (not implemented).")
 
+    # --- Latents build entrypoint (called from UI) ---
+    def handle_build_latents(self, symbol: str, timeframe: str, pca_dim: int = 64, n_bars: int = 200000):
+        try:
+            if not symbol or not timeframe:
+                self.signals.error.emit("Latents: missing symbol/timeframe.")
+                return
+            job = _LatentsBuilderWorker(self.market_service, self.signals, symbol, timeframe, n_bars=n_bars, pca_dim=pca_dim)
+            self.pool.start(job)
+        except Exception as e:
+            logger.exception("handle_build_latents failed: {}", e)
+            self.signals.error.emit(str(e))
+
     @Slot()
     def handle_forecast_requested(self):
         settings = PredictionSettingsDialog.get_settings()
@@ -748,6 +760,89 @@ class _IngestWorker(QRunnable):
             logger.exception("Backfill worker failed: {}", e)
             self.signals.error.emit(str(e))
             self.signals.status.emit("Backfill failed")
+
+
+class _LatentsBuilderWorker(QRunnable):
+    """Builds PCA latents from historical features and saves an artifact."""
+    def __init__(self, market_service: MarketDataService, signals: UIControllerSignals,
+                 symbol: str, timeframe: str, n_bars: int = 100000, pca_dim: int = 64):
+        super().__init__()
+        self.ms = market_service
+        self.signals = signals
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.n_bars = int(max(1000, n_bars))
+        self.pca_dim = int(max(2, pca_dim))
+
+    def _fetch_recent_candles(self, engine, symbol: str, timeframe: str, n_bars: int) -> pd.DataFrame:
+        try:
+            from sqlalchemy import MetaData, select
+            meta = MetaData()
+            meta.reflect(bind=engine, only=["market_data_candles"])
+            tbl = meta.tables.get("market_data_candles")
+            if tbl is None:
+                return pd.DataFrame()
+            with engine.connect() as conn:
+                stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
+                    .where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe)\
+                    .order_by(tbl.c.ts_utc.desc()).limit(int(n_bars))
+                rows = conn.execute(stmt).fetchall()
+                if not rows:
+                    return pd.DataFrame()
+                df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
+                return df.sort_values("ts_utc").reset_index(drop=True)
+        except Exception as e:
+            logger.exception("Latents: fetch candles failed: {}", e)
+            return pd.DataFrame()
+
+    def run(self):
+        import numpy as np
+        try:
+            self.signals.status.emit(f"Latents: building PCA({self.pca_dim}) for {self.symbol} {self.timeframe}...")
+            df = self._fetch_recent_candles(self.ms.engine, self.symbol, self.timeframe, self.n_bars)
+            if df is None or df.empty:
+                raise RuntimeError("No candles for latents build")
+            # compute features via pipeline
+            feats, _ = pipeline_process(df.copy(), timeframe=self.timeframe, features_config={
+                "warmup_bars": 16,
+                "indicators": {"atr": {"n":14}, "rsi": {"n":14}, "bollinger":{"n":20}, "hurst":{"window":64}},
+                "standardization": {"window_bars": 60},
+            })
+            if feats is None or feats.empty:
+                raise RuntimeError("No features to build latents")
+            # clean numeric and drop NaN/Inf
+            X = feats.select_dtypes(include=["number"]).copy()
+            X = X.replace([np.inf, -np.inf], np.nan).dropna()
+            if X.shape[0] < self.pca_dim + 5:
+                raise RuntimeError(f"Not enough rows for PCA({self.pca_dim}). Got {X.shape[0]}.")
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=self.pca_dim, svd_solver="auto", random_state=42)
+            pca.fit(X.to_numpy(dtype=float))
+            # artifact
+            from pathlib import Path
+            out_dir = Path("artifacts/latents")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{self.symbol.replace('/','_')}_{self.timeframe}_pca{self.pca_dim}.pkl"
+            import pickle, json, time as _t
+            payload = {
+                "encoder": "pca",
+                "pca_components": getattr(pca, "components_", None),
+                "pca_mean": getattr(pca, "mean_", None),
+                "explained_variance_ratio": getattr(pca, "explained_variance_ratio_", None),
+                "features_list": list(X.columns),
+                "meta": {
+                    "symbol": self.symbol, "timeframe": self.timeframe,
+                    "created_at": _t.time(), "n_rows": int(X.shape[0]), "n_features": int(X.shape[1]),
+                    "pca_dim": self.pca_dim
+                }
+            }
+            with open(out_path, "wb") as f:
+                pickle.dump(payload, f)
+            self.signals.status.emit(f"Latents: saved {out_path}")
+        except Exception as e:
+            logger.exception("Latents build failed: {}", e)
+            self.signals.error.emit(f"Latents build failed: {e}")
+            self.signals.status.emit("Latents: failed")
 
 
 # --- Training controller (async subprocess with logging/progress) ---
