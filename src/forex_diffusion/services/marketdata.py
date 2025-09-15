@@ -50,9 +50,10 @@ class TiingoClient:
             logger.warning("Tiingo API key not configured; requests may fail.")
         self._client = httpx.Client(timeout=timeout)
         # provider symbol aliases (only for REST requests)
-        #self._aliases: Dict[str, str] = {
-        #    "AUX/USD": "XAU/USD",  # internal alias -> provider known pair
-        #}
+        # always initialize to avoid AttributeError in get_candles
+        self._aliases: Dict[str, str] = {
+            "AUX/USD": "XAU/USD",  # internal alias -> provider known pair
+        }
 
     def _fib_waits(self, max_attempts: int):
         a, b = 1, 1
@@ -108,7 +109,8 @@ class TiingoClient:
         Returns DataFrame with ts_utc (ms), open, high, low, close, (maybe volume)
         """
         # provider alias mapping (keep DB symbol unchanged)
-        provider_symbol = self._aliases.get(symbol, symbol)
+        aliases = getattr(self, "_aliases", {}) or {}
+        provider_symbol = aliases.get(symbol, symbol)
         if provider_symbol != symbol:
             logger.info("Provider symbol alias: '{}' -> '{}'", symbol, provider_symbol)
         # symbol format expected by tiingo e.g. "EURUSD"

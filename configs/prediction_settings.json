@@ -1,12 +1,10 @@
 {
-    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h60_rf_pca.pkl",
+    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h60_rf_none.pkl",
     "model_paths": [
         "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
     ],
     "forecast_types": [
-        "basic",
-        "advanced",
-        "rw"
+        "basic"
     ],
     "horizons": [
         "1m",
@@ -17,7 +15,7 @@
         "30m",
         "35m"
     ],
-    "N_samples": 151,
+    "N_samples": 149,
     "apply_conformal": true,
     "model_weight_pct": 100,
     "indicator_tfs": {

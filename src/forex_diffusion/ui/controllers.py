@@ -176,9 +176,109 @@ class ForecastWorker(QRunnable):
             _os_env.environ.setdefault("MKL_NUM_THREADS", "1")
         except Exception:
             pass
-        p = Path(model_path)
+
+        # Resolve model path strictly, con fallback vincolato ai soli 'allowed_models' del payload
+        def _resolve_model_path(mp: str) -> Path:
+            import os, sys
+            raw = str(mp or "").strip().strip('"').strip("'")
+
+            def _canon(s: str) -> Path:
+                try:
+                    p = Path(os.path.expandvars(os.path.expanduser(s.strip().strip('"').strip("'"))))
+                    if not p.is_absolute():
+                        p = (Path.cwd() / p).resolve()
+                    return p
+                except Exception:
+                    return Path(s)
+
+            norm = _canon(raw)
+
+            # 1) prefer normalized path if it exists
+            try:
+                if norm.exists():
+                    try: logger.info("Model path resolved (exact): {} -> {}", raw, str(norm))
+                    except Exception: pass
+                    return norm
+            except Exception:
+                pass
+
+            # 2) try raw path as-is
+            raw_p = Path(raw)
+            try:
+                if raw_p.exists():
+                    rp = raw_p.resolve()
+                    try: logger.info("Model path resolved (raw): {} -> {}", raw, str(rp))
+                    except Exception: pass
+                    return rp
+            except Exception:
+                pass
+
+            # 3) constrained fallback: cerca SOLO tra allowed_models del payload
+            try:
+                allowed = self.payload.get("allowed_models") or []
+                allowed = [str(a) for a in allowed if a]
+                if allowed:
+                    # normalizza tutti gli allowed e verifica exact match case-insensitive (Windows)
+                    norm_allowed = [_canon(a) for a in allowed]
+                    # match exact string
+                    for ap in norm_allowed:
+                        if str(ap) == str(norm) and ap.exists():
+                            try: logger.info("Model path resolved via allowed (exact match): {} -> {}", raw, str(ap))
+                            except Exception: pass
+                            return ap
+                    # match case-insensitive su Windows
+                    if sys.platform.startswith("win"):
+                        rn = str(norm).lower()
+                        for ap in norm_allowed:
+                            if str(ap).lower() == rn and ap.exists():
+                                try: logger.info("Model path resolved via allowed (case-insensitive): {} -> {}", raw, str(ap))
+                                except Exception: pass
+                                return ap
+                    # match per basename tra allowed (ultimo tentativo VINCOLATO alla lista)
+                    base = Path(raw).name.lower()
+                    if base:
+                        for ap in norm_allowed:
+                            if ap.name.lower() == base and ap.exists():
+                                try: logger.info("Model path resolved via allowed (basename): {} -> {}", raw, str(ap))
+                                except Exception: pass
+                                return ap
+                    try:
+                        logger.error("No allowed model matched: requested='{}', allowed={}", raw, [str(a) for a in norm_allowed])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # 4) nessuna risoluzione: ritorna norm (fallirà subito dopo con err esplicito)
+            try:
+                logger.error("Model path not found (strict): raw='{}' norm='{}'", raw, str(norm))
+            except Exception:
+                pass
+            return norm
+
+        p = _resolve_model_path(str(model_path))
         if not p.exists():
             raise FileNotFoundError(f"Model file not found: {p}")
+
+        # log file effettivo usato e path richiesto (aiuta a verificare corrispondenza con GUI)
+        try:
+            req_path = str(self.payload.get("model_path") or self.payload.get("model") or "")
+            logger.info("Forecast worker using model file: '{}' (requested='{}', source_label='{}')",
+                        str(p), req_path, str(self.payload.get("source_label")))
+        except Exception:
+            pass
+
+        # store used model path and compute sha16
+        used_model_path_str = str(p)
+        try:
+            import hashlib
+            _h = hashlib.sha256()
+            with open(p, "rb") as _f:
+                for _chunk in iter(lambda: _f.read(65536), b""):
+                    _h.update(_chunk)
+            model_sha16 = _h.hexdigest()[:16]
+        except Exception:
+            model_sha16 = None
 
         suffix = p.suffix.lower()
         if suffix in (".pt", ".pth", ".ptl"):
@@ -218,13 +318,21 @@ class ForecastWorker(QRunnable):
                 "bollinger": {"n": int(self.payload.get("bb_n", 20))},
                 "hurst": {"window": int(self.payload.get("hurst_window", 64))},
             },
-            "standardization": {"window_bars": int(self.payload.get("rv_window", 60))},
+            # inference: do not standardize in pipeline; we will apply model μ/σ only
+            "standardization": None,
         }
 
         # --- 5) Pipeline ---
         feats, _ = pipeline_process(df_candles.copy(), timeframe=tf, features_config=features_config)
         if feats is None or feats.empty:
             raise RuntimeError("No features computed for local inference")
+
+        # Ensure required feature schema (order/columns)
+        try:
+            if ensure_features_for_prediction:
+                feats = ensure_features_for_prediction(feats, expected=features_list)  # type: ignore
+        except Exception as _e:
+            logger.warning("ensure_features_for_prediction failed: {}", _e)
 
         # --- Fill missing features ---
         missing = [c for c in features_list if c not in feats.columns]
@@ -313,10 +421,10 @@ class ForecastWorker(QRunnable):
         # Nota: future_ts viene generato più sotto a partire da requested_at_ms.
         # Ciò garantisce che il punto 0 corrisponda al momento della richiesta.
 
-        # Build future_ts (UTC ms) from requested_at_ms and requested horizons
+        # Build future_ts (UTC ms) anchored to last candle ts_utc
         future_ts_list: list[int] = []
         try:
-            base = pd.to_datetime(requested_at_ms, unit="ms", utc=True)
+            base = pd.to_datetime(int(df_candles["ts_utc"].iat[-1]), unit="ms", utc=True)
             if isinstance(horizons, (list, tuple)) and len(horizons) > 0:
                 for h in horizons:
                     try:
@@ -325,10 +433,12 @@ class ForecastWorker(QRunnable):
                         dt = base
                     future_ts_list.append(int(dt.value // 1_000_000))
             else:
+                # fallback: use chart timeframe step
                 step = pd.to_timedelta(tf)
                 future_ts_list = [int((base + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
         except Exception:
-            base = pd.to_datetime(requested_at_ms, unit="ms", utc=True)
+            # last resort: fallback to previous implementation
+            base = pd.to_datetime(int(df_candles["ts_utc"].iat[-1]), unit="ms", utc=True)
             step = pd.to_timedelta(tf) if tf else pd.to_timedelta("1m")
             future_ts_list = [int((base + step * (i + 1)).value // 1_000_000) for i in range(int(horizon_steps))]
 
@@ -428,6 +538,9 @@ class ForecastWorker(QRunnable):
         except Exception:
             pass
 
+        # prefer display name from payload if provided (GUI alias), else source_label
+        display_name = str(self.payload.get("name") or self.payload.get("source_label") or "forecast")
+
         quantiles = {
             "q50": forecast_prices.tolist(),
             "q05": q05_list,
@@ -435,7 +548,11 @@ class ForecastWorker(QRunnable):
             "future_ts": future_ts_list,
             "requested_at_ms": int(requested_at_ms),
             "source": str(self.payload.get("source_label") or ("advanced" if self.payload.get("advanced") else "basic")),
-            "label": str(self.payload.get("source_label") or "forecast"),
+            "label": display_name,
+            # traceability
+            "model_path_used": used_model_path_str,
+            "model_sha16": model_sha16,
+            "display_name": display_name,
         }
         if future_ts_hr and q50_hr_list:
             quantiles["future_ts_hr"] = future_ts_hr
@@ -559,15 +676,27 @@ class UIController:
     @Slot()
     def handle_forecast_requested(self):
         settings = PredictionSettingsDialog.get_settings()
-        # accetta anche multi-modello: se entrambi vuoti -> warning
-        multi = [p for p in (settings.get("model_paths", []) if settings else []) if p]
+        # accetta anche multi-modello: supporta alias 'models' oltre a 'model_paths'
+        multi = []
+        if settings:
+            try:
+                multi += [p for p in (settings.get("model_paths", []) or []) if p]
+            except Exception:
+                pass
+            try:
+                multi += [p for p in (settings.get("models", []) or []) if p]
+            except Exception:
+                pass
         if not multi:
             try:
                 # fallback alla multi-selezione mantenuta dal dialog
                 multi = [p for p in PredictionSettingsDialog.get_model_paths() if p]
             except Exception:
                 multi = []
-        single = settings.get("model_path") if settings else None
+        # singolo: supporta alias 'model' oltre a 'model_path'
+        single = None
+        if settings:
+            single = settings.get("model_path") or settings.get("model")
         if not settings or (not multi and not single):
             self.signals.error.emit("Prediction settings not configured or model path(s) missing.")
             self.handle_prediction_settings_requested()
@@ -589,8 +718,56 @@ class UIController:
 
         # lista modelli effettiva
         models = multi if multi else [single]
+        # deduplica e filtra None (raw)
+        models = list(dict.fromkeys([str(m) for m in models if m]))
+
+        # normalizza path (espandi env/user, assolutizza) e poi deduplica su realpath (case-insensitive su Windows)
+        import os, sys
+        def _canon_path(p: str) -> str:
+            try:
+                s = str(p).strip().strip('"').strip("'")
+                s = os.path.expandvars(os.path.expanduser(s))
+                if not os.path.isabs(s):
+                    s = os.path.abspath(s)
+                return s
+            except Exception:
+                return str(p)
+
+        canon = [_canon_path(m) for m in models]
+        realp = [os.path.realpath(m) for m in canon]
+        seen: set[str] = set()
+        models_norm: list[str] = []
+        for rp in realp:
+            key = rp.lower() if sys.platform.startswith("win") else rp
+            if key in seen:
+                continue
+            seen.add(key)
+            models_norm.append(rp)
+        models = models_norm
+
+        # costruisci label univoche con contatore (basename, basename#2, basename#3, ...)
+        label_map: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for m in models:
+            base = os.path.splitext(os.path.basename(m))[0]
+            counts[base] = counts.get(base, 0) + 1
+            if counts[base] == 1:
+                label_map[m] = base
+            else:
+                label_map[m] = f"{base}#{counts[base]}"
+
+        # log diagnostico mapping
+        try:
+            logger.info("Forecast (menu) models: {}", {m: label_map[m] for m in models})
+        except Exception:
+            pass
+
         # tipi di previsione richiesti
         ftypes = settings.get("forecast_types", ["basic"]) or ["basic"]
+        # se multi-modello, limita a un solo tipo per evitare duplicati dello stesso file
+        effective_types = ftypes
+        if len(models) > 1:
+            effective_types = [ftypes[0] if isinstance(ftypes, (list, tuple)) and len(ftypes) > 0 else "basic"]
 
         base_common = {
             "symbol": symbol,
@@ -616,26 +793,31 @@ class UIController:
         # filtra None
         base_common = {k: v for k, v in base_common.items() if v is not None}
 
-        self.signals.status.emit(f"Forecast requested for {symbol} {timeframe} (models={len(models)} types={','.join(ftypes)})")
+        self.signals.status.emit(f"Forecast requested for {symbol} {timeframe} (models={len(models)} types={','.join(effective_types if isinstance(effective_types, list) else [effective_types])})")
 
         # schedula una combinazione per ogni (modello, tipo)
         import os
         for mp in models:
-            name = os.path.basename(str(mp)) if mp else "model"
-            base_label = os.path.splitext(name)[0]
-            for t in ftypes:
+            # usa label univoca calcolata sopra
+            base_label = label_map.get(mp, os.path.splitext(os.path.basename(str(mp)))[0])
+            for t in effective_types:
                 payload = dict(base_common)
                 payload["model_path"] = mp
                 payload["advanced"] = (t.lower() == "advanced")
                 payload["forecast_type"] = t.lower()
-                # legenda: usa solo il nome del modello (senza estensione)
                 payload["source_label"] = base_label
+                # passa la lista dei modelli selezionati al worker per risoluzione vincolata
+                payload["allowed_models"] = list(models)
                 # limit candles to keep inference lightweight
                 payload.setdefault("limit_candles", 512)
                 # throttle advanced: allow only one at a time
                 if payload["advanced"] and self._forecast_active >= 1:
                     self.signals.status.emit(f"Forecast skipped (advanced busy): {payload['source_label']}")
                     continue
+                try:
+                    logger.info("Forecast (menu) launching: file='{}' label='{}' type={}", mp, base_label, payload["forecast_type"])
+                except Exception:
+                    pass
                 fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
                 self._forecast_active += 1
                 self.pool.start(fw)
@@ -659,8 +841,8 @@ class UIController:
     @Slot(dict)
     def handle_forecast_payload(self, payload: dict):
         """
-        Avvia una previsione usando il payload emesso dalla ChartTab (basic/advanced).
-        Unisce le PredictionSettings correnti e imposta symbol/timeframe se mancanti.
+        Avvia una previsione usando il payload emesso dalla ChartTab.
+        Supporta selezione multipla: lancia un worker per ogni file modello selezionato.
         """
         try:
             settings = PredictionSettingsDialog.get_settings() or {}
@@ -669,47 +851,168 @@ class UIController:
             if chart_tab:
                 payload.setdefault("symbol", getattr(chart_tab, "symbol", None))
                 payload.setdefault("timeframe", getattr(chart_tab, "timeframe", None))
-            # modello: usa quello nel payload o quello delle settings
-            if not payload.get("model_path"):
-                if settings.get("model_path"):
-                    payload["model_path"] = settings.get("model_path")
+
             # horizons e altri parametri di default
             payload.setdefault("horizons", settings.get("horizons", ["1m", "5m", "15m"]))
             payload.setdefault("N_samples", settings.get("N_samples", 200))
             payload.setdefault("apply_conformal", settings.get("apply_conformal", True))
-            # tipo (basic/advanced) e label
-            adv = bool(payload.get("advanced", False))
-            payload.setdefault("forecast_type", "advanced" if adv else "basic")
-            # legenda: se c'è il model_path usa il nome del modello, altrimenti fallback
-            if not payload.get("source_label"):
-                mp_for_label = payload.get("model_path")
-                if mp_for_label:
-                    try:
-                        import os
-                        payload["source_label"] = os.path.splitext(os.path.basename(str(mp_for_label)))[0]
-                    except Exception:
-                        payload["source_label"] = "advanced" if adv else "basic"
-                else:
-                    payload["source_label"] = "advanced" if adv else "basic"
+            payload.setdefault("limit_candles", 512)
+
+            # log ingresso payload sintetico
+            try:
+                logger.info("Forecast payload received: symbol={}, tf={}, has_model_path={}, has_model_paths={}, has_model={}, has_models={}",
+                            payload.get("symbol"), payload.get("timeframe"),
+                            bool(payload.get("model_path")), bool(payload.get("model_paths")),
+                            bool(payload.get("model")), bool(payload.get("models")))
+                self.signals.status.emit("Forecast: payload received")
+            except Exception:
+                pass
+
+            # helper: normalizza path (stringa con separatori o collezione) -> lista di path
+            import os, re
+            def _norm_paths(src) -> list[str]:
+                try:
+                    if not src:
+                        return []
+                    if isinstance(src, (list, tuple, set)):
+                        return [str(s).strip() for s in src if str(s).strip()]
+                    s = str(src).strip()
+                    if any(sep in s for sep in [",", ";", "\n"]):
+                        return [t.strip() for t in re.split(r"[,\n;]+", s) if t.strip()]
+                    return [s]
+                except Exception:
+                    return []
+
+            # costruisci lista modelli: payload.(model_paths|models) -> settings.(model_paths|models) -> dialog.get_model_paths()
+            models: list[str] = []
+            # dal payload (multi)
+            if payload.get("model_paths"):
+                models = _norm_paths(payload.get("model_paths"))
+            if not models and payload.get("models"):
+                models = _norm_paths(payload.get("models"))
+            # dalle settings (multi)
+            if not models and settings.get("model_paths"):
+                models = _norm_paths(settings.get("model_paths"))
+            if not models and settings.get("models"):
+                models = _norm_paths(settings.get("models"))
+            # dal dialog (multi)
+            if not models:
+                try:
+                    models = _norm_paths(PredictionSettingsDialog.get_model_paths())
+                except Exception:
+                    models = []
+
+            # fallback: singolo o stringa multipla in (model_path|model) da payload/settings
+            if not models:
+                mp_field = payload.get("model_path") or payload.get("model") or settings.get("model_path") or settings.get("model")
+                models = _norm_paths(mp_field)
 
             # verifiche minime
             if not payload.get("symbol") or not payload.get("timeframe"):
                 self.signals.error.emit("Missing symbol/timeframe for forecast.")
+                self.signals.status.emit("Forecast: missing symbol/timeframe")
                 return
-            if not payload.get("model_path") and payload.get("forecast_type") != "rw":
-                self.signals.error.emit("Missing model_path. Open Prediction Settings.")
-                return
-
-            # throttle: avoid overlapping advanced jobs
-            if bool(payload.get("advanced", False)) and self._forecast_active >= 1:
-                self.signals.status.emit("Forecast: advanced already running, skipping.")
+            if not models and payload.get("forecast_type") != "rw":
+                self.signals.error.emit("Missing model_path(s). Open Prediction Settings.")
+                self.signals.status.emit("Forecast: no model paths provided")
                 return
 
-            self.signals.status.emit(f"Forecast (payload) for {payload.get('symbol')} {payload.get('timeframe')} [{payload.get('source_label')}]")
-            payload.setdefault("limit_candles", 512)
-            fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
-            self._forecast_active += 1
-            self.pool.start(fw)
+            # deduplica e log raw
+            models = list(dict.fromkeys([str(m) for m in models]))
+            try:
+                logger.info("Forecast models (raw): {}", models)
+            except Exception:
+                pass
+
+            # normalizza i path + realpath e deduplica (case-insensitive su Windows)
+            def _canon_path(p: str) -> str:
+                try:
+                    s = str(p).strip().strip('"').strip("'")
+                    s = os.path.expandvars(os.path.expanduser(s))
+                    if not os.path.isabs(s):
+                        s = os.path.abspath(s)
+                    return s
+                except Exception:
+                    return str(p)
+
+            import sys
+            canon = [_canon_path(m) for m in models]
+            realp = [os.path.realpath(m) for m in canon]
+            seen: set[str] = set()
+            models_norm: list[str] = []
+            for rp in realp:
+                key = rp.lower() if sys.platform.startswith("win") else rp
+                if key in seen:
+                    continue
+                seen.add(key)
+                models_norm.append(rp)
+            models = models_norm
+
+            # log diagnostico: esistenza dopo normalizzazione (non blocca il flusso)
+            try:
+                exist_map = {m: os.path.exists(m) for m in models}
+                logger.info("Forecast models (normalized): {}", exist_map)
+                missing = [m for m, ok in exist_map.items() if not ok]
+                if missing:
+                    self.signals.status.emit(f"Forecast: {len(missing)} model path(s) not found on disk, attempting anyway")
+                    logger.warning("Forecast: missing paths (will attempt load anyway): {}", missing)
+            except Exception:
+                pass
+
+            # label uniche con contatore
+            label_map: dict[str, str] = {}
+            counts: dict[str, int] = {}
+            for m in models:
+                base = os.path.splitext(os.path.basename(m))[0]
+                counts[base] = counts.get(base, 0) + 1
+                label_map[m] = base if counts[base] == 1 else f"{base}#{counts[base]}"
+
+            try:
+                logger.info("Forecast (payload) models: {}", {m: label_map[m] for m in models})
+            except Exception:
+                pass
+
+            # tipo: se più modelli, usa 'basic' per evitare duplicati dello stesso file
+            adv = bool(payload.get("advanced", False))
+            forecast_type = "advanced" if (adv and len(models) == 1) else "basic"
+
+            # log riepilogo prima dell'avvio
+            try:
+                logger.info("Forecast launching: models={}, type={}, symbol={}, tf={}", len(models), forecast_type, payload.get("symbol"), payload.get("timeframe"))
+                self.signals.status.emit(f"Forecast: launching {len(models)} model(s)")
+            except Exception:
+                pass
+
+            # lancia un worker per ciascun modello
+            for mp in models:
+                pl = dict(payload)
+                pl["model_path"] = mp
+                pl["forecast_type"] = forecast_type
+                pl["advanced"] = (forecast_type == "advanced")
+                # lista completa dei modelli selezionati (normalizzati) per risoluzione vincolata lato worker
+                pl["allowed_models"] = list(models)
+                try:
+                    base_label = label_map.get(mp, os.path.splitext(os.path.basename(str(mp)))[0])
+                except Exception:
+                    base_label = "model"
+                pl["source_label"] = base_label
+
+                if pl.get("advanced") and self._forecast_active >= 1:
+                    self.signals.status.emit(f"Forecast: advanced already running, skipping {base_label}.")
+                    try:
+                        logger.info("Skipping advanced forecast for {}: another advanced job is active", base_label)
+                    except Exception:
+                        pass
+                    continue
+
+                self.signals.status.emit(f"Forecast starting for {pl.get('symbol')} {pl.get('timeframe')} [{base_label}]")
+                try:
+                    logger.info("Starting local forecast for file='{}' label='{}' symbol={} tf={} type={}", mp, base_label, pl.get("symbol"), pl.get("timeframe"), pl.get("forecast_type"))
+                except Exception:
+                    pass
+                fw = ForecastWorker(engine_url=self.engine_url, payload=pl, market_service=self.market_service, signals=self.signals)
+                self._forecast_active += 1
+                self.pool.start(fw)
         except Exception as e:
             logger.exception("handle_forecast_payload failed: {}", e)
             self.signals.error.emit(str(e))
