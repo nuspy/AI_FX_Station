@@ -560,7 +560,13 @@ class UIController:
     def handle_forecast_requested(self):
         settings = PredictionSettingsDialog.get_settings()
         # accetta anche multi-modello: se entrambi vuoti -> warning
-        multi = [p for p in settings.get("model_paths", []) if p] if settings else []
+        multi = [p for p in (settings.get("model_paths", []) if settings else []) if p]
+        if not multi:
+            try:
+                # fallback alla multi-selezione mantenuta dal dialog
+                multi = [p for p in PredictionSettingsDialog.get_model_paths() if p]
+            except Exception:
+                multi = []
         single = settings.get("model_path") if settings else None
         if not settings or (not multi and not single):
             self.signals.error.emit("Prediction settings not configured or model path(s) missing.")
@@ -616,12 +622,14 @@ class UIController:
         import os
         for mp in models:
             name = os.path.basename(str(mp)) if mp else "model"
+            base_label = os.path.splitext(name)[0]
             for t in ftypes:
                 payload = dict(base_common)
                 payload["model_path"] = mp
                 payload["advanced"] = (t.lower() == "advanced")
                 payload["forecast_type"] = t.lower()
-                payload["source_label"] = f"{name}:{t}"
+                # legenda: usa solo il nome del modello (senza estensione)
+                payload["source_label"] = base_label
                 # limit candles to keep inference lightweight
                 payload.setdefault("limit_candles", 512)
                 # throttle advanced: allow only one at a time
@@ -672,7 +680,17 @@ class UIController:
             # tipo (basic/advanced) e label
             adv = bool(payload.get("advanced", False))
             payload.setdefault("forecast_type", "advanced" if adv else "basic")
-            payload.setdefault("source_label", "advanced" if adv else "basic")
+            # legenda: se c'è il model_path usa il nome del modello, altrimenti fallback
+            if not payload.get("source_label"):
+                mp_for_label = payload.get("model_path")
+                if mp_for_label:
+                    try:
+                        import os
+                        payload["source_label"] = os.path.splitext(os.path.basename(str(mp_for_label)))[0]
+                    except Exception:
+                        payload["source_label"] = "advanced" if adv else "basic"
+                else:
+                    payload["source_label"] = "advanced" if adv else "basic"
 
             # verifiche minime
             if not payload.get("symbol") or not payload.get("timeframe"):

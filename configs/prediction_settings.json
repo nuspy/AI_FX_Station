@@ -17,7 +17,7 @@
         "30m",
         "35m"
     ],
-    "N_samples": 153,
+    "N_samples": 151,
     "apply_conformal": true,
     "model_weight_pct": 100,
     "indicator_tfs": {
@@ -60,9 +60,9 @@
             "1h"
         ]
     },
-    "warmup_bars": 16,
+    "warmup_bars": 15,
     "atr_n": 14,
-    "rsi_n": 14,
+    "rsi_n": 11,
     "bb_n": 20,
     "rv_window": 60,
     "ema_fast": 12,

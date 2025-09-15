@@ -49,12 +49,36 @@ class PredictionSettingsDialog(QDialog):
         self.loadmeta_button = QPushButton("Carica parametri")
         self.loadmeta_button.setToolTip("Carica i parametri base (horizons, indicatori, finestre) dai metadati del modello")
         self.loadmeta_button.clicked.connect(self._load_model_defaults)
+        # nuovo: selezione multipla
+        self.browse_multi_button = QPushButton("Browse Models…")
+        self.browse_multi_button.setToolTip("Seleziona più file modello per il forecast")
+        self.browse_multi_button.clicked.connect(self._browse_model_paths_multi)
+
         model_h = QHBoxLayout()
         model_h.addWidget(self.model_path_edit)
         model_h.addWidget(self.browse_button)
         model_h.addWidget(self.info_button)
         model_h.addWidget(self.loadmeta_button)
+        model_h.addWidget(self.browse_multi_button)
         self.form_layout.addRow("Model Path:", model_h)
+
+        # lista file selezionati (multi)
+        from PySide6.QtWidgets import QListWidget, QAbstractItemView
+        self.model_list = QListWidget()
+        self.model_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.model_list.setMinimumHeight(80)
+        self.form_layout.addRow("Selected Models:", self.model_list)
+
+        # stato interno: multi path
+        try:
+            # ripristina ultima selezione se presente
+            if not hasattr(self.__class__, "_last_model_paths"):
+                self.__class__._last_model_paths = []
+            self._model_paths = list(self.__class__._last_model_paths)
+            for p in self._model_paths:
+                self.model_list.addItem(str(p))
+        except Exception:
+            self._model_paths = []
 
         # Modelli multipli: uno per riga (opzionale, ha precedenza su Model Path)
         from PySide6.QtWidgets import QTextEdit, QGroupBox, QVBoxLayout as QV
@@ -240,6 +264,34 @@ class PredictionSettingsDialog(QDialog):
         )
         if path:
             self.model_path_edit.setText(path)
+
+    def _browse_model_paths_multi(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Model Files", "", "Model Files (*.pt *.pth *.pkl *.pickle);;All Files (*)"
+        )
+        if not paths:
+            return
+        # dedup e aggiorna lista
+        new_set = {str(p) for p in (self._model_paths or [])}
+        for p in paths:
+            new_set.add(str(p))
+        self._model_paths = sorted(new_set)
+        # aggiorna UI e stato statico
+        try:
+            self.model_list.clear()
+            for p in self._model_paths:
+                self.model_list.addItem(p)
+            self.__class__._last_model_paths = list(self._model_paths)
+        except Exception:
+            pass
+
+    @staticmethod
+    def get_model_paths():
+        """Return last selected model paths from dialog multi-selection."""
+        try:
+            return list(getattr(PredictionSettingsDialog, "_last_model_paths", []) or [])
+        except Exception:
+            return []
 
     def _load_model_meta(self, path: str) -> Dict[str, Any]:
         """Try to load meta from sidecar (path.meta.json) or from inside model (pickle/torch dict)."""

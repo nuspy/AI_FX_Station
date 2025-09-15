@@ -826,13 +826,21 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            # color by source
-            def _color_for(src: str) -> str:
-                palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
-                if not src:
-                    return "tab:orange"
-                h = abs(hash(src)) % len(palette)
-                return palette[h]
+            # color by source (hash-based HSV -> RGB to ensure many distinct colors)
+            def _color_for(src: str):
+                try:
+                    import hashlib, colorsys
+                    key = str(src or "default").encode("utf-8")
+                    hnum = int(hashlib.sha1(key).hexdigest()[:8], 16)
+                    hue = (hnum % 360) / 360.0         # 0..1
+                    sat = 0.65                         # fixed saturation
+                    val = 0.95                         # fixed value
+                    r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
+                    return (r, g, b)                   # matplotlib accepts RGB tuple
+                except Exception:
+                    # fallback palette
+                    palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
+                    return palette[abs(hash(src)) % len(palette)] if src else "tab:orange"
             color = _color_for(quantiles.get("source", source))
 
             # log (time, price) pairs to diagnose
