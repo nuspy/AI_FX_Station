@@ -394,6 +394,40 @@ class ForecastWorker(QRunnable):
             q05_list = (forecast_prices * 0.99).tolist()
             q95_list = (forecast_prices * 1.01).tolist()
 
+        # --- High-resolution series (optional), es. 1m step ---
+        q50_hr_list = None; q05_hr_list = None; q95_hr_list = None; future_ts_hr = None
+        try:
+            step_sel = str(self.payload.get("forecast_step", "auto")).strip().lower()
+            if step_sel and step_sel != "auto" and len(future_ts_list) >= 2:
+                # costruisci griglia temporale a passo costante da t0 a t_end
+                step_td = pd.to_timedelta(step_sel)
+                step_ms = int(step_td.total_seconds() * 1000)
+                t0 = int(future_ts_list[0]); t_end = int(future_ts_list[-1])
+                if step_ms > 0 and t_end > t0:
+                    future_ts_hr = list(range(t0, t_end + 1, step_ms))
+                    # interpola q50 (e q05/q95 se presenti) sui tempi HR
+                    import numpy as _np
+                    x = _np.array(future_ts_list, dtype=float)
+                    x_hr = _np.array(future_ts_hr, dtype=float)
+                    q50_hr = _np.interp(x_hr, x, _np.array(forecast_prices, dtype=float))
+                    q50_hr_list = q50_hr.tolist()
+                    if q05_list is not None:
+                        q05_hr = _np.interp(x_hr, x, _np.array(q05_list, dtype=float))
+                        q05_hr_list = q05_hr.tolist()
+                    if q95_list is not None:
+                        q95_hr = _np.interp(x_hr, x, _np.array(q95_list, dtype=float))
+                        q95_hr_list = q95_hr.tolist()
+                    try:
+                        logger.info("Forecast HR series ({} pts @ {}): first={}, last={}", len(future_ts_hr), step_sel,
+                                    (pd.to_datetime(future_ts_hr[0], unit="ms", utc=True).tz_convert(None).strftime("%H:%M:%S"),
+                                     float(q50_hr_list[0]) if q50_hr_list else None),
+                                    (pd.to_datetime(future_ts_hr[-1], unit="ms", utc=True).tz_convert(None).strftime("%H:%M:%S"),
+                                     float(q50_hr_list[-1]) if q50_hr_list else None))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         quantiles = {
             "q50": forecast_prices.tolist(),
             "q05": q05_list,
@@ -403,6 +437,11 @@ class ForecastWorker(QRunnable):
             "source": str(self.payload.get("source_label") or ("advanced" if self.payload.get("advanced") else "basic")),
             "label": str(self.payload.get("source_label") or "forecast"),
         }
+        if future_ts_hr and q50_hr_list:
+            quantiles["future_ts_hr"] = future_ts_hr
+            quantiles["q50_hr"] = q50_hr_list
+            if q05_hr_list is not None: quantiles["q05_hr"] = q05_hr_list
+            if q95_hr_list is not None: quantiles["q95_hr"] = q95_hr_list
 
         return df_candles, quantiles
 

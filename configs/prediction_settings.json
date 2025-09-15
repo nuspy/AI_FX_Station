@@ -4,16 +4,30 @@
         "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
     ],
     "forecast_types": [
-        "basic"
+        "advanced"
     ],
     "horizons": [
         "1m",
         "5m",
         "15m",
+        "20m",
+        "25m",
         "30m",
+        "35m",
+        "40m",
+        "45m",
+        "50m",
+        "55m",
+        "1h",
+        "90m",
+        "2h",
+        "150m",
+        "3h",
+        "210m",
+        "240m",
         "300m"
     ],
-    "N_samples": 200,
+    "N_samples": 300,
     "apply_conformal": true,
     "model_weight_pct": 100,
     "indicator_tfs": {
@@ -59,14 +73,14 @@
     "warmup_bars": 5,
     "atr_n": 14,
     "rsi_n": 14,
-    "bb_n": 20,
+    "bb_n": 18,
     "rv_window": 60,
     "ema_fast": 12,
     "ema_slow": 26,
     "don_n": 20,
     "hurst_window": 64,
     "keltner_k": 1,
-    "max_forecasts": 5,
+    "max_forecasts": 100,
     "test_history_bars": 128,
     "auto_predict": false,
     "auto_interval_seconds": 60

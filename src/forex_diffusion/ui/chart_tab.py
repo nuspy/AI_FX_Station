@@ -93,6 +93,14 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.forecast_settings_btn)
         top_layout.addWidget(self.forecast_btn)
 
+        # Forecast granularity selector
+        top_layout.addWidget(QLabel("Pred step:"))
+        self.pred_step_combo = QComboBox()
+        self.pred_step_combo.addItems(["auto", "1m"])
+        self.pred_step_combo.setCurrentText("auto")
+        self.pred_step_combo.setToolTip("Granularità dei punti di previsione. 'auto' usa gli horizons, '1m' aggiunge punti a minuto.")
+        top_layout.addWidget(self.pred_step_combo)
+
         # Advanced Forecast Buttons
         self.adv_settings_btn = QPushButton("Advanced Settings")
         self.adv_forecast_btn = QPushButton("Advanced Forecast")
@@ -815,6 +823,16 @@ class ChartTab(QWidget):
             )
             artists = [line50]
 
+            # se disponibili, punti ad alta risoluzione (es. 1m) come scatter
+            try:
+                f_hr = quantiles.get("future_ts_hr"); q50_hr = quantiles.get("q50_hr")
+                if f_hr and q50_hr and len(f_hr) == len(q50_hr):
+                    x_hr = pd.to_datetime(f_hr, unit="ms", utc=True).tz_convert(None)
+                    scat = self.ax.scatter(x_hr, q50_hr, s=10, color=color, alpha=0.6, edgecolors='none')
+                    artists.append(scat)
+            except Exception:
+                pass
+
             # evidenzia il punto 0 (istante richiesta) con marker più grande
             try:
                 req_ms = quantiles.get("requested_at_ms", None)
@@ -1110,6 +1128,7 @@ class ChartTab(QWidget):
                 "horizons": saved.get("horizons", ["1m", "5m", "15m"]),
                 "N_samples": saved.get("N_samples", 200),
                 "apply_conformal": saved.get("apply_conformal", True),
+                "forecast_step": (self.pred_step_combo.currentText() if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None else saved.get("forecast_step", "auto")),
             })
 
             # emit forecast request (will not remove existing forecasts on chart)
@@ -1366,6 +1385,12 @@ class ChartTab(QWidget):
             return
 
         payload = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
+        # add forecast granularity from UI
+        try:
+            if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None:
+                payload["forecast_step"] = self.pred_step_combo.currentText() or "auto"
+        except Exception:
+            pass
         self.forecastRequested.emit(payload)
 
     def _open_adv_forecast_settings(self):
@@ -1382,6 +1407,12 @@ class ChartTab(QWidget):
             QMessageBox.warning(self, "Missing Model", "Please select a model file.")
             return
         payload = {"symbol": self.symbol, "timeframe": self.timeframe, "advanced": True, **settings}
+        # add forecast granularity from UI
+        try:
+            if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None:
+                payload["forecast_step"] = self.pred_step_combo.currentText() or "auto"
+        except Exception:
+            pass
         self.forecastRequested.emit(payload)
 
     def on_forecast_ready(self, df: pd.DataFrame, quantiles: dict):
