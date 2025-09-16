@@ -140,7 +140,7 @@ class AggregatorService:
 
         df_candles = pd.DataFrame(candles)
         report = data_io.upsert_candles(self.engine, df_candles, symbol, timeframe, resampled=(timeframe != '1m'))
-        logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
+        # logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
 
         self._last_processed_ts[state_key] = end_ms
 

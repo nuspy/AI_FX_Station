@@ -1,6 +1,10 @@
 # src/forex_diffusion/ui/chart_tab.py
 from __future__ import annotations
 
+import numpy as np
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+
 from typing import Optional, Dict, List
 import pandas as pd
 from pathlib import Path
@@ -33,6 +37,15 @@ class ChartTab(QWidget):
     def __init__(self, parent=None, viewer=None):
         super().__init__(parent)
         self._main_window = parent
+
+        # attach controller immediately if present on parent
+        self.controller = getattr(parent, "controller", None)
+        try:
+            if self.controller and hasattr(self.controller, "signals"):
+                self.controller.signals.forecastReady.connect(self.on_forecast_ready)
+        except Exception:
+            pass
+
         # drawing/tools state
         self._drawing_mode: Optional[str] = None
         self._pending_points: List = []
@@ -133,6 +146,11 @@ class ChartTab(QWidget):
         self.backfill_btn = QPushButton("Backfill")
         self.backfill_btn.setToolTip("Scarica storico per il range selezionato (Years/Months) per il simbolo corrente")
         top_layout.addWidget(self.backfill_btn)
+
+        # Indicators settings
+        self.indicators_btn = QPushButton("Indicators")
+        self.indicators_btn.setToolTip("Configura gli indicatori tecnici (ATR, RSI, Bollinger, Hurst)")
+        top_layout.addWidget(self.indicators_btn)
 
         # Build Latents (PCA)
         self.build_latents_btn = QPushButton("Build Latents")
@@ -265,6 +283,10 @@ class ChartTab(QWidget):
         self.layout.addWidget(splitter)
 
         self.ax = self.canvas.figure.subplots()
+
+        self._ind_artists = {}  # dict[str, list[matplotlib.artist.Artist]]
+        self._osc_ax = None  # asse “oscillatori” (RSI/MACD/ATR/Hurst)
+
         self._last_df = pd.DataFrame()
         # keep a list of forecast dicts: {id, created_at, quantiles, future_ts, artists:list, source}
         self._forecasts: List[Dict] = []
@@ -326,6 +348,7 @@ class ChartTab(QWidget):
         # Buttons signals
         self.trade_btn.clicked.connect(self._open_trade_dialog)
         self.backfill_btn.clicked.connect(self._on_backfill_missing_clicked)
+        self.indicators_btn.clicked.connect(self._on_indicators_clicked)
         self.build_latents_btn.clicked.connect(self._on_build_latents_clicked)
 
         # Mouse interaction:
@@ -493,6 +516,304 @@ class ChartTab(QWidget):
         except Exception as e:
             logger.exception("Trade dialog failed: {}", e)
 
+    def _on_indicators_clicked(self):
+        """Chiede al controller di aprire il dialog; in fallback mostra un info box."""
+        # prova a risolvere il controller da più punti
+        ctrl = getattr(self, "controller", None) or getattr(self._main_window, "controller", None)
+        # log di debug per confermare il click
+        try:
+            from loguru import logger
+            logger.info("Indicators button clicked; controller is {}", type(ctrl).__name__ if ctrl else None)
+        except Exception:
+            pass
+
+        if ctrl and hasattr(ctrl, "handle_indicators_requested"):
+            try:
+                ctrl.handle_indicators_requested()
+                return
+            except Exception as e:
+                # se il controller c'è ma fallisce, avvisa
+                try:
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Indicators", f"Errore apertura dialog: {e}")
+                except Exception:
+                    pass
+                return
+
+        # fallback visibile: almeno conferma il click
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Indicators", "Controller non disponibile. Apri dal menu principale.")
+        except Exception:
+            pass
+
+    def _get_indicator_settings(self) -> dict:
+        """Prende la config indicatori dal controller (se c’è) o dalla sessione salvata."""
+        try:
+            ctrl = getattr(self, "controller", None) or getattr(self._main_window, "controller", None)
+            s = getattr(ctrl, "indicators_settings", None)
+            if isinstance(s, dict):
+                return s
+        except Exception:
+            pass
+        # fallback: user_settings
+        try:
+            from ..utils.user_settings import get_setting
+            sessions = get_setting("indicators.sessions", {}) or {}
+            def_name = get_setting("indicators.default_session", "default")
+            return sessions.get(def_name, {}) or {}
+        except Exception:
+            return {}
+
+    def _ensure_osc_axis(self, need: bool):
+        """Crea/mostra o nasconde l’asse “oscillatori” (inset sotto il main)."""
+        if need and self._osc_ax is None:
+            try:
+                self._osc_ax = inset_axes(self.ax, width="100%", height="28%",
+                                          loc="lower left", borderpad=1.2)
+                self._osc_ax.set_facecolor("#111418" if getattr(self, "_is_dark", True) else "#f5f7fb")
+                self._osc_ax.grid(True, alpha=0.12)
+            except Exception:
+                self._osc_ax = None
+        if not need and self._osc_ax is not None:
+            try:
+                self._osc_ax.cla()
+                self._osc_ax.set_visible(False)
+                self.canvas.draw_idle()
+            except Exception:
+                pass
+
+    # ---- math helpers ----
+    def _sma(self, x: pd.Series, n: int) -> pd.Series:
+        return x.rolling(n, min_periods=max(1, n // 2)).mean()
+
+    def _ema(self, x: pd.Series, n: int) -> pd.Series:
+        return x.ewm(span=max(1, n), adjust=False).mean()
+
+    def _bollinger(self, x: pd.Series, n: int, k: float):
+        ma = self._sma(x, n)
+        sd = x.rolling(n, min_periods=max(1, n // 2)).std()
+        return ma, ma + k * sd, ma - k * sd
+
+    def _donchian(self, high: pd.Series, low: pd.Series, n: int):
+        upper = high.rolling(n, min_periods=max(1, n // 2)).max()
+        lower = low.rolling(n, min_periods=max(1, n // 2)).min()
+        return upper, lower
+
+    def _atr(self, high: pd.Series, low: pd.Series, close: pd.Series, n: int):
+        prev_close = close.shift(1)
+        tr = pd.concat([
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs()
+        ], axis=1).max(axis=1)
+        return tr.rolling(n, min_periods=max(1, n // 2)).mean()
+
+    def _keltner(self, high: pd.Series, low: pd.Series, close: pd.Series, n: int, k: float):
+        ema_mid = self._ema(close, n)
+        atr = self._atr(high, low, close, n)
+        return ema_mid + k * atr, ema_mid - k * atr
+
+    def _rsi(self, x: pd.Series, n: int):
+        delta = x.diff()
+        gain = (delta.where(delta > 0, 0.0)).rolling(n).mean()
+        loss = (-delta.where(delta < 0, 0.0)).rolling(n).mean()
+        rs = np.where(loss == 0, np.nan, gain / loss)
+        rsi = 100 - (100 / (1 + rs))
+        return pd.Series(rsi, index=x.index)
+
+    def _macd(self, x: pd.Series, fast: int, slow: int, signal: int):
+        ema_fast = self._ema(x, fast)
+        ema_slow = self._ema(x, slow)
+        macd = ema_fast - ema_slow
+        sig = self._ema(macd, signal)
+        hist = macd - sig
+        return macd, sig, hist
+
+    def _hurst_roll(self, x: pd.Series, window: int):
+        # stima leggera Hurst per finestra mobile (attenzione: può essere costosa su dataset enormi)
+        res = pd.Series(index=x.index, dtype=float)
+        if window < 8 or len(x) < window:
+            return res
+        for i in range(window, len(x) + 1):
+            seg = x.iloc[i - window:i].values
+            if np.all(seg == seg[0]):
+                res.iloc[i - 1] = np.nan
+                continue
+            Y = seg - seg.mean()
+            Z = np.cumsum(Y)
+            R = Z.max() - Z.min()
+            S = Y.std()
+            if not S or np.isnan(S):
+                h = np.nan
+            else:
+                h = np.log(R / S) / np.log(window) if window > 1 else np.nan
+            res.iloc[i - 1] = h
+        return res
+
+    def _plot_indicators(self, df2: pd.DataFrame, x_dt: pd.Series):
+        cfg = self._get_indicator_settings()
+        if not isinstance(cfg, dict) or not cfg:
+            self._ensure_osc_axis(False)
+            return
+
+        close = df2['close'] if 'close' in df2.columns else df2['price']
+        high = df2.get('high', close)
+        low = df2.get('low', close)
+
+        # reuse artists se presenti
+        def _get_art(key: str, color: str, style: str = '-'):
+            arr = self._ind_artists.get(key)
+            if arr:
+                line = arr[0]
+            else:
+                (line,) = self.ax.plot([], [], linestyle=style, color=color, linewidth=1.2, alpha=0.95, label=key)
+                self._ind_artists[key] = [line]
+            return self._ind_artists[key][0]
+
+        # --- Overlays sull’asse prezzo ---
+        # SMA
+        if cfg.get('use_sma', False):
+            n = int(cfg.get('sma_n', 20))
+            c = cfg.get('color_sma', '#7f7f7f')
+            sma = self._sma(close, n)
+            line = _get_art('SMA', c, '-')
+            line.set_data(x_dt, sma.values)
+            line.set_visible(True)
+        else:
+            if 'SMA' in self._ind_artists: self._ind_artists['SMA'][0].set_visible(False)
+
+        # EMA fast/slow
+        if cfg.get('use_ema', False):
+            nf = int(cfg.get('ema_fast', 12));
+            ns = int(cfg.get('ema_slow', 26))
+            cf = cfg.get('color_ema', '#bcbd22')
+            ema_f = self._ema(close, nf);
+            ema_s = self._ema(close, ns)
+            linef = _get_art('EMA_fast', cf, '-');
+            lines = _get_art('EMA_slow', cf, '--')
+            linef.set_data(x_dt, ema_f.values);
+            linef.set_visible(True)
+            lines.set_data(x_dt, ema_s.values);
+            lines.set_visible(True)
+        else:
+            for k in ['EMA_fast', 'EMA_slow']:
+                if k in self._ind_artists: self._ind_artists[k][0].set_visible(False)
+
+        # Bollinger (upper/lower)
+        if cfg.get('use_bollinger', False):
+            n = int(cfg.get('bb_n', 20));
+            k = float(cfg.get('bb_k', 2.0))
+            c = cfg.get('color_bollinger', '#2ca02c')
+            mid, up, lo = self._bollinger(close, n, k)
+            upline = _get_art('BB_upper', c, ':');
+            loline = _get_art('BB_lower', c, ':')
+            upline.set_data(x_dt, up.values);
+            upline.set_visible(True)
+            loline.set_data(x_dt, lo.values);
+            loline.set_visible(True)
+        else:
+            for k in ['BB_upper', 'BB_lower']:
+                if k in self._ind_artists: self._ind_artists[k][0].set_visible(False)
+
+        # Donchian (upper/lower)
+        if cfg.get('use_don', False):
+            n = int(cfg.get('don_n', 20));
+            c = cfg.get('color_don', '#8c564b')
+            up, lo = self._donchian(high, low, n)
+            upline = _get_art('DON_upper', c, '-.');
+            loline = _get_art('DON_lower', c, '-.')
+            upline.set_data(x_dt, up.values);
+            upline.set_visible(True)
+            loline.set_data(x_dt, lo.values);
+            loline.set_visible(True)
+        else:
+            for k in ['DON_upper', 'DON_lower']:
+                if k in self._ind_artists: self._ind_artists[k][0].set_visible(False)
+
+        # Keltner (upper/lower) – usa bb_n come finestra base
+        if cfg.get('use_keltner', False):
+            n = int(cfg.get('bb_n', 20));
+            k = float(cfg.get('keltner_k', 1.5))
+            c = cfg.get('color_keltner', '#17becf')
+            up, lo = self._keltner(high, low, close, n, k)
+            upline = _get_art('KELT_upper', c, '--');
+            loline = _get_art('KELT_lower', c, '--')
+            upline.set_data(x_dt, up.values);
+            upline.set_visible(True)
+            loline.set_data(x_dt, lo.values);
+            loline.set_visible(True)
+        else:
+            for k in ['KELT_upper', 'KELT_lower']:
+                if k in self._ind_artists: self._ind_artists[k][0].set_visible(False)
+
+        # --- Pannello oscillatori (RSI/MACD/ATR/Hurst) ---
+        need_osc = any([cfg.get('use_rsi', False), cfg.get('use_macd', False),
+                        cfg.get('use_atr', False), cfg.get('use_hurst', False)])
+        self._ensure_osc_axis(need_osc)
+        if self._osc_ax and need_osc:
+            axo = self._osc_ax
+            axo.set_visible(True)
+            try:
+                axo.cla()
+            except Exception:
+                pass
+            axo.grid(True, alpha=0.2)
+
+            # RSI
+            if cfg.get('use_rsi', False):
+                n = int(cfg.get('rsi_n', 14));
+                c = cfg.get('color_rsi', '#1f77b4')
+                rsi = self._rsi(close, n)
+                axo.plot(x_dt, rsi.values, color=c, linewidth=1.0, label='RSI')
+                axo.axhline(70, color=c, linestyle=':', linewidth=0.8, alpha=0.6)
+                axo.axhline(30, color=c, linestyle=':', linewidth=0.8, alpha=0.6)
+                axo.set_ylim(0, 100)
+
+            # MACD
+            if cfg.get('use_macd', False):
+                f = int(cfg.get('macd_fast', 12));
+                s = int(cfg.get('macd_slow', 26));
+                sig = int(cfg.get('macd_signal', 9))
+                c = cfg.get('color_macd', '#ff7f0e')
+                macd, signal, hist = self._macd(close, f, s, sig)
+                axo.plot(x_dt, macd.values, color=c, linewidth=1.0, label='MACD')
+                axo.plot(x_dt, signal.values, color=c, linewidth=0.9, linestyle='--', alpha=0.8, label='Signal')
+                try:
+                    axo.fill_between(x_dt, 0, hist.values, alpha=0.12, color=c, step='pre')
+                except Exception:
+                    pass
+
+            # ATR
+            if cfg.get('use_atr', False):
+                n = int(cfg.get('atr_n', 14));
+                c = cfg.get('color_atr', '#d62728')
+                atr = self._atr(high, low, close, n)
+                axo.plot(x_dt, atr.values, color=c, linewidth=0.9, label='ATR', alpha=0.9)
+
+            # Hurst
+            if cfg.get('use_hurst', False):
+                win = int(cfg.get('hurst_window', 64));
+                c = cfg.get('color_hurst', '#9467bd')
+                h = self._hurst_roll(close, win)
+                axo.plot(x_dt, h.values, color=c, linewidth=0.9, label='H', alpha=0.9)
+                axo.axhline(0.5, color=c, linestyle=':', linewidth=0.8, alpha=0.6)
+
+            # cosmetica
+            axes_col = self._get_color("axes_color", "#cfd6e1")
+            try:
+                axo.tick_params(colors=axes_col, labelsize=8)
+                for spine in axo.spines.values():
+                    spine.set_color(axes_col)
+            except Exception:
+                pass
+
+        # aggiorna legenda per includere le label indicatori
+        try:
+            self.ax.legend(loc='upper left', fontsize=8, frameon=False)
+        except Exception:
+            pass
+
     def _on_build_latents_clicked(self):
         """Prompt PCA dim and launch latents build via controller."""
         try:
@@ -592,6 +913,9 @@ class ChartTab(QWidget):
                     self._price_line, = self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
                 except Exception:
                     self._price_line = None
+
+        # disegna/aggiorna overlay indicatori (usa settings correnti)
+        self._plot_indicators(df2, x_dt)
 
         if quantiles:
             self._plot_forecast_overlay(quantiles)

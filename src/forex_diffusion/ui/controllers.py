@@ -412,6 +412,13 @@ class UIController:
             pass
         self.db_writer = db_writer
         self._forecast_active = 0
+        # default indicators settings
+        self.indicators_settings: dict = {
+            "use_atr": True, "atr_n": 14,
+            "use_rsi": True, "rsi_n": 14,
+            "use_bollinger": True, "bb_n": 20, "bb_k": 2,
+            "use_hurst": True, "hurst_window": 64,
+        }
         try:
             self.signals.forecastReady.connect(self._on_forecast_finished)
             self.signals.error.connect(self._on_forecast_failed)
@@ -510,6 +517,52 @@ class UIController:
     def handle_prediction_settings_requested(self):
         dialog = PredictionSettingsDialog(self.main_window)
         dialog.exec()
+
+    from PySide6.QtCore import Slot
+
+    @Slot()
+    def handle_indicators_requested(self):
+        """
+        Apre il dialog degli indicatori se disponibile.
+        In fallback mostra un messaggio per confermare che il click funziona.
+        """
+        try:
+            # tenta il dialog “ufficiale”
+            from .indicators_dialog import IndicatorsDialog  # deve esistere nel tuo repo
+            # Se hai uno stato locale per gli indicatori, leggilo/aggiorna qui:
+            initial = getattr(self, "indicators_settings", {}) or {}
+            res = IndicatorsDialog.edit(self.main_window, initial=initial)
+            if res is None:
+                self.signals.status.emit("Indicators: annullato")
+                return
+            # salva le scelte
+            self.indicators_settings = dict(res)
+            self.signals.status.emit("Indicators aggiornati")
+            try:
+                from loguru import logger
+                logger.info("Indicators updated: {}", self.indicators_settings)
+            except Exception:
+                pass
+        except ModuleNotFoundError:
+            # fallback: nessun dialog disponibile → mostra un messaggio
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self.main_window, "Indicators", "Dialog degli indicatori non disponibile.")
+            except Exception:
+                pass
+            self.signals.status.emit("Indicators: dialog non disponibile")
+        except Exception as e:
+            self.signals.status.emit("Indicators: errore")
+            try:
+                from loguru import logger
+                logger.exception("Indicators dialog failed: {}", e)
+            except Exception:
+                pass
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.main_window, "Indicators", str(e))
+            except Exception:
+                pass
 
     # ---- Forecast da menu (usa le settings correnti) ---------------------- #
     @Slot()
@@ -697,6 +750,21 @@ class UIController:
             # tipo: se >1 modello forza basic
             adv = bool(payload.get("advanced", False))
             forecast_type = "advanced" if (adv and len(models) == 1) else "basic"
+
+            # fallback: inietta indicator settings globali se mancanti
+            try:
+                ind = getattr(self, "indicators_settings", {}) or {}
+                if "use_atr" not in payload: payload["use_atr"] = bool(ind.get("use_atr", True))
+                if "atr_n" not in payload: payload["atr_n"] = int(ind.get("atr_n", 14))
+                if "use_rsi" not in payload: payload["use_rsi"] = bool(ind.get("use_rsi", True))
+                if "rsi_n" not in payload: payload["rsi_n"] = int(ind.get("rsi_n", 14))
+                if "use_bollinger" not in payload: payload["use_bollinger"] = bool(ind.get("use_bollinger", True))
+                if "bb_n" not in payload: payload["bb_n"] = int(ind.get("bb_n", 20))
+                if "bb_k" not in payload: payload["bb_k"] = int(ind.get("bb_k", 2))
+                if "use_hurst" not in payload: payload["use_hurst"] = bool(ind.get("use_hurst", True))
+                if "hurst_window" not in payload: payload["hurst_window"] = int(ind.get("hurst_window", 64))
+            except Exception:
+                pass
             logger.info("Forecast launching: models={}, type={}, symbol={}, tf={}", len(models), forecast_type, payload.get("symbol"), payload.get("timeframe"))
             self.signals.status.emit(f"Forecast: launching {len(models)} model(s)")
 

@@ -75,12 +75,16 @@ def setup_ui(
     result["training_tab"] = training_tab
     result["tab_widget"] = tab_widget
     try:
+        chart_tab.controller = controller
         controller.chart_tab = chart_tab
+        setattr(chart_tab, "controller", controller)
+
     except Exception:
         pass
     # expose chart_tab on controller for symbol/timeframe discovery
     try:
         controller.chart_tab = chart_tab
+        setattr(chart_tab, "controller", controller)
     except Exception:
         pass
     # connect ChartTab forecast requests to controller handler, and results back to the chart

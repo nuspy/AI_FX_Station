@@ -31,7 +31,7 @@ class DBWriter:
 
                 if handler and callable(handler):
                     try:
-                        logger.debug(f"Executing DB task: {task_type}")
+                        # logger.debug(f"Executing DB task: {task_type}")
                         handler(payload)
                     except Exception as e:
                         logger.exception(f"Error executing DB task '{task_type}' with payload {payload}. Error: {e}")

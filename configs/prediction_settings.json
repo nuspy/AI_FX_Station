@@ -4,7 +4,7 @@
         "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
     ],
     "forecast_types": [
-        "basic"
+        "advanced"
     ],
     "horizons": [
         "1m",
@@ -15,7 +15,7 @@
         "30m",
         "35m"
     ],
-    "N_samples": 149,
+    "N_samples": 150,
     "apply_conformal": true,
     "model_weight_pct": 100,
     "indicator_tfs": {
