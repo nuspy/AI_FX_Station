@@ -1,10 +1,10 @@
 {
-    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h60_rf_none.pkl",
+    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h60_rf_pca.pkl",
     "model_paths": [
         "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
     ],
     "forecast_types": [
-        "advanced"
+        "basic"
     ],
     "horizons": [
         "1m",

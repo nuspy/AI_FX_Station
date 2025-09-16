@@ -283,6 +283,19 @@ class ChartTab(QWidget):
         self.layout.addWidget(splitter)
 
         self.ax = self.canvas.figure.subplots()
+        try:
+            # Minimize outer paddings around the plot area
+            self.canvas.figure.set_constrained_layout(False)
+            self.canvas.figure.subplots_adjust(left=0.04, right=0.995, top=0.97, bottom=0.08)
+            # Reduce internal data margins (focus on data)
+            self.ax.margins(x=0.001, y=0.05)
+        except Exception:
+            pass
+        try:
+            # Keep oscillator panel aligned on any x-limit change of main axis
+            self._xlim_cid = self.ax.callbacks.connect('xlim_changed', self._on_main_xlim_changed)
+        except Exception:
+            pass
 
         self._ind_artists = {}  # dict[str, list[matplotlib.artist.Artist]]
         self._osc_ax = None  # asse “oscillatori” (RSI/MACD/ATR/Hurst)
@@ -540,12 +553,55 @@ class ChartTab(QWidget):
                     pass
                 return
 
-        # fallback visibile: almeno conferma il click
+        # Fallback: dialog locale con toggle per WK fill e indicatori su forecast
         try:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Indicators", "Controller non disponibile. Apri dal menu principale.")
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QPushButton
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Indicators (fallback)")
+            lay = QVBoxLayout(dlg)
+            lay.addWidget(QLabel("Impostazioni rapide indicatori"))
+            # Fill area WK
+            chk_wk = QCheckBox("Fill area tra Bande Bollinger & Keltner")
+            try:
+                chk_wk.setChecked(bool(get_setting("indicators.fill_wk", True)))
+            except Exception:
+                chk_wk.setChecked(True)
+            lay.addWidget(chk_wk)
+            # Indicatori su forecast
+            chk_fcst = QCheckBox("Calcola/Mostra indicatori anche sul forecast (q50)")
+            try:
+                chk_fcst.setChecked(bool(get_setting("indicators.on_forecast", False)))
+            except Exception:
+                chk_fcst.setChecked(False)
+            lay.addWidget(chk_fcst)
+            # Bottoni
+            bh = QHBoxLayout()
+            okb = QPushButton("Salva")
+            canc = QPushButton("Annulla")
+            bh.addStretch(1)
+            bh.addWidget(okb)
+            bh.addWidget(canc)
+            lay.addLayout(bh)
+
+            def _save():
+                try:
+                    set_setting("indicators.fill_wk", bool(chk_wk.isChecked()))
+                    set_setting("indicators.on_forecast", bool(chk_fcst.isChecked()))
+                except Exception:
+                    pass
+                dlg.accept()
+                if self._last_df is not None and not self._last_df.empty:
+                    self.update_plot(self._last_df)
+
+            okb.clicked.connect(_save)
+            canc.clicked.connect(dlg.reject)
+            dlg.exec()
         except Exception:
-            pass
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Indicators", "Controller non disponibile. Apri dal menu principale.")
+            except Exception:
+                pass
 
     def _get_indicator_settings(self) -> dict:
         """Prende la config indicatori dal controller (se c’è) o dalla sessione salvata."""
@@ -582,6 +638,14 @@ class ChartTab(QWidget):
                 self.canvas.draw_idle()
             except Exception:
                 pass
+
+    def _on_main_xlim_changed(self, ax):
+        """Sync oscillator inset x-limits to main axis."""
+        try:
+            if self._osc_ax is not None:
+                self._osc_ax.set_xlim(self.ax.get_xlim())
+        except Exception:
+            pass
 
     # ---- math helpers ----
     def _sma(self, x: pd.Series, n: int) -> pd.Series:
@@ -747,6 +811,57 @@ class ChartTab(QWidget):
             for k in ['KELT_upper', 'KELT_lower']:
                 if k in self._ind_artists: self._ind_artists[k][0].set_visible(False)
 
+        # Wollinger-Keltner shaded area (overlap between Bollinger and Keltner), controllata da 'fill_wk'
+        try:
+            draw_wk = bool(cfg.get('fill_wk', get_setting("indicators.fill_wk", True)))
+        except Exception:
+            draw_wk = True
+        if draw_wk and cfg.get('use_bollinger', False) and cfg.get('use_keltner', False):
+            try:
+                n_bb = int(cfg.get('bb_n', 20)); k_bb = float(cfg.get('bb_k', 2.0))
+                _, bb_up, bb_lo = self._bollinger(close, n_bb, k_bb)
+                n_k = int(cfg.get('bb_n', 20)); k_k = float(cfg.get('keltner_k', 1.5))
+                k_up, k_lo = self._keltner(high, low, close, n_k, k_k)
+                import numpy as _np
+                minlen = min(len(x_dt), len(bb_up), len(bb_lo), len(k_up), len(k_lo))
+                if minlen > 0:
+                    upper = _np.minimum(bb_up.values[:minlen], k_up.values[:minlen])
+                    lower = _np.maximum(bb_lo.values[:minlen], k_lo.values[:minlen])
+                    valid = upper > lower
+                    # rimuovi precedente fill se presente
+                    if 'WK_fill' in self._ind_artists:
+                        try:
+                            self._ind_artists['WK_fill'][0].remove()
+                        except Exception:
+                            pass
+                    fill_color = cfg.get('color_wk_fill', cfg.get('color_keltner', '#17becf'))
+                    try:
+                        poly = self.ax.fill_between(
+                            x_dt[:minlen], lower, upper,
+                            where=valid, interpolate=True,
+                            color=fill_color, alpha=float(cfg.get('alpha_wk_fill', 0.12)), label=None
+                        )
+                    except Exception:
+                        poly = self.ax.fill_between(
+                            x_dt[:minlen], lower, upper,
+                            color=fill_color, alpha=float(cfg.get('alpha_wk_fill', 0.12)), label=None
+                        )
+                    self._ind_artists['WK_fill'] = [poly]
+            except Exception:
+                if 'WK_fill' in self._ind_artists:
+                    try:
+                        self._ind_artists['WK_fill'][0].remove()
+                    except Exception:
+                        pass
+                    self._ind_artists.pop('WK_fill', None)
+        else:
+            if 'WK_fill' in self._ind_artists:
+                try:
+                    self._ind_artists['WK_fill'][0].remove()
+                except Exception:
+                    pass
+                self._ind_artists.pop('WK_fill', None)
+
         # --- Pannello oscillatori (RSI/MACD/ATR/Hurst) ---
         need_osc = any([cfg.get('use_rsi', False), cfg.get('use_macd', False),
                         cfg.get('use_atr', False), cfg.get('use_hurst', False)])
@@ -754,6 +869,11 @@ class ChartTab(QWidget):
         if self._osc_ax and need_osc:
             axo = self._osc_ax
             axo.set_visible(True)
+            # align x-range with main axis
+            try:
+                axo.set_xlim(self.ax.get_xlim())
+            except Exception:
+                pass
             try:
                 axo.cla()
             except Exception:
@@ -921,7 +1041,7 @@ class ChartTab(QWidget):
             self._plot_forecast_overlay(quantiles)
 
         # title and axes cosmetics
-        self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}")
+        self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}", pad=2)
         axes_col = self._get_color("axes_color", "#cfd6e1")
         try:
             self.ax.tick_params(colors=axes_col)
@@ -929,9 +1049,28 @@ class ChartTab(QWidget):
             self.ax.yaxis.label.set_color(axes_col)
             for spine in self.ax.spines.values():
                 spine.set_color(axes_col)
+            # Remove xlabel/offset text like '1 minute'
+            self.ax.set_xlabel("")
+            try:
+                self.ax.xaxis.get_offset_text().set_visible(False)
+            except Exception:
+                pass
         except Exception:
             pass
-        self.ax.figure.autofmt_xdate()
+        # Compact date axis without unit text
+        try:
+            locator = mdates.AutoDateLocator(minticks=4, maxticks=10)
+            formatter = mdates.ConciseDateFormatter(locator)
+            self.ax.xaxis.set_major_locator(locator)
+            self.ax.xaxis.set_major_formatter(formatter)
+        except Exception:
+            pass
+        # tighten paddings
+        try:
+            self.ax.margins(x=0.001, y=0.05)
+            self.canvas.figure.subplots_adjust(left=0.04, right=0.995, top=0.97, bottom=0.08)
+        except Exception:
+            pass
 
         # restore limits (only if requested), else autoscale to data
         try:
@@ -942,6 +1081,13 @@ class ChartTab(QWidget):
             if prev_xlim is None and prev_ylim is None:
                 self.ax.relim()
                 self.ax.autoscale_view()
+        except Exception:
+            pass
+
+        # ensure oscillator panel shares the same x-range
+        try:
+            if self._osc_ax is not None:
+                self._osc_ax.set_xlim(self.ax.get_xlim())
         except Exception:
             pass
 
@@ -1185,6 +1331,98 @@ class ChartTab(QWidget):
                 label=f"{label} (q50)"
             )
             artists = [line50]
+
+            # Se abilitato, calcola/disegna indicatori anche sulla porzione di forecast
+            try:
+                cfg = self._get_indicator_settings() or {}
+            except Exception:
+                cfg = {}
+            try:
+                ind_on_fcst = bool(cfg.get("ind_on_forecast", get_setting("indicators.on_forecast", False)))
+            except Exception:
+                ind_on_fcst = False
+            if ind_on_fcst:
+                try:
+                    y_col = "close" if "close" in self._last_df.columns else "price"
+                    hist = self._last_df[["ts_utc", y_col]].dropna().copy()
+                    hist["ts_utc"] = pd.to_numeric(hist["ts_utc"], errors="coerce").astype("int64")
+                    hist = hist.sort_values("ts_utc").reset_index(drop=True)
+                    x_hist = pd.to_datetime(hist["ts_utc"], unit="ms", utc=True).tz_convert(None)
+                    close_hist = pd.to_numeric(hist[y_col], errors="coerce").astype(float)
+
+                    n_sma = int(cfg.get("sma_n", 20)) if cfg.get("use_sma", False) else 0
+                    n_ef = int(cfg.get("ema_fast", 12)) if cfg.get("use_ema", False) else 0
+                    n_es = int(cfg.get("ema_slow", 26)) if cfg.get("use_ema", False) else 0
+                    n_bb = int(cfg.get("bb_n", 20)) if cfg.get("use_bollinger", False) else 0
+                    n_k = int(cfg.get("bb_n", 20)) if cfg.get("use_keltner", False) else 0
+                    nmax = max(1, n_sma, n_ef, n_es, n_bb, n_k)
+                    tail = max(100, nmax * 4)
+                    close_hist_tail = close_hist.iloc[-tail:] if len(close_hist) > tail else close_hist
+
+                    import numpy as _np
+                    close_all = _np.concatenate([close_hist_tail.values, q50_arr])
+                    f_start = len(close_all) - len(q50_arr)
+
+                    # SMA
+                    if cfg.get("use_sma", False) and n_sma > 0:
+                        sma_all = self._sma(pd.Series(close_all), n_sma).to_numpy()
+                        try:
+                            ln, = self.ax.plot(x_vals, sma_all[f_start:], color=cfg.get("color_sma", "#7f7f7f"),
+                                               linestyle=":", linewidth=1.0, alpha=0.7, label=None)
+                            artists.append(ln)
+                        except Exception:
+                            pass
+                    # EMA
+                    if cfg.get("use_ema", False):
+                        if n_ef > 0:
+                            emaf_all = self._ema(pd.Series(close_all), n_ef).to_numpy()
+                            try:
+                                ln, = self.ax.plot(x_vals, emaf_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
+                                                   linestyle="--", linewidth=1.0, alpha=0.7, label=None)
+                                artists.append(ln)
+                            except Exception:
+                                pass
+                        if n_es > 0:
+                            emas_all = self._ema(pd.Series(close_all), n_es).to_numpy()
+                            try:
+                                ln, = self.ax.plot(x_vals, emas_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
+                                                   linestyle=":", linewidth=1.0, alpha=0.6, label=None)
+                                artists.append(ln)
+                            except Exception:
+                                pass
+                    # Bollinger
+                    if cfg.get("use_bollinger", False) and n_bb > 0:
+                        _, bb_up_all, bb_lo_all = self._bollinger(pd.Series(close_all), n_bb, float(cfg.get("bb_k", 2.0)))
+                        bu = bb_up_all.to_numpy()[f_start:]
+                        bl = bb_lo_all.to_numpy()[f_start:]
+                        c_bb = cfg.get("color_bollinger", "#2ca02c")
+                        try:
+                            l1, = self.ax.plot(x_vals, bu, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
+                            l2, = self.ax.plot(x_vals, bl, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
+                            artists.extend([l1, l2])
+                            try:
+                                poly = self.ax.fill_between(x_vals, bl, bu, color=c_bb, alpha=0.06)
+                                artists.append(poly)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    # Keltner
+                    if cfg.get("use_keltner", False) and n_k > 0:
+                        high_all = pd.Series(close_all)
+                        low_all = pd.Series(close_all)
+                        ku_all, kl_all = self._keltner(high_all, low_all, pd.Series(close_all), n_k, float(cfg.get("keltner_k", 1.5)))
+                        ku = (ku_all.to_numpy() if hasattr(ku_all, "to_numpy") else ku_all.values)[f_start:]
+                        kl = (kl_all.to_numpy() if hasattr(kl_all, "to_numpy") else kl_all.values)[f_start:]
+                        c_k = cfg.get("color_keltner", "#17becf")
+                        try:
+                            l1, = self.ax.plot(x_vals, ku, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
+                            l2, = self.ax.plot(x_vals, kl, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
+                            artists.extend([l1, l2])
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
             # se disponibili, punti ad alta risoluzione (es. 1m) come scatter
             try:
