@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # ensure-features helper (robust import)
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Dict, Tuple
 _ensure_features_for_prediction: Optional[Callable] = None
 try:
     from forex_diffusion.inference.prediction_config import ensure_features_for_prediction as _ensure_features_for_prediction
@@ -241,11 +241,41 @@ class ForecastWorker(QRunnable):
         limit = int(self.payload.get("limit_candles", 512))
         ftype = str(self.payload.get("forecast_type", "basic")).lower()
 
-        # 1) dati
-        df_candles = self._fetch_recent_candles(self.market_service.engine, sym, tf, n_bars=limit)
+        # 1) dati (ancorati all'eventuale timestamp del click)
+        anchor_ts = None
+        try:
+            a = self.payload.get("testing_point_ts", None)
+            if a is None:
+                a = self.payload.get("requested_at_ms", None)
+            if a is not None:
+                anchor_ts = int(a)
+        except Exception:
+            anchor_ts = None
+
+        # Sorgente dati: override esplicito o fetch dal DB; se anchor_ts è definito, non includere barre successive
+        if isinstance(self.payload.get("candles_override"), (list, tuple)):
+            import pandas as _pd
+            df_candles = _pd.DataFrame(self.payload["candles_override"]).copy()
+        else:
+            df_candles = self._fetch_recent_candles(
+                self.market_service.engine, sym, tf,
+                n_bars=limit,
+                end_ts=anchor_ts if anchor_ts is not None else None
+            )
+
         if df_candles is None or df_candles.empty:
             raise RuntimeError("No candles available for local inference")
+
+        # Normalizza ordine ASC e, se presente anchor_ts, taglia le barre > anchor
         df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
+        if anchor_ts is not None:
+            try:
+                df_candles["ts_utc"] = pd.to_numeric(df_candles["ts_utc"], errors="coerce").astype("int64")
+                df_candles = df_candles[df_candles["ts_utc"] <= int(anchor_ts)].reset_index(drop=True)
+            except Exception:
+                pass
+        if df_candles.empty:
+            raise RuntimeError("No candles available at anchor timestamp")
 
         # 2) carica modello (se non RW)
         used_model_path_str = ""

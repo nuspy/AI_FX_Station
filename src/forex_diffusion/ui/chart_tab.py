@@ -1436,13 +1436,16 @@ class ChartTab(QWidget):
                 QMessageBox.information(self, "No data", "No chart data available to create testing forecast.")
                 return
 
-            # find nearest ts index in _last_df by ts_utc
+            # anchor forecast to the last timestamp <= clicked_ms (floor on X)
             try:
                 arr = self._last_df["ts_utc"].astype("int64").to_numpy()
-                # find index of nearest timestamp (<= clicked_ms preferred). choose the row with ts closest to clicked_ms
                 import numpy as np
-                idx = int(np.argmin(np.abs(arr - clicked_ms)))
-                testing_ts = int(arr[idx])
+                # ensure ascending order for robust floor search
+                arr_sorted = np.sort(arr.astype(np.int64))
+                pos = int(np.searchsorted(arr_sorted, int(clicked_ms), side="right") - 1)
+                if pos < 0:
+                    pos = 0
+                testing_ts = int(arr_sorted[pos])
             except Exception:
                 logger.exception("Failed to locate testing point in data")
                 return
