@@ -40,6 +40,12 @@ Il menu “Model → Train” porta direttamente alla tab di Training.
 - API: `POST /backtests`, `GET /backtests/{id}/status`, `GET /backtests/{id}/results?top_k=20`.
 - Risultati: metriche di aderenza (mean/quantili/std), win‑rate@δ, n_points. CompositeScore calcolabile a batch chiuso.
 
+Note runtime (Backtesting):
+- Durante il backtest la UI disabilita REST/WS; i dati provengono solo dal DB.
+- Per l'API si può disabilitare l’ingest realtime: `FOREX_DISABLE_RT_INGEST=1`.
+- Per la UI, WS attivo di default; disabilitalo con `FOREX_ENABLE_WS=0`.
+- La UI attende `/ready` e ritenta `POST /backtests` (header `Connection: close`).
+
 ## Forecast multi‑modello e multi‑tipo
 
 Nel dialog “Prediction Settings”:
