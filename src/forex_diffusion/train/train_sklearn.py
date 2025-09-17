@@ -103,16 +103,33 @@ def _time_series_split(X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2) -> 
 def _maybe_pca(X_train_z: pd.DataFrame, X_val_z: pd.DataFrame, n_components: int | None):
     """
     Optional PCA encoder. Returns transformed arrays and encoder metadata.
+    - Clamps n_components to [1, min(n_samples_train, n_features)].
+    - Disables PCA if not feasible.
     """
-    if not n_components or n_components <= 0:
+    # Disable if not requested or invalid
+    if not n_components or int(n_components) <= 0:
         return X_train_z.to_numpy(float), X_val_z.to_numpy(float), {"type": "none"}
 
     from sklearn.decomposition import PCA
-    pca = PCA(n_components=n_components, svd_solver="auto", random_state=0)
-    Xt = pca.fit_transform(X_train_z.to_numpy(float))
-    Xv = pca.transform(X_val_z.to_numpy(float))
-    enc = {"type": "pca", "n_components": int(n_components), "pca": pca}
-    return Xt, Xv, enc
+    Xtr = X_train_z.to_numpy(float)
+    Xva = X_val_z.to_numpy(float)
+    n_samples, n_features = Xtr.shape[0], Xtr.shape[1] if Xtr.ndim == 2 else (Xtr.shape[0], 1)
+    max_nc = max(0, min(n_samples, n_features))
+    if max_nc < 1:
+        # not enough data to run PCA
+        return Xtr, Xva, {"type": "none"}
+
+    req = int(n_components)
+    nc = max(1, min(req, max_nc))
+    try:
+        pca = PCA(n_components=nc, svd_solver="auto", random_state=0)
+        Xt = pca.fit_transform(Xtr)
+        Xv = pca.transform(Xva)
+        enc = {"type": "pca", "n_components": int(nc), "pca": pca}
+        return Xt, Xv, enc
+    except Exception:
+        # Fallback: disable PCA if anything goes wrong
+        return Xtr, Xva, {"type": "none"}
 
 
 def _build_features(
