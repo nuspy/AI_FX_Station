@@ -92,8 +92,208 @@ def setup_ui(
         chart_tab.forecastRequested.connect(controller.handle_forecast_payload)
     except Exception:
         logger.warning("Failed to connect chart_tab.forecastRequested")
+    # Wrap forecastReady -> compute adherence if possible, then forward to chart
     try:
-        controller.signals.forecastReady.connect(chart_tab.on_forecast_ready)
+        def _on_forecast_ready_with_adherence(df, quantiles):
+            try:
+                # Lazy import to avoid hard deps at import time
+                from forex_diffusion.postproc.adherence import adherence_metrics, atr_sigma_from_df
+                import pandas as _pd
+                import numpy as _np
+                # Anchor-based sigma from pre-anchor candles
+                anchor_ts = None
+                try:
+                    anchor_ts = int(_pd.to_numeric(df["ts_utc"].iloc[-1]))
+                except Exception:
+                    pass
+                atr_n = 14
+                try:
+                    # try take from controller indicators settings if available
+                    atr_n = int(getattr(controller, "indicators_settings", {}).get("atr_n", 14))
+                except Exception:
+                    pass
+                sigma_vol = float(atr_sigma_from_df(df, n=atr_n, pre_anchor_only=True, anchor_ts=anchor_ts, robust=True))
+                # Prepare alignment data
+                fut_ts = list(quantiles.get("future_ts") or [])
+                m = list(quantiles.get("q50") or [])
+                q05 = list(quantiles.get("q05") or [])
+                q95 = list(quantiles.get("q95") or [])
+                actual_ts, actual_y = [], []
+                if fut_ts:
+                    # Fetch realized closes at those timestamps from DB; fallback to in-memory merge_asof if needed
+                    try:
+                        from sqlalchemy import text
+                        engine = getattr(controller.market_service, "engine", None)
+                        if engine is None:
+                            engine = getattr(getattr(controller, "db_service", None), "engine", None)
+                        if engine is not None:
+                            with engine.connect() as conn:
+                                vals = ",".join(f"({int(t)})" for t in fut_ts)
+                                q = text(
+                                    f"WITH fut(ts) AS (VALUES {vals}) "
+                                    "SELECT c.ts_utc AS ts, c.close AS y "
+                                    "FROM fut JOIN market_data_candles c ON c.ts_utc = fut.ts "
+                                    "WHERE c.symbol = :symbol AND c.timeframe = :timeframe "
+                                    "ORDER BY c.ts_utc ASC"
+                                )
+                                sym = getattr(chart_tab, 'symbol', 'EUR/USD')
+                                tf = getattr(chart_tab, 'timeframe', '1m')
+                                rows = conn.execute(q, {'symbol': sym, 'timeframe': tf}).fetchall()
+                                if rows:
+                                    tmp = _pd.DataFrame(rows, columns=['ts', 'y'])
+                                    actual_ts = tmp['ts'].astype('int64').tolist()
+                                    actual_y = tmp['y'].astype(float).tolist()
+                    except Exception:
+                        pass
+                    # Fallback: align to nearest in-memory bar within timeframe tolerance (datetime-based asof)
+                    try:
+                        if (not actual_ts) and hasattr(chart_tab, "_last_df") and chart_tab._last_df is not None and not chart_tab._last_df.empty:
+                            dfa = chart_tab._last_df.copy()
+                            ycol = "close" if "close" in dfa.columns else "price"
+                            dfa = dfa.dropna(subset=["ts_utc", ycol]).reset_index(drop=True)
+                            dfa["ts"] = _pd.to_numeric(dfa["ts_utc"], errors="coerce").astype("int64")
+                            dfa["y"] = _pd.to_numeric(dfa[ycol], errors="coerce").astype(float)
+                            # Build datetime keys
+                            dfa["ts_dt"] = _pd.to_datetime(dfa["ts"], unit="ms", utc=True).dt.tz_convert(None)
+                            df_fut = _pd.DataFrame({"ts": _pd.to_numeric(fut_ts, errors="coerce").astype("int64")}).sort_values("ts")
+                            df_fut["ts_dt"] = _pd.to_datetime(df_fut["ts"], unit="ms", utc=True).dt.tz_convert(None)
+                            # timeframe tolerance in ms
+                            def _tf_ms(tf: str) -> int:
+                                try:
+                                    s = str(tf).strip().lower()
+                                    if s.endswith("m"): return int(s[:-1]) * 60_000
+                                    if s.endswith("h"): return int(s[:-1]) * 3_600_000
+                                    if s.endswith("d"): return int(s[:-1]) * 86_400_000
+                                except Exception:
+                                    pass
+                                return 60_000
+                            tol_ms = max(1_000, int(0.51 * _tf_ms(getattr(chart_tab, 'timeframe', '1m') or '1m')))
+                            merged = _pd.merge_asof(
+                                df_fut.sort_values("ts_dt"),
+                                dfa.sort_values("ts_dt")[["ts_dt", "ts", "y"]],
+                                left_on="ts_dt",
+                                right_on="ts_dt",
+                                direction="nearest",
+                                tolerance=_pd.Timedelta(milliseconds=tol_ms),
+                                suffixes=("", "_real"),
+                            ).dropna().reset_index(drop=True)
+                            if not merged.empty:
+                                actual_ts = merged["ts"].astype("int64").tolist()
+                                actual_y = merged["y"].astype(float).tolist()
+                    except Exception:
+                        pass
+                # Compute metrics if we have realized points (inner alignment inside the function will prune mismatches)
+                metrics = {}
+                try:
+                    if fut_ts and (actual_ts and actual_y):
+                        metrics = adherence_metrics(
+                            fut_ts=fut_ts, m=m, q05=q05, q95=q95,
+                            actual_ts=actual_ts, actual_y=actual_y,
+                            sigma_vol=sigma_vol, band_target=0.90
+                        )
+                except Exception:
+                    metrics = {}
+                # Attach metrics to quantiles for downstream consumers
+                try:
+                    quantiles = dict(quantiles or {})
+                    if metrics:
+                        quantiles["adherence_metrics"] = metrics
+                except Exception:
+                    pass
+            except Exception:
+                # never block UI due to metrics
+                pass
+            try:
+                chart_tab.on_forecast_ready(df, quantiles)
+            except Exception:
+                # fallback: ignore if chart handler fails
+                pass
+
+            # --- Draw adherence badge at the end of upper tolerance (q95) line ---
+            try:
+                q = quantiles or {}
+                metrics = (q.get("adherence_metrics") or {})
+                if metrics and hasattr(chart_tab, "ax") and hasattr(chart_tab, "canvas"):
+                    import numpy as _np
+
+                    adh = metrics.get("adherence", None)
+                    fut_ts = list(q.get("future_ts") or [])
+                    q95 = list(q.get("q95") or [])
+                    m_vals = list(q.get("q50") or [])
+                    if isinstance(adh, (int, float)) and fut_ts and q95 and m_vals and len(fut_ts) == len(q95) == len(m_vals):
+                        ax = chart_tab.ax
+                        x_last = float(fut_ts[-1])
+                        y_last = float(q95[-1])
+
+                        # Detect median line color (fallback to default)
+                        line_color = "#555555"
+                        try:
+                            lines = list(reversed(ax.get_lines()))
+                            x_ref = _np.asarray(fut_ts, dtype=float)
+                            y_ref = _np.asarray(m_vals, dtype=float)
+                            for ln in lines:
+                                xd = _np.asarray(ln.get_xdata(), dtype=float)
+                                yd = _np.asarray(ln.get_ydata(), dtype=float)
+                                # quick shape check, then allclose
+                                if xd.size == x_ref.size and yd.size == y_ref.size:
+                                    if _np.allclose(xd, x_ref, rtol=1e-6, atol=1e-6) and _np.allclose(yd, y_ref, rtol=1e-6, atol=1e-6):
+                                        line_color = ln.get_color()
+                                        break
+                        except Exception:
+                            pass
+
+                        # Inside-axes placement: clamp to current x/y limits with small margin
+                        try:
+                            xmin, xmax = ax.get_xlim()
+                            ymin, ymax = ax.get_ylim()
+                            dx = max(1.0, 0.015 * (xmax - xmin))
+                            dy = 0.015 * (ymax - ymin)
+                            x_text = min(x_last, xmax - dx)
+                            x_text = max(x_text, xmin + dx)
+                            y_text = min(max(y_last, ymin + dy), ymax - dy)
+                        except Exception:
+                            x_text, y_text = x_last, y_last
+
+                        # Manage per-forecast badge registry
+                        try:
+                            label_key = str(q.get("label") or q.get("source") or "forecast")
+                        except Exception:
+                            label_key = "forecast"
+                        if not hasattr(chart_tab, "_adh_badges"):
+                            setattr(chart_tab, "_adh_badges", {})
+                        # Remove previous badge for this label if any
+                        old = chart_tab._adh_badges.get(label_key)
+                        if old is not None:
+                            try:
+                                old.remove()
+                            except Exception:
+                                pass
+
+                        text_str = f"{float(adh):.2f}"
+                        badge = ax.text(
+                            x_text, y_text, text_str,
+                            transform=ax.transData,
+                            ha="left", va="center",
+                            fontsize=9, fontweight="bold",
+                            bbox=dict(
+                                facecolor="white",
+                                edgecolor=line_color,
+                                boxstyle="round,pad=0.38",  # rounded -> oval-like and width adapts to text
+                                linewidth=1.2,
+                                alpha=0.98
+                            ),
+                            zorder=100,
+                        )
+                        chart_tab._adh_badges[label_key] = badge
+                        try:
+                            chart_tab.canvas.draw_idle()
+                        except Exception:
+                            pass
+            except Exception:
+                # never block UI for badge drawing
+                pass
+
+        controller.signals.forecastReady.connect(_on_forecast_ready_with_adherence)
     except Exception:
         logger.warning("Failed to connect controller.forecastReady to chart")
 

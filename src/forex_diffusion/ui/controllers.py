@@ -449,6 +449,14 @@ class UIController:
             "use_bollinger": True, "bb_n": 20, "bb_k": 2,
             "use_hurst": True, "hurst_window": 64,
         }
+        # Load persisted indicators settings if available
+        try:
+            from ..utils.user_settings import get_setting
+            saved = get_setting("indicators.last_settings", {}) or {}
+            if isinstance(saved, dict) and saved:
+                self.indicators_settings.update(saved)
+        except Exception:
+            pass
         try:
             self.signals.forecastReady.connect(self._on_forecast_finished)
             self.signals.error.connect(self._on_forecast_failed)
@@ -567,6 +575,12 @@ class UIController:
                 return
             # salva le scelte
             self.indicators_settings = dict(res)
+            # persist between sessions
+            try:
+                from ..utils.user_settings import set_setting
+                set_setting("indicators.last_settings", dict(self.indicators_settings))
+            except Exception:
+                pass
             self.signals.status.emit("Indicators aggiornati")
             try:
                 from loguru import logger

@@ -385,6 +385,8 @@ class ChartTab(QWidget):
             self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
         except Exception:
             logger.debug("Failed to connect mpl mouse events for zoom/pan.")
+        # registry for adherence badges
+        self._adh_badges: list = []
 
         # --- Signal Connections ---
         self.forecast_settings_btn.clicked.connect(self._open_forecast_settings)
@@ -1461,6 +1463,152 @@ class ChartTab(QWidget):
                 fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12, label=None)
                 artists.extend([line05, line95, fill])
 
+                # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
+                try:
+                    metrics = (quantiles or {}).get("adherence_metrics") or {}
+                    if not metrics:
+                        try:
+                            from forex_diffusion.postproc.adherence import adherence_metrics, atr_sigma_from_df
+                            anchor_ts = int(pd.to_datetime(self._last_df["ts_utc"].iloc[-1], unit="ms").value // 1_000_000) if (self._last_df is not None and not self._last_df.empty) else None
+                            atr_n = 14
+                            try:
+                                atr_n = int((self._get_indicator_settings() or {}).get("atr_n", 14))
+                            except Exception:
+                                pass
+                            sigma_vol = float(atr_sigma_from_df(self._last_df.rename(columns={"price":"close"}) if self._last_df is not None else pd.DataFrame(),
+                                                                n=atr_n, pre_anchor_only=True, anchor_ts=anchor_ts, robust=True))
+                            fut_ts_ms = list(quantiles.get("future_ts") or [])
+                            actual_ts, actual_y = [], []
+                            if fut_ts_ms:
+                                try:
+                                    controller = getattr(self, "controller", None) or getattr(self._main_window, "controller", None)
+                                    engine = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
+                                    if engine is not None:
+                                        from sqlalchemy import text
+                                        with engine.connect() as conn:
+                                            vals = ",".join(f"({int(t)})" for t in fut_ts_ms)
+                                            qsql = text(
+                                                f"WITH fut(ts) AS (VALUES {vals}) "
+                                                "SELECT c.ts_utc AS ts, c.close AS y "
+                                                "FROM fut JOIN market_data_candles c ON c.ts_utc = fut.ts "
+                                                "WHERE c.symbol = :symbol AND c.timeframe = :timeframe "
+                                                "ORDER BY c.ts_utc ASC"
+                                            )
+                                            sym = getattr(self, 'symbol', 'EUR/USD')
+                                            tf = getattr(self, 'timeframe', '1m')
+                                            rows = conn.execute(qsql, {'symbol': sym, 'timeframe': tf}).fetchall()
+                                            if rows:
+                                                tmp = pd.DataFrame(rows, columns=['ts', 'y'])
+                                                actual_ts = tmp['ts'].astype('int64').tolist()
+                                                actual_y = tmp['y'].astype(float).tolist()
+                                except Exception:
+                                    pass
+                                if not actual_ts and self._last_df is not None and not self._last_df.empty:
+                                    try:
+                                        ycol = 'close' if 'close' in self._last_df.columns else 'price'
+                                        dfa = self._last_df[['ts_utc', ycol]].dropna().copy()
+                                        dfa['ts'] = pd.to_numeric(dfa['ts_utc'], errors='coerce').astype('int64')
+                                        dfa['y'] = pd.to_numeric(dfa[ycol], errors='coerce').astype(float)
+                                        dfa['ts_dt'] = pd.to_datetime(dfa['ts'], unit='ms', utc=True).dt.tz_convert(None)
+                                        df_fut = pd.DataFrame({'ts': pd.to_numeric(fut_ts_ms, errors='coerce').astype('int64')}).sort_values('ts')
+                                        df_fut['ts_dt'] = pd.to_datetime(df_fut['ts'], unit='ms', utc=True).dt.tz_convert(None)
+                                        # tolerance: ~0.51×TF
+                                        def _tf_ms(tf: str) -> int:
+                                            try:
+                                                s = str(tf).strip().lower()
+                                                if s.endswith("m"): return int(s[:-1]) * 60_000
+                                                if s.endswith("h"): return int(s[:-1]) * 3_600_000
+                                                if s.endswith("d"): return int(s[:-1]) * 86_400_000
+                                            except Exception:
+                                                pass
+                                            return 60_000
+                                        tol_ms = max(1_000, int(0.51 * _tf_ms(getattr(self, 'timeframe', '1m') or '1m')))
+                                        merged = pd.merge_asof(
+                                            df_fut.sort_values('ts_dt'),
+                                            dfa.sort_values('ts_dt')[['ts_dt','ts','y']],
+                                            left_on='ts_dt',
+                                            right_on='ts_dt',
+                                            direction='nearest',
+                                            tolerance=pd.Timedelta(milliseconds=tol_ms),
+                                            suffixes=('', '_real')
+                                        ).dropna().reset_index(drop=True)
+                                        if not merged.empty:
+                                            actual_ts = (df_fut.loc[merged.index, "ts"]).astype("int64").tolist()
+                                            actual_y = merged["y"].astype(float).tolist()
+                                    except Exception:
+                                        pass
+                            if fut_ts_ms and actual_ts and actual_y:
+                                metrics = adherence_metrics(
+                                    fut_ts=fut_ts_ms, m=quantiles.get("q50") or [],
+                                    q05=quantiles.get("q05") or [], q95=quantiles.get("q95") or [],
+                                    actual_ts=actual_ts, actual_y=actual_y,
+                                    sigma_vol=sigma_vol, band_target=0.90
+                                )
+                                quantiles["adherence_metrics"] = metrics
+                        except Exception:
+                            metrics = {}
+                except Exception:
+                    metrics = {}
+
+                # Ensure forecast is visible in current axes (extend limits if needed)
+                try:
+                    last_x_dt = x_vals[-1]
+                    last_x_num = mdates.date2num(last_x_dt)
+                    xmin, xmax = self.ax.get_xlim()
+                    if last_x_num > xmax:
+                        span = (xmax - xmin) if (xmax > xmin) else 1.0
+                        margin = 0.02 * span
+                        self.ax.set_xlim(left=xmin, right=last_x_num + margin)
+                    ymin, ymax = self.ax.get_ylim()
+                    y_last = float(q95_arr[-1])
+                    pad = 0.02 * (ymax - ymin if ymax > ymin else 1.0)
+                    if y_last > ymax:
+                        self.ax.set_ylim(bottom=ymin, top=y_last + pad)
+                    elif y_last < ymin:
+                        self.ax.set_ylim(bottom=y_last - pad, top=ymax)
+                except Exception:
+                    pass
+
+                # Draw adherence badge (oval) at the end of q95 with median color; always show
+                try:
+                    adh = (metrics or {}).get("adherence", None)
+                    # Robust numeric conversion: handles numpy scalars too; fallback to "0.00"
+                    try:
+                        val = float(adh)
+                        if np.isnan(val):
+                            val = None
+                    except Exception:
+                        val = None
+                    txt = f"{val:.2f}" if val is not None else "0.00"
+                    badge = self.ax.annotate(
+                        txt,
+                        xy=(x_vals[-1], float(q95_arr[-1])),
+                        xycoords="data",
+                        textcoords="offset points",
+                        xytext=(6, 0),
+                        ha="left",
+                        va="center",
+                        fontsize=15,
+                        fontweight="bold",
+                        bbox=dict(
+                            facecolor="white",
+                            edgecolor=color,           # same as median line color
+                            boxstyle="round,pad=0.38", # rounded -> oval-like; auto width fits text
+                            linewidth=1.4,
+                            alpha=0.98
+                        ),
+                        zorder=100,
+                        clip_on=False
+                    )
+                    artists.append(badge)
+                    # register globally for hover-hide
+                    try:
+                        self._adh_badges.append(badge)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
             # aggiorna legenda unica (no duplicati per modello)
             try:
                 self._refresh_legend_unique(loc='upper left')
@@ -1818,6 +1966,11 @@ class ChartTab(QWidget):
         try:
             if event is None or event.inaxes != self.ax:
                 return
+            # update adherence badges visibility on hover
+            try:
+                self._update_badge_visibility(event)
+            except Exception:
+                pass
             # PAN con LMB: sposta i limiti in base allo spostamento del cursore in coordinate dati
             if self._lbtn_pan and self._pan_last_xy is not None:
                 x_last, y_last = self._pan_last_xy
@@ -1907,6 +2060,55 @@ class ChartTab(QWidget):
                 top = center + (ymax - center) * (new_h / h)
                 if top - bottom > 1e-12:
                     self.ax.set_ylim(bottom, top)
+        except Exception:
+            pass
+
+    def _update_badge_visibility(self, event):
+        """Hide badges when cursor is inside a rectangle centered on the badge with 2x width/height; show otherwise."""
+        try:
+            if not hasattr(self, "_adh_badges") or not self._adh_badges:
+                return
+            renderer = self.canvas.get_renderer()
+            if renderer is None:
+                # ensure a valid renderer for correct bbox
+                try:
+                    self.canvas.draw()
+                    renderer = self.canvas.get_renderer()
+                except Exception:
+                    return
+            changed = False
+            for art in list(self._adh_badges):
+                try:
+                    if art.figure is None:
+                        # dropped artist; cleanup
+                        self._adh_badges.remove(art)
+                        continue
+                    bbox = art.get_window_extent(renderer=renderer)
+                    # Rectangle with same center, doubled width/height
+                    x0, y0 = float(bbox.x0), float(bbox.y0)
+                    x1, y1 = float(bbox.x1), float(bbox.y1)
+                    w = max(1.0, x1 - x0)
+                    h = max(1.0, y1 - y0)
+                    cx = (x0 + x1) * 0.5
+                    cy = (y0 + y1) * 0.5
+                    # doubled dimensions -> half sizes equal to original full sizes
+                    hx = w
+                    hy = h
+                    ex0, ex1 = cx - hx, cx + hx
+                    ey0, ey1 = cy - hy, cy + hy
+                    # strict inequalities: inside only if strictly within area, not only touching border
+                    inside = (ex0 < float(event.x) < ex1) and (ey0 < float(event.y) < ey1)
+                    vis = not inside
+                    if art.get_visible() != vis:
+                        art.set_visible(vis)
+                        changed = True
+                except Exception:
+                    continue
+            if changed:
+                try:
+                    self.canvas.draw_idle()
+                except Exception:
+                    self.canvas.draw()
         except Exception:
             pass
 
@@ -2076,20 +2278,11 @@ class ChartTab(QWidget):
             logger.exception(f"Failed to clear forecasts: {e}")
 
     def _trim_forecasts(self):
-        """Enforce max_forecasts by removing oldest forecast artists."""
+        """Disabled: keep all forecast overlays visible."""
         try:
-            maxf = int(get_setting("max_forecasts", self.max_forecasts))
-            # enforce current runtime limit as well
-            maxf = max(1, maxf)
-            while len(self._forecasts) > maxf:
-                old = self._forecasts.pop(0)
-                for art in old.get("artists", []):
-                    try:
-                        art.remove()
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.exception(f"Failed trimming forecasts: {e}")
+            return  # no trimming
+        except Exception:
+            return
 
     def start_auto_forecast(self):
         if not self._auto_timer.isActive():
