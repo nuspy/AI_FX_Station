@@ -19,6 +19,7 @@ from .controllers import UIController
 from .training_tab import TrainingTab
 from .signals_tab import SignalsTab
 from .chart_tab import ChartTab
+from .backtesting_tab import BacktestingTab
 
 def setup_ui(
     main_window: QWidget, 
@@ -66,13 +67,16 @@ def setup_ui(
     chart_tab = ChartTab(main_window)
     training_tab = TrainingTab(main_window)
     signals_tab = SignalsTab(main_window, db_service=db_service)
+    backtesting_tab = BacktestingTab(main_window)
 
     tab_widget.addTab(chart_tab, "Chart")
     tab_widget.addTab(training_tab, "Training")
     tab_widget.addTab(signals_tab, "Signals")
+    tab_widget.addTab(backtesting_tab, "Backtesting")
     layout.addWidget(tab_widget)
     result["chart_tab"] = chart_tab
     result["training_tab"] = training_tab
+    result["backtesting_tab"] = backtesting_tab
     result["tab_widget"] = tab_widget
     try:
         chart_tab.controller = controller
@@ -430,6 +434,77 @@ def setup_ui(
 
     controller.signals.status.connect(status_label.setText)
     controller.signals.error.connect(status_label.setText)
+
+    # --- Backtesting Tab Handlers ---
+    try:
+        import httpx
+        def _on_bt_start(payload: dict):
+            try:
+                base = engine_url.rstrip("/")
+                # small retry/backoff for async path
+                def _get_with_retry(client, url, max_wait_s=6.0):
+                    import time as _t
+                    t0 = _t.time()
+                    delay = 0.3
+                    while True:
+                        rr = client.get(url, params={"top_k": 20})
+                        if rr.status_code == 200 and rr.json().get("results"):
+                            return rr
+                        if _t.time() - t0 > max_wait_s:
+                            return rr
+                        _t.sleep(delay)
+                        delay = min(1.2, delay * 1.5)
+
+                with httpx.Client(timeout=60.0) as client:
+                    r = client.post(f"{base}/backtests", json=payload)
+                    r.raise_for_status()
+                    job = r.json()
+                    job_id = int(job.get("job_id", 0))
+                    # fetch results with retry (async queue) and update status label with progress polling
+                    if job_id:
+                        # quick status poll loop while waiting
+                        try:
+                            import time as _t
+                            t0 = _t.time()
+                            while _t.time() - t0 < 6.0:
+                                st = client.get(f"{base}/backtests/{job_id}/status")
+                                if st.status_code == 200:
+                                    js = st.json()
+                                    p = js.get("progress")
+                                    if p is not None:
+                                        status_label.setText(f"Backtesting: in corso ({int(float(p)*100)}%)")
+                                    if js.get("status") == "done":
+                                        break
+                                _t.sleep(0.5)
+                        except Exception:
+                            pass
+                        rr = _get_with_retry(client, f"{base}/backtests/{job_id}/results")
+                        if rr.status_code == 200:
+                            data = rr.json()
+                            for row in data.get("results", []):
+                                p = row.get("payload") or {}
+                                model = (p.get("model") or p.get("model_name") or "?")
+                                ptype = p.get("ptype") or p.get("prediction_type") or "?"
+                                tf = p.get("timeframe") or "?"
+                                backtesting_tab.add_result_row(
+                                    model, ptype, tf,
+                                    float(row.get("adherence_mean") or 0.0),
+                                    float(row.get("p50") or 0.0),
+                                    float(row.get("win_rate_delta") or 0.0),
+                                    row.get("coverage_observed"), row.get("band_efficiency"), row.get("composite_score"),
+                                    int(row.get("config_id") or 0)
+                                )
+                            # attach job_id to tab for apply-config calls
+                            try:
+                                setattr(backtesting_tab, "last_job_id", job_id)
+                            except Exception:
+                                pass
+                status_label.setText("Backtesting: job completed")
+            except Exception as e:
+                status_label.setText(f"Backtesting error: {e}")
+        backtesting_tab.startRequested.connect(_on_bt_start)
+    except Exception:
+        pass
 
     # --- Graceful shutdown on app exit ---
     try:

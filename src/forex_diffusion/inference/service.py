@@ -83,6 +83,8 @@ async def lifespan(app):
 
 # Create FastAPI app with lifespan manager so uvicorn/ASGI server triggers start/stop per worker
 app = FastAPI(title="MagicForex Inference Service", lifespan=lifespan)
+from .backtest_api import router as backtest_router
+app.include_router(backtest_router)
 
 
 class ForecastRequest(BaseModel):
