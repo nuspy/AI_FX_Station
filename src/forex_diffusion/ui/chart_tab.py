@@ -1106,10 +1106,10 @@ class ChartTab(QWidget):
             self.canvas.draw_idle()
         except Exception:
             self.canvas.draw()
-        try:
-            logger.info("Plotted {} points for {} {}", len(y_vals), getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
-        except Exception:
-            pass
+        # try:
+            # logger.info("Plotted {} points for {} {}", len(y_vals), getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
+        # except Exception:
+            # pass
 
     def _on_mode_toggled(self, checked: bool):
         """Manual switch placeholder (candles disabled)."""

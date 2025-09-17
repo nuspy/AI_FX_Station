@@ -59,7 +59,7 @@ class SignalsTab(QWidget):
             self._log("DBService not available. Cannot refresh signals.")
             return
         limit = self.limit_spinbox.value()
-        self._log(f"Refreshing signals (limit={limit})...")
+        # self._log(f"Refreshing signals (limit={limit})...")
         try:
             with self.db_service.engine.connect() as conn:
                 query = text(
@@ -76,7 +76,7 @@ class SignalsTab(QWidget):
                     self.table.setItem(i, 4, QTableWidgetItem(f"{row.entry_price:.5f}"))
                     self.table.setItem(i, 5, QTableWidgetItem(f"{row.target_price:.5f}"))
                     self.table.setItem(i, 6, QTableWidgetItem(f"{row.stop_price:.5f}"))
-            self._log("Signals refreshed successfully.")
+            # self._log("Signals refreshed successfully.")
         except Exception as e:
             self._log(f"Failed to refresh signals: {e}")
             logger.exception(e)
