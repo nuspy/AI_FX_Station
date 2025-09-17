@@ -453,7 +453,7 @@ def backfill_from_provider(
                     cnt_stmt,
                     {"s": symbol, "tf": timeframe, "a": int(start_ts_ms), "b": int(end_ts_ms)},
                 ).scalar() or 0
-                logger.info("Post-upsert DB rows for %s %s in [%s,%s]: %d", symbol, timeframe, start_ts_ms, end_ts_ms, int(cnt))
+                # logger.info("Post-upsert DB rows for %s %s in [%s,%s]: %d", symbol, timeframe, start_ts_ms, end_ts_ms, int(cnt))
                 if int(cnt) == 0:
                     logger.warning(
                         "Backfill verification: no rows found in DB for %s %s in [%s,%s] after upsert. Check upsert implementation.",
@@ -466,9 +466,9 @@ def backfill_from_provider(
                 logger.exception("Post-upsert verification query failed: {}", _e)
     except Exception:
         # best-effort: ignore verification failures but log debug
-        try:
-            logger.debug("Backfill post-upsert verification skipped due to missing sqlalchemy/text import or connection issue")
-        except Exception:
+        # try:
+            # logger.debug("Backfill post-upsert verification skipped due to missing sqlalchemy/text import or connection issue")
+        # except Exception:
             pass
 
     # Optionally compute features and persist

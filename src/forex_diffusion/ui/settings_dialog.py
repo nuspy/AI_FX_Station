@@ -51,6 +51,21 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel("Leverage:"), self.acc_leverage)
         form.addRow(QLabel("Account Tiingo Key:"), self.acc_tiingo)
 
+        # Lista accounts + azioni
+        from PySide6.QtWidgets import QListWidget, QHBoxLayout
+        self.accounts_list = QListWidget()
+        layout.addWidget(QLabel("Accounts:"))
+        layout.addWidget(self.accounts_list)
+        acc_btns = QHBoxLayout()
+        self.btn_acc_add = QPushButton("Add/Update")
+        self.btn_acc_remove = QPushButton("Remove")
+        self.btn_acc_set_active = QPushButton("Set Active")
+        acc_btns.addWidget(self.btn_acc_add); acc_btns.addWidget(self.btn_acc_remove); acc_btns.addWidget(self.btn_acc_set_active)
+        layout.addLayout(acc_btns)
+        self.btn_acc_add.clicked.connect(self._on_account_add_update)
+        self.btn_acc_remove.clicked.connect(self._on_account_remove)
+        self.btn_acc_set_active.clicked.connect(self._on_account_set_active)
+
         # IB credentials
         self.ib_host = QLineEdit(); self.ib_host.setPlaceholderText("127.0.0.1")
         self.ib_port = QLineEdit(); self.ib_port.setPlaceholderText("7497")

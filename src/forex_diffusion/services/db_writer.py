@@ -24,14 +24,14 @@ class DBWriter:
         while self._is_running or not self._task_queue.empty():
             try:
                 task_type, payload = self._task_queue.get(timeout=1)
-                logger.critical(f"--- DBWRITER DEQUEUED TASK: {task_type} ---")
+                # logger.critical(f"--- DBWRITER DEQUEUED TASK: {task_type} ---")
 
                 handler_name = f"write_{task_type}"
                 handler = getattr(self.db_service, handler_name, None)
 
                 if handler and callable(handler):
                     try:
-                        logger.debug(f"Executing DB task: {task_type}")
+                        # logger.debug(f"Executing DB task: {task_type}")
                         handler(payload)
                     except Exception as e:
                         logger.exception(f"Error executing DB task '{task_type}' with payload {payload}. Error: {e}")

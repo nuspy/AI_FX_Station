@@ -3,11 +3,19 @@ from __future__ import annotations
 # src/forex_diffusion/ui/color_settings_dialog.py
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QPushButton, QColorDialog, QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QPushButton, QColorDialog, QDialogButtonBox, QPlainTextEdit
 from ..utils.user_settings import get_setting, set_setting
 
 COLOR_KEYS = {
+    # finestra/pannelli/testo
+    "window_bg": "#0f1115",
+    "panel_bg": "#12151b",
+    "text_color": "#e0e0e0",
+    # grafico
+    "chart_bg": "#0f1115",
+    "axes_color": "#cfd6e1",
     "price_color": "#e0e0e0",
+    # tools
     "hline_color": "#9bdcff",
     "trend_color": "#ff9bdc",
     "rect_color": "#f0c674",
@@ -18,8 +26,8 @@ COLOR_KEYS = {
 class ColorSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Color Settings")
-        self.resize(420, 260)
+        self.setWindowTitle("Color & CSS Settings")
+        self.resize(560, 420)
         lay = QVBoxLayout(self)
         form = QFormLayout()
         self.edits = {}
@@ -30,6 +38,13 @@ class ColorSettingsDialog(QDialog):
             form.addRow(QLabel(key.replace("_"," ").title()), e)
             self.edits[key] = e
         lay.addLayout(form)
+
+        # Custom QSS editor
+        lay.addWidget(QLabel("Custom QSS (applicato sopra il tema):"))
+        self.qss_edit = QPlainTextEdit()
+        self.qss_edit.setPlainText(get_setting("custom_qss", ""))
+        lay.addWidget(self.qss_edit)
+
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save); btns.rejected.connect(self.reject)
         lay.addWidget(btns)
@@ -42,6 +57,7 @@ class ColorSettingsDialog(QDialog):
     def _save(self):
         for k, e in self.edits.items():
             set_setting(k, e.text().strip())
+        set_setting("custom_qss", self.qss_edit.toPlainText())
         self.accept()
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QPushButton, QColorDialog, QDialogButtonBox
 from ..utils.user_settings import get_setting, set_setting

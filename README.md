@@ -32,6 +32,14 @@ Requisiti principali:
 
 Il menu “Model → Train” porta direttamente alla tab di Training.
 
+## Backtesting (MVP)
+
+- Tab “Backtesting”: configurazione tipi (Basic/Advanced/Baseline), Indicatori×TF, orizzonti (`30s,1m,(5-15)m`), Samples 200→1500 step 200.
+- Intervallo: preset (7/30/90/180d, YTD, 1Y, 3Y) o custom; walk‑forward default `train=90d,test=7d,step=7d,gap=0d`.
+- Esecuzione: worker ASHA (η=3) con early‑stop (baseline/median). Persistenza in tabelle `bt_*`.
+- API: `POST /backtests`, `GET /backtests/{id}/status`, `GET /backtests/{id}/results?top_k=20`.
+- Risultati: metriche di aderenza (mean/quantili/std), win‑rate@δ, n_points. CompositeScore calcolabile a batch chiuso.
+
 ## Forecast multi‑modello e multi‑tipo
 
 Nel dialog “Prediction Settings”:

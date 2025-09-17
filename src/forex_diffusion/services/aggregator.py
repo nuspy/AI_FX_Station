@@ -111,7 +111,7 @@ class AggregatorService:
         if not rows:
             return
 
-        logger.info(f"Found {len(rows)} new ticks for {symbol} to aggregate into {timeframe}.")
+        # logger.info(f"Found {len(rows)} new ticks for {symbol} to aggregate into {timeframe}.")
         df_ticks = pd.DataFrame(rows, columns=["ts_utc", "price", "bid", "ask", "volume"])
         df_ticks['price'] = df_ticks['price'].fillna((df_ticks['bid'] + df_ticks['ask']) / 2).ffill()
         if df_ticks.empty or df_ticks['price'].isnull().all():
@@ -140,7 +140,7 @@ class AggregatorService:
 
         df_candles = pd.DataFrame(candles)
         report = data_io.upsert_candles(self.engine, df_candles, symbol, timeframe, resampled=(timeframe != '1m'))
-        logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
+        # logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
 
         self._last_processed_ts[state_key] = end_ms
 

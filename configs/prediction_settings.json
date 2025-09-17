@@ -1,8 +1,88 @@
 {
-    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h5_ridge_none.pkl",
-    "horizons": [
-        "1m"
+    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h25_lasso_pca.pkl",
+    "model_paths": [
+        "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
     ],
-    "N_samples": 15,
-    "apply_conformal": true
+    "forecast_types": [
+        "basic"
+    ],
+    "horizons": [
+        "1m",
+        "2m",
+        "3m",
+        "4m",
+        "5m",
+        "6m",
+        "7m",
+        "8m",
+        "9m",
+        "10m",
+        "11m",
+        "12m",
+        "13m",
+        "14m",
+        "15m",
+        "16m",
+        "17m",
+        "18m",
+        "19m",
+        "20m"
+    ],
+    "N_samples": 235,
+    "apply_conformal": true,
+    "model_weight_pct": 70,
+    "indicator_tfs": {
+        "atr": [
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "1h"
+        ],
+        "rsi": [
+            "1m",
+            "5m",
+            "15m",
+            "30m"
+        ],
+        "bollinger": [
+            "1m",
+            "5m",
+            "15m"
+        ],
+        "macd": [
+            "5m",
+            "15m",
+            "30m",
+            "1h"
+        ],
+        "donchian": [
+            "15m",
+            "30m",
+            "1h"
+        ],
+        "keltner": [
+            "15m",
+            "30m",
+            "1h"
+        ],
+        "hurst": [
+            "30m",
+            "1h"
+        ]
+    },
+    "warmup_bars": 20,
+    "atr_n": 17,
+    "rsi_n": 16,
+    "bb_n": 20,
+    "rv_window": 60,
+    "ema_fast": 12,
+    "ema_slow": 26,
+    "don_n": 20,
+    "hurst_window": 64,
+    "keltner_k": 1,
+    "max_forecasts": 29,
+    "test_history_bars": 53,
+    "auto_predict": false,
+    "auto_interval_seconds": 60
 }

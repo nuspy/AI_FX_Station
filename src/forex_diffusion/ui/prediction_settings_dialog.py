@@ -23,37 +23,82 @@ class PredictionSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Prediction Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(520)
+        # make window compact (scrollable content)
+        try:
+            self.resize(720, 600)
+        except Exception:
+            pass
 
-        self.layout = QVBoxLayout(self)
+        # Root layout + scroll area with content
+        from PySide6.QtWidgets import QScrollArea, QWidget
+        self._root_layout = QVBoxLayout(self)
+        content = QWidget(self)
+        self.layout = QVBoxLayout(content)
         self.form_layout = QFormLayout()
 
         # Model Path (singolo, per compatibilità)
         self.model_path_edit = QLineEdit()
+        self.model_path_edit.setToolTip("Percorso del file modello da usare per l'inferenza.\nSupporto tipico: PyTorch (.pt/.pth) o pickle di modelli sklearn.\nSe è valorizzato 'Modelli multipli', questo campo è ignorato.")
         self.browse_button = QPushButton("Browse...")
+        self.browse_button.setToolTip("Sfoglia e seleziona un file modello da disco.")
         self.browse_button.clicked.connect(self._browse_model_path)
+        self.info_button = QPushButton("Model Info")
+        self.info_button.setToolTip("Mostra i metadati salvati nel file modello o nel sidecar .meta.json")
+        self.info_button.clicked.connect(self._show_model_info)
+        self.loadmeta_button = QPushButton("Carica parametri")
+        self.loadmeta_button.setToolTip("Carica i parametri base (horizons, indicatori, finestre) dai metadati del modello")
+        self.loadmeta_button.clicked.connect(self._load_model_defaults)
+        # nuovo: selezione multipla
+        self.browse_multi_button = QPushButton("Browse Models…")
+        self.browse_multi_button.setToolTip("Seleziona più file modello per il forecast")
+        self.browse_multi_button.clicked.connect(self._browse_model_paths_multi)
+
         model_h = QHBoxLayout()
         model_h.addWidget(self.model_path_edit)
         model_h.addWidget(self.browse_button)
+        model_h.addWidget(self.info_button)
+        model_h.addWidget(self.loadmeta_button)
+        model_h.addWidget(self.browse_multi_button)
         self.form_layout.addRow("Model Path:", model_h)
+
+        # lista file selezionati (multi)
+        from PySide6.QtWidgets import QListWidget, QAbstractItemView
+        self.model_list = QListWidget()
+        self.model_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.model_list.setMinimumHeight(80)
+        self.form_layout.addRow("Selected Models:", self.model_list)
+
+        # stato interno: multi path
+        try:
+            # ripristina ultima selezione se presente
+            if not hasattr(self.__class__, "_last_model_paths"):
+                self.__class__._last_model_paths = []
+            self._model_paths = list(self.__class__._last_model_paths)
+            for p in self._model_paths:
+                self.model_list.addItem(str(p))
+        except Exception:
+            self._model_paths = []
 
         # Modelli multipli: uno per riga (opzionale, ha precedenza su Model Path)
         from PySide6.QtWidgets import QTextEdit, QGroupBox, QVBoxLayout as QV
         models_box = QGroupBox("Modelli multipli (uno per riga)")
+        models_box.setToolTip("Inserisci uno o più percorsi di modelli (uno per riga). Verrà lanciata una previsione per ciascun modello selezionato.\nSe compilato, ha precedenza su 'Model Path'.")
         box_lay = QV(models_box)
         self.models_edit = QTextEdit()
         self.models_edit.setPlaceholderText("Percorso modello per riga (opzionale). Se valorizzato, verranno eseguite previsioni per ciascun modello.")
+        self.models_edit.setToolTip("Ogni riga deve contenere un percorso file valido a un modello. I modelli verranno eseguiti in parallelo.")
         box_lay.addWidget(self.models_edit)
         self.layout.addWidget(models_box)
 
         # Tipi di previsione (selezione multipla)
         from PySide6.QtWidgets import QCheckBox
         types_box = QGroupBox("Tipi di previsione")
+        types_box.setToolTip("Seleziona il tipo di previsione:\n- Basic: pipeline standard con indicatori e standardizzazione.\n- Advanced: come Basic, ma abilita opzioni/feature aggiuntive.\n- Baseline RW: baseline Random Walk/zero-drift (nessun modello richiesto).")
         types_lay = QV(types_box)
-        self.type_basic_cb = QCheckBox("Basic")
-        self.type_basic_cb.setChecked(True)
-        self.type_advanced_cb = QCheckBox("Advanced")
-        self.type_rw_cb = QCheckBox("Baseline RW")
+        self.type_basic_cb = QCheckBox("Basic"); self.type_basic_cb.setChecked(True); self.type_basic_cb.setToolTip("Basic: usa la pipeline standard e il modello selezionato.")
+        self.type_advanced_cb = QCheckBox("Advanced"); self.type_advanced_cb.setToolTip("Advanced: come Basic con opzioni extra (EMA, Hurst, Donchian, Keltner, ecc.).")
+        self.type_rw_cb = QCheckBox("Baseline RW"); self.type_rw_cb.setToolTip("Baseline RW: previsione di riferimento a drift nullo. Non richiede un modello.")
         types_lay.addWidget(self.type_basic_cb)
         types_lay.addWidget(self.type_advanced_cb)
         types_lay.addWidget(self.type_rw_cb)
@@ -61,17 +106,20 @@ class PredictionSettingsDialog(QDialog):
 
         # Horizons
         self.horizons_edit = QLineEdit("1m, 5m, 15m")
+        self.horizons_edit.setToolTip("Orizzonti temporali di previsione, separati da virgola (es.: 1m, 5m, 15m).\nVengono convertiti in passi rispetto al timeframe corrente.")
         self.form_layout.addRow("Horizons (comma-separated):", self.horizons_edit)
 
         # N_samples
         self.n_samples_spinbox = QSpinBox()
         self.n_samples_spinbox.setRange(1, 10000)
         self.n_samples_spinbox.setValue(200)
+        self.n_samples_spinbox.setToolTip("Numero di campioni/forward-pass per stimare i quantili.\nValori più alti aumentano stabilità ma richiedono più tempo.")
         self.form_layout.addRow("Number of Samples (N_samples):", self.n_samples_spinbox)
 
         # Conformal Calibration
         self.conformal_checkbox = QCheckBox("Apply Conformal Calibration")
         self.conformal_checkbox.setChecked(True)
+        self.conformal_checkbox.setToolTip("Applica calibrazione conformale per intervalli predittivi affidabili.\nSe attiva, i quantili (q05, q95) vengono corretti in base a una stima di errore fuori campione.")
         self.form_layout.addRow(self.conformal_checkbox)
 
         # Model weight (inference scaling)
@@ -80,6 +128,7 @@ class PredictionSettingsDialog(QDialog):
         for p in range(0, 101, 5):
             self.model_weight_combo.addItem(f"{p} %", p)
         self.model_weight_combo.setCurrentIndex(20)  # default 100%
+        self.model_weight_combo.setToolTip("Peso con cui fondere la previsione col prezzo attuale:\n0% = ignora modello (resta ultimo close); 100% = usa la previsione al 100%.")
         self.form_layout.addRow("Model weight (%):", self.model_weight_combo)
 
         # Indicators × Timeframes selection
@@ -87,6 +136,7 @@ class PredictionSettingsDialog(QDialog):
         self._indicators = ["ATR","RSI","Bollinger","MACD","Donchian","Keltner","Hurst"]
         self._timeframes = ["1m","5m","15m","30m","1h","4h","1d"]
         box = QGroupBox("Indicatori per Timeframe (per training/inferenza)")
+        box.setToolTip("Seleziona quali indicatori includere per ciascun timeframe nella pipeline.\nDurante il training/inf. questi flag controllano quali feature vengono calcolate.")
         grid = QGridLayout(box)
         grid.addWidget(QLabel(""), 0, 0)
         for j, tf in enumerate(self._timeframes, start=1):
@@ -105,52 +155,62 @@ class PredictionSettingsDialog(QDialog):
         self.warmup_spin = QSpinBox()
         self.warmup_spin.setRange(1, 500)
         self.warmup_spin.setValue(16)
+        self.warmup_spin.setToolTip("Numero di barre iniziali da scartare/riscaldare per gli indicatori.\nValori maggiori stabilizzano le feature all'inizio della serie.")
         self.form_layout.addRow("Warmup Bars:", self.warmup_spin)
 
         self.atr_n_spin = QSpinBox()
         self.atr_n_spin.setRange(1, 200)
         self.atr_n_spin.setValue(14)
+        self.atr_n_spin.setToolTip("Lunghezza media per l'Average True Range (misura di volatilità).")
         self.form_layout.addRow("ATR n:", self.atr_n_spin)
 
         self.rsi_n_spin = QSpinBox()
         self.rsi_n_spin.setRange(2, 200)
         self.rsi_n_spin.setValue(14)
+        self.rsi_n_spin.setToolTip("Numero di periodi per il Relative Strength Index (momento).")
         self.form_layout.addRow("RSI n:", self.rsi_n_spin)
 
         self.bb_n_spin = QSpinBox()
         self.bb_n_spin.setRange(2, 200)
         self.bb_n_spin.setValue(20)
+        self.bb_n_spin.setToolTip("Finestra per le Bande di Bollinger (deviazioni standard su media mobile).")
         self.form_layout.addRow("Bollinger window n:", self.bb_n_spin)
 
         self.rv_window_spin = QSpinBox()
         self.rv_window_spin.setRange(1, 1000)
         self.rv_window_spin.setValue(60)
+        self.rv_window_spin.setToolTip("Finestra per stimare la Realized Volatility/standardizzazione.\nControlla la scala delle feature in pipeline.")
         self.form_layout.addRow("RV window:", self.rv_window_spin)
 
         # --- Advanced indicators ---
         self.ema_fast_spin = QSpinBox()
         self.ema_fast_spin.setRange(1, 200)
         self.ema_fast_spin.setValue(12)
+        self.ema_fast_spin.setToolTip("Span della EMA veloce per trend/momentum.")
         self.form_layout.addRow("EMA fast span:", self.ema_fast_spin)
 
         self.ema_slow_spin = QSpinBox()
         self.ema_slow_spin.setRange(1, 400)
         self.ema_slow_spin.setValue(26)
+        self.ema_slow_spin.setToolTip("Span della EMA lenta per trend/momentum.")
         self.form_layout.addRow("EMA slow span:", self.ema_slow_spin)
 
         self.don_n_spin = QSpinBox()
         self.don_n_spin.setRange(1, 400)
         self.don_n_spin.setValue(20)
+        self.don_n_spin.setToolTip("Finestra per il canale di Donchian (massimi/minimi su n barre).")
         self.form_layout.addRow("Donchian n:", self.don_n_spin)
 
         self.hurst_window_spin = QSpinBox()
         self.hurst_window_spin.setRange(1, 1024)
         self.hurst_window_spin.setValue(64)
+        self.hurst_window_spin.setToolTip("Window per la stima dell'esponente di Hurst (mean-reversion vs. trending).")
         self.form_layout.addRow("Hurst window:", self.hurst_window_spin)
 
         self.keltner_k_spin = QSpinBox()
         self.keltner_k_spin.setRange(1, 10)
         self.keltner_k_spin.setValue(1)
+        self.keltner_k_spin.setToolTip("Moltiplicatore per le Keltner Channels (ampiezza del canale rispetto all'ATR).")
         self.form_layout.addRow("Keltner multiplier (k):", self.keltner_k_spin)
 
         # max forecasts
@@ -182,16 +242,167 @@ class PredictionSettingsDialog(QDialog):
         self.button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        self.layout.addWidget(self.button_box)
+
+        # Install scroll area
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        # 'content' è il QWidget su cui abbiamo costruito self.layout
+        try:
+            content = self.layout.parentWidget()
+            scroll.setWidget(content)
+        except Exception:
+            scroll.setWidget(self)
+        self._root_layout.addWidget(scroll)
+        self._root_layout.addWidget(self.button_box)
 
         self.load_settings()
 
     def _browse_model_path(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Model File", "", "PyTorch Models (*.pt *.pth);;All Files (*)"
+            self, "Select Model File", "", "Model Files (*.pt *.pth *.pkl *.pickle);;All Files (*)"
         )
         if path:
             self.model_path_edit.setText(path)
+
+    def _browse_model_paths_multi(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Model Files", "", "Model Files (*.pt *.pth *.pkl *.pickle);;All Files (*)"
+        )
+        if not paths:
+            return
+        # dedup e aggiorna lista
+        new_set = {str(p) for p in (self._model_paths or [])}
+        for p in paths:
+            new_set.add(str(p))
+        self._model_paths = sorted(new_set)
+        # aggiorna UI e stato statico
+        try:
+            self.model_list.clear()
+            for p in self._model_paths:
+                self.model_list.addItem(p)
+            self.__class__._last_model_paths = list(self._model_paths)
+        except Exception:
+            pass
+
+    @staticmethod
+    def get_model_paths():
+        """Return last selected model paths from dialog multi-selection."""
+        try:
+            return list(getattr(PredictionSettingsDialog, "_last_model_paths", []) or [])
+        except Exception:
+            return []
+
+    def _load_model_meta(self, path: str) -> Dict[str, Any]:
+        """Try to load meta from sidecar (path.meta.json) or from inside model (pickle/torch dict)."""
+        from pathlib import Path
+        import json
+        p = Path(path) if path else None
+        if not p or not p.exists():
+            return {}
+        # 1) sidecar
+        side = Path(str(p) + ".meta.json")
+        if side.exists():
+            try:
+                return json.loads(side.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        # 2) embedded
+        try:
+            if p.suffix.lower() in (".pkl", ".pickle"):
+                import pickle
+                with open(p, "rb") as f:
+                    obj = pickle.load(f)
+                if isinstance(obj, dict):
+                    return obj.get("meta", {})
+            elif p.suffix.lower() in (".pt", ".pth"):
+                try:
+                    import torch  # type: ignore
+                except Exception:
+                    torch = None
+                if torch is not None:
+                    ckpt = torch.load(str(p), map_location="cpu")
+                    if isinstance(ckpt, dict):
+                        return ckpt.get("meta", {})
+        except Exception:
+            pass
+        return {}
+
+    def _show_model_info(self):
+        """Open a popup with model meta if available."""
+        from PySide6.QtWidgets import QMessageBox
+        import json
+        path = self.model_path_edit.text().strip()
+        meta = self._load_model_meta(path)
+        if not meta:
+            QMessageBox.information(self, "Model Info", "Nessun metadato trovato (né sidecar né embedded).")
+            return
+        try:
+            text = json.dumps(meta, indent=2, ensure_ascii=False)
+        except Exception:
+            text = str(meta)
+        QMessageBox.information(self, "Model Info", text)
+
+    def _apply_model_defaults_from_meta(self, meta: Dict[str, Any]):
+        """Apply common defaults from meta to dialog fields."""
+        try:
+            # horizons
+            hz = meta.get("horizons") or meta.get("default_horizons")
+            if isinstance(hz, (list, tuple)):
+                self.horizons_edit.setText(", ".join([str(x) for x in hz]))
+            # N_samples, conformal, weight
+            if "N_samples" in meta:
+                self.n_samples_spinbox.setValue(int(meta.get("N_samples", self.n_samples_spinbox.value())))
+            if "apply_conformal" in meta:
+                self.conformal_checkbox.setChecked(bool(meta.get("apply_conformal", self.conformal_checkbox.isChecked())))
+            if "model_weight_pct" in meta:
+                # try to match the combo data
+                target = int(meta.get("model_weight_pct", 100))
+                for i in range(self.model_weight_combo.count()):
+                    if int(self.model_weight_combo.itemData(i)) == target:
+                        self.model_weight_combo.setCurrentIndex(i); break
+
+            # advanced params
+            adv = meta.get("advanced_params", {})
+            def _set_spin(spin, key, cast=int):
+                try:
+                    if key in adv:
+                        spin.setValue(cast(adv[key]))
+                except Exception:
+                    pass
+            _set_spin(self.warmup_spin, "warmup_bars")
+            _set_spin(self.atr_n_spin, "atr_n")
+            _set_spin(self.rsi_n_spin, "rsi_n")
+            _set_spin(self.bb_n_spin, "bb_n")
+            _set_spin(self.hurst_window_spin, "hurst_window")
+            _set_spin(self.rv_window_spin, "rv_window")
+
+            # indicator × timeframes
+            ind_tfs = meta.get("indicator_tfs", {})
+            if isinstance(ind_tfs, dict) and hasattr(self, "indicator_checks"):
+                for ind, tfmap in self.indicator_checks.items():
+                    lst = ind_tfs.get(ind.lower()) or ind_tfs.get(ind) or []
+                    for tf, cb in tfmap.items():
+                        try:
+                            cb.setChecked(tf in lst)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def _load_model_defaults(self):
+        """Load meta and apply as dialog defaults."""
+        from PySide6.QtWidgets import QMessageBox
+        path = self.model_path_edit.text().strip()
+        if not path:
+            QMessageBox.information(self, "Carica parametri", "Seleziona prima un Model Path.")
+            return
+        meta = self._load_model_meta(path)
+        if not meta:
+            QMessageBox.information(self, "Carica parametri", "Nessun metadato trovato per questo modello.")
+            return
+        self._apply_model_defaults_from_meta(meta)
+        QMessageBox.information(self, "Carica parametri", "Parametri base caricati dal modello.")
 
     def load_settings(self):
         """Loads settings from the JSON config file."""

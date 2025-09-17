@@ -49,6 +49,11 @@ class TiingoClient:
         if not self.api_key:
             logger.warning("Tiingo API key not configured; requests may fail.")
         self._client = httpx.Client(timeout=timeout)
+        # provider symbol aliases (only for REST requests)
+        # always initialize to avoid AttributeError in get_candles
+        self._aliases: Dict[str, str] = {
+            "AUX/USD": "XAU/USD",  # internal alias -> provider known pair
+        }
 
     def _fib_waits(self, max_attempts: int):
         a, b = 1, 1
@@ -62,14 +67,35 @@ class TiingoClient:
             attempt += 1
             try:
                 headers = {"Authorization": f"Token {self.api_key}"} if self.api_key else {}
+                # log request (do not print token)
+                # logger.info("HTTP GET {} params={} (attempt {}/{})", url, params, attempt, max_attempts)
                 r = self._client.get(url, params=params, headers=headers)
                 r.raise_for_status()
+                # success log
+                try:
+                    size = len(r.content) if r.content is not None else 0
+                    # logger.info("HTTP GET {} -> {} ({} bytes)", url, r.status_code, size)
+                except Exception:
+                    pass
                 # Tiingo returns JSON array for prices endpoint
                 return r.json()
             except Exception as e:
-                logger.warning("Tiingo request attempt %d failed: %s", attempt, e)
+                # enrich error with status/text if available
+                status = None
+                body_snip = None
+                try:
+                    resp = getattr(e, "response", None)
+                    if resp is not None:
+                        status = getattr(resp, "status_code", None)
+                        txt = getattr(resp, "text", "")
+                        body_snip = (txt[:200] + ("..." if len(txt) > 200 else "")) if isinstance(txt, str) else None
+                except Exception:
+                    pass
+                if status is not None or body_snip is not None:
+                    logger.warning("HTTP GET {} failed (status={}): {}", url, status, body_snip)
+                logger.warning("Tiingo request attempt {} failed: {}", attempt, e)
                 if attempt >= max_attempts:
-                    logger.error("Tiingo request failed after %d attempts: %s %s", attempt, url, params)
+                    logger.error("Tiingo request failed after {} attempts: {} {}", attempt, url, params)
                     return None
                 # fibonacci backoff in seconds (cap at 1800s to avoid extremely long sleeps)
                 sleep_s = min(wait_s, 1800)
@@ -82,13 +108,19 @@ class TiingoClient:
         resample_freq examples: '1min','5min','15min','1hour','1day'
         Returns DataFrame with ts_utc (ms), open, high, low, close, (maybe volume)
         """
+        # provider alias mapping (keep DB symbol unchanged)
+        aliases = getattr(self, "_aliases", {}) or {}
+        provider_symbol = aliases.get(symbol, symbol)
+        if provider_symbol != symbol:
+            logger.info("Provider symbol alias: '{}' -> '{}'", symbol, provider_symbol)
         # symbol format expected by tiingo e.g. "EURUSD"
-        from_sym, to_sym = parse_symbol(symbol)
+        from_sym, to_sym = parse_symbol(provider_symbol)
         ticker = f"{from_sym}{to_sym}"
         url = f"{self.BASE_URL}/{ticker}/prices"
         params = {"startDate": start_date, "endDate": end_date, "resampleFreq": resample_freq, "format": fmt}
         data = self._get_json_with_retry(url, params=params, max_attempts=50)
         if not data:
+            logger.warning("Tiingo returned empty for {} {}-{} (resample={})", provider_symbol, start_date, end_date, resample_freq)
             return pd.DataFrame()
         # Data expected as list of dicts with 'date','open','high','low','close'
         try:
@@ -97,7 +129,8 @@ class TiingoClient:
                 return pd.DataFrame()
             # date -> datetime (tiingo returns ISO with timezone)
             df["date"] = pd.to_datetime(df["date"], utc=True)
-            df["ts_utc"] = (df["date"].view("int64") // 1_000_000).astype("int64")
+            # pandas 2.x: cast a int64 (ns), poi ms
+            df["ts_utc"] = (df["date"].astype("int64") // 1_000_000).astype("int64")
             # ensure columns present
             for c in ["open", "high", "low", "close"]:
                 if c not in df.columns:
@@ -130,7 +163,10 @@ class MarketDataService:
         self.engine = create_engine(db_url, future=True)
         self.provider = TiingoClient()  # Default provider: Tiingo
         # Default timeframes to fetch after ticks: 1m up to 1d (24h)
-        self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"]
+        # Note: "60m" is an alias of "1h" -> keep only "1h" to avoid duplicates
+        self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+            # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
+        self.rest_enabled: bool = False
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
@@ -142,8 +178,22 @@ class MarketDataService:
         - If start_ms_override provided, compute gaps in [start_ms_override, now] (range mode).
         """
         logger.info("Starting backfill for {} {} (override={}, force_full={})", symbol, timeframe, start_ms_override, force_full)
+        # Guard: block any REST backfill unless explicitly enabled (UI backfill button)
+        if not getattr(self, "rest_enabled", False):
+            logger.info("REST backfill disabled; skipping backfill for {} {}.", symbol, timeframe)
+            if progress_cb:
+                try: progress_cb(100)
+                except Exception: pass
+            return
         # overall period
         last_ts, now_ms = self._get_last_candle_ts(symbol, timeframe)
+        try:
+            if start_ms_override is not None:
+                start_iso = time_utils.ms_to_utc_dt(int(start_ms_override)).isoformat()
+                now_iso = time_utils.ms_to_utc_dt(int(now_ms)).isoformat()
+                logger.info("Backfill effective range (override): {} -> {}", start_iso, now_iso)
+        except Exception:
+            pass
         if start_ms_override is not None:
             start_ms = int(start_ms_override)
         elif force_full or last_ts is None:
@@ -158,27 +208,41 @@ class MarketDataService:
                 except Exception: pass
             return
 
-        # Determine timeframes to process (skip 'tick')
-        if timeframe in self.timeframes_priority:
-            idx = self.timeframes_priority.index(timeframe)
+        # Normalize alias (e.g., "60m" -> "1h") and determine timeframes to process (skip 'tick')
+        tf_req = (timeframe or "").strip().lower()
+        alias_map = {"60m": "1h"}
+        tf_norm = alias_map.get(tf_req, tf_req)
+        if tf_norm in self.timeframes_priority:
+            idx = self.timeframes_priority.index(tf_norm)
             tfs_to_process = self.timeframes_priority[1: idx + 1]
         else:
-            tfs_to_process = ["1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"]
+            # fallback default chain (no "60m" to avoid duplicate of "1h")
+            tfs_to_process = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+        # ensure uniqueness while preserving order
+        _seen = set()
+        tfs_to_process = [t for t in tfs_to_process if not (t in _seen or _seen.add(t))]
+        # if request was an alias, log normalization
+        if tf_req != tf_norm:
+            logger.info("Normalized timeframe alias: '{}' -> '{}'", tf_req, tf_norm)
 
-        # Pre-compute total subranges for determinate progress
+        # Pre-compute total subranges for determinate progress (guard against huge ranges)
         total_subranges = 0
         try:
-            # 1m ranges (ticks fallback)
-            r_1m = self._find_missing_intervals(symbol, "1m", start_ms, now_ms)
-            for (s_ms, e_ms) in r_1m:
-                total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
-            # other TFs
-            for tf in tfs_to_process:
-                if tf == "1m":
-                    continue
-                r_tf = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
-                for (s_ms, e_ms) in r_tf:
+            range_days = (now_ms - start_ms) / (24 * 3600 * 1000)
+            if range_days <= 370:  # avoid huge O(N) precompute for multi-year 1m ranges
+                # 1m ranges (ticks fallback)
+                r_1m = self._find_missing_intervals(symbol, "1m", start_ms, now_ms)
+                for (s_ms, e_ms) in r_1m:
                     total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
+                # other TFs
+                for tf in tfs_to_process:
+                    if tf == "1m":
+                        continue
+                    r_tf = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
+                    for (s_ms, e_ms) in r_tf:
+                        total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
+            else:
+                logger.warning("Backfill range is large (%.0f days); skipping progress precompute for speed.", range_days)
         except Exception:
             total_subranges = 0
         processed = 0
@@ -199,11 +263,20 @@ class MarketDataService:
                 for (sub_s, sub_e) in subranges:
                     start_date = sub_s.date().isoformat()
                     end_date = sub_e.date().isoformat()
-                    logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
+                    # logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
                     df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                     if df is not None and not df.empty:
+                        try:
+                            # drop NaN and duplicates on ts_utc before upsert
+                            df = df.dropna(subset=["ts_utc"]).copy()
+                            before = len(df)
+                            df = df.drop_duplicates(subset=["ts_utc"], keep="last")
+                            if len(df) != before:
+                                logger.info("Dedup 1m: {} -> {} rows for {} {}-{}", before, len(df), symbol, start_date, end_date)
+                        except Exception:
+                            pass
                         report = data_io.upsert_candles(self.engine, df, symbol, "1m")
-                        logger.info("Upsert 1m report: %s", report)
+                        # logger.info("Upsert 1m report: %s", report)
                     processed += 1
                     _emit_progress()
         except Exception as e:
@@ -224,8 +297,16 @@ class MarketDataService:
                         logger.info("Requesting %s candles %s - %s for %s", tf, start_date, end_date, symbol)
                         df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq=resample)
                         if df is not None and not df.empty:
+                            try:
+                                df = df.dropna(subset=["ts_utc"]).copy()
+                                before = len(df)
+                                df = df.drop_duplicates(subset=["ts_utc"], keep="last")
+                                if len(df) != before:
+                                    logger.info("Dedup {}: {} -> {} rows for {} {}-{}", tf, before, len(df), symbol, start_date, end_date)
+                            except Exception:
+                                pass
                             report = data_io.upsert_candles(self.engine, df, symbol, tf)
-                            logger.info("Upsert report for %s %s: %s", symbol, tf, report)
+                            # logger.info("Upsert report for %s %s: %s", symbol, tf, report)
                         processed += 1
                         _emit_progress()
             except Exception as e:
@@ -255,14 +336,14 @@ class MarketDataService:
             for (sub_s, sub_e) in subranges:
                 start_date = sub_s.date().isoformat()
                 end_date = sub_e.date().isoformat()
-                logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
+                # logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
                 df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                 if df is None or df.empty:
                     logger.info("No tick/1m data returned for %s %s-%s", symbol, start_date, end_date)
                     continue
                 # Upsert as 1m timeframe
                 report = data_io.upsert_candles(self.engine, df, symbol, "1m")
-                logger.info("Upsert 1m report: %s", report)
+                # logger.info("Upsert 1m report: %s", report)
 
     def _backfill_timeframe_autonomous(self, symbol: str, timeframe: str, global_start_ms: int, global_end_ms: int):
         """
@@ -292,7 +373,7 @@ class MarketDataService:
                     continue
                 # Upsert into DB
                 report = data_io.upsert_candles(self.engine, df, symbol, timeframe)
-                logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
+                # logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
 
     def _tf_to_tiingo_resample(self, tf: str) -> str:
         """
@@ -376,7 +457,13 @@ class MarketDataService:
                 e_dt_plus = e_dt + pd.Timedelta(freq)
             except Exception:
                 e_dt_plus = pd.to_datetime(e, unit="ms", utc=True)
-            out_ranges.append((int(s), int(e_dt_plus.view("int64") // 1_000_000)))
+            # pandas 2.x: usa timestamp() per ottenere secondi, poi ms
+            try:
+                e_ms = int(e_dt_plus.timestamp() * 1000)
+            except Exception:
+                # fallback robusto
+                e_ms = int(pd.to_datetime(e_dt_plus).value // 1_000_000)
+            out_ranges.append((int(s), e_ms))
         return out_ranges
 
     def _get_last_candle_ts(self, symbol: str, timeframe: str) -> Tuple[Optional[int], int]:
