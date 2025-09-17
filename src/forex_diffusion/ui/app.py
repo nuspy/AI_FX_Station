@@ -39,6 +39,11 @@ def setup_ui(
     # --- Core Services ---
     db_service = DBService()
     market_service = MarketDataService(database_url=db_service.engine.url)
+    # UI: abilita REST per backfill alla apertura
+    try:
+        setattr(market_service, "rest_enabled", True)
+    except Exception:
+        pass
     db_writer = DBWriter(db_service=db_service)
     db_writer.start()
 
@@ -312,11 +317,18 @@ def setup_ui(
     if use_test_server:
         logger.info(f"Redirecting Tiingo WebSocket to test server: {ws_uri}")
 
+    # track backtest state to suppress misleading WS logs during runs
+    backtest_active = {"flag": False}
+
     def _ws_status(msg: str):
         try:
             if msg == "ws_down":
-                logger.warning("Realtime WS down detected. REST fallback is DISABLED.")
-                controller.signals.status.emit("Realtime: WS down (no REST fallback)")
+                if backtest_active["flag"]:
+                    logger.info("Realtime WS stopped (backtest active) - suppressing REST fallback.")
+                    controller.signals.status.emit("Realtime: WS stopped (backtest active)")
+                else:
+                    logger.warning("Realtime WS down detected. REST fallback is DISABLED.")
+                    controller.signals.status.emit("Realtime: WS down (no REST fallback)")
                 #controller.signals.status.emit("Realtime: WS down (fallback REST attivo)")
 
             elif msg == "ws_restored":
@@ -325,25 +337,32 @@ def setup_ui(
         except Exception:
             pass
 
-    connector = TiingoWSConnector(
-        uri=ws_uri,
-        api_key=os.environ.get("TIINGO_APIKEY"),
-        tickers=["eurusd"],
-        chart_handler=chart_tab._handle_tick,
-        db_handler=db_writer.write_tick_async
-        , status_handler=_ws_status
-    )
-    connector.start()
-    result["tiingo_ws_connector"] = connector
-    logger.info("TiingoWSConnector started with direct handlers for ChartTab and DBWriter.")
+    connector = None
+    if os.environ.get("FOREX_ENABLE_WS", "1") == "1":
+        connector = TiingoWSConnector(
+            uri=ws_uri,
+            api_key=os.environ.get("TIINGO_APIKEY"),
+            tickers=["eurusd"],
+            chart_handler=chart_tab._handle_tick,
+            db_handler=db_writer.write_tick_async
+            , status_handler=_ws_status
+        )
+        connector.start()
+        result["tiingo_ws_connector"] = connector
+        logger.info("TiingoWSConnector started with direct handlers for ChartTab and DBWriter.")
+    else:
+        logger.info("WS connector disabled (FOREX_ENABLE_WS!=1)")
 
     # --- Final UI Setup ---
     default_symbol = "EUR/USD"
     default_tf = "1m"
     chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
 
-    # Auto backfill on startup for all supported symbols with existing candles
+    # Auto backfill on startup (abilitato per default)
     try:
+        if os.environ.get("FOREX_DISABLE_AUTOBACKFILL", "0") == "1":
+            logger.info("Auto backfill disabled by FOREX_DISABLE_AUTOBACKFILL=1")
+            raise RuntimeError("skip_autobackfill")
         from PySide6.QtCore import QRunnable, QThreadPool, QObject, Signal
         class _BFSignals(QObject):
             progress = Signal(int)
@@ -382,32 +401,52 @@ def setup_ui(
                         # compute start override from UI (0/0 -> full from first), else from now - (years, months)
                         import datetime
                         now_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+                        # compute LAST candle ts from DB across ALL timeframes for incremental logic
+                        last_ts = None
+                        try:
+                            from sqlalchemy import text
+                            eng = getattr(self.ms, "engine", None)
+                            if eng is not None:
+                                with eng.connect() as conn:
+                                    row = conn.execute(
+                                        text("SELECT MAX(ts_utc) FROM market_data_candles WHERE symbol = :sym"),
+                                        {"sym": sym},
+                                    ).fetchone()
+                                    if row and row[0] is not None:
+                                        last_ts = int(row[0])
+                        except Exception:
+                            last_ts = None
+
+                        # If already fresh (updated in last 5 minutes), skip backfill for this symbol
+                        try:
+                            if last_ts is not None and (now_ms - int(last_ts)) < 5 * 60 * 1000:
+                                self.signals.status.emit(f"[Backfill] {sym}: up-to-date (skip)")
+                                continue
+                        except Exception:
+                            pass
+
                         if (self.years == 0 and self.months == 0):
-                            start_ms = first_ts
+                            # default: incremental from last known candle (if any), else from the very beginning
+                            if last_ts is not None and last_ts > 0:
+                                start_ms = int(last_ts) + 1  # avoid re-fetching last included bar
+                                self.signals.status.emit(f"[Backfill] {sym}: incremental from {start_ms}")
+                            else:
+                                start_ms = first_ts
+                                self.signals.status.emit(f"[Backfill] {sym}: initial full from {start_ms}")
                         else:
-                            # approximate months as 30 days each
+                            # explicit historical range requested from UI
                             days = self.years * 365 + self.months * 30
                             start_ms = max(first_ts, now_ms - days * 24 * 3600 * 1000)
-                        self.signals.status.emit(f"[Backfill] {sym} starting range sync...")
+                            self.signals.status.emit(f"[Backfill] {sym}: range start {start_ms}")
+
                         # nested progress bridge
                         def _cb(p):
                             try:
                                 self.signals.status.emit(f"[Backfill] {sym}: {p}%")
                             except Exception:
                                 pass
-                        # abilita REST solo per la durata di questo backfill
-                        try:
-                            setattr(self.ms, "rest_enabled", True)
-                        except Exception:
-                            pass
-                        try:
-                            # use '1d' to cover all timeframes up to daily
-                            self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
-                        finally:
-                            try:
-                                setattr(self.ms, "rest_enabled", False)
-                            except Exception:
-                                pass
+                        # use '1d' to cover all timeframes up to daily
+                        self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
                     except Exception as e:
                         try:
                             self.signals.status.emit(f"[Backfill] {sym} failed: {e}")
@@ -430,7 +469,8 @@ def setup_ui(
         bf_signals.progress.connect(lambda p: status_label.setText(f"Backfill: {p}%"))
         QThreadPool.globalInstance().start(_BFJob(market_service, chart_tab._symbols_supported, chart_tab.years_combo.currentText(), chart_tab.months_combo.currentText(), bf_signals))
     except Exception as e:
-        logger.warning("Auto backfill job not started: {}", e)
+        if str(e) != "skip_autobackfill":
+            logger.warning("Auto backfill job not started: {}", e)
 
     controller.signals.status.connect(status_label.setText)
     controller.signals.error.connect(status_label.setText)
@@ -454,6 +494,23 @@ def setup_ui(
                             return rr
                         _t.sleep(delay)
                         delay = min(1.2, delay * 1.5)
+
+                # Temporarily disable REST backfill and WS during backtest
+                prev_rest_flag = getattr(market_service, "rest_enabled", False)
+                try:
+                    setattr(market_service, "rest_enabled", False)
+                except Exception:
+                    pass
+                try:
+                    if connector is not None:
+                        try:
+                            connector.stop()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # mark backtest active to adjust WS status reporting
+                backtest_active["flag"] = True
 
                 with httpx.Client(timeout=60.0) as client:
                     r = client.post(f"{base}/backtests", json=payload)
@@ -500,8 +557,20 @@ def setup_ui(
                             except Exception:
                                 pass
                 status_label.setText("Backtesting: job completed")
-            except Exception as e:
-                status_label.setText(f"Backtesting error: {e}")
+            finally:
+                # restore flags/services
+                try:
+                    setattr(market_service, "rest_enabled", prev_rest_flag)
+                except Exception:
+                    pass
+                try:
+                    if connector is not None and os.environ.get("FOREX_ENABLE_WS", "1") == "1":
+                        connector.start()
+                except Exception:
+                    pass
+                backtest_active["flag"] = False
+            #except Exception as e:
+            #    status_label.setText(f"Backtesting error: {e}")
         backtesting_tab.startRequested.connect(_on_bt_start)
     except Exception:
         pass

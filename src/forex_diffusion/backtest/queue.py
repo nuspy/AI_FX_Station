@@ -60,6 +60,12 @@ class BacktestQueue:
                         extra=dict(payload.get("extra", {})),
                     ))
                 if configs:
+                    # ensure market services do not trigger REST backfill during job
+                    try:
+                        from ..services.marketdata import MarketDataService
+                        # not strictly needed here; worker reads directly from DB
+                    except Exception:
+                        pass
                     self.worker.run_job(job_id=job_id, configs=configs)
                 self.db.set_job_status(job_id, "done")
             except Exception as e:

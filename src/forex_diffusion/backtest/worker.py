@@ -157,22 +157,19 @@ class Worker:
             from sqlalchemy import MetaData, select
             from sqlalchemy import create_engine
             from ..utils.config import get_config
+            from .data_access import fetch_candles
             from ..postproc.adherence import adherence_metrics, atr_sigma_from_df
             import pandas as pd
 
             cfg_env = get_config()
             db_url = getattr(cfg_env.db, "database_url", None) or (cfg_env.db.get("database_url") if isinstance(cfg_env.db, dict) else None)
             engine = create_engine(db_url, future=True)
-            md = MetaData()
-            md.reflect(bind=engine, only=["market_data_candles"])
-            tbl = md.tables.get("market_data_candles")
             sym = cfg.symbol or "EUR/USD"
-            with engine.connect() as conn:
-                q = select(tbl).where(tbl.c.symbol == sym).where(tbl.c.timeframe == cfg.timeframe).order_by(tbl.c.ts_utc.desc()).limit(2048)
-                rows = conn.execute(q).fetchall()
-            if not rows:
+            # fetch strictly from DB (no REST) using data_access helper
+            df = fetch_candles(engine, sym, cfg.timeframe, start_ms=int(slice_def.get("train_start_ms", 0)) or None, end_ms=int(slice_def.get("test_end_ms", 0)) or None, limit=4096)
+            if df is None or df.empty:
                 return {"adherence": 0.0, "n_points": 0}
-            df = pd.DataFrame(rows, columns=rows[0]._mapping.keys()).sort_values("ts_utc").reset_index(drop=True)
+            df = df.sort_values("ts_utc").reset_index(drop=True)
             # Build realized y on test slice and predictions via asof align (real per-slice would use model outputs)
             mask = (df["ts_utc"].astype("int64") >= int(slice_def.get("test_start_ms", 0))) & (df["ts_utc"].astype("int64") <= int(slice_def.get("test_end_ms", 2**63-1)))
             dft = df.loc[mask].reset_index(drop=True)

@@ -163,7 +163,7 @@ class BacktestingTab(QWidget):
             self.chk_rw.setChecked(bool(t.get("rw", False)))
             if s.get("bt_tf"): self.cmb_tf.setCurrentText(str(s["bt_tf"]))
             if s.get("bt_h"): self.ed_h.setText(str(s["bt_h"]))
-            if s.get("bt_models")): self.ed_models.setText(str(s["bt_models"]))
+            if s.get("bt_models"): self.ed_models.setText(str(s["bt_models"]))
             if s.get("bt_samples") and isinstance(s["bt_samples"], list) and len(s["bt_samples"])==3:
                 self.sp_s.setValue(int(s["bt_samples"][0])); self.sp_e.setValue(int(s["bt_samples"][1])); self.sp_p.setValue(int(s["bt_samples"][2]))
             if s.get("bt_preset"): self.cmb_preset.setCurrentText(str(s["bt_preset"]))
