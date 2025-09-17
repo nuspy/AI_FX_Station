@@ -125,7 +125,8 @@ def _build_features(
     no_std = Standardizer(cols=[], mu={}, sigma={})
     feats_cfg = {
         "warmup_bars": int(warmup_bars),
-        "standardization": None,
+        # Must be a dict: pipeline expects .get on this field
+        "standardization": {"window_bars": 1000},
         "indicators": {
             # Add/adjust indicators as you like; they match common defaults in your repo
             "atr": {"n": 14},
