@@ -513,8 +513,42 @@ def setup_ui(
                 backtest_active["flag"] = True
 
                 with httpx.Client(timeout=60.0) as client:
-                    r = client.post(f"{base}/backtests", json=payload)
-                    r.raise_for_status()
+                    # wait for API readiness
+                    try:
+                        import time as _t
+                        t0 = _t.time()
+                        while _t.time() - t0 < 5.0:
+                            try:
+                                hr = client.get(f"{base}/ready")
+                                if hr.status_code == 200 and (hr.json().get("ready") in (True, None)):
+                                    break
+                            except Exception:
+                                pass
+                            _t.sleep(0.25)
+                    except Exception:
+                        pass
+
+                    # robust POST with retry to avoid RemoteProtocolError on warm servers
+                    last_exc = None
+                    for attempt in range(3):
+                        try:
+                            r = client.post(f"{base}/backtests", json=payload, headers={"Connection": "close"})
+                            r.raise_for_status()
+                            last_exc = None
+                            break
+                        except Exception as e:
+                            last_exc = e
+                            try:
+                                import httpx as _hx
+                                if isinstance(e, _hx.RemoteProtocolError):
+                                    import time as _t
+                                    _t.sleep(0.35 * (attempt + 1))
+                                    continue
+                            except Exception:
+                                pass
+                            raise
+                    if last_exc is not None:
+                        raise last_exc
                     job = r.json()
                     job_id = int(job.get("job_id", 0))
                     # fetch results with retry (async queue) and update status label with progress polling

@@ -29,6 +29,10 @@ class CreateBacktestResponse(BaseModel):
 @router.post("")
 def create_backtest(req: CreateBacktestRequest) -> CreateBacktestResponse:
     try:
+        # Preflight: ensure bt_* tables exist
+        btdb = BacktestDB()
+        if not all([btdb.t_job, btdb.t_cfg, btdb.t_res]):
+            raise HTTPException(status_code=503, detail="Backtesting tables missing. Run migrations.")
         # Expand horizons
         _, horizons_sec = parse_horizons(req.horizons_raw)
         if not horizons_sec:
@@ -50,7 +54,6 @@ def create_backtest(req: CreateBacktestRequest) -> CreateBacktestResponse:
                 )
                 configs.append(tc)
         # Create job and run (with caching/dedup: reuse existing result by fingerprint)
-        btdb = BacktestDB()
         job_id = int(req.job_id) if req.job_id is not None else btdb.create_job(status="running")
         # Check dedup: if all configs already have results, skip run and just bind them to job via read-only response
         fingerprints = []
