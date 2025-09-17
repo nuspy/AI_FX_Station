@@ -236,7 +236,7 @@ def plot_adherence_shading(
     Returns
     -------
     dict
-        Metrics dict from adherence_metrics.
+        Metrics dict from adherence_metrics. .
     """
     import matplotlib.pyplot as plt  # local import to avoid hard dep if headless
 
