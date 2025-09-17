@@ -69,8 +69,8 @@ class DBService:
                 # Use the correct unique constraint columns for conflict resolution
                 stmt = stmt.on_conflict_do_nothing(index_elements=["symbol", "timeframe", "ts_utc"])
                 result = conn.execute(stmt)
-                if result.rowcount > 0:
-                     logger.debug(f"Persisted tick for {payload['symbol']}")
+                # if result.rowcount > 0:
+                     # logger.debug(f"Persisted tick for {payload['symbol']}")
             return True
         except Exception as e:
             logger.exception(f"write_tick failed for payload {payload}: {e}")

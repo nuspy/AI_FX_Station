@@ -63,13 +63,13 @@ def setup_ui(
         pass
 
     tab_widget = QTabWidget()
-    signals_tab = SignalsTab(main_window, db_service=db_service)
-    training_tab = TrainingTab(main_window)
     chart_tab = ChartTab(main_window)
+    training_tab = TrainingTab(main_window)
+    signals_tab = SignalsTab(main_window, db_service=db_service)
 
-    tab_widget.addTab(signals_tab, "Signals")
-    tab_widget.addTab(training_tab, "Training")
     tab_widget.addTab(chart_tab, "Chart")
+    tab_widget.addTab(training_tab, "Training")
+    tab_widget.addTab(signals_tab, "Signals")
     layout.addWidget(tab_widget)
     result["chart_tab"] = chart_tab
     result["training_tab"] = training_tab

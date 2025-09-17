@@ -303,7 +303,10 @@ class ChartTab(QWidget):
         self._last_df = pd.DataFrame()
         # keep a list of forecast dicts: {id, created_at, quantiles, future_ts, artists:list, source}
         self._forecasts: List[Dict] = []
-        self.max_forecasts = int(get_setting("max_forecasts", 5))
+        # show multiple overlays without removing old ones (unless over limit)
+        self.max_forecasts = int(get_setting("max_forecasts", 20))
+        # legend registry: show each model only once in legend
+        self._legend_once = set()
 
         # Broker (simulato)
         try:
@@ -1091,6 +1094,12 @@ class ChartTab(QWidget):
         except Exception:
             pass
 
+            # aggiorna legenda unica (no duplicati per modello)
+            try:
+                self._refresh_legend_unique(loc='upper left')
+            except Exception:
+                pass
+
         try:
             self.canvas.draw_idle()
         except Exception:
@@ -1296,39 +1305,41 @@ class ChartTab(QWidget):
             except Exception:
                 pass
 
-            # color by source (hash-based HSV -> RGB to ensure many distinct colors)
+            # color per sorgente e gestione legenda per modello
             def _color_for(src: str):
                 try:
                     import hashlib, colorsys
                     key = str(src or "default").encode("utf-8")
                     hnum = int(hashlib.sha1(key).hexdigest()[:8], 16)
-                    hue = (hnum % 360) / 360.0         # 0..1
-                    sat = 0.65                         # fixed saturation
-                    val = 0.95                         # fixed value
+                    hue = (hnum % 360) / 360.0
+                    sat = 0.65
+                    val = 0.95
                     r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
-                    return (r, g, b)                   # matplotlib accepts RGB tuple
+                    return (r, g, b)
                 except Exception:
-                    # fallback palette
                     palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
                     return palette[abs(hash(src)) % len(palette)] if src else "tab:orange"
             color = _color_for(quantiles.get("source", source))
 
-            # log (time, price) pairs to diagnose
+            # nome modello per legenda (mostra una sola volta)
             try:
-                times_iso = pd.Series(pd.to_datetime(x_vals)).astype(str).tolist()
-                pairs = list(zip(times_iso, [float(v) for v in q50_arr.tolist()]))
-                logger.info("Plot forecast ({} pts): {}", len(pairs), pairs)
+                model_name = str(quantiles.get("label") or quantiles.get("source") or label)
             except Exception:
-                pass
+                model_name = str(label)
+            if not hasattr(self, "_legend_once") or self._legend_once is None:
+                self._legend_once = set()
+            first_for_model = model_name not in self._legend_once
+            if first_for_model:
+                self._legend_once.add(model_name)
 
-            # linea di previsione con marker sui punti
+            # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
             line50, = self.ax.plot(
                 x_vals, q50_arr,
                 color=color, linestyle='-',
                 marker='o', markersize=3.5,
                 markerfacecolor=color, markeredgecolor=color,
                 alpha=0.95,
-                label=f"{label} (q50)"
+                label=(model_name if first_for_model else None)
             )
             artists = [line50]
 
@@ -1447,8 +1458,14 @@ class ChartTab(QWidget):
             if q05_arr is not None and q95_arr is not None:
                 line05, = self.ax.plot(x_vals, q05_arr, color=color, linestyle='--', alpha=0.8, label=None)
                 line95, = self.ax.plot(x_vals, q95_arr, color=color, linestyle='--', alpha=0.8, label=None)
-                fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12)
+                fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12, label=None)
                 artists.extend([line05, line95, fill])
+
+            # aggiorna legenda unica (no duplicati per modello)
+            try:
+                self._refresh_legend_unique(loc='upper left')
+            except Exception:
+                pass
 
             fid = time.time()
             forecast = {
@@ -1523,7 +1540,7 @@ class ChartTab(QWidget):
             df = self._load_candles_from_db(self.symbol, self.timeframe, limit=3000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
-                logger.info("Plotted {} points for {} {}", len(df), self.symbol, self.timeframe)
+                # logger.info("Plotted {} points for {} {}", len(df), self.symbol, self.timeframe)
             else:
                 logger.info("No candles found in DB for {} {}", self.symbol, self.timeframe)
         except Exception as e:
@@ -2043,6 +2060,17 @@ class ChartTab(QWidget):
                     except Exception:
                         pass
             self._forecasts = []
+            # reset legenda/registro modelli
+            try:
+                self._legend_once = set()
+                leg = self.ax.get_legend()
+                if leg:
+                    try:
+                        leg.remove()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             self.canvas.draw()
         except Exception as e:
             logger.exception(f"Failed to clear forecasts: {e}")
