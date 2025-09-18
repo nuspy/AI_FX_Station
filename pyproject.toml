@@ -18,9 +18,8 @@ dependencies = [
   "joblib>=1.3",
   "pyyaml",
   "pytz",
-  "ta>=0.11.0; python_version>='3.10'"
-  "duckdb",
-  "ta"
+  "ta>=0.11.0; python_version>='3.10'",
+  "duckdb"
 ]
 
 [project.scripts]

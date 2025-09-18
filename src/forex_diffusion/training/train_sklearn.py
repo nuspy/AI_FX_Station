@@ -84,8 +84,67 @@ except Exception:
     _HAS_TA = False
     warnings.warn("Package 'ta' non trovato: indicatori avanzati limitati.", RuntimeWarning)
 
+
 def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy(); out.index = pd.to_datetime(out["ts_utc"], unit="ms", utc=True); return out
+    out = df.copy()
+    out.index = pd.to_datetime(out["ts_utc"], unit="ms", utc=True)
+    return out
+
+
+def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
+    tf = str(tf).strip().lower()
+    if tf.endswith("ms"):
+        return pd.Timedelta(milliseconds=int(tf[:-2]))
+    if tf.endswith("s") and not tf.endswith("ms"):
+        return pd.Timedelta(seconds=int(tf[:-1]))
+    if tf.endswith("m"):
+        return pd.Timedelta(minutes=int(tf[:-1]))
+    if tf.endswith("h"):
+        return pd.Timedelta(hours=int(tf[:-1]))
+    if tf.endswith("d"):
+        return pd.Timedelta(days=int(tf[:-1]))
+    raise ValueError(f"Timeframe non supportato: {tf}")
+
+
+def _coerce_indicator_tfs(raw_value: Any) -> Dict[str, List[str]]:
+    if not raw_value:
+        return {}
+    data: Dict[str, Any]
+    if isinstance(raw_value, dict):
+        data = raw_value
+    else:
+        try:
+            data = json.loads(str(raw_value))
+        except Exception:
+            warnings.warn("indicator_tfs non parseable; uso dizionario vuoto", RuntimeWarning)
+            return {}
+    out: Dict[str, List[str]] = {}
+    for k, v in data.items():
+        if not v:
+            continue
+        key = str(k).lower()
+        if isinstance(v, (list, tuple, set)):
+            vals = [str(x) for x in v if str(x).strip()]
+        else:
+            vals = [str(v)]
+        dedup: List[str] = []
+        for tf in vals:
+            tf_norm = tf.strip()
+            if tf_norm and tf_norm not in dedup:
+                dedup.append(tf_norm)
+        if dedup:
+            out[key] = dedup
+    return out
+
+
+def _realized_vol_feature(df: pd.DataFrame, window: int) -> pd.DataFrame:
+    if window <= 1:
+        return pd.DataFrame(index=df.index)
+    close = pd.to_numeric(df["close"], errors="coerce").replace(0.0, np.nan).fillna(method="ffill")
+    log_ret = np.log(close).diff().fillna(0.0)
+    rv = log_ret.pow(2).rolling(window=window, min_periods=2).sum().pow(0.5)
+    feature = pd.DataFrame({f"rv_{window}": rv}, index=df.index)
+    return feature
 
 def _resample(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     if timeframe.endswith("m"): rule = f"{int(timeframe[:-1])}T"
@@ -121,24 +180,36 @@ def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
     out["dow_sin"]  = np.sin(2*np.pi*dow/7.0);   out["dow_cos"]  = np.cos(2*np.pi*dow/7.0)
     return out
 
+
 def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[str, List[str]], base_tf: str) -> pd.DataFrame:
-    frames = []; base = _ensure_dt_index(df)
+    frames: List[pd.DataFrame] = []
+    base = _ensure_dt_index(df)
+    base_lookup = base[["ts_utc"]].copy()
+    try:
+        base_delta = _timeframe_to_timedelta(base_tf)
+    except Exception:
+        base_delta = pd.Timedelta("1min")
     for name, params in ind_cfg.items():
-        tfs = indicator_tfs.get(name, [base_tf])
+        key = str(name).lower()
+        tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
         for tf in tfs:
             tmp = df.copy()
-            if tf != base_tf: tmp = _resample(tmp, tf)
+            if tf != base_tf:
+                try:
+                    tmp = _resample(tmp, tf)
+                except Exception:
+                    continue
             tmp = _ensure_dt_index(tmp)
-            cols = {}
+            cols: Dict[str, pd.Series] = {}
             if not _HAS_TA:
-                if name == "rsi":
+                if key == "rsi":
                     n = int(params.get("n", 14))
                     delta = tmp["close"].diff()
                     up = delta.clip(lower=0.0).rolling(n).mean()
                     down = (-delta.clip(upper=0.0)).rolling(n).mean()
                     rs = (up / (down + 1e-12))
                     cols[f"rsi_{tf}_{n}"] = 100 - (100 / (1 + rs))
-                elif name == "atr":
+                elif key == "atr":
                     n = int(params.get("n", 14))
                     hl = (tmp["high"] - tmp["low"]).abs()
                     hc = (tmp["high"] - tmp["close"].shift(1)).abs()
@@ -146,32 +217,38 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                     tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
                     cols[f"atr_{tf}_{n}"] = tr.rolling(n).mean()
             else:
-                if name == "rsi":
+                if key == "rsi":
                     n = int(params.get("n", 14))
                     cols[f"rsi_{tf}_{n}"] = ta.momentum.RSIIndicator(close=tmp["close"], window=n).rsi()
-                elif name == "atr":
+                elif key == "atr":
                     n = int(params.get("n", 14))
                     cols[f"atr_{tf}_{n}"] = ta.volatility.AverageTrueRange(
                         high=tmp["high"], low=tmp["low"], close=tmp["close"], window=n
                     ).average_true_range()
-                elif name == "bollinger":
-                    n = int(params.get("n", 20)); dev = float(params.get("dev", 2.0))
+                elif key == "bollinger":
+                    n = int(params.get("n", 20))
+                    dev = float(params.get("dev", 2.0))
                     bb = ta.volatility.BollingerBands(close=tmp["close"], window=n, window_dev=dev)
                     cols[f"bb_m_{tf}_{n}_{dev}"] = bb.bollinger_mavg()
                     cols[f"bb_h_{tf}_{n}_{dev}"] = bb.bollinger_hband()
                     cols[f"bb_l_{tf}_{n}_{dev}"] = bb.bollinger_lband()
-                elif name == "macd":
-                    f = int(params.get("fast", 12)); s = int(params.get("slow", 26)); sig = int(params.get("signal", 9))
+                elif key == "macd":
+                    f = int(params.get("fast", 12))
+                    s = int(params.get("slow", 26))
+                    sig = int(params.get("signal", 9))
                     macd = ta.trend.MACD(close=tmp["close"], window_fast=f, window_slow=s, window_sign=sig)
                     cols[f"macd_{tf}_{f}_{s}_{sig}"] = macd.macd()
                     cols[f"macd_sig_{tf}_{f}_{s}_{sig}"] = macd.macd_signal()
                     cols[f"macd_diff_{tf}_{f}_{s}_{sig}"] = macd.macd_diff()
-                elif name == "donchian":
+                elif key == "donchian":
                     n = int(params.get("n", 20))
-                    u = tmp["high"].rolling(n).max(); l = tmp["low"].rolling(n).min()
+                    u = tmp["high"].rolling(n).max()
+                    l = tmp["low"].rolling(n).min()
                     cols[f"donch_mid_{tf}_{n}"] = (u + l) / 2.0
-                elif name == "keltner":
-                    ema = int(params.get("ema", 20)); atr_n = int(params.get("atr", 10)); mult = float(params.get("mult", 1.5))
+                elif key == "keltner":
+                    ema = int(params.get("ema", 20))
+                    atr_n = int(params.get("atr", 10))
+                    mult = float(params.get("mult", 1.5))
                     mid = tmp["close"].ewm(span=ema, adjust=False).mean()
                     hl = (tmp["high"] - tmp["low"]).abs()
                     hc = (tmp["high"] - tmp["close"].shift(1)).abs()
@@ -179,48 +256,95 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                     tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
                     atr = tr.rolling(atr_n).mean()
                     cols[f"kelt_mid_{tf}_{ema}_{atr_n}_{mult}"] = mid
-                    cols[f"kelt_up_{tf}_{ema}_{atr_n}_{mult}"]  = mid + mult*atr
-                    cols[f"kelt_lo_{tf}_{ema}_{atr_n}_{mult}"]  = mid - mult*atr
-                elif name == "hurst":
+                    cols[f"kelt_up_{tf}_{ema}_{atr_n}_{mult}"] = mid + mult * atr
+                    cols[f"kelt_lo_{tf}_{ema}_{atr_n}_{mult}"] = mid - mult * atr
+                elif key == "hurst":
                     w = int(params.get("window", 128))
-                    series = tmp["close"].astype(float); roll = series.rolling(w)
+                    series = tmp["close"].astype(float)
+                    roll = series.rolling(w)
                     def _h(x):
-                        x = x.values
-                        if len(x) < 2: return np.nan
-                        x = x - x.mean(); z = np.cumsum(x)
-                        R = z.max() - z.min(); S = x.std() + 1e-12
-                        return math.log((R/S)+1e-12) / math.log(len(x)+1e-12)
+                        vals = x.values
+                        if len(vals) < 2:
+                            return np.nan
+                        vals = vals - vals.mean()
+                        z = np.cumsum(vals)
+                        R = z.max() - z.min()
+                        S = vals.std() + 1e-12
+                        return math.log((R / S) + 1e-12) / math.log(len(vals) + 1e-12)
                     cols[f"hurst_{tf}_{w}"] = roll.apply(_h, raw=False)
-            if not cols: continue
-            feat = pd.DataFrame(cols); feat["ts_utc"] = (tmp.index.view("int64") // 10**6)
-            feat = pd.merge_asof(
-                left=_ensure_dt_index(pd.DataFrame({"ts_utc": base["ts_utc"]})),
-                right=_ensure_dt_index(feat),
-                left_index=True, right_index=True, direction="nearest", tolerance=pd.Timedelta("1min")
-            ).reset_index(drop=True).drop(columns=["ts_utc_y"], errors="ignore").rename(columns={"ts_utc_x":"ts_utc"})
-            frames.append(feat.drop(columns=["ts_utc"], errors="ignore"))
+            if not cols:
+                continue
+            feat = pd.DataFrame(cols)
+            feat["ts_utc"] = (tmp.index.view("int64") // 10**6)
+            right = _ensure_dt_index(feat)
+            try:
+                tol = max(_timeframe_to_timedelta(tf), base_delta)
+            except Exception:
+                tol = base_delta
+            merged = pd.merge_asof(
+                left=base_lookup,
+                right=right,
+                left_index=True,
+                right_index=True,
+                direction="nearest",
+                tolerance=tol
+            )
+            merged = merged.reset_index(drop=True).drop(columns=["ts_utc_y"], errors="ignore").rename(columns={"ts_utc_x": "ts_utc"})
+            frames.append(merged.drop(columns=["ts_utc"], errors="ignore"))
     return pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
 
+
+
 def _build_features(candles: pd.DataFrame, args):
-    H = int(args.horizon); c = candles["close"].astype(float)
+    H = int(args.horizon)
+    if H <= 0:
+        raise ValueError("horizon deve essere > 0")
+    c = pd.to_numeric(candles["close"], errors="coerce").astype(float)
+    if len(c) <= H:
+        raise ValueError(f"Non abbastanza barre ({len(c)}) per orizzonte {H}")
     y = (c.shift(-H) / c) - 1.0
-    feats = []
-    if args.use_relative_ohlc:     feats.append(_relative_ohlc(candles))
-    if args.use_temporal_features: feats.append(_temporal_feats(candles))
-    indicator_tfs = json.loads(args.indicator_tfs or "{}")
-    ind_cfg = {}
-    if "atr" in indicator_tfs:       ind_cfg["atr"] = {"n": int(args.atr_n)}
-    if "rsi" in indicator_tfs:       ind_cfg["rsi"] = {"n": int(args.rsi_n)}
-    if "bollinger" in indicator_tfs: ind_cfg["bollinger"] = {"n": int(args.bb_n), "dev": 2.0}
-    if "macd" in indicator_tfs:      ind_cfg["macd"] = {"fast": 12, "slow": 26, "signal": 9}
-    if "donchian" in indicator_tfs:  ind_cfg["donchian"] = {"n": 20}
-    if "keltner" in indicator_tfs:   ind_cfg["keltner"] = {"ema": 20, "atr": 10, "mult": 1.5}
-    if "hurst" in indicator_tfs:     ind_cfg["hurst"] = {"window": int(args.hurst_window)}
-    if ind_cfg: feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe))
-    X = pd.concat(feats, axis=1).dropna(); y = y.loc[X.index]
-    if args.warmup_bars > 0 and len(X) > args.warmup_bars:
-        X = X.iloc[args.warmup_bars:]; y = y.iloc[args.warmup_bars:]
+    feats: List[pd.DataFrame] = []
+    if getattr(args, "use_relative_ohlc", True):
+        feats.append(_relative_ohlc(candles))
+    if getattr(args, "use_temporal_features", True):
+        feats.append(_temporal_feats(candles))
+    rv_window = int(getattr(args, "rv_window", 0) or 0)
+    if rv_window > 1:
+        feats.append(_realized_vol_feature(candles, rv_window))
+    indicator_tfs = _coerce_indicator_tfs(getattr(args, "indicator_tfs", {}))
+    ind_cfg: Dict[str, Dict[str, Any]] = {}
+    if "atr" in indicator_tfs:
+        ind_cfg["atr"] = {"n": int(args.atr_n)}
+    if "rsi" in indicator_tfs:
+        ind_cfg["rsi"] = {"n": int(args.rsi_n)}
+    if "bollinger" in indicator_tfs:
+        ind_cfg["bollinger"] = {"n": int(args.bb_n), "dev": 2.0}
+    if "macd" in indicator_tfs:
+        ind_cfg["macd"] = {"fast": 12, "slow": 26, "signal": 9}
+    if "donchian" in indicator_tfs:
+        ind_cfg["donchian"] = {"n": 20}
+    if "keltner" in indicator_tfs:
+        ind_cfg["keltner"] = {"ema": 20, "atr": 10, "mult": 1.5}
+    if "hurst" in indicator_tfs:
+        ind_cfg["hurst"] = {"window": int(args.hurst_window)}
+    if ind_cfg:
+        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe))
+    if not feats:
+        raise RuntimeError("Nessuna feature disponibile per il training")
+    X = pd.concat(feats, axis=1)
+    X = X.replace([np.inf, -np.inf], np.nan).dropna()
+    y = y.loc[X.index].dropna()
+    # riallinea X e y su indice comune dopo dropna
+    common_idx = X.index.intersection(y.index)
+    X = X.loc[common_idx]
+    y = y.loc[common_idx]
+    if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
+        X = X.iloc[int(args.warmup_bars):]
+        y = y.iloc[int(args.warmup_bars):]
+    if X.empty or y.empty:
+        raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
     return X, y, {"features": list(X.columns), "indicator_tfs": indicator_tfs, "args_used": vars(args)}
+
 
 def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
     Xtr, Xva, ytr, yva = train_test_split(X.values, y.values, test_size=val_frac, shuffle=False)

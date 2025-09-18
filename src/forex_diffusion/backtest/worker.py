@@ -7,6 +7,8 @@ import json
 import math
 import statistics as stats
 
+import numpy as np
+import pandas as pd
 from loguru import logger
 
 from .schemas import BacktestConfigPayload
@@ -18,6 +20,22 @@ ETA = 3
 K_MIN = 4
 DELTA = 0.03
 EPS_MEDIAN = 0.0
+
+
+def _realized_volatility_scalar(df: pd.DataFrame, window: int, anchor_ts: Optional[int] = None) -> float:
+    if window <= 1:
+        return float("nan")
+    series = df.copy()
+    if anchor_ts is not None:
+        series = series[series["ts_utc"].astype("int64") <= int(anchor_ts)]
+    closes = pd.to_numeric(series.get("close"), errors="coerce").fillna(method="ffill")
+    if closes.isna().all():
+        return float("nan")
+    log_ret = np.log(closes).diff().dropna()
+    if log_ret.empty:
+        return float("nan")
+    rv = log_ret.pow(2).rolling(window=window, min_periods=2).sum().pow(0.5)
+    return float(rv.iloc[-1]) if not rv.empty else float("nan")
 
 
 @dataclass
@@ -178,7 +196,17 @@ class Worker:
             # per-horizon metrics using naive RW median and ATR bands scaled by sqrt(h)
             import math as _math
             tf = cfg.timeframe
-            base_sigma = atr_sigma_from_df(df, n=14, pre_anchor_only=True, anchor_ts=int(dft["ts_utc"].iloc[0]))
+            params = cfg.extra.get("forecast_params", {}) if isinstance(cfg.extra, dict) else {}
+            atr_window = int(params.get("atr_n", 14))
+            base_sigma = atr_sigma_from_df(df, n=atr_window, pre_anchor_only=True, anchor_ts=int(dft["ts_utc"].iloc[0]))
+            rv_window = int(params.get("rv_window", 0))
+            weight = float(params.get("model_weight_pct", 100)) / 100.0
+            if rv_window > 1:
+                sigma_rv = _realized_volatility_scalar(df, rv_window, anchor_ts=int(dft["ts_utc"].iloc[0]))
+                if not np.isnan(sigma_rv):
+                    base_sigma = float(weight * base_sigma + (1 - weight) * sigma_rv)
+            
+            band_target = 0.90 if params.get("apply_conformal", True) else 0.85
 
             def _sec_to_label(sec: int) -> str:
                 if sec % 3600 == 0:
@@ -213,7 +241,7 @@ class Worker:
                 met = adherence_metrics(
                     fut_ts=fut_ts_list, m=m_list, q05=q05, q95=q95,
                     actual_ts=fut_ts_list, actual_y=y.tolist(),
-                    sigma_vol=sigma_h, band_target=0.90,
+                    sigma_vol=sigma_h, band_target=band_target,
                 )
                 lab = _sec_to_label(int(h_sec))
                 # compute simple per-horizon quantiles of error magnitude |y-m| for diagnostics

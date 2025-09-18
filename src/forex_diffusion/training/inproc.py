@@ -8,6 +8,7 @@ delegated to the application context.
 """
 from __future__ import annotations
 
+import json
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,7 +52,14 @@ def _make_args_from_cfg(cfg: Dict[str, Any]) -> SimpleNamespace:
     a.bb_n = int(cfg.get("bb_n", cfg.get("advanced_params", {}).get("bb_n", 20)))
     a.hurst_window = int(cfg.get("hurst_window", cfg.get("advanced_params", {}).get("hurst_window", 64)))
     a.rv_window = int(cfg.get("rv_window", cfg.get("advanced_params", {}).get("rv_window", 60)))
-    a.indicator_tfs = cfg.get("indicator_tfs", "{}")
+    raw_tfs = cfg.get("indicator_tfs", {})
+    if isinstance(raw_tfs, str):
+        a.indicator_tfs = raw_tfs
+    else:
+        try:
+            a.indicator_tfs = json.dumps(raw_tfs or {})
+        except Exception:
+            a.indicator_tfs = "{}"
     # boolean flags
     a.use_relative_ohlc = bool(cfg.get("use_relative_ohlc", True))
     a.use_temporal_features = bool(cfg.get("use_temporal_features", True))

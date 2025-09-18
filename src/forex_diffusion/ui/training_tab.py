@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QSpinBox, QDoubleSpinBox,
     QLineEdit, QGroupBox, QGridLayout, QMessageBox, QFileDialog, QTextEdit, QProgressBar
 )
 from loguru import logger
@@ -83,7 +83,7 @@ class TrainingTab(QWidget):
 
         lbl_m = QLabel("Model:"); lbl_m.setToolTip("Tipo di modello supervisato da addestrare.")
         top.addWidget(lbl_m)
-        self.model_combo = QComboBox(); self.model_combo.addItems(["ridge","lasso","elasticnet","rf"])
+        self.model_combo = QComboBox(); self.model_combo.addItems(["ridge","lasso","elasticnet","rf","lightning"])
         self.model_combo.setToolTip("Scegli l'algoritmo di base (regressione lineare regolarizzata o Random Forest).")
         top.addWidget(self.model_combo)
 
@@ -155,7 +155,16 @@ class TrainingTab(QWidget):
         adv.addWidget(lbl_hu); self.hurst_w = QSpinBox(); self.hurst_w.setRange(8, 4096); self.hurst_w.setValue(64); self.hurst_w.setToolTip("Lunghezza finestra per stimare 'H'."); adv.addWidget(self.hurst_w)
         lbl_rv = QLabel("rv_window"); lbl_rv.setToolTip("Finestra per stima di volatilità/standardizzazione.")
         adv.addWidget(lbl_rv); self.rv_w = QSpinBox(); self.rv_w.setRange(1, 10000); self.rv_w.setValue(60); self.rv_w.setToolTip("Barre usate per normalizzare/standardizzare le feature."); adv.addWidget(self.rv_w)
+        lbl_epochs = QLabel("epochs"); lbl_epochs.setToolTip("Epoche per il trainer Lightning.")
+        adv.addWidget(lbl_epochs); self.light_epochs = QSpinBox(); self.light_epochs.setRange(1, 1000); self.light_epochs.setValue(30); self.light_epochs.setToolTip("Numero di epoche usate dal trainer Lightning."); adv.addWidget(self.light_epochs)
+        lbl_batch = QLabel("batch"); lbl_batch.setToolTip("Batch size per il trainer Lightning.")
+        adv.addWidget(lbl_batch); self.light_batch = QSpinBox(); self.light_batch.setRange(4, 512); self.light_batch.setValue(64); self.light_batch.setToolTip("Dimensione del batch per il trainer Lightning."); adv.addWidget(self.light_batch)
+        lbl_val = QLabel("val_frac"); lbl_val.setToolTip("Frazione dei dati riservata alla validation per Lightning.")
+        adv.addWidget(lbl_val); self.light_val_frac = QDoubleSpinBox(); self.light_val_frac.setRange(0.05, 0.5); self.light_val_frac.setSingleStep(0.05); self.light_val_frac.setDecimals(2); self.light_val_frac.setValue(0.2); self.light_val_frac.setToolTip("Quota di dati usata per la validation (0.05-0.5)."); adv.addWidget(self.light_val_frac)
+        lbl_patch = QLabel("patch"); lbl_patch.setToolTip("Lunghezza della finestra (patch) per Lightning.")
+        adv.addWidget(lbl_patch); self.patch_len = QSpinBox(); self.patch_len.setRange(16, 1024); self.patch_len.setValue(64); self.patch_len.setToolTip("Numero di barre nel patch passato al modello Lightning."); adv.addWidget(self.patch_len)
         self.layout.addLayout(adv)
+
 
         # Install scroll area into root
         from PySide6.QtWidgets import QScrollArea
@@ -218,33 +227,83 @@ class TrainingTab(QWidget):
                 m[ind.lower()] = tfs
         return m
 
-    def _start_training(self):
-        try:
-            sym = self.symbol_combo.currentText()
-            tf = self.tf_combo.currentText()
-            days = int(self.days_spin.value())
-            horizon = int(self.horizon_spin.value())
-            model = self.model_combo.currentText()
-            encoder = self.encoder_combo.currentText()
-            ind_tfs = self._collect_indicator_tfs()
-            self._persist_indicator_tfs()
+def _start_training(self):
+    try:
+        sym = self.symbol_combo.currentText()
+        tf = self.tf_combo.currentText()
+        days = int(self.days_spin.value())
+        horizon = int(self.horizon_spin.value())
+        model = self.model_combo.currentText()
+        encoder = self.encoder_combo.currentText()
+        ind_tfs = self._collect_indicator_tfs()
+        ind_tfs_json = json.dumps(ind_tfs)
+        self._persist_indicator_tfs()
 
-            # Nome “umano” per log
-            tfs_str = "-".join(sorted(set(sum(ind_tfs.values(), [])))) if ind_tfs else "none"
-            name = f"{sym.replace('/','')}_{tf}_d{days}_h{horizon}_{model}_{encoder}_ind{len(ind_tfs)}_{tfs_str}"
+        # Nome “umano” per log
+        tfs_flat = sorted({tf_sel for values in ind_tfs.values() for tf_sel in values})
+        tfs_str = "-".join(tfs_flat) if tfs_flat else "none"
+        name = f"{sym.replace('/','')}_{tf}_d{days}_h{horizon}_{model}_{encoder}_ind{len(ind_tfs)}_{tfs_str}"
 
-            # Artifacts base dir: se l’utente ha messo .../models, passo la parent al trainer
-            out_dir = Path(self.out_dir.text()).resolve()
-            artifacts_dir = out_dir if out_dir.name.lower() != "models" else out_dir.parent
+        out_dir = Path(self.out_dir.text()).resolve()
+        artifacts_dir = out_dir if out_dir.name.lower() != "models" else out_dir.parent
+        root = Path(__file__).resolve().parents[3]
 
-            # Trainer sklearn come modulo
-            root = Path(__file__).resolve().parents[3]
+        strategy = self.opt_combo.currentText()
+        if strategy != "none" and model != "lightning":
+            self._append_log(f"[warn] Optimization '{strategy}' non implementata nel trainer sklearn; eseguo una singola fit.")
+
+        from datetime import datetime, timezone
+
+        if model == "lightning":
+            module = "src.forex_diffusion.training.train"
+            args = [
+                sys.executable, "-m", module,
+                "--symbol", sym,
+                "--timeframe", tf,
+                "--horizon", str(horizon),
+                "--days_history", str(days),
+                "--patch_len", str(int(self.patch_len.value())),
+                "--epochs", str(int(self.light_epochs.value())),
+                "--batch_size", str(int(self.light_batch.value())),
+                "--val_frac", f"{self.light_val_frac.value():.2f}",
+                "--artifacts_dir", str(artifacts_dir),
+                "--indicator_tfs", ind_tfs_json,
+                "--warmup_bars", str(int(self.warmup.value())),
+                "--atr_n", str(int(self.atr_n.value())),
+                "--rsi_n", str(int(self.rsi_n.value())),
+                "--bb_n", str(int(self.bb_n.value())),
+                "--hurst_window", str(int(self.hurst_w.value())),
+                "--rv_window", str(int(self.rv_w.value())),
+            ]
+            meta = {
+                "symbol": sym,
+                "base_timeframe": tf,
+                "days_history": int(days),
+                "horizon_bars": int(horizon),
+                "trainer": "lightning",
+                "lightning_params": {
+                    "epochs": int(self.light_epochs.value()),
+                    "batch_size": int(self.light_batch.value()),
+                    "val_frac": float(self.light_val_frac.value()),
+                    "patch_len": int(self.patch_len.value()),
+                },
+                "indicator_tfs": ind_tfs,
+                "advanced_params": {
+                    "warmup_bars": int(self.warmup.value()),
+                    "atr_n": int(self.atr_n.value()),
+                    "rsi_n": int(self.rsi_n.value()),
+                    "bb_n": int(self.bb_n.value()),
+                    "hurst_window": int(self.hurst_w.value()),
+                    "rv_window": int(self.rv_w.value()),
+                },
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "ui_run_name": name,
+            }
+            pending_dir = artifacts_dir / "lightning"
+        else:
             module = "src.forex_diffusion.training.train_sklearn"
-
-            # Mappatura UI → CLI (RF non supportato nel trainer sklearn base: ricadiamo su ridge)
-            algo = "ridge" if model == "rf" else model
-            pca = "0" if encoder != "pca" else "16"  # esempio: 16 componenti se l'utente seleziona PCA
-
+            algo = model if model != "latents" else "ridge"
+            pca = "0" if encoder != "pca" else "16"
             args = [
                 sys.executable, "-m", module,
                 "--symbol", sym,
@@ -257,50 +316,49 @@ class TrainingTab(QWidget):
                 "--val_frac", "0.2",
                 "--alpha", "0.001",
                 "--l1_ratio", "0.5",
+                "--days_history", str(days),
+                "--indicator_tfs", ind_tfs_json,
+                "--atr_n", str(int(self.atr_n.value())),
+                "--rsi_n", str(int(self.rsi_n.value())),
+                "--bb_n", str(int(self.bb_n.value())),
+                "--hurst_window", str(int(self.hurst_w.value())),
+                "--rv_window", str(int(self.rv_w.value())),
+                "--random_state", "0",
+                "--n_estimators", "400",
             ]
+            meta = {
+                "symbol": sym,
+                "base_timeframe": tf,
+                "days_history": int(days),
+                "horizon_bars": int(horizon),
+                "model_type": model,
+                "encoder": encoder,
+                "indicator_tfs": ind_tfs,
+                "advanced_params": {
+                    "warmup_bars": int(self.warmup.value()),
+                    "atr_n": int(self.atr_n.value()),
+                    "rsi_n": int(self.rsi_n.value()),
+                    "bb_n": int(self.bb_n.value()),
+                    "hurst_window": int(self.hurst_w.value()),
+                    "rv_window": int(self.rv_w.value()),
+                },
+                "optimization": strategy,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "ui_run_name": name,
+            }
+            pending_dir = artifacts_dir / "models"
 
-            # Nota su ottimizzazione: non implementata nel trainer sklearn
-            strategy = self.opt_combo.currentText()
-            if strategy != "none":
-                self._append_log(f"[warn] Optimization '{strategy}' non implementata nel trainer sklearn; eseguo una singola fit.")
+        self._pending_meta = meta
+        self._pending_out_dir = pending_dir
+        self._append_log(f"[meta] prepared: {meta}")
 
-            # Meta sidecar per l’ultimo file creato (<artifacts_dir>/models)
-            try:
-                from datetime import datetime, timezone
-                meta = {
-                    "symbol": sym,
-                    "base_timeframe": tf,
-                    "days_history": int(days),
-                    "horizon_bars": int(horizon),
-                    "model_type": model,
-                    "encoder": encoder,
-                    "indicator_tfs": ind_tfs,
-                    "advanced_params": {
-                        "warmup_bars": int(self.warmup.value()),
-                        "atr_n": int(self.atr_n.value()),
-                        "rsi_n": int(self.rsi_n.value()),
-                        "bb_n": int(self.bb_n.value()),
-                        "hurst_window": int(self.hurst_w.value()),
-                        "rv_window": int(self.rv_w.value()),
-                    },
-                    "optimization": strategy,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "ui_run_name": name,
-                }
-                self._pending_meta = meta
-                self._pending_out_dir = artifacts_dir / "models"
-                self._append_log(f"[meta] prepared: {meta}")
-            except Exception:
-                self._pending_meta = None
-                self._pending_out_dir = None
-
-            # Avvio async
-            self.progress.setRange(0, 100); self.progress.setValue(0)
-            self.controller.start_training(args, cwd=str(root))
-            self._append_log(f"[start] {' '.join(args)}")
-        except Exception as e:
-            logger.exception("Start training error: {}", e)
-            QMessageBox.warning(self, "Training", str(e))
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.controller.start_training(args, cwd=str(root))
+        self._append_log(f"[start] {' '.join(args)}")
+    except Exception as e:
+        logger.exception("Start training error: {}", e)
+        QMessageBox.warning(self, "Training", str(e))
 
     def _append_log(self, line: str):
         try:

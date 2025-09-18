@@ -493,6 +493,7 @@ def setup_ui(
                         from ..backtest.worker import TrialConfig
                         from ..backtest.db import BacktestDB
                         from ..backtest.queue import BacktestQueue
+                        from ..backtest.config_builder import build_param_grid, expand_indicator_timeframes
                     except Exception as _e:
                         raise RuntimeError(f"Local backtest unavailable: {_e}")
 
@@ -504,21 +505,35 @@ def setup_ui(
                     models = list((_payload or {}).get("models") or ["baseline_rw"])
                     ptypes = list((_payload or {}).get("prediction_types") or ["basic"]) 
                     # assemble configs
-                    cfgs = []
+                    cfgs: List[TrialConfig] = []
+                    indicator_selection = (_payload or {}).get("indicator_selection") or {}
+                    indicator_variants = expand_indicator_timeframes(indicator_selection)
+                    numeric_ranges_raw = (_payload or {}).get("forecast_numeric_ranges") or {}
+                    numeric_ranges = {k: tuple(int(x) for x in v) for k, v in numeric_ranges_raw.items()}
+                    boolean_choices = (_payload or {}).get("forecast_boolean_params") or {}
+                    param_grid = build_param_grid(numeric_ranges, boolean_choices) or [{}]
+                    if not indicator_variants:
+                        indicator_variants = [{}]
+                    total_configs = len(models) * len(ptypes) * len(indicator_variants) * len(param_grid)
+                    if total_configs > 250:
+                        logger.warning("Backtesting: %s configurazioni generate; valuta di restringere gli intervalli.", total_configs)
                     for model_name in models:
                         for ptype in ptypes:
-                            tc = TrialConfig(
-                                model_name=model_name,
-                                prediction_type=ptype,
-                                timeframe=str((_payload or {}).get("timeframe") or "1m"),
-                                horizons_sec=horizons_sec,
-                                samples_range=tuple((_payload or {}).get("samples_range") or (200, 1000)),
-                                indicators=dict(((_payload or {}).get("indicators") or {})),
-                                interval=dict(((_payload or {}).get("interval") or {})),
-                                data_version=int((_payload or {}).get("data_version") or 1),
-                                symbol=str((_payload or {}).get("symbol") or "EUR/USD"),
-                            )
-                            cfgs.append(tc)
+                            for ind_variant in indicator_variants:
+                                for params in param_grid:
+                                    tc = TrialConfig(
+                                        model_name=model_name,
+                                        prediction_type=ptype,
+                                        timeframe=str((_payload or {}).get("timeframe") or "1m"),
+                                        horizons_sec=horizons_sec,
+                                        samples_range=tuple((_payload or {}).get("samples_range") or (200, 1000, 200)),
+                                        indicators=ind_variant,
+                                        interval=dict(((_payload or {}).get("interval") or {})),
+                                        data_version=int((_payload or {}).get("data_version") or 1),
+                                        symbol=str((_payload or {}).get("symbol") or "EUR/USD"),
+                                        extra={"forecast_params": params, "indicator_variant": ind_variant},
+                                    )
+                                    cfgs.append(tc)
                     # DB ops
                     btdb = BacktestDB()
                     job_id = int((_payload or {}).get("job_id") or 0) or btdb.create_job(status="pending")
