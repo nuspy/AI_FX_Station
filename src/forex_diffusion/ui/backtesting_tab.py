@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Tuple
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QCheckBox,
-    QComboBox, QSpinBox, QTableWidget, QTableWidgetItem, QGroupBox, QFileDialog, QGridLayout
+    QComboBox, QSpinBox, QTableWidget, QTableWidgetItem, QGroupBox, QFileDialog, QGridLayout,
+    QScrollArea
 )
 
 from .prediction_settings_dialog import PredictionSettingsDialog
@@ -66,7 +67,10 @@ class BacktestingTab(QWidget):
             self._poll_timer = None
 
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        # Scrollable content root
+        root = QVBoxLayout(self)
+        content = QWidget()
+        lay = QVBoxLayout(content)
 
         # Prediction types
         grp_types = QGroupBox("Tipo di previsione")
@@ -90,41 +94,106 @@ class BacktestingTab(QWidget):
         lh.addLayout(row1)
         lay.addWidget(grp_h)
 
-        # Indicator selection grid
-        ind_group = QGroupBox("Indicatori tecnici per timeframe")
-        ind_group.setToolTip("Seleziona gli indicatori tecnici da utilizzare durante i backtest e i timeframe associati.")
+        # Indicator selection grid with per-indicator params
+        ind_group = QGroupBox("Indicatori tecnici per TimeFrame")
+        ind_group.setToolTip("Indicatori tecnici: parametri (da/a/passo) e attivazione per timeframe.")
         ind_grid = QGridLayout(ind_group)
-        ind_grid.addWidget(QLabel(""), 0, 0)
-        for j, tf in enumerate(TIMEFRAMES, start=1):
+        # headers
+        ind_grid.addWidget(QLabel("Indicatore"), 0, 0)
+        ind_grid.addWidget(QLabel("Parametri (da / a / passo)"), 0, 1)
+        for j, tf in enumerate(TIMEFRAMES, start=2):
             ind_grid.addWidget(QLabel(tf), 0, j)
         self.indicator_checks: Dict[str, Dict[str, QCheckBox]] = {}
+        # store per-indicator param editors
+        self.indicator_param_ranges: Dict[str, Dict[str, Tuple[QSpinBox, QSpinBox, QSpinBox]]] = {}
         for i, ind in enumerate(INDICATORS, start=1):
+            # label + default button
             row_box = QHBoxLayout()
             lbl = QLabel(ind)
             btn_default = QPushButton("Default")
             btn_default.setFixedWidth(64)
             btn_default.clicked.connect(lambda _, name=ind: self._reset_indicator_row(name))
-            row_box.addWidget(lbl); row_box.addWidget(btn_default); row_box.addStretch()
-            holder = QWidget(); holder.setLayout(row_box)
-            ind_grid.addWidget(holder, i, 0)
+            wrap0 = QWidget(); _hb = QHBoxLayout(wrap0); _hb.setContentsMargins(0,0,0,0)
+            _hb.addWidget(lbl); _hb.addWidget(btn_default); _hb.addStretch(1)
+            ind_grid.addWidget(wrap0, i, 0)
+
+            # parameter editors per indicator
+            params_wrap = QWidget()
+            params_lay = QHBoxLayout(params_wrap); params_lay.setContentsMargins(0,0,0,0)
+            param_editors: Dict[str, Tuple[QSpinBox, QSpinBox, QSpinBox]] = {}
+            def _mk_triplet(vmin: int, vmax: int, step: int, default: int) -> Tuple[QSpinBox, QSpinBox, QSpinBox]:
+                sp_from = QSpinBox(); sp_from.setRange(vmin, vmax); sp_from.setValue(default)
+                sp_to = QSpinBox(); sp_to.setRange(vmin, vmax); sp_to.setValue(default)
+                sp_step = QSpinBox(); sp_step.setRange(1, max(1, vmax - vmin)); sp_step.setValue(max(1, step))
+                return sp_from, sp_to, sp_step
+            # map indicator -> param keys from NUMERIC_PARAM_BOUNDS
+            if ind == "ATR":
+                vmin, vmax, step, default = NUMERIC_PARAM_BOUNDS["atr_n"]
+                spf, spt, sps = _mk_triplet(vmin, vmax, step, default)
+                params_lay.addWidget(QLabel("n:")); params_lay.addWidget(spf); params_lay.addWidget(spt); params_lay.addWidget(sps)
+                param_editors["atr_n"] = (spf, spt, sps)
+            elif ind == "RSI":
+                vmin, vmax, step, default = NUMERIC_PARAM_BOUNDS["rsi_n"]
+                spf, spt, sps = _mk_triplet(vmin, vmax, step, default)
+                params_lay.addWidget(QLabel("n:")); params_lay.addWidget(spf); params_lay.addWidget(spt); params_lay.addWidget(sps)
+                param_editors["rsi_n"] = (spf, spt, sps)
+            elif ind == "Bollinger":
+                vmin, vmax, step, default = NUMERIC_PARAM_BOUNDS["bb_n"]
+                spf, spt, sps = _mk_triplet(vmin, vmax, step, default)
+                params_lay.addWidget(QLabel("n:")); params_lay.addWidget(spf); params_lay.addWidget(spt); params_lay.addWidget(sps)
+                param_editors["bb_n"] = (spf, spt, sps)
+            elif ind == "MACD":
+                vminf, vmaxf, stepf, deff = NUMERIC_PARAM_BOUNDS["ema_fast"]
+                spff, sptf, spsf = _mk_triplet(vminf, vmaxf, stepf, deff)
+                vmins, vmaxs, steps, defs = NUMERIC_PARAM_BOUNDS["ema_slow"]
+                spfs, spts, spss = _mk_triplet(vmins, vmaxs, steps, defs)
+                params_lay.addWidget(QLabel("fast:")); params_lay.addWidget(spff); params_lay.addWidget(sptf); params_lay.addWidget(spsf)
+                params_lay.addWidget(QLabel("slow:")); params_lay.addWidget(spfs); params_lay.addWidget(spts); params_lay.addWidget(spss)
+                param_editors["ema_fast"] = (spff, sptf, spsf)
+                param_editors["ema_slow"] = (spfs, spts, spss)
+            elif ind == "Donchian":
+                vmin, vmax, step, default = NUMERIC_PARAM_BOUNDS["don_n"]
+                spf, spt, sps = _mk_triplet(vmin, vmax, step, default)
+                params_lay.addWidget(QLabel("n:")); params_lay.addWidget(spf); params_lay.addWidget(spt); params_lay.addWidget(sps)
+                param_editors["don_n"] = (spf, spt, sps)
+            elif ind == "Keltner":
+                vmin, vmax, step, default = NUMERIC_PARAM_BOUNDS["keltner_k"]
+                spf, spt, sps = _mk_triplet(vmin, vmax, step, default)
+                params_lay.addWidget(QLabel("k:")); params_lay.addWidget(spf); params_lay.addWidget(spt); params_lay.addWidget(sps)
+                param_editors["keltner_k"] = (spf, spt, sps)
+            elif ind == "Hurst":
+                vmin, vmax, step, default = NUMERIC_PARAM_BOUNDS["hurst_window"]
+                spf, spt, sps = _mk_triplet(vmin, vmax, step, default)
+                params_lay.addWidget(QLabel("window:")); params_lay.addWidget(spf); params_lay.addWidget(spt); params_lay.addWidget(sps)
+                param_editors["hurst_window"] = (spf, spt, sps)
+            ind_grid.addWidget(params_wrap, i, 1)
+            self.indicator_param_ranges[ind] = param_editors
+
+            # timeframe checkboxes
             self.indicator_checks[ind] = {}
             defaults = DEFAULT_INDICATOR_TFS.get(ind, [])
-            for j, tf in enumerate(TIMEFRAMES, start=1):
+            for j, tf in enumerate(TIMEFRAMES, start=2):
                 cb = QCheckBox()
                 cb.setChecked(tf in defaults)
                 self.indicator_checks[ind][tf] = cb
                 ind_grid.addWidget(cb, i, j)
         lay.addWidget(ind_group)
 
-        # Forecast parameter ranges
-        params_group = QGroupBox("Parametri forecast (range da / a / passo)")
+        # Forecast parameter ranges (non-indicator)
+        params_group = QGroupBox("Forecast: Parametri (range da / a / passo)")
         params_layout = QGridLayout(params_group)
         params_layout.addWidget(QLabel("Parametro"), 0, 0)
         params_layout.addWidget(QLabel("Da"), 0, 1)
         params_layout.addWidget(QLabel("A"), 0, 2)
         params_layout.addWidget(QLabel("Passo"), 0, 3)
         self.range_fields: Dict[str, Tuple[QSpinBox, QSpinBox, QSpinBox]] = {}
-        for row_idx, (param, (vmin, vmax, step, default)) in enumerate(NUMERIC_PARAM_BOUNDS.items(), start=1):
+        # omit indicator-specific keys (handled in indicator grid)
+        skip_keys = {"atr_n","rsi_n","bb_n","ema_fast","ema_slow","don_n","hurst_window","keltner_k"}
+        r = 1
+        for param, (vmin, vmax, step, default) in NUMERIC_PARAM_BOUNDS.items():
+            if param in skip_keys:
+                continue
+            row_idx = r; r += 1
             lbl = QLabel(param)
             sp_from = QSpinBox(); sp_from.setRange(vmin, vmax); sp_from.setValue(default)
             sp_to = QSpinBox(); sp_to.setRange(vmin, vmax); sp_to.setValue(default)
@@ -137,21 +206,40 @@ class BacktestingTab(QWidget):
         lay.addWidget(params_group)
 
         bool_group = QGroupBox("Parametri booleani")
-        bool_layout = QHBoxLayout(bool_group)
+        from PySide6.QtWidgets import QGridLayout as _QGrid
+        bool_layout = _QGrid(bool_group)
         self.boolean_fields: Dict[str, Tuple[QCheckBox, QCheckBox]] = {}
-        for param in BOOLEAN_PARAMS:
-            box = QVBoxLayout()
+        for idx, param in enumerate(BOOLEAN_PARAMS):
             lbl = QLabel(param)
             cb_true = QCheckBox("True"); cb_true.setChecked(True)
             cb_false = QCheckBox("False")
-            box.addWidget(lbl)
-            box.addWidget(cb_true)
-            box.addWidget(cb_false)
-            wrap = QWidget(); wrap.setLayout(box)
-            bool_layout.addWidget(wrap)
+            bool_layout.addWidget(lbl, idx, 0)
+            bool_layout.addWidget(cb_true, idx, 1)
+            bool_layout.addWidget(cb_false, idx, 2)
             self.boolean_fields[param] = (cb_true, cb_false)
-        bool_layout.addStretch(1)
         lay.addWidget(bool_group)
+
+        # Forecast time constraints
+        tf_group = QGroupBox("Vincoli temporali (combina con altri parametri)")
+        tf_layout = QVBoxLayout(tf_group)
+        # Hours of day
+        hours_row = QHBoxLayout(); hours_row.addWidget(QLabel("Ore (0–23):"))
+        self.hour_checks: List[QCheckBox] = []
+        for h in range(24):
+            cb = QCheckBox(str(h)); cb.setChecked(True)
+            self.hour_checks.append(cb); hours_row.addWidget(cb)
+        hours_row.addStretch(1)
+        tf_layout.addLayout(hours_row)
+        # Days of week
+        days_row = QHBoxLayout(); days_row.addWidget(QLabel("Giorni (L–D):"))
+        self.day_checks: List[QCheckBox] = []
+        day_labels = ["L","M","Me","G","V","S","D"]
+        for d in range(7):
+            cb = QCheckBox(day_labels[d]); cb.setChecked(True)
+            self.day_checks.append(cb); days_row.addWidget(cb)
+        days_row.addStretch(1)
+        tf_layout.addLayout(days_row)
+        lay.addWidget(tf_group)
 
 # Models
         grp_m = QGroupBox("Modelli")
@@ -193,7 +281,7 @@ class BacktestingTab(QWidget):
 
         # Results table (expanded) + actions
         self.tbl = QTableWidget(0, 10)
-        self.tbl.setHorizontalHeaderLabels(["ConfigId","Modello","Tipo","TF","Adh_mean","p50","Win@δ","Coverage","BandEff","Score"]) 
+        self.tbl.setHorizontalHeaderLabels(["ConfigId","Modello","Tipo","TF","Adh_mean","p50","Win@Δ","Coverage","BandEff","Score"]) 
         lay.addWidget(self.tbl)
         act_row = QHBoxLayout()
         self.btn_apply_basic = QPushButton("Applica a Basic")
@@ -223,6 +311,10 @@ class BacktestingTab(QWidget):
             self.plot.setBackground('w')
             self.plot.showGrid(x=True, y=True, alpha=0.3)
             try:
+                self.plot.setMinimumHeight(360)
+            except Exception:
+                pass
+            try:
                 self.legend = self.plot.addLegend()
             except Exception:
                 self.legend = None
@@ -239,6 +331,12 @@ class BacktestingTab(QWidget):
         # Status
         self.lbl_status = QLabel("")
         lay.addWidget(self.lbl_status)
+
+        # finalize scroll container
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        root.addWidget(scroll)
 
     def _poll_job_status(self):
         try:
@@ -305,70 +403,83 @@ class BacktestingTab(QWidget):
         if paths:
             self.ed_models.setText(";".join(paths))
 
-def _reset_indicator_row(self, indicator: str) -> None:
-    defaults = DEFAULT_INDICATOR_TFS.get(indicator, [])
-    for tf, cb in self.indicator_checks.get(indicator, {}).items():
-        cb.setChecked(tf in defaults)
+    def _reset_indicator_row(self, indicator: str) -> None:
+        defaults = DEFAULT_INDICATOR_TFS.get(indicator, [])
+        for tf, cb in self.indicator_checks.get(indicator, {}).items():
+            cb.setChecked(tf in defaults)
 
-def _collect_indicator_selection(self) -> Dict[str, List[str]]:
-    selection: Dict[str, List[str]] = {}
-    for ind, mapping in self.indicator_checks.items():
-        chosen = [tf for tf, cb in mapping.items() if cb.isChecked()]
-        if chosen:
-            selection[ind] = chosen
-    return selection
+    def _collect_indicator_selection(self) -> Dict[str, List[str]]:
+        selection: Dict[str, List[str]] = {}
+        for ind, mapping in self.indicator_checks.items():
+            chosen = [tf for tf, cb in mapping.items() if cb.isChecked()]
+            if chosen:
+                selection[ind] = chosen
+        return selection
 
-def _collect_numeric_ranges(self) -> Dict[str, Tuple[int, int, int]]:
-    ranges: Dict[str, Tuple[int, int, int]] = {}
-    for param, (sp_from, sp_to, sp_step) in self.range_fields.items():
-        start = int(sp_from.value())
-        stop = int(sp_to.value())
-        if start > stop:
-            start, stop = stop, start
-        step = max(1, int(sp_step.value()))
-        ranges[param] = (start, stop, step)
-    return ranges
+    def _collect_indicator_param_ranges(self) -> Dict[str, Dict[str, Tuple[int, int, int]]]:
+        out: Dict[str, Dict[str, Tuple[int, int, int]]] = {}
+        for ind, params in self.indicator_param_ranges.items():
+            inner: Dict[str, Tuple[int, int, int]] = {}
+            for pkey, (sp_from, sp_to, sp_step) in params.items():
+                a = int(sp_from.value()); b = int(sp_to.value());
+                if a > b: a, b = b, a
+                s = max(1, int(sp_step.value()))
+                inner[pkey] = (a, b, s)
+            if inner:
+                out[ind] = inner
+        return out
 
-def _collect_boolean_choices(self) -> Dict[str, List[bool]]:
-    choices: Dict[str, List[bool]] = {}
-    for param, (cb_true, cb_false) in self.boolean_fields.items():
-        vals: List[bool] = []
-        if cb_true.isChecked():
-            vals.append(True)
-        if cb_false.isChecked():
-            vals.append(False)
-        choices[param] = vals
-    return choices
+    def _collect_numeric_ranges(self) -> Dict[str, Tuple[int, int, int]]:
+        ranges: Dict[str, Tuple[int, int, int]] = {}
+        for param, (sp_from, sp_to, sp_step) in self.range_fields.items():
+            start = int(sp_from.value())
+            stop = int(sp_to.value())
+            if start > stop:
+                start, stop = stop, start
+            step = max(1, int(sp_step.value()))
+            ranges[param] = (start, stop, step)
+        return ranges
 
-def _load_prediction_defaults(self) -> None:
-    try:
-        settings = PredictionSettingsDialog.get_settings()
-    except Exception:
-        settings = {}
-    if not settings:
-        return
-    ind_settings = settings.get("indicator_tfs", {})
-    for ind, mapping in self.indicator_checks.items():
-        selected = ind_settings.get(ind.lower(), ind_settings.get(ind.upper(), []))
-        selected = [str(tf) for tf in selected]
-        for tf, cb in mapping.items():
-            cb.setChecked(tf in selected)
-    for param, (sp_from, sp_to, sp_step) in self.range_fields.items():
-        value = settings.get(param)
-        if value is None:
-            value = settings.get(param.lower())
-        if isinstance(value, (int, float)):
-            v = int(value)
-            sp_from.setValue(v)
-            sp_to.setValue(v)
-    for param, (cb_true, cb_false) in self.boolean_fields.items():
-        value = settings.get(param)
-        if isinstance(value, bool):
-            cb_true.setChecked(value is True)
-            cb_false.setChecked(value is False)
-        else:
-            cb_true.setChecked(True)
-            cb_false.setChecked(False)
+    def _collect_boolean_choices(self) -> Dict[str, List[bool]]:
+        choices: Dict[str, List[bool]] = {}
+        for param, (cb_true, cb_false) in self.boolean_fields.items():
+            vals: List[bool] = []
+            if cb_true.isChecked():
+                vals.append(True)
+            if cb_false.isChecked():
+                vals.append(False)
+            choices[param] = vals
+        return choices
+
+    def _load_prediction_defaults(self) -> None:
+        try:
+            settings = PredictionSettingsDialog.get_settings()
+        except Exception:
+            settings = {}
+        if not settings:
+            return
+        ind_settings = settings.get("indicator_tfs", {})
+        for ind, mapping in self.indicator_checks.items():
+            selected = ind_settings.get(ind.lower(), ind_settings.get(ind.upper(), []))
+            selected = [str(tf) for tf in selected]
+            for tf, cb in mapping.items():
+                cb.setChecked(tf in selected)
+        for param, (sp_from, sp_to, sp_step) in self.range_fields.items():
+            value = settings.get(param)
+            if value is None:
+                value = settings.get(param.lower())
+            if isinstance(value, (int, float)):
+                v = int(value)
+                sp_from.setValue(v)
+                sp_to.setValue(v)
+        for param, (cb_true, cb_false) in self.boolean_fields.items():
+            value = settings.get(param)
+            if isinstance(value, bool):
+                cb_true.setChecked(value is True)
+                cb_false.setChecked(value is False)
+            else:
+                cb_true.setChecked(True)
+                cb_false.setChecked(False)
 
     def _persist(self):
         s = {
@@ -384,8 +495,11 @@ def _load_prediction_defaults(self) -> None:
             "bt_preset": self.cmb_preset.currentText(),
             "bt_cache": self.chk_cache.isChecked(),
             "bt_indicator_tfs": self._collect_indicator_selection(),
+            "bt_indicator_param_ranges": {ind: {p: [a, b, s] for p, (a, b, s) in ((k, (sp_from.value(), sp_to.value(), max(1, sp_step.value()))) for k, (sp_from, sp_to, sp_step) in params.items())} for ind, params in self.indicator_param_ranges.items()},
             "bt_numeric_ranges": {k: [sp_from.value(), sp_to.value(), max(1, sp_step.value())] for k, (sp_from, sp_to, sp_step) in self.range_fields.items()},
             "bt_boolean_flags": {k: {"true": cb_true.isChecked(), "false": cb_false.isChecked()} for k, (cb_true, cb_false) in self.boolean_fields.items()},
+            "bt_hours": [i for i, cb in enumerate(self.hour_checks) if cb.isChecked()],
+            "bt_days": [i for i, cb in enumerate(self.day_checks) if cb.isChecked()],
         }
         set_setting("backtesting_tab", s)
 
@@ -409,6 +523,15 @@ def _load_prediction_defaults(self) -> None:
                 chosen = [str(tf) for tf in chosen]
                 for tf, cb in mapping.items():
                     cb.setChecked(tf in chosen)
+            # restore indicator param ranges
+            ind_ranges = s.get("bt_indicator_param_ranges", {}) or {}
+            for ind, params in self.indicator_param_ranges.items():
+                saved = ind_ranges.get(ind, {}) or {}
+                for p, (sp_from, sp_to, sp_step) in params.items():
+                    trip = saved.get(p)
+                    if isinstance(trip, (list, tuple)) and len(trip) == 3:
+                        a, b, st = trip
+                        sp_from.setValue(int(a)); sp_to.setValue(int(b)); sp_step.setValue(max(1, int(st)))
             ranges = s.get("bt_numeric_ranges", {}) or {}
             for param, values in ranges.items():
                 sp = self.range_fields.get(param)
@@ -430,6 +553,16 @@ def _load_prediction_defaults(self) -> None:
                 cb_true, cb_false = cb_pair
                 cb_true.setChecked(bool(state.get("true", False)))
                 cb_false.setChecked(bool(state.get("false", False)))
+            # restore time filters
+            try:
+                hours = list(s.get("bt_hours") or [])
+                days = list(s.get("bt_days") or [])
+                for i, cb in enumerate(self.hour_checks):
+                    cb.setChecked(i in hours)
+                for i, cb in enumerate(self.day_checks):
+                    cb.setChecked(i in days)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -483,8 +616,14 @@ def _load_prediction_defaults(self) -> None:
             "interval": {"type": "preset", "preset": self.cmb_preset.currentText(), "walkforward": {"train": "90d", "test": "7d", "step": "7d", "gap": "0d"}},
             "use_cache": self.chk_cache.isChecked(),
             "indicator_selection": self._collect_indicator_selection(),
+            # merge indicator param ranges and generic ranges downstream
+            "indicator_numeric_ranges": self._collect_indicator_param_ranges(),
             "forecast_numeric_ranges": {k: list(v) for k, v in self._collect_numeric_ranges().items()},
             "forecast_boolean_params": {k: v for k, v in self._collect_boolean_choices().items()},
+            "time_filters": {
+                "hours_active": [i for i, cb in enumerate(self.hour_checks) if cb.isChecked()],
+                "days_active": [i for i, cb in enumerate(self.day_checks) if cb.isChecked()],
+            },
         }
         self.startRequested.emit(payload)
 

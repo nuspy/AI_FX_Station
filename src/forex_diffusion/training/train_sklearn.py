@@ -332,18 +332,32 @@ def _build_features(candles: pd.DataFrame, args):
     if not feats:
         raise RuntimeError("Nessuna feature disponibile per il training")
     X = pd.concat(feats, axis=1)
-    X = X.replace([np.inf, -np.inf], np.nan).dropna()
-    y = y.loc[X.index].dropna()
-    # riallinea X e y su indice comune dopo dropna
-    common_idx = X.index.intersection(y.index)
-    X = X.loc[common_idx]
-    y = y.loc[common_idx]
-    if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
-        X = X.iloc[int(args.warmup_bars):]
-        y = y.iloc[int(args.warmup_bars):]
-    if X.empty or y.empty:
-        raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
-    return X, y, {"features": list(X.columns), "indicator_tfs": indicator_tfs, "args_used": vars(args)}
+    X = X.replace([np.inf, -np.inf], np.nan)
+
+    # rimuovi colonne quasi vuote prima di forzare dropna
+    coverage = X.notna().mean()
+    min_cov = float(getattr(args, "min_feature_coverage", 0.15) or 0.0)
+    dropped_feats: List[str] = []
+    if min_cov > 0.0:
+        low_cov = coverage[coverage < min_cov]
+        if not low_cov.empty:
+            dropped_feats = list(low_cov.index)
+            X = X.drop(columns=dropped_feats, errors="ignore")
+            warnings.warn(f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}", RuntimeWarning)
+
+            X = X.dropna()
+            y = y.loc[X.index].dropna()
+            # riallinea X e y su indice comune dopo dropna
+            common_idx = X.index.intersection(y.index)
+            X = X.loc[common_idx]
+            y = y.loc[common_idx]
+            if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
+                X = X.iloc[int(args.warmup_bars):]
+                y = y.iloc[int(args.warmup_bars):]
+            if X.empty or y.empty:
+                raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
+            meta = {"features": list(X.columns), "indicator_tfs": indicator_tfs, "dropped_features": dropped_feats, "args_used": vars(args)}
+            return X, y, meta
 
 
 def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
@@ -378,6 +392,7 @@ def main():
     ap.add_argument("--bb_n", type=int, default=20)
     ap.add_argument("--hurst_window", type=int, default=64)
     ap.add_argument("--rv_window", type=int, default=60)
+    ap.add_argument("--min_feature_coverage", type=float, default=0.15)
     ap.add_argument("--indicator_tfs", type=str, default="{}")
     ap.add_argument("--use_relative_ohlc", action="store_true", default=True)
     ap.add_argument("--use_temporal_features", action="store_true", default=True)

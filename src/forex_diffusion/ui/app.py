@@ -514,26 +514,37 @@ def setup_ui(
                     param_grid = build_param_grid(numeric_ranges, boolean_choices) or [{}]
                     if not indicator_variants:
                         indicator_variants = [{}]
-                    total_configs = len(models) * len(ptypes) * len(indicator_variants) * len(param_grid)
+                    # time filters: build simple variants (none or each single selected hour/day)
+                    tf_cfg = dict(((_payload or {}).get("time_filters") or {}))
+                    hours_sel = list(tf_cfg.get("hours_active") or [])
+                    days_sel = list(tf_cfg.get("days_active") or [])
+                    hour_variants = [None] + [[int(h)] for h in hours_sel]
+                    day_variants = [None] + [[int(d)] for d in days_sel]
+                    total_configs = len(models) * len(ptypes) * len(indicator_variants) * len(param_grid) * max(1, len(hour_variants)) * max(1, len(day_variants))
                     if total_configs > 250:
                         logger.warning("Backtesting: %s configurazioni generate; valuta di restringere gli intervalli.", total_configs)
                     for model_name in models:
                         for ptype in ptypes:
                             for ind_variant in indicator_variants:
                                 for params in param_grid:
-                                    tc = TrialConfig(
-                                        model_name=model_name,
-                                        prediction_type=ptype,
-                                        timeframe=str((_payload or {}).get("timeframe") or "1m"),
-                                        horizons_sec=horizons_sec,
-                                        samples_range=tuple((_payload or {}).get("samples_range") or (200, 1000, 200)),
-                                        indicators=ind_variant,
-                                        interval=dict(((_payload or {}).get("interval") or {})),
-                                        data_version=int((_payload or {}).get("data_version") or 1),
-                                        symbol=str((_payload or {}).get("symbol") or "EUR/USD"),
-                                        extra={"forecast_params": params, "indicator_variant": ind_variant},
-                                    )
-                                    cfgs.append(tc)
+                                    for hv in hour_variants:
+                                        for dv in day_variants:
+                                            extra_tf = {}
+                                            if hv is not None or dv is not None:
+                                                extra_tf = {"hours_active": (hv or []), "days_active": (dv or [])}
+                                            tc = TrialConfig(
+                                                model_name=model_name,
+                                                prediction_type=ptype,
+                                                timeframe=str((_payload or {}).get("timeframe") or "1m"),
+                                                horizons_sec=horizons_sec,
+                                                samples_range=tuple((_payload or {}).get("samples_range") or (200, 1000, 200)),
+                                                indicators=ind_variant,
+                                                interval=dict(((_payload or {}).get("interval") or {})),
+                                                data_version=int((_payload or {}).get("data_version") or 1),
+                                                symbol=str((_payload or {}).get("symbol") or "EUR/USD"),
+                                                extra={"forecast_params": params, "indicator_variant": ind_variant, "time_filters": extra_tf},
+                                            )
+                                            cfgs.append(tc)
                     # DB ops
                     btdb = BacktestDB()
                     job_id = int((_payload or {}).get("job_id") or 0) or btdb.create_job(status="pending")

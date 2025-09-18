@@ -1,0 +1,261 @@
+class BacktestingTab(QWidget):
+    startRequested = Signal(dict)
+    pauseRequested = Signal()
+    stopRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+        self._load_prediction_defaults()
+        self._load_persisted()
+        # track shown results to append only new rows during polling
+        self._shown_config_ids: set[int] = set()
+        self._row_by_config_id: dict[int,int] = {}
+        # local polling timer for job status (DB-only)
+        try:
+            from PySide6.QtCore import QTimer
+            self._poll_timer = QTimer(self)
+            self._poll_timer.setInterval(500)
+            self._poll_timer.timeout.connect(self._poll_job_status)
+        except Exception:
+            self._poll_timer = None
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+
+        # Prediction types
+        grp_types = QGroupBox("Tipo di previsione")
+        lt = QHBoxLayout(grp_types)
+        self.chk_basic = QCheckBox("Basic"); self.chk_basic.setChecked(True)
+        self.chk_adv = QCheckBox("Advanced")
+        self.chk_rw = QCheckBox("Baseline (RW)")
+        lt.addWidget(self.chk_basic); lt.addWidget(self.chk_adv); lt.addWidget(self.chk_rw)
+        lay.addWidget(grp_types)
+
+        # Timeframe + Horizons
+        grp_h = QGroupBox("Indicatori × Timeframe / Orizzonti")
+        lh = QVBoxLayout(grp_h)
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Timeframe"))
+        self.cmb_tf = QComboBox(); self.cmb_tf.addItems(["1m","5m","15m","30m","1h","4h","1d"])
+        row1.addWidget(self.cmb_tf)
+        row1.addWidget(QLabel("Orizzonti"))
+        self.ed_h = QLineEdit("30s, 1m, (5-15)m, 30m, 1h, 2h")
+        row1.addWidget(self.ed_h)
+        lh.addLayout(row1)
+        lay.addWidget(grp_h)
+
+        # Indicator selection grid
+        ind_group = QGroupBox("Indicatori tecnici per timeframe")
+        ind_group.setToolTip("Seleziona gli indicatori tecnici da utilizzare durante i backtest e i timeframe associati.")
+        ind_grid = QGridLayout(ind_group)
+        ind_grid.addWidget(QLabel(""), 0, 0)
+        for j, tf in enumerate(TIMEFRAMES, start=1):
+            ind_grid.addWidget(QLabel(tf), 0, j)
+        self.indicator_checks: Dict[str, Dict[str, QCheckBox]] = {}
+        for i, ind in enumerate(INDICATORS, start=1):
+            row_box = QHBoxLayout()
+            lbl = QLabel(ind)
+            btn_default = QPushButton("Default")
+            btn_default.setFixedWidth(64)
+            btn_default.clicked.connect(lambda _, name=ind: self._reset_indicator_row(name))
+            row_box.addWidget(lbl); row_box.addWidget(btn_default); row_box.addStretch()
+            holder = QWidget(); holder.setLayout(row_box)
+            ind_grid.addWidget(holder, i, 0)
+            self.indicator_checks[ind] = {}
+            defaults = DEFAULT_INDICATOR_TFS.get(ind, [])
+            for j, tf in enumerate(TIMEFRAMES, start=1):
+                cb = QCheckBox()
+                cb.setChecked(tf in defaults)
+                self.indicator_checks[ind][tf] = cb
+                ind_grid.addWidget(cb, i, j)
+        lay.addWidget(ind_group)
+
+        # Forecast parameter ranges
+        params_group = QGroupBox("Parametri forecast (range da / a / passo)")
+        params_layout = QGridLayout(params_group)
+        params_layout.addWidget(QLabel("Parametro"), 0, 0)
+        params_layout.addWidget(QLabel("Da"), 0, 1)
+        params_layout.addWidget(QLabel("A"), 0, 2)
+        params_layout.addWidget(QLabel("Passo"), 0, 3)
+        self.range_fields: Dict[str, Tuple[QSpinBox, QSpinBox, QSpinBox]] = {}
+        for row_idx, (param, (vmin, vmax, step, default)) in enumerate(NUMERIC_PARAM_BOUNDS.items(), start=1):
+            lbl = QLabel(param)
+            sp_from = QSpinBox(); sp_from.setRange(vmin, vmax); sp_from.setValue(default)
+            sp_to = QSpinBox(); sp_to.setRange(vmin, vmax); sp_to.setValue(default)
+            sp_step = QSpinBox(); sp_step.setRange(1, max(1, vmax - vmin)); sp_step.setValue(max(1, step))
+            params_layout.addWidget(lbl, row_idx, 0)
+            params_layout.addWidget(sp_from, row_idx, 1)
+            params_layout.addWidget(sp_to, row_idx, 2)
+            params_layout.addWidget(sp_step, row_idx, 3)
+            self.range_fields[param] = (sp_from, sp_to, sp_step)
+        lay.addWidget(params_group)
+
+        bool_group = QGroupBox("Parametri booleani")
+        bool_layout = QHBoxLayout(bool_group)
+        self.boolean_fields: Dict[str, Tuple[QCheckBox, QCheckBox]] = {}
+        for param in BOOLEAN_PARAMS:
+            box = QVBoxLayout()
+            lbl = QLabel(param)
+            cb_true = QCheckBox("True"); cb_true.setChecked(True)
+            cb_false = QCheckBox("False")
+            box.addWidget(lbl)
+            box.addWidget(cb_true)
+            box.addWidget(cb_false)
+            wrap = QWidget(); wrap.setLayout(box)
+            bool_layout.addWidget(wrap)
+            self.boolean_fields[param] = (cb_true, cb_false)
+        bool_layout.addStretch(1)
+        lay.addWidget(bool_group)
+
+# Models
+        grp_m = QGroupBox("Modelli")
+        lm = QHBoxLayout(grp_m)
+        self.ed_models = QLineEdit("")
+        btn_browse = QPushButton("Sfoglia Modelli")
+        btn_browse.clicked.connect(self._browse_models)
+        lm.addWidget(self.ed_models); lm.addWidget(btn_browse)
+        lay.addWidget(grp_m)
+
+        # Samples
+        grp_s = QGroupBox("Samples (Da/A/Passo)")
+        ls = QHBoxLayout(grp_s)
+        self.sp_s = QSpinBox(); self.sp_s.setRange(1, 100000); self.sp_s.setValue(200)
+        self.sp_e = QSpinBox(); self.sp_e.setRange(1, 100000); self.sp_e.setValue(1500)
+        self.sp_p = QSpinBox(); self.sp_p.setRange(1, 10000); self.sp_p.setValue(200)
+        ls.addWidget(QLabel("Da")); ls.addWidget(self.sp_s)
+        ls.addWidget(QLabel("A")); ls.addWidget(self.sp_e)
+        ls.addWidget(QLabel("Passo")); ls.addWidget(self.sp_p)
+        lay.addWidget(grp_s)
+
+        # Interval presets
+        grp_i = QGroupBox("Intervallo")
+        li = QHBoxLayout(grp_i)
+        self.cmb_preset = QComboBox(); self.cmb_preset.addItems(["7d","30d","90d","180d","YTD","1Y","3Y"]) 
+        li.addWidget(QLabel("Preset")); li.addWidget(self.cmb_preset)
+        lay.addWidget(grp_i)
+
+        # Exec
+        row_exec = QHBoxLayout()
+        self.chk_cache = QCheckBox("Evita ricalcoli (cache DB)"); self.chk_cache.setChecked(True)
+        self.btn_start = QPushButton("Avvia"); self.btn_pause = QPushButton("Pausa"); self.btn_stop = QPushButton("Ferma")
+        self.btn_start.clicked.connect(self._on_start)
+        self.btn_pause.clicked.connect(self.pauseRequested.emit)
+        self.btn_stop.clicked.connect(self.stopRequested.emit)
+        row_exec.addWidget(self.chk_cache); row_exec.addStretch(1)
+        row_exec.addWidget(self.btn_start); row_exec.addWidget(self.btn_pause); row_exec.addWidget(self.btn_stop)
+        lay.addLayout(row_exec)
+
+        # Results table (expanded) + actions
+        self.tbl = QTableWidget(0, 10)
+        self.tbl.setHorizontalHeaderLabels(["ConfigId","Modello","Tipo","TF","Adh_mean","p50","Win@δ","Coverage","BandEff","Score"]) 
+        lay.addWidget(self.tbl)
+        act_row = QHBoxLayout()
+        self.btn_apply_basic = QPushButton("Applica a Basic")
+        self.btn_apply_adv = QPushButton("Applica a Advanced")
+        self.btn_pause_job = QPushButton("Pausa Job")
+        self.btn_cancel_job = QPushButton("Cancella Job")
+        self.btn_resume_job = QPushButton("Resume Job")
+        self.btn_cancel_config = QPushButton("Cancel Config")
+        self.btn_apply_basic.clicked.connect(lambda: self._apply_selected("Basic"))
+        self.btn_apply_adv.clicked.connect(lambda: self._apply_selected("Advanced"))
+        self.btn_pause_job.clicked.connect(self._pause_job)
+        self.btn_cancel_job.clicked.connect(self._cancel_job)
+        self.btn_resume_job.clicked.connect(self._resume_job)
+        self.btn_cancel_config.clicked.connect(self._cancel_selected_config)
+        act_row.addWidget(self.btn_apply_basic)
+        act_row.addWidget(self.btn_apply_adv)
+        act_row.addWidget(self.btn_pause_job)
+        act_row.addWidget(self.btn_cancel_job)
+        act_row.addWidget(self.btn_resume_job)
+        act_row.addWidget(self.btn_cancel_config)
+        lay.addLayout(act_row)
+
+        # Profiles plot (pyqtgraph minimal)
+        try:
+            import pyqtgraph as pg
+            self.plot = pg.PlotWidget()
+            self.plot.setBackground('w')
+            self.plot.showGrid(x=True, y=True, alpha=0.3)
+            try:
+                self.legend = self.plot.addLegend()
+            except Exception:
+                self.legend = None
+            # Save button under plot
+            save_row = QHBoxLayout()
+            self.btn_save_plot = QPushButton("Salva Grafico…")
+            self.btn_save_plot.clicked.connect(self._save_plot)
+            save_row.addWidget(self.btn_save_plot)
+            lay.addLayout(save_row)
+            lay.addWidget(self.plot)
+        except Exception:
+            self.plot = None
+
+        # Status
+        self.lbl_status = QLabel("")
+        lay.addWidget(self.lbl_status)
+
+    def _poll_job_status(self):
+        try:
+            from ..backtest.db import BacktestDB
+            job_id = int(getattr(self, "last_job_id", 0) or 0)
+            if not job_id:
+                return
+            db = BacktestDB()
+            counts = db.job_status_counts(job_id)
+            ncfg = max(1, int(counts.get("n_configs", 0)))
+            prog = float(min(1.0, (counts.get("n_results", 0) + counts.get("n_dropped", 0)) / ncfg)) if ncfg else 0.0
+            try:
+                self.lbl_status.setText(f"Backtesting: in corso ({int(prog*100)}%)")
+            except Exception:
+                pass
+            # append new result rows as they become available
+            try:
+                rows = db.results_for_job(job_id) or []
+                # order by composite_score desc for stable view
+                def _rk(x: dict):
+                    try:
+                        return (float(x.get("composite_score", 0.0) or 0.0), float(x.get("adherence_mean", 0.0) or 0.0))
+                    except Exception:
+                        return (0.0, 0.0)
+                rows = sorted(rows, key=_rk, reverse=True)
+                for r in rows:
+                    try:
+                        cfg_id = int(r.get("config_id") or 0)
+                    except Exception:
+                        cfg_id = 0
+                    if cfg_id <= 0:
+                        continue
+                    if cfg_id in self._row_by_config_id:
+                        # update in-place
+                        self._update_row_metrics(self._row_by_config_id[cfg_id], r)
+                    else:
+                        # create new row
+                        p = r.get("payload_json") or {}
+                        model = (p.get("model") or p.get("model_name") or "?")
+                        ptype = p.get("ptype") or p.get("prediction_type") or "?"
+                        tf = p.get("timeframe") or "?"
+                        self.add_result_row(
+                            model, ptype, tf,
+                            float(r.get("adherence_mean") or 0.0),
+                            float(r.get("p50") or 0.0),
+                            float(r.get("win_rate_delta") or 0.0),
+                            r.get("coverage_observed"), r.get("band_efficiency"), r.get("composite_score"),
+                            cfg_id
+                        )
+            except Exception:
+                pass
+            if counts.get("n_results", 0) >= counts.get("n_configs", 0) and counts.get("n_configs", 0) > 0:
+                if self._poll_timer is not None:
+                    self._poll_timer.stop()
+                try:
+                    self.lbl_status.setText("Backtesting: completato")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _browse_models(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Seleziona modelli", filter="Pickle/All (*.*)")
+        if paths:
+            self.ed_models.setText(";".join(paths))

@@ -190,6 +190,21 @@ class Worker:
             df = df.sort_values("ts_utc").reset_index(drop=True)
             # Build realized y on test slice and predictions via asof align (real per-slice would use model outputs)
             mask = (df["ts_utc"].astype("int64") >= int(slice_def.get("test_start_ms", 0))) & (df["ts_utc"].astype("int64") <= int(slice_def.get("test_end_ms", 2**63-1)))
+            # Apply optional time filters (hours/days) from cfg.extra.time_filters
+            try:
+                tf_cfg = (cfg.extra or {}).get("time_filters") or {}
+                hours = list(tf_cfg.get("hours_active") or [])
+                days = list(tf_cfg.get("days_active") or [])
+                if hours or days:
+                    dtmp = df.copy()
+                    dtmp["_dt"] = _pd.to_datetime(_pd.to_numeric(dtmp["ts_utc"], errors="coerce").astype("int64"), unit="ms", utc=True)
+                    if hours:
+                        mask = mask & dtmp["_dt"].dt.hour.isin([int(h) for h in hours])
+                    if days:
+                        # Monday=0 .. Sunday=6
+                        mask = mask & dtmp["_dt"].dt.weekday.isin([int(d) for d in days])
+            except Exception:
+                pass
             dft = df.loc[mask].reset_index(drop=True)
             if dft.empty:
                 return {"adherence": 0.0, "n_points": 0}
@@ -197,16 +212,22 @@ class Worker:
             import math as _math
             tf = cfg.timeframe
             params = cfg.extra.get("forecast_params", {}) if isinstance(cfg.extra, dict) else {}
-            atr_window = int(params.get("atr_n", 14))
+            # prefer indicator-qualified keys if present
+            def _pget(keys, default=None):
+                for k in keys:
+                    if k in params and params.get(k) is not None:
+                        return params.get(k)
+                return default
+            atr_window = int(_pget(["ATR.atr_n", "atr_n"], 14))
             base_sigma = atr_sigma_from_df(df, n=atr_window, pre_anchor_only=True, anchor_ts=int(dft["ts_utc"].iloc[0]))
-            rv_window = int(params.get("rv_window", 0))
-            weight = float(params.get("model_weight_pct", 100)) / 100.0
+            rv_window = int(_pget(["rv_window"], 0))
+            weight = float(_pget(["model_weight_pct"], 100)) / 100.0
             if rv_window > 1:
                 sigma_rv = _realized_volatility_scalar(df, rv_window, anchor_ts=int(dft["ts_utc"].iloc[0]))
                 if not np.isnan(sigma_rv):
                     base_sigma = float(weight * base_sigma + (1 - weight) * sigma_rv)
             
-            band_target = 0.90 if params.get("apply_conformal", True) else 0.85
+            band_target = 0.90 if bool(_pget(["apply_conformal"], True)) else 0.85
 
             def _sec_to_label(sec: int) -> str:
                 if sec % 3600 == 0:

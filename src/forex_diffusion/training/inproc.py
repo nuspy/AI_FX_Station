@@ -52,6 +52,7 @@ def _make_args_from_cfg(cfg: Dict[str, Any]) -> SimpleNamespace:
     a.bb_n = int(cfg.get("bb_n", cfg.get("advanced_params", {}).get("bb_n", 20)))
     a.hurst_window = int(cfg.get("hurst_window", cfg.get("advanced_params", {}).get("hurst_window", 64)))
     a.rv_window = int(cfg.get("rv_window", cfg.get("advanced_params", {}).get("rv_window", 60)))
+    a.min_feature_coverage = float(cfg.get("min_feature_coverage", cfg.get("advanced_params", {}).get("min_feature_coverage", 0.15)))
     raw_tfs = cfg.get("indicator_tfs", {})
     if isinstance(raw_tfs, str):
         a.indicator_tfs = raw_tfs
