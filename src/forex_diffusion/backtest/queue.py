@@ -45,9 +45,13 @@ class BacktestQueue:
                 self.db.set_job_status(job_id, "running")
                 # Build TrialConfig list from stored bt_config rows
                 cfg_rows = self.db.configs_for_job(job_id)
+                logger.debug("bt_queue: job {} picked with {} configs", job_id, len(cfg_rows))
                 configs: List[TrialConfig] = []
                 for row in cfg_rows:
                     payload = row.get("payload_json") or {}
+                    logger.debug("bt_queue: cfg id={} model={} ptype={} tf={} horizs={} samples={}",
+                                 int(row.get("id")), payload.get("model"), payload.get("ptype"), payload.get("timeframe"),
+                                 (payload.get("horizons_sec") or []), (payload.get("samples_range") or []))
                     configs.append(TrialConfig(
                         model_name=str(payload.get("model", "baseline_rw")),
                         prediction_type=str(payload.get("ptype", "Baseline")),
@@ -57,6 +61,7 @@ class BacktestQueue:
                         indicators=dict(payload.get("indicators", {})),
                         interval=dict(payload.get("interval", {})),
                         data_version=payload.get("data_version"),
+                        symbol=str(payload.get("symbol") or "EUR/USD"),
                         extra=dict(payload.get("extra", {})),
                     ))
                 if configs:
@@ -66,8 +71,19 @@ class BacktestQueue:
                         # not strictly needed here; worker reads directly from DB
                     except Exception:
                         pass
+                    logger.debug("bt_queue: starting worker for job {}", job_id)
                     self.worker.run_job(job_id=job_id, configs=configs)
-                self.db.set_job_status(job_id, "done")
+                    logger.debug("bt_queue: worker finished for job {}", job_id)
+                # mark done only if all configs have a result or dropped
+                try:
+                    counts = self.db.job_status_counts(job_id)
+                    if counts.get("n_configs", 0) > 0 and (counts.get("n_results", 0) + counts.get("n_dropped", 0)) >= counts.get("n_configs", 0):
+                        self.db.set_job_status(job_id, "done")
+                    else:
+                        # keep running status; next poll will continue
+                        pass
+                except Exception:
+                    self.db.set_job_status(job_id, "done")
             except Exception as e:
                 logger.exception("BacktestQueue error: {}", e)
                 time.sleep(self.poll_interval)

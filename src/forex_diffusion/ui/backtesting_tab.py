@@ -20,6 +20,17 @@ class BacktestingTab(QWidget):
         super().__init__(parent)
         self._build_ui()
         self._load_persisted()
+        # track shown results to append only new rows during polling
+        self._shown_config_ids: set[int] = set()
+        self._row_by_config_id: dict[int,int] = {}
+        # local polling timer for job status (DB-only)
+        try:
+            from PySide6.QtCore import QTimer
+            self._poll_timer = QTimer(self)
+            self._poll_timer.setInterval(500)
+            self._poll_timer.timeout.connect(self._poll_job_status)
+        except Exception:
+            self._poll_timer = None
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -133,6 +144,66 @@ class BacktestingTab(QWidget):
         self.lbl_status = QLabel("")
         lay.addWidget(self.lbl_status)
 
+    def _poll_job_status(self):
+        try:
+            from ..backtest.db import BacktestDB
+            job_id = int(getattr(self, "last_job_id", 0) or 0)
+            if not job_id:
+                return
+            db = BacktestDB()
+            counts = db.job_status_counts(job_id)
+            ncfg = max(1, int(counts.get("n_configs", 0)))
+            prog = float(min(1.0, (counts.get("n_results", 0) + counts.get("n_dropped", 0)) / ncfg)) if ncfg else 0.0
+            try:
+                self.lbl_status.setText(f"Backtesting: in corso ({int(prog*100)}%)")
+            except Exception:
+                pass
+            # append new result rows as they become available
+            try:
+                rows = db.results_for_job(job_id) or []
+                # order by composite_score desc for stable view
+                def _rk(x: dict):
+                    try:
+                        return (float(x.get("composite_score", 0.0) or 0.0), float(x.get("adherence_mean", 0.0) or 0.0))
+                    except Exception:
+                        return (0.0, 0.0)
+                rows = sorted(rows, key=_rk, reverse=True)
+                for r in rows:
+                    try:
+                        cfg_id = int(r.get("config_id") or 0)
+                    except Exception:
+                        cfg_id = 0
+                    if cfg_id <= 0:
+                        continue
+                    if cfg_id in self._row_by_config_id:
+                        # update in-place
+                        self._update_row_metrics(self._row_by_config_id[cfg_id], r)
+                    else:
+                        # create new row
+                        p = r.get("payload_json") or {}
+                        model = (p.get("model") or p.get("model_name") or "?")
+                        ptype = p.get("ptype") or p.get("prediction_type") or "?"
+                        tf = p.get("timeframe") or "?"
+                        self.add_result_row(
+                            model, ptype, tf,
+                            float(r.get("adherence_mean") or 0.0),
+                            float(r.get("p50") or 0.0),
+                            float(r.get("win_rate_delta") or 0.0),
+                            r.get("coverage_observed"), r.get("band_efficiency"), r.get("composite_score"),
+                            cfg_id
+                        )
+            except Exception:
+                pass
+            if counts.get("n_results", 0) >= counts.get("n_configs", 0) and counts.get("n_configs", 0) > 0:
+                if self._poll_timer is not None:
+                    self._poll_timer.stop()
+                try:
+                    self.lbl_status.setText("Backtesting: completato")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _browse_models(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "Seleziona modelli", filter="Pickle/All (*.*)")
         if paths:
@@ -184,6 +255,30 @@ class BacktestingTab(QWidget):
         self.tbl.setItem(r, 7, QTableWidgetItem("" if coverage is None else f"{coverage:.2f}"))
         self.tbl.setItem(r, 8, QTableWidgetItem("" if band_eff is None else f"{band_eff:.2f}"))
         self.tbl.setItem(r, 9, QTableWidgetItem("" if score is None else f"{score:.3f}"))
+        try:
+            if config_id is not None and int(config_id) > 0:
+                self._row_by_config_id[int(config_id)] = r
+                self._shown_config_ids.add(int(config_id))
+        except Exception:
+            pass
+
+    def _update_row_metrics(self, row_idx: int, result_row: dict):
+        try:
+            # Update only numeric metrics columns 4..9
+            adh_mean = float(result_row.get("adherence_mean") or 0.0)
+            p50 = float(result_row.get("p50") or 0.0)
+            win = float(result_row.get("win_rate_delta") or 0.0)
+            cov = result_row.get("coverage_observed")
+            be = result_row.get("band_efficiency")
+            score = result_row.get("composite_score")
+            self.tbl.item(row_idx, 4).setText(f"{adh_mean:.3f}")
+            self.tbl.item(row_idx, 5).setText(f"{p50:.3f}")
+            self.tbl.item(row_idx, 6).setText(f"{win:.2f}")
+            self.tbl.item(row_idx, 7).setText("" if cov is None else f"{float(cov):.2f}")
+            self.tbl.item(row_idx, 8).setText("" if be is None else f"{float(be):.2f}")
+            self.tbl.item(row_idx, 9).setText("" if score is None else f"{float(score):.3f}")
+        except Exception:
+            pass
 
     def _on_start(self):
         self._persist()
@@ -214,17 +309,33 @@ class BacktestingTab(QWidget):
         except Exception:
             self.lbl_status.setText("config_id non valido.")
             return
-        # Emit a signal or directly call API here? The app wires startRequested only; use httpx here
+        # DB-only apply: carica payload e scrive prediction_settings.json localmente
         try:
-            import httpx
-            base = getattr(self.parent(), "engine_url", None) or "http://127.0.0.1:8000"
-            job_id = getattr(self, "last_job_id", 0)
-            with httpx.Client(timeout=30.0) as client:
-                r = client.post(f"{base.rstrip('/')}/backtests/{int(job_id)}/apply-config", json={"config_id": cfg_id, "target": target})
-                if r.status_code == 200:
-                    self.lbl_status.setText(f"Applicato preset a {target}.")
-                else:
-                    self.lbl_status.setText(f"Apply-config error: {r.text}")
+            from ..backtest.db import BacktestDB
+            from .prediction_settings_dialog import PredictionSettingsDialog
+            db = BacktestDB()
+            rows = db.results_for_job(int(getattr(self, "last_job_id", 0)))
+            row = next((r for r in rows if int(r.get("config_id")) == int(cfg_id)), None)
+            if not row:
+                self.lbl_status.setText("config non trovata nel job")
+                return
+            payload = row.get("payload_json") or {}
+            mapped = {
+                "horizons": [str(h) for h in (payload.get("horizons_sec") or [])],
+                "indicator_tfs": payload.get("indicators") or {},
+                "forecast_types": [target.lower()],
+                "model_paths": [payload.get("model")] if payload.get("model") else [],
+            }
+            current = PredictionSettingsDialog.get_settings()
+            current.update(mapped)
+            from pathlib import Path
+            import json as _json
+            cfg_file = PredictionSettingsDialog.CONFIG_FILE if hasattr(PredictionSettingsDialog, "CONFIG_FILE") else None
+            if cfg_file is None:
+                cfg_file = Path(__file__).resolve().parents[3] / "configs" / "prediction_settings.json"
+            cfg_file.parent.mkdir(parents=True, exist_ok=True)
+            cfg_file.write_text(_json.dumps(current, indent=4), encoding="utf-8")
+            self.lbl_status.setText(f"Applicato preset a {target}.")
         except Exception as e:
             self.lbl_status.setText(f"Apply-config exception: {e}")
         # After applying, try to load and display profiles
@@ -237,52 +348,49 @@ class BacktestingTab(QWidget):
         if self.plot is None:
             return
         try:
-            import httpx
             import numpy as _np
             import pyqtgraph as pg
-            base = getattr(self.parent(), "engine_url", None) or "http://127.0.0.1:8000"
-            job_id = getattr(self, "last_job_id", 0)
-            with httpx.Client(timeout=15.0) as client:
-                r = client.get(f"{base.rstrip('/')}/backtests/{int(job_id)}/config/{int(config_id)}/profiles")
-                if r.status_code != 200:
-                    return
-                data = r.json()
-                hp = data.get("horizon_profile") or {}
-                # plot adherence mean by horizon label sorted
-                if hp:
-                    labels = sorted(hp.keys(), key=lambda k: k)
-                    mean_vals = [_np.nan if hp[k] is None else float(hp[k].get("mean", 0.0)) for k in labels]
-                    x = list(range(len(labels)))
-                    self.plot.clear()
-                    try:
-                        if hasattr(self, 'legend') and self.legend is not None:
-                            self.legend.clear()
-                    except Exception:
-                        pass
-                    self.plot.plot(x, mean_vals, pen=pg.mkPen('#1f77b4', width=2), name="adh_mean")
-                    # overlay error quantiles if available
-                    try:
-                        q10 = [float(hp[k].get("err_q10", _np.nan)) for k in labels]
-                        q50 = [float(hp[k].get("err_q50", _np.nan)) for k in labels]
-                        q90 = [float(hp[k].get("err_q90", _np.nan)) for k in labels]
-                        self.plot.plot(x, q10, pen=pg.mkPen('#ff7f0e', width=1, style=pg.QtCore.Qt.DashLine), name="err_q10")
-                        self.plot.plot(x, q50, pen=pg.mkPen('#2ca02c', width=1, style=pg.QtCore.Qt.DashLine), name="err_q50")
-                        self.plot.plot(x, q90, pen=pg.mkPen('#d62728', width=1, style=pg.QtCore.Qt.DashLine), name="err_q90")
-                    except Exception:
-                        pass
-                    try:
-                        ax = self.plot.getAxis('bottom')
-                        ax.setTicks([[(i, labels[i]) for i in x]])
-                    except Exception:
-                        pass
-                # optionally overlay time-profile q50 as bar chart
-                tp = data.get("time_profile") or {}
-                if tp:
-                    buckets = sorted(tp.keys(), key=lambda k: k)
-                    q50 = [float(tp[b].get("q50", tp[b].get("mean", 0.0))) for b in buckets]
-                    x2 = list(range(len(buckets)))
-                    bars = pg.BarGraphItem(x=x2, height=q50, width=0.6, brush=pg.mkBrush(200, 120, 50, 120))
-                    self.plot.addItem(bars)
+            from ..backtest.db import BacktestDB
+            db = BacktestDB()
+            r = db.result_for_config(int(config_id))
+            if not r:
+                return
+            hp = r.get("horizon_profile_json") or {}
+            # plot adherence mean by horizon label sorted
+            if hp:
+                labels = sorted(hp.keys(), key=lambda k: k)
+                mean_vals = [_np.nan if hp[k] is None else float(hp[k].get("mean", 0.0)) for k in labels]
+                x = list(range(len(labels)))
+                self.plot.clear()
+                try:
+                    if hasattr(self, 'legend') and self.legend is not None:
+                        self.legend.clear()
+                except Exception:
+                    pass
+                self.plot.plot(x, mean_vals, pen=pg.mkPen('#1f77b4', width=2), name="adh_mean")
+                # overlay error quantiles if available
+                try:
+                    q10 = [float(hp[k].get("err_q10", _np.nan)) for k in labels]
+                    q50 = [float(hp[k].get("err_q50", _np.nan)) for k in labels]
+                    q90 = [float(hp[k].get("err_q90", _np.nan)) for k in labels]
+                    self.plot.plot(x, q10, pen=pg.mkPen('#ff7f0e', width=1, style=pg.QtCore.Qt.DashLine), name="err_q10")
+                    self.plot.plot(x, q50, pen=pg.mkPen('#2ca02c', width=1, style=pg.QtCore.Qt.DashLine), name="err_q50")
+                    self.plot.plot(x, q90, pen=pg.mkPen('#d62728', width=1, style=pg.QtCore.Qt.DashLine), name="err_q90")
+                except Exception:
+                    pass
+                try:
+                    ax = self.plot.getAxis('bottom')
+                    ax.setTicks([[(i, labels[i]) for i in x]])
+                except Exception:
+                    pass
+            # optionally overlay time-profile q50 as bar chart
+            tp = r.get("time_profile_json") or {}
+            if tp:
+                buckets = sorted(tp.keys(), key=lambda k: k)
+                q50 = [float(tp[b].get("q50", tp[b].get("mean", 0.0))) for b in buckets]
+                x2 = list(range(len(buckets)))
+                bars = pg.BarGraphItem(x=x2, height=q50, width=0.6, brush=pg.mkBrush(200, 120, 50, 120))
+                self.plot.addItem(bars)
         except Exception:
             pass
 
@@ -309,12 +417,11 @@ class BacktestingTab(QWidget):
 
     def _resume_job(self):
         try:
-            import httpx
-            base = getattr(self.parent(), "engine_url", None) or "http://127.0.0.1:8000"
-            job_id = getattr(self, "last_job_id", 0)
-            with httpx.Client(timeout=15.0) as client:
-                r = client.post(f"{base.rstrip('/')}/backtests/{int(job_id)}/resume")
-                self.lbl_status.setText("Job in esecuzione" if r.status_code == 200 else f"Resume error: {r.text}")
+            from ..backtest.db import BacktestDB
+            db = BacktestDB()
+            job_id = int(getattr(self, "last_job_id", 0))
+            db.update_job_status(job_id, status="running")
+            self.lbl_status.setText("Job in esecuzione")
         except Exception as e:
             self.lbl_status.setText(f"Resume exception: {e}")
 
@@ -333,19 +440,14 @@ class BacktestingTab(QWidget):
             self.lbl_status.setText("config_id non valido.")
             return
         try:
-            import httpx
-            base = getattr(self.parent(), "engine_url", None) or "http://127.0.0.1:8000"
-            job_id = getattr(self, "last_job_id", 0)
-            with httpx.Client(timeout=15.0) as client:
-                r = client.post(f"{base.rstrip('/')}/backtests/{int(job_id)}/config/cancel", json={"config_id": cfg_id, "reason": "user"})
-                if r.status_code == 200:
-                    self.lbl_status.setText("Config cancellata")
-                    try:
-                        self._mark_row_cancelled(row)
-                    except Exception:
-                        pass
-                else:
-                    self.lbl_status.setText(f"Cancel config error: {r.text}")
+            from ..backtest.db import BacktestDB
+            db = BacktestDB()
+            db.cancel_config(int(cfg_id), reason="user")
+            self.lbl_status.setText("Config cancellata")
+            try:
+                self._mark_row_cancelled(row)
+            except Exception:
+                pass
         except Exception as e:
             self.lbl_status.setText(f"Cancel config exception: {e}")
 
@@ -371,23 +473,21 @@ class BacktestingTab(QWidget):
 
     def _pause_job(self):
         try:
-            import httpx
-            base = getattr(self.parent(), "engine_url", None) or "http://127.0.0.1:8000"
-            job_id = getattr(self, "last_job_id", 0)
-            with httpx.Client(timeout=15.0) as client:
-                r = client.post(f"{base.rstrip('/')}/backtests/{int(job_id)}/pause")
-                self.lbl_status.setText("Job in pausa" if r.status_code == 200 else f"Pause error: {r.text}")
+            from ..backtest.db import BacktestDB
+            db = BacktestDB()
+            job_id = int(getattr(self, "last_job_id", 0))
+            db.update_job_status(job_id, status="paused")
+            self.lbl_status.setText("Job in pausa")
         except Exception as e:
             self.lbl_status.setText(f"Pause exception: {e}")
 
     def _cancel_job(self):
         try:
-            import httpx
-            base = getattr(self.parent(), "engine_url", None) or "http://127.0.0.1:8000"
-            job_id = getattr(self, "last_job_id", 0)
-            with httpx.Client(timeout=15.0) as client:
-                r = client.post(f"{base.rstrip('/')}/backtests/{int(job_id)}/cancel", json={"reason": "user"})
-                self.lbl_status.setText("Job cancellato" if r.status_code == 200 else f"Cancel error: {r.text}")
+            from ..backtest.db import BacktestDB
+            db = BacktestDB()
+            job_id = int(getattr(self, "last_job_id", 0))
+            db.update_job_status(job_id, status="cancelled")
+            self.lbl_status.setText("Job cancellato")
         except Exception as e:
             self.lbl_status.setText(f"Cancel exception: {e}")
 

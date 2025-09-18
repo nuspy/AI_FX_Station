@@ -9,12 +9,6 @@ from sqlalchemy.engine import Engine
 from ..utils.config import get_config
 
 
-def get_engine() -> Engine:
-    cfg = get_config()
-    db_url = getattr(cfg.db, "database_url", None) or (cfg.db.get("database_url") if isinstance(cfg.db, dict) else None)
-    if not db_url:
-        raise RuntimeError("Database URL not configured")
-    return create_engine(db_url, future=True)
 
 
 def fetch_candles(
@@ -61,5 +55,12 @@ def fetch_candles(
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows, columns=rows[0]._mapping.keys()).sort_values("ts_utc").reset_index(drop=True)
+
+def get_engine() -> Engine:
+    cfg = get_config()
+    db_url = getattr(cfg.db, "database_url", None) or (cfg.db.get("database_url") if isinstance(cfg.db, dict) else None)
+    if not db_url:
+        raise RuntimeError("Database URL not configured")
+    return create_engine(db_url, future=True)
 
 

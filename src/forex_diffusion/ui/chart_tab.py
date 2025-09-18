@@ -2367,20 +2367,11 @@ class ChartTab(QWidget):
                             self.signals.progress.emit(int(pct))
                         except Exception:
                             pass
-                    # Enable REST backfill for explicit request (button)
-                    try:
-                        setattr(self.svc, "rest_enabled", True)
-                    except Exception:
-                        pass
                     self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
                 except Exception as e:
                     ok = False
                 finally:
-                    # Always disable REST backfill after completion
-                    try:
-                        setattr(self.svc, "rest_enabled", False)
-                    except Exception:
-                        pass
+                    # keep REST setting unchanged
                     try:
                         self.signals.finished.emit(ok)
                     except Exception:

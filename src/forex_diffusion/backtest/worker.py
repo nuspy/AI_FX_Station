@@ -348,6 +348,8 @@ class Worker:
                     except Exception:
                         pass
                     s_idx = st.slices_done
+                    if s_idx >= len(slices):
+                        break
                     slice_def = slices[s_idx]
                     m = self.run_one_slice(cfg, slice_def)
                     # include advanced slice metadata in trace
@@ -475,6 +477,7 @@ class Worker:
                     except Exception:
                         q10 = q50 = q90 = float(arr.mean() if arr.size else 0.0)
                     time_profile_json[b] = {"mean": float(arr.mean() if arr.size else 0.0), "n": int(arr.size), "q10": q10, "q50": q50, "q90": q90}
+            # ensure not to include per-config flags in result row (columns differ)
             result = {
                 "adherence_mean": adh_mean,
                 "adherence_std": adh_std,
@@ -489,7 +492,6 @@ class Worker:
                 "complexity_penalty": complexity_penalty,
                 "composite_score": composite_score,
                 "n_points": st.n_points_accum,
-                "dropped": st.dropped, "drop_reason": st.drop_reason,
                 "horizon_profile_json": horizon_profile_json,
                 "time_profile_json": time_profile_json,
             }
