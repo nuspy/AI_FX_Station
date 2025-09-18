@@ -21,6 +21,9 @@ from .signals_tab import SignalsTab
 from .chart_tab import ChartTab
 from .backtesting_tab import BacktestingTab
 
+# local backtest queue singleton (offline mode)
+_btq_local = None
+
 def setup_ui(
     main_window: QWidget, 
     layout, 
@@ -39,6 +42,11 @@ def setup_ui(
     # --- Core Services ---
     db_service = DBService()
     market_service = MarketDataService(database_url=db_service.engine.url)
+    # UI: abilita REST per backfill alla apertura
+    try:
+        setattr(market_service, "rest_enabled", True)
+    except Exception:
+        pass
     db_writer = DBWriter(db_service=db_service)
     db_writer.start()
 
@@ -312,11 +320,18 @@ def setup_ui(
     if use_test_server:
         logger.info(f"Redirecting Tiingo WebSocket to test server: {ws_uri}")
 
+    # track backtest state to suppress misleading WS logs during runs
+    backtest_active = {"flag": False}
+
     def _ws_status(msg: str):
         try:
             if msg == "ws_down":
-                logger.warning("Realtime WS down detected. REST fallback is DISABLED.")
-                controller.signals.status.emit("Realtime: WS down (no REST fallback)")
+                if backtest_active["flag"]:
+                    logger.info("Realtime WS stopped (backtest active) - suppressing REST fallback.")
+                    controller.signals.status.emit("Realtime: WS stopped (backtest active)")
+                else:
+                    logger.warning("Realtime WS down detected. REST fallback is DISABLED.")
+                    controller.signals.status.emit("Realtime: WS down (no REST fallback)")
                 #controller.signals.status.emit("Realtime: WS down (fallback REST attivo)")
 
             elif msg == "ws_restored":
@@ -325,25 +340,32 @@ def setup_ui(
         except Exception:
             pass
 
-    connector = TiingoWSConnector(
-        uri=ws_uri,
-        api_key=os.environ.get("TIINGO_APIKEY"),
-        tickers=["eurusd"],
-        chart_handler=chart_tab._handle_tick,
-        db_handler=db_writer.write_tick_async
-        , status_handler=_ws_status
-    )
-    connector.start()
-    result["tiingo_ws_connector"] = connector
-    logger.info("TiingoWSConnector started with direct handlers for ChartTab and DBWriter.")
+    connector = None
+    if os.environ.get("FOREX_ENABLE_WS", "1") == "1":
+        connector = TiingoWSConnector(
+            uri=ws_uri,
+            api_key=os.environ.get("TIINGO_APIKEY"),
+            tickers=["eurusd"],
+            chart_handler=chart_tab._handle_tick,
+            db_handler=db_writer.write_tick_async
+            , status_handler=_ws_status
+        )
+        connector.start()
+        result["tiingo_ws_connector"] = connector
+        logger.info("TiingoWSConnector started with direct handlers for ChartTab and DBWriter.")
+    else:
+        logger.info("WS connector disabled (FOREX_ENABLE_WS!=1)")
 
     # --- Final UI Setup ---
     default_symbol = "EUR/USD"
     default_tf = "1m"
     chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
 
-    # Auto backfill on startup for all supported symbols with existing candles
+    # Auto backfill on startup (abilitato per default)
     try:
+        if os.environ.get("FOREX_DISABLE_AUTOBACKFILL", "0") == "1":
+            logger.info("Auto backfill disabled by FOREX_DISABLE_AUTOBACKFILL=1")
+            raise RuntimeError("skip_autobackfill")
         from PySide6.QtCore import QRunnable, QThreadPool, QObject, Signal
         class _BFSignals(QObject):
             progress = Signal(int)
@@ -382,32 +404,52 @@ def setup_ui(
                         # compute start override from UI (0/0 -> full from first), else from now - (years, months)
                         import datetime
                         now_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+                        # compute LAST candle ts from DB across ALL timeframes for incremental logic
+                        last_ts = None
+                        try:
+                            from sqlalchemy import text
+                            eng = getattr(self.ms, "engine", None)
+                            if eng is not None:
+                                with eng.connect() as conn:
+                                    row = conn.execute(
+                                        text("SELECT MAX(ts_utc) FROM market_data_candles WHERE symbol = :sym"),
+                                        {"sym": sym},
+                                    ).fetchone()
+                                    if row and row[0] is not None:
+                                        last_ts = int(row[0])
+                        except Exception:
+                            last_ts = None
+
+                        # If already fresh (updated in last 5 minutes), skip backfill for this symbol
+                        try:
+                            if last_ts is not None and (now_ms - int(last_ts)) < 5 * 60 * 1000:
+                                self.signals.status.emit(f"[Backfill] {sym}: up-to-date (skip)")
+                                continue
+                        except Exception:
+                            pass
+
                         if (self.years == 0 and self.months == 0):
-                            start_ms = first_ts
+                            # default: incremental from last known candle (if any), else from the very beginning
+                            if last_ts is not None and last_ts > 0:
+                                start_ms = int(last_ts) + 1  # avoid re-fetching last included bar
+                                self.signals.status.emit(f"[Backfill] {sym}: incremental from {start_ms}")
+                            else:
+                                start_ms = first_ts
+                                self.signals.status.emit(f"[Backfill] {sym}: initial full from {start_ms}")
                         else:
-                            # approximate months as 30 days each
+                            # explicit historical range requested from UI
                             days = self.years * 365 + self.months * 30
                             start_ms = max(first_ts, now_ms - days * 24 * 3600 * 1000)
-                        self.signals.status.emit(f"[Backfill] {sym} starting range sync...")
+                            self.signals.status.emit(f"[Backfill] {sym}: range start {start_ms}")
+
                         # nested progress bridge
                         def _cb(p):
                             try:
                                 self.signals.status.emit(f"[Backfill] {sym}: {p}%")
                             except Exception:
                                 pass
-                        # abilita REST solo per la durata di questo backfill
-                        try:
-                            setattr(self.ms, "rest_enabled", True)
-                        except Exception:
-                            pass
-                        try:
-                            # use '1d' to cover all timeframes up to daily
-                            self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
-                        finally:
-                            try:
-                                setattr(self.ms, "rest_enabled", False)
-                            except Exception:
-                                pass
+                        # use '1d' to cover all timeframes up to daily
+                        self.ms.backfill_symbol_timeframe(sym, "1d", force_full=False, progress_cb=_cb, start_ms_override=start_ms)
                     except Exception as e:
                         try:
                             self.signals.status.emit(f"[Backfill] {sym} failed: {e}")
@@ -430,78 +472,135 @@ def setup_ui(
         bf_signals.progress.connect(lambda p: status_label.setText(f"Backfill: {p}%"))
         QThreadPool.globalInstance().start(_BFJob(market_service, chart_tab._symbols_supported, chart_tab.years_combo.currentText(), chart_tab.months_combo.currentText(), bf_signals))
     except Exception as e:
-        logger.warning("Auto backfill job not started: {}", e)
+        if str(e) != "skip_autobackfill":
+            logger.warning("Auto backfill job not started: {}", e)
 
     controller.signals.status.connect(status_label.setText)
     controller.signals.error.connect(status_label.setText)
 
     # --- Backtesting Tab Handlers ---
     try:
-        import httpx
         def _on_bt_start(payload: dict):
             try:
-                base = engine_url.rstrip("/")
-                # small retry/backoff for async path
-                def _get_with_retry(client, url, max_wait_s=6.0):
+                # local-only mode: no HTTP
+
+                # No REST/backfill/WS toggles: backtest does not invoke any REST/backfill paths
+
+                # Local fallback (offline): enqueue and poll via DB only
+                def _local_enqueue_and_poll(_payload: dict):
+                    try:
+                        from ..backtest.horizons import parse_horizons
+                        from ..backtest.worker import TrialConfig
+                        from ..backtest.db import BacktestDB
+                        from ..backtest.queue import BacktestQueue
+                    except Exception as _e:
+                        raise RuntimeError(f"Local backtest unavailable: {_e}")
+
+                    # build configs from payload
+                    horiz_raw = (_payload or {}).get("horizons_raw") or ""
+                    _, horizons_sec = parse_horizons(horiz_raw)
+                    if not horizons_sec:
+                        raise RuntimeError("No valid horizons parsed")
+                    models = list((_payload or {}).get("models") or ["baseline_rw"])
+                    ptypes = list((_payload or {}).get("prediction_types") or ["basic"]) 
+                    # assemble configs
+                    cfgs = []
+                    for model_name in models:
+                        for ptype in ptypes:
+                            tc = TrialConfig(
+                                model_name=model_name,
+                                prediction_type=ptype,
+                                timeframe=str((_payload or {}).get("timeframe") or "1m"),
+                                horizons_sec=horizons_sec,
+                                samples_range=tuple((_payload or {}).get("samples_range") or (200, 1000)),
+                                indicators=dict(((_payload or {}).get("indicators") or {})),
+                                interval=dict(((_payload or {}).get("interval") or {})),
+                                data_version=int((_payload or {}).get("data_version") or 1),
+                                symbol=str((_payload or {}).get("symbol") or "EUR/USD"),
+                            )
+                            cfgs.append(tc)
+                    # DB ops
+                    btdb = BacktestDB()
+                    job_id = int((_payload or {}).get("job_id") or 0) or btdb.create_job(status="pending")
+                    # upsert configs
+                    for cfg in cfgs:
+                        _ = btdb.upsert_config({
+                            "job_id": job_id,
+                            "fingerprint": cfg.fingerprint(),
+                            "payload_json": {
+                                "model": cfg.model_name,
+                                "ptype": cfg.prediction_type,
+                                "timeframe": cfg.timeframe,
+                                "horizons_sec": cfg.horizons_sec,
+                                "samples_range": cfg.samples_range,
+                                "indicators": cfg.indicators,
+                                "interval": cfg.interval,
+                                "data_version": cfg.data_version,
+                                "symbol": cfg.symbol,
+                                "extra": cfg.extra,
+                            },
+                        })
+                    btdb.set_job_status(job_id, "pending")
+                    # ensure queue is running
+                    try:
+                        global _btq_local
+                    except Exception:
+                        _btq_local = None
+                    if _btq_local is None:
+                        _btq_local = BacktestQueue(poll_interval=0.5)
+                        _btq_local.start()
+
+                    # poll status and then read results
                     import time as _t
                     t0 = _t.time()
-                    delay = 0.3
-                    while True:
-                        rr = client.get(url, params={"top_k": 20})
-                        if rr.status_code == 200 and rr.json().get("results"):
-                            return rr
-                        if _t.time() - t0 > max_wait_s:
-                            return rr
-                        _t.sleep(delay)
-                        delay = min(1.2, delay * 1.5)
-
-                with httpx.Client(timeout=60.0) as client:
-                    r = client.post(f"{base}/backtests", json=payload)
-                    r.raise_for_status()
-                    job = r.json()
-                    job_id = int(job.get("job_id", 0))
-                    # fetch results with retry (async queue) and update status label with progress polling
-                    if job_id:
-                        # quick status poll loop while waiting
+                    while _t.time() - t0 < 6.0:
+                        counts = btdb.job_status_counts(job_id)
+                        ncfg = max(1, int(counts.get("n_configs", 0)))
+                        prog = float(min(1.0, (counts.get("n_results", 0) + counts.get("n_dropped", 0)) / ncfg)) if ncfg else 0.0
                         try:
-                            import time as _t
-                            t0 = _t.time()
-                            while _t.time() - t0 < 6.0:
-                                st = client.get(f"{base}/backtests/{job_id}/status")
-                                if st.status_code == 200:
-                                    js = st.json()
-                                    p = js.get("progress")
-                                    if p is not None:
-                                        status_label.setText(f"Backtesting: in corso ({int(float(p)*100)}%)")
-                                    if js.get("status") == "done":
-                                        break
-                                _t.sleep(0.5)
+                            status_label.setText(f"Backtesting: in corso ({int(prog*100)}%)")
                         except Exception:
                             pass
-                        rr = _get_with_retry(client, f"{base}/backtests/{job_id}/results")
-                        if rr.status_code == 200:
-                            data = rr.json()
-                            for row in data.get("results", []):
-                                p = row.get("payload") or {}
-                                model = (p.get("model") or p.get("model_name") or "?")
-                                ptype = p.get("ptype") or p.get("prediction_type") or "?"
-                                tf = p.get("timeframe") or "?"
-                                backtesting_tab.add_result_row(
-                                    model, ptype, tf,
-                                    float(row.get("adherence_mean") or 0.0),
-                                    float(row.get("p50") or 0.0),
-                                    float(row.get("win_rate_delta") or 0.0),
-                                    row.get("coverage_observed"), row.get("band_efficiency"), row.get("composite_score"),
-                                    int(row.get("config_id") or 0)
-                                )
-                            # attach job_id to tab for apply-config calls
-                            try:
-                                setattr(backtesting_tab, "last_job_id", job_id)
-                            except Exception:
-                                pass
-                status_label.setText("Backtesting: job completed")
-            except Exception as e:
-                status_label.setText(f"Backtesting error: {e}")
+                        if counts.get("n_results", 0) >= counts.get("n_configs", 0) and counts.get("n_configs", 0) > 0:
+                            break
+                        _t.sleep(0.5)
+                    rows = btdb.results_for_job(job_id) or []
+                    # simple sort by composite_score -> adherence_mean
+                    def _key(x: dict):
+                        return (float(x.get("composite_score", 0.0) or 0.0), float(x.get("adherence_mean", 0.0) or 0.0))
+                    rows = sorted(rows, key=_key, reverse=True)
+                    for r in rows:
+                        p = r.get("payload_json") or {}
+                        model = (p.get("model") or p.get("model_name") or "?")
+                        ptype = p.get("ptype") or p.get("prediction_type") or "?"
+                        tf = p.get("timeframe") or "?"
+                        backtesting_tab.add_result_row(
+                            model, ptype, tf,
+                            float(r.get("adherence_mean") or 0.0),
+                            float(r.get("p50") or 0.0),
+                            float(r.get("win_rate_delta") or 0.0),
+                            r.get("coverage_observed"), r.get("band_efficiency"), r.get("composite_score"),
+                            int(r.get("config_id") or 0)
+                        )
+                    try:
+                        setattr(backtesting_tab, "last_job_id", job_id)
+                    except Exception:
+                        pass
+                    return job_id
+
+                job_id = _local_enqueue_and_poll(payload)
+                status_label.setText("Backtesting: avviato (offline)")
+                # start local polling in tab for ongoing progress feedback
+                try:
+                    if hasattr(backtesting_tab, "_poll_timer") and backtesting_tab._poll_timer is not None:
+                        setattr(backtesting_tab, "last_job_id", job_id)
+                        backtesting_tab._poll_timer.start()
+                except Exception:
+                    pass
+            finally:
+                # Nothing to restore; backtest did not alter REST/WS state
+                pass
+
         backtesting_tab.startRequested.connect(_on_bt_start)
     except Exception:
         pass

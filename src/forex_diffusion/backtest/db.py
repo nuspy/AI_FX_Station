@@ -7,6 +7,7 @@ from sqlalchemy import JSON, Boolean, Column, Float, Integer, MetaData, String, 
 from sqlalchemy.engine import Engine
 
 from ..utils.config import get_config
+from loguru import logger
 
 
 class BacktestDB:
@@ -38,15 +39,30 @@ class BacktestDB:
             conn.execute(update(self.t_job).where(self.t_job.c.id == job_id).values(status=status))
 
     def upsert_config(self, payload: Dict[str, Any]) -> int:
-        """Insert config if fingerprint is new, else return existing id."""
-        from sqlalchemy import select
+        """Insert config if fingerprint is new; if exists, bind to given job_id and refresh payload_json.
+        Returns config id.
+        """
+        from sqlalchemy import select, update
         with self.engine.begin() as conn:
-            sel = select(self.t_cfg.c.id).where(self.t_cfg.c.fingerprint == payload["fingerprint"])  # type: ignore[attr-defined]
+            sel = select(self.t_cfg.c.id, self.t_cfg.c.job_id).where(self.t_cfg.c.fingerprint == payload["fingerprint"])  # type: ignore[attr-defined]
             row = conn.execute(sel).fetchone()
             if row is not None:
-                return int(row[0])
+                cfg_id = int(row[0])
+                try:
+                    upd_vals: Dict[str, Any] = {}
+                    if payload.get("job_id") is not None:
+                        upd_vals["job_id"] = int(payload["job_id"])  # type: ignore[index]
+                    if payload.get("payload_json") is not None:
+                        upd_vals["payload_json"] = payload["payload_json"]  # type: ignore[index]
+                    if upd_vals:
+                        conn.execute(update(self.t_cfg).where(self.t_cfg.c.id == cfg_id).values(**upd_vals))
+                        logger.debug("bt_config re-bound: id={} job_id={}", cfg_id, upd_vals.get("job_id"))
+                except Exception as e:
+                    logger.warning("upsert_config update failed for id {}: {}", cfg_id, e)
+                return cfg_id
             ins = self.t_cfg.insert().values(**payload)
             rid = conn.execute(ins).inserted_primary_key[0]
+            logger.debug("bt_config inserted: id={} job_id={}", int(rid), payload.get("job_id"))
             return int(rid)
 
     def start_config(self, config_id: int):
@@ -82,18 +98,28 @@ class BacktestDB:
     def results_for_job(self, job_id: int) -> list[Dict[str, Any]]:
         from sqlalchemy import select
         with self.engine.connect() as conn:
-            j = self.t_job
             c = self.t_cfg
             r = self.t_res
-            stmt = select(c.c.id, c.c.payload_json, r).join(r, r.c.config_id == c.c.id).where(c.c.job_id == job_id)
-            out = []
+            # select all result columns plus cfg id/payload (labelled)
+            cols = [c.c.id.label("cfg_id"), c.c.payload_json.label("cfg_payload")]
+            cols.extend([col for col in r.c])
+            stmt = select(*cols).join(r, r.c.config_id == c.c.id).where(c.c.job_id == job_id)
+            out: list[Dict[str, Any]] = []
             for row in conn.execute(stmt):
-                cfg_id = int(row[0])
-                payload = row[1]
-                res_map = row[2]._mapping if hasattr(row[2], "_mapping") else row[2]
-                res = {k: res_map[k] for k in res_map.keys()}
-                res["config_id"] = cfg_id
-                res["payload_json"] = payload
+                m = row._mapping if hasattr(row, "_mapping") else row
+                res: Dict[str, Any] = {}
+                # copy bt_result columns
+                for col in r.c:
+                    try:
+                        res[col.key] = m[col.key]
+                    except Exception:
+                        pass
+                # enforce config_id and payload_json
+                try:
+                    res["config_id"] = int(m["cfg_id"])  # override with cfg id
+                except Exception:
+                    pass
+                res["payload_json"] = m.get("cfg_payload") if hasattr(m, "get") else None
                 out.append(res)
             return out
 
