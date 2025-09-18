@@ -219,27 +219,15 @@ class BacktestingTab(QWidget):
             self.boolean_fields[param] = (cb_true, cb_false)
         lay.addWidget(bool_group)
 
-        # Forecast time constraints
-        tf_group = QGroupBox("Vincoli temporali (combina con altri parametri)")
-        tf_layout = QVBoxLayout(tf_group)
-        # Hours of day
-        hours_row = QHBoxLayout(); hours_row.addWidget(QLabel("Ore (0–23):"))
-        self.hour_checks: List[QCheckBox] = []
-        for h in range(24):
-            cb = QCheckBox(str(h)); cb.setChecked(True)
-            self.hour_checks.append(cb); hours_row.addWidget(cb)
-        hours_row.addStretch(1)
-        tf_layout.addLayout(hours_row)
-        # Days of week
-        days_row = QHBoxLayout(); days_row.addWidget(QLabel("Giorni (L–D):"))
-        self.day_checks: List[QCheckBox] = []
-        day_labels = ["L","M","Me","G","V","S","D"]
-        for d in range(7):
-            cb = QCheckBox(day_labels[d]); cb.setChecked(True)
-            self.day_checks.append(cb); days_row.addWidget(cb)
-        days_row.addStretch(1)
-        tf_layout.addLayout(days_row)
-        lay.addWidget(tf_group)
+        # Candle parameters (flags)
+        flags_group = QGroupBox("Parametri candele (flags)")
+        fl = QHBoxLayout(flags_group)
+        self.cb_use_hours = QCheckBox("Usa ore")
+        self.cb_use_day = QCheckBox("Usa giorno")
+        fl.addWidget(self.cb_use_hours)
+        fl.addWidget(self.cb_use_day)
+        fl.addStretch(1)
+        lay.addWidget(flags_group)
 
 # Models
         grp_m = QGroupBox("Modelli")
@@ -498,8 +486,7 @@ class BacktestingTab(QWidget):
             "bt_indicator_param_ranges": {ind: {p: [a, b, s] for p, (a, b, s) in ((k, (sp_from.value(), sp_to.value(), max(1, sp_step.value()))) for k, (sp_from, sp_to, sp_step) in params.items())} for ind, params in self.indicator_param_ranges.items()},
             "bt_numeric_ranges": {k: [sp_from.value(), sp_to.value(), max(1, sp_step.value())] for k, (sp_from, sp_to, sp_step) in self.range_fields.items()},
             "bt_boolean_flags": {k: {"true": cb_true.isChecked(), "false": cb_false.isChecked()} for k, (cb_true, cb_false) in self.boolean_fields.items()},
-            "bt_hours": [i for i, cb in enumerate(self.hour_checks) if cb.isChecked()],
-            "bt_days": [i for i, cb in enumerate(self.day_checks) if cb.isChecked()],
+            "bt_time_flags": {"use_hours": bool(self.cb_use_hours.isChecked()), "use_day": bool(self.cb_use_day.isChecked())},
         }
         set_setting("backtesting_tab", s)
 
@@ -553,14 +540,11 @@ class BacktestingTab(QWidget):
                 cb_true, cb_false = cb_pair
                 cb_true.setChecked(bool(state.get("true", False)))
                 cb_false.setChecked(bool(state.get("false", False)))
-            # restore time filters
+            # restore candle flags
             try:
-                hours = list(s.get("bt_hours") or [])
-                days = list(s.get("bt_days") or [])
-                for i, cb in enumerate(self.hour_checks):
-                    cb.setChecked(i in hours)
-                for i, cb in enumerate(self.day_checks):
-                    cb.setChecked(i in days)
+                tf = s.get("bt_time_flags", {}) or {}
+                self.cb_use_hours.setChecked(bool(tf.get("use_hours", False)))
+                self.cb_use_day.setChecked(bool(tf.get("use_day", False)))
             except Exception:
                 pass
         except Exception:
@@ -620,10 +604,8 @@ class BacktestingTab(QWidget):
             "indicator_numeric_ranges": self._collect_indicator_param_ranges(),
             "forecast_numeric_ranges": {k: list(v) for k, v in self._collect_numeric_ranges().items()},
             "forecast_boolean_params": {k: v for k, v in self._collect_boolean_choices().items()},
-            "time_filters": {
-                "hours_active": [i for i, cb in enumerate(self.hour_checks) if cb.isChecked()],
-                "days_active": [i for i, cb in enumerate(self.day_checks) if cb.isChecked()],
-            },
+            # time flag selection: if True, the backend will try both states (False/True)
+            "time_flag_selection": {"use_hours": bool(self.cb_use_hours.isChecked()), "use_day": bool(self.cb_use_day.isChecked())},
         }
         self.startRequested.emit(payload)
 

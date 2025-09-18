@@ -190,19 +190,20 @@ class Worker:
             df = df.sort_values("ts_utc").reset_index(drop=True)
             # Build realized y on test slice and predictions via asof align (real per-slice would use model outputs)
             mask = (df["ts_utc"].astype("int64") >= int(slice_def.get("test_start_ms", 0))) & (df["ts_utc"].astype("int64") <= int(slice_def.get("test_end_ms", 2**63-1)))
-            # Apply optional time filters (hours/days) from cfg.extra.time_filters
+            # Apply optional time flags (use_hours/use_day) from cfg.extra.time_flags
             try:
-                tf_cfg = (cfg.extra or {}).get("time_filters") or {}
-                hours = list(tf_cfg.get("hours_active") or [])
-                days = list(tf_cfg.get("days_active") or [])
-                if hours or days:
+                tf_flags = (cfg.extra or {}).get("time_flags") or {}
+                use_hours = bool(tf_flags.get("use_hours", False))
+                use_day = bool(tf_flags.get("use_day", False))
+                if use_hours or use_day:
                     dtmp = df.copy()
                     dtmp["_dt"] = _pd.to_datetime(_pd.to_numeric(dtmp["ts_utc"], errors="coerce").astype("int64"), unit="ms", utc=True)
-                    if hours:
-                        mask = mask & dtmp["_dt"].dt.hour.isin([int(h) for h in hours])
-                    if days:
-                        # Monday=0 .. Sunday=6
-                        mask = mask & dtmp["_dt"].dt.weekday.isin([int(d) for d in days])
+                    if use_hours:
+                        # example: filter to a mid-day session (10-16) as a representative slice; configurable later
+                        mask = mask & dtmp["_dt"].dt.hour.between(10, 16)
+                    if use_day:
+                        # example: filter to business days (Mon-Fri)
+                        mask = mask & dtmp["_dt"].dt.weekday.isin([0,1,2,3,4])
             except Exception:
                 pass
             dft = df.loc[mask].reset_index(drop=True)
