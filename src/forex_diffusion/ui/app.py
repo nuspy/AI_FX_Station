@@ -18,7 +18,7 @@ from ..services.aggregator import AggregatorService
 from .controllers import UIController
 from .training_tab import TrainingTab
 from .signals_tab import SignalsTab
-from .chart_tab import ChartTab
+from .chart_tab import ChartTab, ChartTabUI
 from .backtesting_tab import BacktestingTab
 
 # local backtest queue singleton (offline mode)
@@ -72,38 +72,44 @@ def setup_ui(
         pass
 
     tab_widget = QTabWidget()
+    chart_tab_ui = ChartTabUI(main_window)
     chart_tab = ChartTab(main_window)
+    primary_chart = chart_tab_ui
+    legacy_chart = chart_tab
     training_tab = TrainingTab(main_window)
     signals_tab = SignalsTab(main_window, db_service=db_service)
     backtesting_tab = BacktestingTab(main_window)
 
-    tab_widget.addTab(chart_tab, "Chart")
+    tab_widget.addTab(chart_tab_ui, "Chart (UI)")
+    tab_widget.addTab(chart_tab, "Chart (Legacy)")
     tab_widget.addTab(training_tab, "Training")
     tab_widget.addTab(signals_tab, "Signals")
     tab_widget.addTab(backtesting_tab, "Backtesting")
     layout.addWidget(tab_widget)
-    result["chart_tab"] = chart_tab
+    result["chart_tab_ui"] = chart_tab_ui
+    result["chart_tab_legacy"] = chart_tab
+    result["chart_tab"] = chart_tab_ui
     result["training_tab"] = training_tab
     result["backtesting_tab"] = backtesting_tab
     result["tab_widget"] = tab_widget
     try:
-        chart_tab.controller = controller
-        controller.chart_tab = chart_tab
-        setattr(chart_tab, "controller", controller)
-
+        chart_tab_ui.controller = controller
+        setattr(chart_tab_ui, "controller", controller)
     except Exception:
         pass
-    # expose chart_tab on controller for symbol/timeframe discovery
     try:
-        controller.chart_tab = chart_tab
-        setattr(chart_tab, "controller", controller)
+        legacy_chart.controller = controller
+        setattr(legacy_chart, "controller", controller)
     except Exception:
         pass
+    controller.chart_tab = chart_tab_ui
+    controller.chart_tab_legacy = legacy_chart
     # connect ChartTab forecast requests to controller handler, and results back to the chart
     try:
-        chart_tab.forecastRequested.connect(controller.handle_forecast_payload)
+        chart_tab_ui.forecastRequested.connect(controller.handle_forecast_payload)
+        legacy_chart.forecastRequested.connect(controller.handle_forecast_payload)
     except Exception:
-        logger.warning("Failed to connect chart_tab.forecastRequested")
+        logger.warning("Failed to connect chart forecast requests")
     # Wrap forecastReady -> compute adherence if possible, then forward to chart
     try:
         def _on_forecast_ready_with_adherence(df, quantiles):
@@ -148,8 +154,8 @@ def setup_ui(
                                     "WHERE c.symbol = :symbol AND c.timeframe = :timeframe "
                                     "ORDER BY c.ts_utc ASC"
                                 )
-                                sym = getattr(chart_tab, 'symbol', 'EUR/USD')
-                                tf = getattr(chart_tab, 'timeframe', '1m')
+                                sym = getattr(primary_chart, 'symbol', 'EUR/USD')
+                                tf = getattr(primary_chart, 'timeframe', '1m')
                                 rows = conn.execute(q, {'symbol': sym, 'timeframe': tf}).fetchall()
                                 if rows:
                                     tmp = _pd.DataFrame(rows, columns=['ts', 'y'])
@@ -159,8 +165,8 @@ def setup_ui(
                         pass
                     # Fallback: align to nearest in-memory bar within timeframe tolerance (datetime-based asof)
                     try:
-                        if (not actual_ts) and hasattr(chart_tab, "_last_df") and chart_tab._last_df is not None and not chart_tab._last_df.empty:
-                            dfa = chart_tab._last_df.copy()
+                        if (not actual_ts) and hasattr(primary_chart, "_last_df") and primary_chart._last_df is not None and not primary_chart._last_df.empty:
+                            dfa = primary_chart._last_df.copy()
                             ycol = "close" if "close" in dfa.columns else "price"
                             dfa = dfa.dropna(subset=["ts_utc", ycol]).reset_index(drop=True)
                             dfa["ts"] = _pd.to_numeric(dfa["ts_utc"], errors="coerce").astype("int64")
@@ -179,7 +185,7 @@ def setup_ui(
                                 except Exception:
                                     pass
                                 return 60_000
-                            tol_ms = max(1_000, int(0.51 * _tf_ms(getattr(chart_tab, 'timeframe', '1m') or '1m')))
+                            tol_ms = max(1_000, int(0.51 * _tf_ms(getattr(primary_chart, 'timeframe', '1m') or '1m')))
                             merged = _pd.merge_asof(
                                 df_fut.sort_values("ts_dt"),
                                 dfa.sort_values("ts_dt")[["ts_dt", "ts", "y"]],
@@ -216,16 +222,20 @@ def setup_ui(
                 # never block UI due to metrics
                 pass
             try:
-                chart_tab.on_forecast_ready(df, quantiles)
+                primary_chart.on_forecast_ready(df, quantiles)
             except Exception:
                 # fallback: ignore if chart handler fails
+                pass
+            try:
+                legacy_chart.on_forecast_ready(df, quantiles)
+            except Exception:
                 pass
 
             # --- Draw adherence badge at the end of upper tolerance (q95) line ---
             try:
                 q = quantiles or {}
                 metrics = (q.get("adherence_metrics") or {})
-                if metrics and hasattr(chart_tab, "ax") and hasattr(chart_tab, "canvas"):
+                if metrics and hasattr(primary_chart, "ax") and hasattr(primary_chart, "canvas"):
                     import numpy as _np
 
                     adh = metrics.get("adherence", None)
@@ -233,7 +243,7 @@ def setup_ui(
                     q95 = list(q.get("q95") or [])
                     m_vals = list(q.get("q50") or [])
                     if isinstance(adh, (int, float)) and fut_ts and q95 and m_vals and len(fut_ts) == len(q95) == len(m_vals):
-                        ax = chart_tab.ax
+                        ax = primary_chart.ax
                         x_last = float(fut_ts[-1])
                         y_last = float(q95[-1])
 
@@ -271,10 +281,10 @@ def setup_ui(
                             label_key = str(q.get("label") or q.get("source") or "forecast")
                         except Exception:
                             label_key = "forecast"
-                        if not hasattr(chart_tab, "_adh_badges"):
-                            setattr(chart_tab, "_adh_badges", {})
+                        if not hasattr(primary_chart, "_adh_badges"):
+                            setattr(primary_chart, "_adh_badges", {})
                         # Remove previous badge for this label if any
-                        old = chart_tab._adh_badges.get(label_key)
+                        old = primary_chart._adh_badges.get(label_key)
                         if old is not None:
                             try:
                                 old.remove()
@@ -296,9 +306,9 @@ def setup_ui(
                             ),
                             zorder=100,
                         )
-                        chart_tab._adh_badges[label_key] = badge
+                        primary_chart._adh_badges[label_key] = badge
                         try:
-                            chart_tab.canvas.draw_idle()
+                            primary_chart.canvas.draw_idle()
                         except Exception:
                             pass
             except Exception:
@@ -346,7 +356,7 @@ def setup_ui(
             uri=ws_uri,
             api_key=os.environ.get("TIINGO_APIKEY"),
             tickers=["eurusd"],
-            chart_handler=chart_tab._handle_tick,
+            chart_handler=primary_chart._handle_tick,
             db_handler=db_writer.write_tick_async
             , status_handler=_ws_status
         )
@@ -359,7 +369,8 @@ def setup_ui(
     # --- Final UI Setup ---
     default_symbol = "EUR/USD"
     default_tf = "1m"
-    chart_tab.set_symbol_timeframe(db_service, default_symbol, default_tf)
+    primary_chart.set_symbol_timeframe(db_service, default_symbol, default_tf)
+    legacy_chart.set_symbol_timeframe(db_service, default_symbol, default_tf)
 
     # Auto backfill on startup (abilitato per default)
     try:
@@ -470,7 +481,7 @@ def setup_ui(
         bf_signals = _BFSignals()
         bf_signals.status.connect(status_label.setText)
         bf_signals.progress.connect(lambda p: status_label.setText(f"Backfill: {p}%"))
-        QThreadPool.globalInstance().start(_BFJob(market_service, chart_tab._symbols_supported, chart_tab.years_combo.currentText(), chart_tab.months_combo.currentText(), bf_signals))
+        QThreadPool.globalInstance().start(_BFJob(market_service, primary_chart._symbols_supported, primary_chart.years_combo.currentText(), primary_chart.months_combo.currentText(), bf_signals))
     except Exception as e:
         if str(e) != "skip_autobackfill":
             logger.warning("Auto backfill job not started: {}", e)

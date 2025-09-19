@@ -1,6 +1,7 @@
 # src/forex_diffusion/ui/chart_tab.py
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional, Dict, List
 import pandas as pd
 
@@ -9,7 +10,8 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem,
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox
 )
-from PySide6.QtCore import QTimer, Qt, Signal, QSize
+from PySide6.QtUiTools import QUiLoader
+from PySide6.QtCore import QTimer, Qt, Signal, QSize, QFile
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -46,236 +48,33 @@ class ChartTab(QWidget):
         self._rect_points: List = []
         self._fib_points: List = []
         self._orders_visible: bool = True
-        self.layout = QVBoxLayout(self)
-        self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        self._price_mode = "candles"   # default mode
+        self._price_line = None
+        self._candle_artists: list = []
         self.chart_controller = ChartTabController(self, self.controller)
 
-        # --- Toolbar Setup ---
-        topbar = QWidget()
-        top_layout = QHBoxLayout(topbar)
-        # margini/spacing compatti per ridurre l'altezza
-        top_layout.setContentsMargins(4, 1, 4, 1)
-        top_layout.setSpacing(4)
-        # rendi la NavigationToolbar compatta
+        self._build_ui()
+        self._init_control_defaults()
+
         try:
-            self.toolbar.setIconSize(QSize(16, 16))
-            self.toolbar.setStyleSheet("QToolBar{spacing:2px; padding:0px; margin:0px;}")
-            self.toolbar.setMovable(False)
-            self.toolbar.setFloatable(False)
-            self.toolbar.setMaximumHeight(26)
+            self.toggle_drawbar_btn.toggled.connect(self._toggle_drawbar)
         except Exception:
             pass
-        # stile compatto solo per i widget dentro la topbar
-        topbar.setStyleSheet("""
-            QPushButton, QComboBox, QToolButton { padding: 2px 6px; min-height: 22px; }
-            QLabel { padding: 0px; margin: 0px; }
-        """)
-        # altezza massima della barra poco sopra i bottoni
-        topbar.setMaximumHeight(32)
-        top_layout.addWidget(self.toolbar)
-
-        # Symbol selector
-        self.symbol_combo = QComboBox()
-        # Requested pairs
-        self._symbols_supported = ["EUR/USD","GBP/USD","AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"]
-        self.symbol_combo.addItems(self._symbols_supported)
-        top_layout.addWidget(self.symbol_combo)
-
-        # Timeframe selector (with 'auto')
-        top_layout.addWidget(QLabel("TF:"))
-        self.tf_combo = QComboBox()
-        self.tf_combo.addItems(["auto","tick","1m","5m","15m","30m","1h","4h","1d"])
-        self.tf_combo.setCurrentText("auto")
-        self.tf_combo.setToolTip("Seleziona il timeframe di visualizzazione. 'auto' sceglie il TF in base allo zoom.")
-        top_layout.addWidget(self.tf_combo)
-        # Label di stato TF effettivo
-        self.tf_used_label = QLabel("TF used: -")
-        top_layout.addWidget(self.tf_used_label)
-        self.tf_combo.currentTextChanged.connect(lambda _: self.chart_controller.schedule_view_reload())
-
-        # Basic Forecast Buttons
-        self.forecast_settings_btn = QPushButton("Prediction Settings")
-        self.forecast_btn = QPushButton("Make Prediction")
-        top_layout.addWidget(self.forecast_settings_btn)
-        top_layout.addWidget(self.forecast_btn)
-
-        # Forecast granularity selector
-        top_layout.addWidget(QLabel("Pred step:"))
-        self.pred_step_combo = QComboBox()
-        self.pred_step_combo.addItems(["auto", "1m"])
-        self.pred_step_combo.setCurrentText("auto")
-        self.pred_step_combo.setToolTip("Granularità dei punti di previsione. 'auto' usa gli horizons, '1m' aggiunge punti a minuto.")
-        top_layout.addWidget(self.pred_step_combo)
-
-        # Advanced Forecast Buttons
-        self.adv_settings_btn = QPushButton("Advanced Settings")
-        self.adv_forecast_btn = QPushButton("Advanced Forecast")
-        top_layout.addWidget(self.adv_settings_btn)
-        top_layout.addWidget(self.adv_forecast_btn)
-
-        # Toggle per barra Drawing (icone sopra al grafico)
-        from PySide6.QtWidgets import QToolButton
-        self.toggle_drawbar_btn = QToolButton()
-        self.toggle_drawbar_btn.setText("Draw")
-        self.toggle_drawbar_btn.setCheckable(True)
-        self.toggle_drawbar_btn.setChecked(True)
-        self.toggle_drawbar_btn.setToolTip("Mostra/Nascondi barra di disegno")
-        top_layout.addWidget(self.toggle_drawbar_btn)
-
-        # Backfill range selectors (session-only; 0=full range)
-        top_layout.addWidget(QLabel("Years:"))
-        self.years_combo = QComboBox()
-        self.years_combo.addItems([str(x) for x in [0,1,2,3,4,5,10,15,20,30]])
-        self.years_combo.setCurrentText("0")
-        top_layout.addWidget(self.years_combo)
-
-        top_layout.addWidget(QLabel("Months:"))
-        self.months_combo = QComboBox()
-        self.months_combo.addItems([str(x) for x in [0,1,2,3,4,5,6,7,8,9,10,11,12]])
-        self.months_combo.setCurrentText("0")
-        top_layout.addWidget(self.months_combo)
-
-        # Backfill button + progress
-        self.backfill_btn = QPushButton("Backfill")
-        self.backfill_btn.setToolTip("Scarica storico per il range selezionato (Years/Months) per il simbolo corrente")
-        top_layout.addWidget(self.backfill_btn)
-
-        # Indicators settings
-        self.indicators_btn = QPushButton("Indicators")
-        self.indicators_btn.setToolTip("Configura gli indicatori tecnici (ATR, RSI, Bollinger, Hurst)")
-        top_layout.addWidget(self.indicators_btn)
-
-        # Build Latents (PCA)
-        self.build_latents_btn = QPushButton("Build Latents")
-        self.build_latents_btn.setToolTip("Costruisci latents PCA dalle feature storiche per il simbolo/TF correnti")
-        top_layout.addWidget(self.build_latents_btn)
-
-        from PySide6.QtWidgets import QProgressBar
-        self.backfill_progress = QProgressBar()
-        self.backfill_progress.setMaximumWidth(160)
-        self.backfill_progress.setRange(0, 100)
-        self.backfill_progress.setValue(0)
-        self.backfill_progress.setTextVisible(False)
-        top_layout.addWidget(self.backfill_progress)
-
-        # Clear forecasts
-        self.clear_forecasts_btn = QPushButton("Clear Forecasts")
-        top_layout.addWidget(self.clear_forecasts_btn)
-
-        # Toggle prezzo: Candles/Line (manuale)
-        from PySide6.QtWidgets import QToolButton
-        self.mode_btn = QToolButton()
-        self.mode_btn.setCheckable(True)
-        self.mode_btn.setText("Candles")  # checked => candles, unchecked => line
-        self.mode_btn.setToolTip("Commuta visualizzazione prezzo: Candles (candele OHLC) / Line (linea).")
-        self.mode_btn.setChecked(True)
-        self.mode_btn.toggled.connect(self.chart_controller.on_mode_toggled)
-        self.mode_btn.setText("Linea" if self.mode_btn.isChecked() else "Candles")
-        top_layout.addWidget(self.mode_btn)
-
-        top_layout.addStretch()
-        self.bidask_label = QLabel("Bid: -    Ask: -")
-        self.bidask_label.setStyleSheet("font-weight: bold;")
-        top_layout.addWidget(self.bidask_label)
-        # Trade button on toolbar
-        self.trade_btn = QPushButton("Trade")
-        top_layout.addWidget(self.trade_btn)
-
-        # Theme switch
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["Dark", "Light"])
-        self.theme_combo.setCurrentText(get_setting("ui_theme", "Dark"))
-        top_layout.addWidget(QLabel("Theme:"))
-        top_layout.addWidget(self.theme_combo)
-        self.theme_combo.currentTextChanged.connect(self.chart_controller.apply_theme)
-        # apply at startup
-        self.chart_controller.apply_theme(self.theme_combo.currentText())
-
-        self.layout.addWidget(topbar)
-
-        # Drawing bar (icone) subito sopra il grafico
-        from PySide6.QtWidgets import QToolButton
-        from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
-        from PySide6.QtWidgets import QStyle
-        drawbar = QWidget()
-        dlay = QHBoxLayout(drawbar); dlay.setContentsMargins(4, 2, 4, 2)
-        # Nav buttons
-        self.tb_home = QToolButton(); self.tb_home.setToolTip("Reset view"); self.tb_home.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.tb_pan = QToolButton(); self.tb_pan.setToolTip("Pan"); self.tb_pan.setCheckable(True); self.tb_pan.setIcon(self.style().standardIcon(QStyle.SP_ArrowUp))
-        self.tb_zoom = QToolButton(); self.tb_zoom.setToolTip("Zoom"); self.tb_zoom.setCheckable(True); self.tb_zoom.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
-        for b in (self.tb_home, self.tb_pan, self.tb_zoom):
-            dlay.addWidget(b)
-        dlay.addSpacing(12)
-        # Drawing tools (icone provvisorie)
-        self.tb_cross = QToolButton(); self.tb_cross.setToolTip("Cross"); self.tb_cross.setIcon(self.style().standardIcon(QStyle.SP_DialogYesButton))
-        self.tb_hline = QToolButton(); self.tb_hline.setToolTip("H-Line"); self.tb_hline.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
-        self.tb_trend = QToolButton(); self.tb_trend.setToolTip("Trend"); self.tb_trend.setIcon(self.style().standardIcon(QStyle.SP_ArrowRight))
-        self.tb_rect = QToolButton(); self.tb_rect.setToolTip("Rect"); self.tb_rect.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
-        self.tb_fib = QToolButton(); self.tb_fib.setToolTip("Fib"); self.tb_fib.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
-        self.tb_label = QToolButton(); self.tb_label.setToolTip("Label"); self.tb_label.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
-        # Colors come tool sulla drawbar
-        self.tb_colors = QToolButton(); self.tb_colors.setToolTip("Color/CSS Settings"); self.tb_colors.setIcon(self.style().standardIcon(QStyle.SP_DriveDVDIcon))
-        self.tb_colors.clicked.connect(self.chart_controller.open_color_settings)
-        # Toggle Orders visibilità
-        self.tb_orders = QToolButton(); self.tb_orders.setToolTip("Show/Hide Orders"); self.tb_orders.setCheckable(True); self.tb_orders.setChecked(True)
-        self.tb_orders.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
-        self.tb_orders.toggled.connect(self.chart_controller.toggle_orders)
-
-        # Aggiunta ordinata dei tools (evita doppioni dei primi tre già inseriti)
-        for b in (self.tb_cross, self.tb_hline, self.tb_trend, self.tb_rect, self.tb_fib, self.tb_label, self.tb_colors, self.tb_orders):
-            dlay.addWidget(b)
-        dlay.addStretch()
-        # conserva la barra per inserirla nello splitter sopra al grafico
-        self._drawbar = drawbar
-
-        # Connessioni nav/drawing
-        self.tb_home.clicked.connect(self.chart_controller.on_nav_home)
-        self.tb_pan.clicked.connect(self.chart_controller.on_nav_pan)
-        self.tb_zoom.clicked.connect(self.chart_controller.on_nav_zoom)
-        self.tb_cross.clicked.connect(lambda: self.chart_controller.set_drawing_mode(None))
-        self.tb_hline.clicked.connect(lambda: self.chart_controller.set_drawing_mode("hline"))
-        self.tb_trend.clicked.connect(lambda: self.chart_controller.set_drawing_mode("trend"))
-        self.tb_rect.clicked.connect(lambda: self.chart_controller.set_drawing_mode("rect"))
-        self.tb_fib.clicked.connect(lambda: self.chart_controller.set_drawing_mode("fib"))
-        self.tb_label.clicked.connect(lambda: self.chart_controller.set_drawing_mode("label"))
-
-        # Toggle drawbar visibility
-        self.toggle_drawbar_btn.toggled.connect(self.chart_controller.toggle_drawbar)
-
-        # Splitter: Market Watch | (Chart + Orders)
-        splitter = QSplitter(Qt.Horizontal)
-        # left: market watch
-        self.market_watch = QListWidget()
-        for s in self._symbols_supported:
-            QListWidgetItem(f"{s}  -", self.market_watch)
-        splitter.addWidget(self.market_watch)
-        # right: vertical with (drawbar+chart) and orders table
-        right_vert = QSplitter(Qt.Vertical)
-        # inner splitter: drawbar | chart canvas
-        chart_area = QSplitter(Qt.Vertical)
-        chart_area.setHandleWidth(4); chart_area.setOpaqueResize(True)
-        self._chart_area = chart_area
-        chart_area.addWidget(self._drawbar)
-        chart_wrap = QWidget()
-        cw_lay = QVBoxLayout(chart_wrap); cw_lay.setContentsMargins(0, 0, 0, 0)
-        cw_lay.addWidget(self.canvas)
-        chart_area.addWidget(chart_wrap)
-        right_vert.addWidget(chart_area)
-        # orders table
-        self.orders_table = QTableWidget(0, 9)
-        self.orders_table.setHorizontalHeaderLabels(["ID","Time","Symbol","Type","Volume","Price","SL","TP","Status"])
-        right_vert.addWidget(self.orders_table)
-        splitter.addWidget(right_vert)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 5)
-        # Splitter handles/movimento per tutti
-        splitter.setHandleWidth(6); splitter.setOpaqueResize(True)
-        right_vert.setHandleWidth(6); right_vert.setOpaqueResize(True)
-        # Splitter handles/movimento
-        splitter.setHandleWidth(6); splitter.setOpaqueResize(True)
-        right_vert.setHandleWidth(6); right_vert.setOpaqueResize(True)
-        self.layout.addWidget(splitter)
+        try:
+            self.tb_home.clicked.connect(self._on_nav_home)
+            self.tb_pan.clicked.connect(self._on_nav_pan)
+            self.tb_zoom.clicked.connect(self._on_nav_zoom)
+        except Exception:
+            pass
+        try:
+            self.tb_cross.clicked.connect(lambda: self._set_drawing_mode(None))
+            self.tb_hline.clicked.connect(lambda: self._set_drawing_mode("hline"))
+            self.tb_trend.clicked.connect(lambda: self._set_drawing_mode("trend"))
+            self.tb_rect.clicked.connect(lambda: self._set_drawing_mode("rect"))
+            self.tb_fib.clicked.connect(lambda: self._set_drawing_mode("fib"))
+            self.tb_label.clicked.connect(lambda: self._set_drawing_mode("label"))
+        except Exception:
+            pass
 
         self.ax = self.canvas.figure.subplots()
         try:
@@ -332,11 +131,6 @@ class ChartTab(QWidget):
             self.tickArrived.connect(self.chart_controller.on_tick_main)
         except Exception:
             pass
-
-        # Stato rendering prezzo e artist
-        self._price_mode = "candles"   # "line" | "candles"
-        self._price_line = None
-        self._candle_artists: list = []
 
         # Pan (LMB) state
         self._lbtn_pan = False
@@ -400,6 +194,302 @@ class ChartTab(QWidget):
         except Exception:
             pass
 
+
+    def _build_ui(self) -> None:
+        "Use the original programmatic layout for the chart tab."
+        self.layout = QVBoxLayout(self)
+        self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        topbar = QWidget()
+        top_layout = QHBoxLayout(topbar)
+        top_layout.setContentsMargins(4, 1, 4, 1)
+        top_layout.setSpacing(4)
+        try:
+            self.toolbar.setIconSize(QSize(16, 16))
+            self.toolbar.setStyleSheet("QToolBar{spacing:2px; padding:0px; margin:0px;}")
+            self.toolbar.setMovable(False)
+            self.toolbar.setFloatable(False)
+            self.toolbar.setMaximumHeight(26)
+        except Exception:
+            pass
+        topbar.setStyleSheet("QPushButton, QComboBox, QToolButton { padding: 2px 6px; min-height: 22px; }; QLabel { padding: 0px; margin: 0px; }")
+        topbar.setMaximumHeight(32)
+        top_layout.addWidget(self.toolbar)
+
+        self.symbol_combo = QComboBox()
+        top_layout.addWidget(self.symbol_combo)
+
+        top_layout.addWidget(QLabel("TF:"))
+        self.tf_combo = QComboBox()
+        top_layout.addWidget(self.tf_combo)
+        self.tf_used_label = QLabel("TF used: -")
+        top_layout.addWidget(self.tf_used_label)
+
+        self.forecast_settings_btn = QPushButton("Prediction Settings")
+        self.forecast_btn = QPushButton("Make Prediction")
+        top_layout.addWidget(self.forecast_settings_btn)
+        top_layout.addWidget(self.forecast_btn)
+
+        top_layout.addWidget(QLabel("Pred step:"))
+        self.pred_step_combo = QComboBox()
+        top_layout.addWidget(self.pred_step_combo)
+
+        self.adv_settings_btn = QPushButton("Advanced Settings")
+        self.adv_forecast_btn = QPushButton("Advanced Forecast")
+        top_layout.addWidget(self.adv_settings_btn)
+        top_layout.addWidget(self.adv_forecast_btn)
+
+        from PySide6.QtWidgets import QToolButton
+
+        self.toggle_drawbar_btn = QToolButton()
+        self.toggle_drawbar_btn.setText("Draw")
+        self.toggle_drawbar_btn.setCheckable(True)
+        self.toggle_drawbar_btn.setChecked(True)
+        self.toggle_drawbar_btn.setToolTip("Mostra/Nascondi barra di disegno")
+        top_layout.addWidget(self.toggle_drawbar_btn)
+
+        top_layout.addWidget(QLabel("Years:"))
+        self.years_combo = QComboBox()
+        top_layout.addWidget(self.years_combo)
+        top_layout.addWidget(QLabel("Months:"))
+        self.months_combo = QComboBox()
+        top_layout.addWidget(self.months_combo)
+
+        self.backfill_btn = QPushButton("Backfill")
+        self.backfill_btn.setToolTip(
+            "Scarica storico per il range selezionato (Years/Months) per il simbolo corrente"
+        )
+        top_layout.addWidget(self.backfill_btn)
+
+        self.indicators_btn = QPushButton("Indicators")
+        top_layout.addWidget(self.indicators_btn)
+
+        self.build_latents_btn = QPushButton("Build Latents")
+        top_layout.addWidget(self.build_latents_btn)
+
+        from PySide6.QtWidgets import QProgressBar
+
+        self.backfill_progress = QProgressBar()
+        self.backfill_progress.setMaximumWidth(160)
+        self.backfill_progress.setRange(0, 100)
+        self.backfill_progress.setValue(0)
+        self.backfill_progress.setTextVisible(False)
+        top_layout.addWidget(self.backfill_progress)
+
+        self.clear_forecasts_btn = QPushButton("Clear Forecasts")
+        top_layout.addWidget(self.clear_forecasts_btn)
+
+        self.mode_btn = QToolButton()
+        self.mode_btn.setCheckable(True)
+        self.mode_btn.setText("Candles")
+        self.mode_btn.setToolTip("Commuta visualizzazione prezzo: Candles (candele OHLC) / Line (linea).")
+        self.mode_btn.setChecked(True)
+        top_layout.addWidget(self.mode_btn)
+
+        top_layout.addStretch()
+        self.bidask_label = QLabel("Bid: -    Ask: -")
+        self.bidask_label.setStyleSheet("font-weight: bold;")
+        top_layout.addWidget(self.bidask_label)
+
+        self.trade_btn = QPushButton("Trade")
+        top_layout.addWidget(self.trade_btn)
+
+        self.theme_combo = QComboBox()
+        top_layout.addWidget(QLabel("Theme:"))
+        top_layout.addWidget(self.theme_combo)
+
+        self.layout.addWidget(topbar)
+
+        self._drawbar = self._create_drawbar()
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter = splitter
+        self.market_watch = QListWidget()
+        splitter.addWidget(self.market_watch)
+
+        right_vert = QSplitter(Qt.Vertical)
+        self.right_splitter = right_vert
+        chart_area = QSplitter(Qt.Vertical)
+        chart_area.setHandleWidth(4)
+        chart_area.setOpaqueResize(True)
+        self._chart_area = chart_area
+        chart_area.addWidget(self._drawbar)
+
+        chart_wrap = QWidget()
+        chart_layout = QVBoxLayout(chart_wrap)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.addWidget(self.canvas)
+        chart_area.addWidget(chart_wrap)
+
+        right_vert.addWidget(chart_area)
+        self.orders_table = QTableWidget(0, 9)
+        self.orders_table.setHorizontalHeaderLabels([
+            "ID",
+            "Time",
+            "Symbol",
+            "Type",
+            "Volume",
+            "Price",
+            "SL",
+            "TP",
+            "Status",
+        ])
+        right_vert.addWidget(self.orders_table)
+        splitter.addWidget(right_vert)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 5)
+        splitter.setHandleWidth(6)
+        splitter.setOpaqueResize(True)
+        right_vert.setHandleWidth(6)
+        right_vert.setOpaqueResize(True)
+
+        self.layout.addWidget(splitter)
+
+
+    def _init_control_defaults(self) -> None:
+        """Populate combo boxes and default UI state shared across layouts."""
+        self._symbols_supported = [
+            "EUR/USD",
+            "GBP/USD",
+            "AUX/USD",
+            "GBP/NZD",
+            "AUD/JPY",
+            "GBP/EUR",
+            "GBP/AUD",
+        ]
+        try:
+            self.symbol_combo.clear()
+            self.symbol_combo.addItems(self._symbols_supported)
+        except Exception:
+            pass
+    
+        try:
+            self.tf_combo.clear()
+            self.tf_combo.addItems(["auto", "tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"])
+            self.tf_combo.setCurrentText("auto")
+            self.tf_combo.setToolTip("Seleziona il timeframe di visualizzazione. 'auto' sceglie il TF in base allo zoom.")
+        except Exception:
+            pass
+    
+        try:
+            self.pred_step_combo.clear()
+            self.pred_step_combo.addItems(["auto", "1m"])
+            self.pred_step_combo.setCurrentText("auto")
+            self.pred_step_combo.setToolTip(
+                "Granularità dei punti di previsione. 'auto' usa gli horizons, '1m' aggiunge punti a minuto."
+            )
+        except Exception:
+            pass
+    
+        try:
+            self.years_combo.clear()
+            self.years_combo.addItems([str(x) for x in [0, 1, 2, 3, 4, 5, 10, 15, 20, 30]])
+            self.years_combo.setCurrentText("0")
+        except Exception:
+            pass
+    
+        try:
+            self.months_combo.clear()
+            self.months_combo.addItems([str(x) for x in range(0, 13)])
+            self.months_combo.setCurrentText("0")
+        except Exception:
+            pass
+    
+        try:
+            self.theme_combo.clear()
+            self.theme_combo.addItems(["Dark", "Light"])
+            self.theme_combo.setCurrentText(get_setting("ui_theme", "Dark"))
+        except Exception:
+            pass
+    
+        try:
+            self.market_watch.clear()
+            for symbol in self._symbols_supported:
+                QListWidgetItem(f"{symbol}  -", self.market_watch)
+        except Exception:
+            pass
+    
+        try:
+            self.toggle_drawbar_btn.setChecked(True)
+        except Exception:
+            pass
+    
+        try:
+            self.mode_btn.setText("Linea" if self.mode_btn.isChecked() else "Candles")
+        except Exception:
+            pass
+    
+        try:
+            self.backfill_progress.setRange(0, 100)
+            self.backfill_progress.setValue(0)
+        except Exception:
+            pass
+
+    def _create_drawbar(self) -> QWidget:
+        from PySide6.QtWidgets import QToolButton, QStyle
+
+        drawbar = QWidget()
+        dlay = QHBoxLayout(drawbar)
+        dlay.setContentsMargins(4, 2, 4, 2)
+
+        self.tb_home = QToolButton()
+        self.tb_home.setToolTip("Reset view")
+        self.tb_home.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.tb_pan = QToolButton()
+        self.tb_pan.setToolTip("Pan")
+        self.tb_pan.setCheckable(True)
+        self.tb_pan.setIcon(self.style().standardIcon(QStyle.SP_ArrowUp))
+        self.tb_zoom = QToolButton()
+        self.tb_zoom.setToolTip("Zoom")
+        self.tb_zoom.setCheckable(True)
+        self.tb_zoom.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
+        for b in (self.tb_home, self.tb_pan, self.tb_zoom):
+            dlay.addWidget(b)
+        dlay.addSpacing(12)
+
+        self.tb_cross = QToolButton()
+        self.tb_cross.setToolTip("Cross")
+        self.tb_cross.setIcon(self.style().standardIcon(QStyle.SP_DialogYesButton))
+        self.tb_hline = QToolButton()
+        self.tb_hline.setToolTip("H-Line")
+        self.tb_hline.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
+        self.tb_trend = QToolButton()
+        self.tb_trend.setToolTip("Trend")
+        self.tb_trend.setIcon(self.style().standardIcon(QStyle.SP_ArrowRight))
+        self.tb_rect = QToolButton()
+        self.tb_rect.setToolTip("Rect")
+        self.tb_rect.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        self.tb_fib = QToolButton()
+        self.tb_fib.setToolTip("Fib")
+        self.tb_fib.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        self.tb_label = QToolButton()
+        self.tb_label.setToolTip("Label")
+        self.tb_label.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+        self.tb_colors = QToolButton()
+        self.tb_colors.setToolTip("Color/CSS Settings")
+        self.tb_colors.setIcon(self.style().standardIcon(QStyle.SP_DriveDVDIcon))
+        self.tb_colors.clicked.connect(self._open_color_settings)
+        self.tb_orders = QToolButton()
+        self.tb_orders.setToolTip("Show/Hide Orders")
+        self.tb_orders.setCheckable(True)
+        self.tb_orders.setChecked(True)
+        self.tb_orders.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
+        self.tb_orders.toggled.connect(self._toggle_orders)
+
+        for b in (
+            self.tb_cross,
+            self.tb_hline,
+            self.tb_trend,
+            self.tb_rect,
+            self.tb_fib,
+            self.tb_label,
+            self.tb_colors,
+            self.tb_orders,
+        ):
+            dlay.addWidget(b)
+        dlay.addStretch()
+        return drawbar
     def _handle_tick(self, payload: dict):
         """Thread-safe entrypoint: enqueue tick to GUI thread."""
         return self.chart_controller.handle_tick(payload=payload)
@@ -611,3 +701,126 @@ class ChartTab(QWidget):
         """
         return self.chart_controller.load_candles_from_db(symbol=symbol, timeframe=timeframe, limit=limit, start_ms=start_ms, end_ms=end_ms)
 
+
+
+
+class _ChartTabUiLoader(QUiLoader):
+    def __init__(self, baseinstance: QWidget) -> None:
+        super().__init__()
+        self._baseinstance = baseinstance
+
+    def createWidget(self, className: str, parent: QWidget | None = None, name: str = "") -> QWidget:
+        if parent is None and self._baseinstance is not None:
+            return self._baseinstance
+        widget = super().createWidget(className, parent, name)
+        if self._baseinstance is not None and name:
+            setattr(self._baseinstance, name, widget)
+        return widget
+
+
+class ChartTabUI(ChartTab):
+    """Chart tab backed by a Qt Designer .ui layout."""
+
+    UI_FILE = Path(__file__).with_name("chart_tab_ui.ui")
+
+    def _build_ui(self) -> None:
+        self._load_designer_ui()
+
+        main_layout = self.layout()
+        if main_layout is not None:
+            self.layout = main_layout
+
+        toolbar_container = getattr(self, "toolbar_placeholder", None)
+        chart_container = getattr(self, "chart_container", None)
+        drawbar_container = getattr(self, "drawbar_container", None)
+
+        self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
+        if chart_container is not None:
+            chart_layout = chart_container.layout()
+            if chart_layout is None:
+                chart_layout = QVBoxLayout(chart_container)
+            chart_layout.setContentsMargins(0, 0, 0, 0)
+            chart_layout.addWidget(self.canvas)
+
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        if toolbar_container is not None:
+            toolbar_layout = toolbar_container.layout()
+            if toolbar_layout is None:
+                toolbar_layout = QHBoxLayout(toolbar_container)
+            toolbar_layout.setContentsMargins(0, 0, 0, 0)
+            toolbar_layout.addWidget(self.toolbar)
+
+        try:
+            self.toolbar.setIconSize(QSize(16, 16))
+            self.toolbar.setStyleSheet("QToolBar{spacing:2px; padding:0px; margin:0px;}")
+            self.toolbar.setMovable(False)
+            self.toolbar.setFloatable(False)
+            self.toolbar.setMaximumHeight(26)
+        except Exception:
+            pass
+
+        topbar = getattr(self, "topbar", None)
+        if topbar is not None:
+            topbar.setMaximumHeight(32)
+            topbar.setStyleSheet("QPushButton, QComboBox, QToolButton { padding: 2px 6px; min-height: 22px; }; QLabel { padding: 0px; margin: 0px; }")
+
+        self._drawbar = self._create_drawbar()
+        if drawbar_container is not None:
+            drawbar_layout = drawbar_container.layout()
+            if drawbar_layout is None:
+                drawbar_layout = QHBoxLayout(drawbar_container)
+            while drawbar_layout.count():
+                item = drawbar_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(None)
+            drawbar_layout.addWidget(self._drawbar)
+
+        self.main_splitter = getattr(self, "main_splitter", None)
+        self.right_splitter = getattr(self, "right_splitter", None)
+        self._chart_area = getattr(self, "chart_area_splitter", None)
+        self.market_watch = getattr(self, "market_watch", None)
+        self.orders_table = getattr(self, "orders_table", None)
+        self.symbol_combo = getattr(self, "symbol_combo", None)
+        self.tf_combo = getattr(self, "tf_combo", None)
+        self.tf_used_label = getattr(self, "tf_used_label", None)
+        self.forecast_settings_btn = getattr(self, "forecast_settings_btn", None)
+        self.forecast_btn = getattr(self, "forecast_btn", None)
+        self.pred_step_combo = getattr(self, "pred_step_combo", None)
+        self.adv_settings_btn = getattr(self, "adv_settings_btn", None)
+        self.adv_forecast_btn = getattr(self, "adv_forecast_btn", None)
+        self.toggle_drawbar_btn = getattr(self, "toggle_drawbar_btn", None)
+        self.years_combo = getattr(self, "years_combo", None)
+        self.months_combo = getattr(self, "months_combo", None)
+        self.backfill_btn = getattr(self, "backfill_btn", None)
+        self.indicators_btn = getattr(self, "indicators_btn", None)
+        self.build_latents_btn = getattr(self, "build_latents_btn", None)
+        self.backfill_progress = getattr(self, "backfill_progress", None)
+        self.clear_forecasts_btn = getattr(self, "clear_forecasts_btn", None)
+        self.mode_btn = getattr(self, "mode_btn", None)
+        self.bidask_label = getattr(self, "bidask_label", None)
+        self.trade_btn = getattr(self, "trade_btn", None)
+        self.theme_combo = getattr(self, "theme_combo", None)
+
+        if self.main_splitter is not None:
+            self.main_splitter.setStretchFactor(0, 1)
+            self.main_splitter.setStretchFactor(1, 5)
+            self.main_splitter.setHandleWidth(6)
+            self.main_splitter.setOpaqueResize(True)
+        if self.right_splitter is not None:
+            self.right_splitter.setHandleWidth(6)
+            self.right_splitter.setOpaqueResize(True)
+        if self._chart_area is not None:
+            self._chart_area.setHandleWidth(4)
+            self._chart_area.setOpaqueResize(True)
+
+    def _load_designer_ui(self) -> None:
+        ui_path = self.UI_FILE
+        if not ui_path.exists():
+            raise FileNotFoundError(f"UI file not found: {ui_path}")
+        loader = _ChartTabUiLoader(self)
+        ui_file = QFile(str(ui_path))
+        if not ui_file.open(QFile.ReadOnly):
+            raise IOError(f"Unable to open UI file: {ui_path}")
+        loader.load(ui_file, self)
+        ui_file.close()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
-import time
 
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle, Patch

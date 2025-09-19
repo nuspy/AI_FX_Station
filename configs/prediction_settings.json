@@ -26,7 +26,12 @@
         "17m",
         "18m",
         "19m",
-        "20m"
+        "20m",
+        "30 m",
+        "45m",
+        "1h",
+        "2h",
+        "3h"
     ],
     "N_samples": 235,
     "apply_conformal": true,
