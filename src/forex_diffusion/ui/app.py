@@ -99,6 +99,21 @@ def setup_ui(
         setattr(chart_tab, "controller", controller)
     except Exception:
         pass
+    # attach controllers to chart_tab
+    try:
+        from .chart_tab.controllers import DataLoaderController, AdherenceBadgeController, ZoomController
+        dloader = DataLoaderController(chart_tab, db_service)
+        dloader.populate_symbols_timeframes()
+        chart_tab.controllers['adherence'] = AdherenceBadgeController(chart_tab)
+        chart_tab.controllers['zoom'] = ZoomController(chart_tab)
+        # Improve readability on high-DPI: increase default minimum height
+        try:
+            chart_tab.plot.setMinimumHeight(420)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     # connect ChartTab forecast requests to controller handler, and results back to the chart
     try:
         chart_tab.forecastRequested.connect(controller.handle_forecast_payload)

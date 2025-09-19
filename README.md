@@ -1,7 +1,8 @@
-# ForexMagic Patch v1
+# ForexGPT
 
-Contenuti principali:
-- **train_sklearn.py**: OHLC in **variazione relativa** (log-returns), feature **ora del giorno** e **giorno settimana**, indicatori con **parametri UI** e **timeframe** selezionati, modelli **ridge/lasso/elasticnet + rf**, salvataggio **joblib**.
-- **train.py** (Lightning stub) per permettere il **ritorno al ramo Lightning** dalla UI.
-- **ui/training_launcher.py**: invocazione robusta (senza prefisso `src.`) che passa *tutti* i parametri.
-- **db_adapter.py**: collega qui il fetch delle candele dal DB (ritorna ts_utc/open/high/low/close/volume).
+- Requisiti: Python 3.12, `pip install -e .`
+- Avvio GUI: `python scripts/run_gui.py --testserver`
+- Backtesting Tab aggiornato: scroll, indicatori con range/timeframe, forecast con flag ore/giorno.
+- Generazione combinazioni completa (modelli × tipi × indicatori × parametri × flag tempo).
+- ChartTab su Qt Designer (.ui) + controller separati (zoom, badge, data loader).
+- Simboli/timeframe dal DB (fallback se DB vuoto). Opzioni: mostra/nascondi serie, profili colore personalizzabili e persistenti.

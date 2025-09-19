@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ChartTab</class>
+ <widget class="QWidget" name="ChartTab">
+  <property name="windowTitle">
+   <string>Chart</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QWidget" name="toolbar" native="true">
+     <layout class="QHBoxLayout" name="horizontalLayout">
+      <item><widget class="QComboBox" name="symbolCombo"/></item>
+      <item><widget class="QComboBox" name="timeframeCombo"/></item>
+      <item><widget class="QToolButton" name="btnSeries"><property name="text"><string>Series</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnPalette"><property name="text"><string>Palette</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnIndicators"><property name="text"><string>Indicators</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnBase"><property name="text"><string>Base Settings</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnRun"><property name="text"><string>Run</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnAdv"><property name="text"><string>Advanced</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnRunAdv"><property name="text"><string>Run Adv</string></property></widget></item>
+      <item><widget class="QToolButton" name="btnTrades"><property name="text"><string>Trades</string></property></widget></item>
+      <item><widget class="QComboBox" name="colorProfileCombo"><property name="editable"><bool>false</bool></property></widget></item>
+      <item><spacer name="spacer"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+      <item><widget class="QPushButton" name="btnForecast"><property name="text"><string>Forecast</string></property></widget></item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="plotContainer" native="true"/>
+   </item>
+   <item>
+    <widget class="QTextEdit" name="logText"/>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+ </ui>
+
+
