@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import time
 
 import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle, Patch
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -21,81 +22,96 @@ class PlotService(ChartServiceBase):
 
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
         if df is None or df.empty:
+            self._clear_candles()
+            if hasattr(self, '_price_line') and self._price_line is not None:
+                try:
+                    self._price_line.set_visible(False)
+                except Exception:
+                    pass
+            try:
+                self._refresh_legend_unique(loc='upper left')
+            except Exception:
+                pass
             return
+
+        if not hasattr(self, '_extra_legend_items'):
+            self._extra_legend_items = {}
 
         self._last_df = df.copy()
 
-        # preserve previous limits only if explicitly provided
         prev_xlim = restore_xlim if restore_xlim is not None else None
         prev_ylim = restore_ylim if restore_ylim is not None else None
 
-        # Clean and normalize data for plotting (align x/y, drop NaN, sort by time)
         try:
             df2 = df.copy()
             y_col = 'close' if 'close' in df2.columns else 'price'
-            df2["ts_utc"] = pd.to_numeric(df2["ts_utc"], errors="coerce")
-            df2[y_col] = pd.to_numeric(df2[y_col], errors="coerce")
-            df2 = df2.dropna(subset=["ts_utc", y_col]).reset_index(drop=True)
-            df2["ts_utc"] = df2["ts_utc"].astype("int64")
-            df2 = df2.sort_values("ts_utc").reset_index(drop=True)
+            df2['ts_utc'] = pd.to_numeric(df2['ts_utc'], errors='coerce')
+            df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')
+            df2 = df2.dropna(subset=['ts_utc', y_col]).reset_index(drop=True)
+            df2['ts_utc'] = df2['ts_utc'].astype('int64')
+            df2 = df2.sort_values('ts_utc').reset_index(drop=True)
 
-            # build x (naive datetime for matplotlib) and y aligned
-            x_dt = pd.to_datetime(df2["ts_utc"], unit="ms", utc=True)
+            x_dt = pd.to_datetime(df2['ts_utc'], unit='ms', utc=True)
             try:
                 x_dt = x_dt.tz_localize(None)
             except Exception:
                 pass
             y_vals = df2[y_col].astype(float).to_numpy()
         except Exception as e:
-            logger.exception("Failed to normalize data for plotting: {}", e)
+            logger.exception('Failed to normalize data for plotting: {}', e)
             return
 
         if len(x_dt) == 0 or len(y_vals) == 0:
-            logger.info("Nothing to plot after cleaning ({} {}).", getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
+            logger.info('Nothing to plot after cleaning ({} {}).', getattr(self, 'symbol', ''), getattr(self, 'timeframe', ''))
+            self._clear_candles()
             return
 
-        # Ensure single price line artist exists and update it (do not clear overlays)
-        price_color = self._get_color("price_color", "#e0e0e0" if getattr(self, "_is_dark", True) else "#000000")
-        if not hasattr(self, "_price_line") or self._price_line is None:
-            try:
-                self._price_line, = self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
-            except Exception:
-                self._price_line = None
-        else:
-            try:
-                self._price_line.set_data(x_dt, y_vals)
-                self._price_line.set_color(price_color)
-                self._price_line.set_visible(True)
-            except Exception:
-                try:
-                    self._price_line, = self.ax.plot(x_dt, y_vals, color=price_color, label="Price")
-                except Exception:
-                    self._price_line = None
+        price_mode = str(getattr(self, '_price_mode', 'line')).lower()
+        price_color = self._get_color('price_color', '#e0e0e0' if getattr(self, '_is_dark', True) else '#000000')
+        try:
+            if not hasattr(self, '_price_line') or self._price_line is None:
+                (self._price_line,) = self.ax.plot([], [], color=price_color, label='Price')
+            self._price_line.set_data(x_dt, y_vals)
+            self._price_line.set_color(price_color)
+        except Exception:
+            self._price_line = None
 
-        # disegna/aggiorna overlay indicatori (usa settings correnti)
+        if price_mode == 'candles' and {'open', 'high', 'low', 'close'}.issubset(df2.columns):
+            if self._price_line is not None:
+                try:
+                    self._price_line.set_visible(False)
+                except Exception:
+                    pass
+            self._render_candles(df2, x_dt)
+        else:
+            if self._price_line is not None:
+                try:
+                    self._price_line.set_visible(True)
+                except Exception:
+                    pass
+            self._clear_candles()
+
         self._plot_indicators(df2, x_dt)
 
         if quantiles:
             self._plot_forecast_overlay(quantiles)
 
-        # title and axes cosmetics
         self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}", pad=2)
-        axes_col = self._get_color("axes_color", "#cfd6e1")
+        axes_col = self._get_color('axes_color', '#cfd6e1')
         try:
             self.ax.tick_params(colors=axes_col)
             self.ax.xaxis.label.set_color(axes_col)
             self.ax.yaxis.label.set_color(axes_col)
             for spine in self.ax.spines.values():
                 spine.set_color(axes_col)
-            # Remove xlabel/offset text like '1 minute'
-            self.ax.set_xlabel("")
+            self.ax.set_xlabel('')
             try:
                 self.ax.xaxis.get_offset_text().set_visible(False)
             except Exception:
                 pass
         except Exception:
             pass
-        # Compact date axis without unit text
+
         try:
             locator = mdates.AutoDateLocator(minticks=4, maxticks=10)
             formatter = mdates.ConciseDateFormatter(locator)
@@ -103,14 +119,13 @@ class PlotService(ChartServiceBase):
             self.ax.xaxis.set_major_formatter(formatter)
         except Exception:
             pass
-        # tighten paddings
+
         try:
             self.ax.margins(x=0.001, y=0.05)
             self.canvas.figure.subplots_adjust(left=0.04, right=0.995, top=0.97, bottom=0.08)
         except Exception:
             pass
 
-        # restore limits (only if requested), else autoscale to data
         try:
             if prev_xlim is not None:
                 self.ax.set_xlim(prev_xlim)
@@ -122,27 +137,116 @@ class PlotService(ChartServiceBase):
         except Exception:
             pass
 
-        # ensure oscillator panel shares the same x-range
         try:
             if self._osc_ax is not None:
                 self._osc_ax.set_xlim(self.ax.get_xlim())
         except Exception:
             pass
 
-            # aggiorna legenda unica (no duplicati per modello)
-            try:
-                self._refresh_legend_unique(loc='upper left')
-            except Exception:
-                pass
+        try:
+            self._refresh_legend_unique(loc='upper left')
+        except Exception as exc:
+            logger.debug('Legend refresh skipped: {}', exc)
 
         try:
             self.canvas.draw_idle()
         except Exception:
             self.canvas.draw()
 
-    def _render_candles(self, df2: pd.DataFrame):
-        """Disabled candle renderer (rollback)."""
-        return
+    def _render_candles(self, df2: pd.DataFrame, x_dt: Optional[pd.Series] = None):
+        """Render OHLC candles on the main axis."""
+        try:
+            required = {'open', 'high', 'low', 'close'}
+            if not required.issubset(df2.columns):
+                self._clear_candles()
+                return
+
+            self._clear_candles()
+
+            if x_dt is None:
+                ts = pd.to_numeric(df2['ts_utc'], errors='coerce').dropna()
+                if ts.empty:
+                    self._clear_candles()
+                    return
+                x_dt = pd.to_datetime(ts.astype('int64'), unit='ms', utc=True).tz_convert(None)
+
+            xs = mdates.date2num(pd.to_datetime(x_dt))
+            diffs = xs[1:] - xs[:-1] if len(xs) > 1 else []
+            positive = [d for d in diffs if d > 0]
+            width = (float(np.median(positive)) * 0.7) if positive else self._default_candle_width()
+            if width <= 0:
+                width = self._default_candle_width()
+            price_span = float(df2['high'].max() - df2['low'].min() or 1.0)
+            epsilon = max(price_span * 0.0005, 1e-6)
+
+            bull_color = self._get_color('candle_up_color', '#2ecc71')
+            bear_color = self._get_color('candle_down_color', '#e74c3c')
+
+            candle_artists: List = []
+            for idx, row in df2.iterrows():
+                try:
+                    o = float(row['open']); c = float(row['close'])
+                    h = float(row['high']); l = float(row['low'])
+                except Exception:
+                    continue
+                if any(pd.isna(v) for v in (o, c, h, l)):
+                    continue
+                color = bull_color if c >= o else bear_color
+                body_height = abs(c - o)
+                if body_height == 0:
+                    body_height = epsilon
+                    lower = o - body_height / 2.0
+                else:
+                    lower = min(o, c)
+                rect = Rectangle((xs[idx] - width / 2.0, lower), width, body_height,
+                                 facecolor=color, edgecolor=color, linewidth=0.6,
+                                 alpha=0.9, zorder=3)
+                self.ax.add_patch(rect)
+                wick_line, = self.ax.plot([xs[idx], xs[idx]], [l, h], color=color, linewidth=0.7,
+                                           zorder=2.5, solid_capstyle='round')
+                candle_artists.extend([rect, wick_line])
+
+            self._candle_artists = candle_artists
+            extra = dict(getattr(self, '_extra_legend_items', {}))
+            bull_patch = Patch(facecolor=bull_color, edgecolor='none', label='Bull Candle')
+            bear_patch = Patch(facecolor=bear_color, edgecolor='none', label='Bear Candle')
+            extra['candles_bull'] = (bull_patch, bull_patch.get_label())
+            extra['candles_bear'] = (bear_patch, bear_patch.get_label())
+            self._extra_legend_items = extra
+        except Exception as exc:
+            logger.exception('Failed to render candles: {}', exc)
+            self._clear_candles()
+
+    def _clear_candles(self) -> None:
+        """Remove candle artists and legend patches."""
+        artists = list(getattr(self, '_candle_artists', []))
+        for artist in artists:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._candle_artists = []
+        extra = dict(getattr(self, '_extra_legend_items', {}))
+        for key in ['candles_bull', 'candles_bear']:
+            extra.pop(key, None)
+        self._extra_legend_items = extra
+
+    def _default_candle_width(self) -> float:
+        """Fallback candle width expressed in Matplotlib date units."""
+        tf = str(getattr(self, 'timeframe', '1m')).lower()
+        try:
+            if tf.endswith('m'):
+                minutes = max(1, int(tf[:-1] or '1'))
+                return minutes / (24 * 60) * 0.7
+            if tf.endswith('h'):
+                hours = max(1, int(tf[:-1] or '1'))
+                return hours / 24 * 0.6
+            if tf.endswith('d'):
+                days = max(1, int(tf[:-1] or '1'))
+                return days * 0.5
+        except Exception:
+            pass
+        return 1 / (24 * 60) * 0.7
 
     def _ensure_osc_axis(self, need: bool):
         """Crea/mostra o nasconde l’asse “oscillatori” (inset sotto il main)."""
@@ -384,12 +488,6 @@ class PlotService(ChartServiceBase):
             except Exception:
                 pass
 
-        # aggiorna legenda per includere le label indicatori
-        try:
-            self.ax.legend(loc='upper left', fontsize=8, frameon=False)
-        except Exception:
-            pass
-
     def _sma(self, x: pd.Series, n: int) -> pd.Series:
         return x.rolling(n, min_periods=max(1, n // 2)).mean()
 
@@ -458,15 +556,17 @@ class PlotService(ChartServiceBase):
         return res
 
     def _on_mode_toggled(self, checked: bool):
-        """Manual switch placeholder (candles disabled)."""
+        """Toggle between candle and line rendering."""
         try:
-            # Always render as line after rollback; keep placeholder to avoid wiring issues.
+            self._price_mode = 'candles' if checked else 'line'
+            if hasattr(self, 'mode_btn') and self.mode_btn is not None:
+                self.mode_btn.setText('Linea' if checked else 'Candles')
             if self._last_df is not None and not self._last_df.empty:
-                prev_xlim = self.ax.get_xlim() if hasattr(self.ax, "get_xlim") else None
-                prev_ylim = self.ax.get_ylim() if hasattr(self.ax, "get_ylim") else None
+                prev_xlim = self.ax.get_xlim() if hasattr(self.ax, 'get_xlim') else None
+                prev_ylim = self.ax.get_ylim() if hasattr(self.ax, 'get_ylim') else None
                 self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug('Price mode toggle failed: {}', exc)
 
     def _apply_theme(self, theme: str):
         from PySide6.QtGui import QPalette, QColor
@@ -535,29 +635,43 @@ class PlotService(ChartServiceBase):
             pass
 
     def _refresh_legend_unique(self, loc: str = "upper left"):
-        """Refresh legend without duplicating labels."""
+        """Refresh legend showing only visible, unique labels (main + oscillator axes)."""
         try:
-            handles, labels = self.ax.get_legend_handles_labels()
-            if not handles:
-                return
+            handles_labels: List[Tuple[object, str]] = []
+            for axis in (self.ax, getattr(self, '_osc_ax', None)):
+                if axis is None:
+                    continue
+                handles, labels = axis.get_legend_handles_labels()
+                for handle, label in zip(handles, labels):
+                    if not label or label.startswith('_'):
+                        continue
+                    visible = getattr(handle, 'get_visible', lambda: True)()
+                    if not visible:
+                        continue
+                    handles_labels.append((handle, label))
+
+            for handle, label in getattr(self, '_extra_legend_items', {}).values():
+                handles_labels.append((handle, label))
+
+            unique: List[Tuple[object, str]] = []
             seen = set()
-            uniq_handles = []
-            uniq_labels = []
-            for handle, label in zip(handles, labels):
-                if not label or label in seen:
+            for handle, label in handles_labels:
+                if label in seen:
                     continue
                 seen.add(label)
-                uniq_handles.append(handle)
-                uniq_labels.append(label)
-            if not uniq_handles:
+                unique.append((handle, label))
+
+            existing = getattr(self.ax, 'legend_', None)
+            if existing is not None:
+                existing.remove()
+
+            if not unique:
                 return
-            legend = self.ax.legend(uniq_handles, uniq_labels, loc=loc)
-            try:
-                legend.set_frame_on(False)
-            except Exception:
-                pass
-        except Exception:
-            pass
+
+            legend = self.ax.legend([h for h, _ in unique], [l for _, l in unique], loc=loc, fontsize=8, frameon=False)
+            self._legend_artist = legend
+        except Exception as exc:
+            logger.debug('Legend refresh failed: {}', exc)
 
     def _toggle_orders(self, visible: bool):
         try:

@@ -171,6 +171,7 @@ class ChartTab(QWidget):
         self.mode_btn.setToolTip("Commuta visualizzazione prezzo: Candles (candele OHLC) / Line (linea).")
         self.mode_btn.setChecked(True)
         self.mode_btn.toggled.connect(self.chart_controller.on_mode_toggled)
+        self.mode_btn.setText("Linea" if self.mode_btn.isChecked() else "Candles")
         top_layout.addWidget(self.mode_btn)
 
         top_layout.addStretch()
