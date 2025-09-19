@@ -66,7 +66,7 @@ class PlotService(ChartServiceBase):
             return
 
         price_mode = str(getattr(self, '_price_mode', 'line')).lower()
-        price_color = self._get_color('price_color', '#e0e0e0' if getattr(self, '_is_dark', True) else '#000000')
+        price_color = self._get_color_mpl('price_line_color', '#e0e0e0' if getattr(self, '_is_dark', True) else '#1a1e25')
         try:
             if not hasattr(self, '_price_line') or self._price_line is None:
                 (self._price_line,) = self.ax.plot([], [], color=price_color, label='Price')
@@ -95,14 +95,17 @@ class PlotService(ChartServiceBase):
         if quantiles:
             self._plot_forecast_overlay(quantiles)
 
-        self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}", pad=2)
-        axes_col = self._get_color('axes_color', '#cfd6e1')
+        title_color = self._get_color_mpl('title_bar_color', '#cfd6e1' if getattr(self, '_is_dark', True) else '#1a1e25')
+        self.ax.set_title(f"{getattr(self, 'symbol', '')} - {getattr(self, 'timeframe', '')}", pad=2, color=title_color)
+        axes_color_qt = self._get_qcolor('axes_color', '#cfd6e1')
+        axes_col = self._color_to_mpl(axes_color_qt)
+        axes_col_hex = axes_color_qt.name(QColor.HexRgb)
         try:
-            self.ax.tick_params(colors=axes_col)
-            self.ax.xaxis.label.set_color(axes_col)
-            self.ax.yaxis.label.set_color(axes_col)
+            self.ax.tick_params(colors=axes_col_hex)
+            self.ax.xaxis.label.set_color(axes_col_hex)
+            self.ax.yaxis.label.set_color(axes_col_hex)
             for spine in self.ax.spines.values():
-                spine.set_color(axes_col)
+                spine.set_color(axes_col_hex)
             self.ax.set_xlabel('')
             try:
                 self.ax.xaxis.get_offset_text().set_visible(False)
@@ -178,8 +181,8 @@ class PlotService(ChartServiceBase):
             price_span = float(df2['high'].max() - df2['low'].min() or 1.0)
             epsilon = max(price_span * 0.0005, 1e-6)
 
-            bull_color = self._get_color('candle_up_color', '#2ecc71')
-            bear_color = self._get_color('candle_down_color', '#e74c3c')
+            bull_color = self._get_color_mpl('candle_up_color', '#2ecc71')
+            bear_color = self._get_color_mpl('candle_down_color', '#e74c3c')
 
             candle_artists: List = []
             for idx, row in df2.iterrows():
@@ -249,11 +252,12 @@ class PlotService(ChartServiceBase):
 
     def _ensure_osc_axis(self, need: bool):
         """Crea/mostra o nasconde l’asse “oscillatori” (inset sotto il main)."""
+        mini_color = getattr(self, '_mini_chart_color', self._get_qcolor('mini_chart_bg', '#14181f' if getattr(self, '_is_dark', True) else '#f5f7fb'))
         if need and self._osc_ax is None:
             try:
                 self._osc_ax = inset_axes(self.ax, width="100%", height="28%",
                                           loc="lower left", borderpad=1.2)
-                self._osc_ax.set_facecolor("#111418" if getattr(self, "_is_dark", True) else "#f5f7fb")
+                self._osc_ax.set_facecolor(self._color_to_mpl(mini_color))
                 self._osc_ax.grid(True, alpha=0.12)
             except Exception:
                 self._osc_ax = None
@@ -262,6 +266,11 @@ class PlotService(ChartServiceBase):
                 self._osc_ax.cla()
                 self._osc_ax.set_visible(False)
                 self.canvas.draw_idle()
+            except Exception:
+                pass
+        elif need and self._osc_ax is not None:
+            try:
+                self._osc_ax.set_facecolor(self._color_to_mpl(mini_color))
             except Exception:
                 pass
     def _on_main_xlim_changed(self, ax):
@@ -479,7 +488,8 @@ class PlotService(ChartServiceBase):
                 axo.axhline(0.5, color=c, linestyle=':', linewidth=0.8, alpha=0.6)
 
             # cosmetica
-            axes_col = self._get_color("axes_color", "#cfd6e1")
+            axes_color_qt = self._get_qcolor("axes_color", "#cfd6e1")
+            axes_col = axes_color_qt.name(QColor.HexRgb)
             try:
                 axo.tick_params(colors=axes_col, labelsize=8)
                 for spine in axo.spines.values():
@@ -554,12 +564,42 @@ class PlotService(ChartServiceBase):
             res.iloc[i - 1] = h
         return res
 
+    def _get_qcolor(self, key: str, default: str) -> QColor:
+        """Return a QColor from persisted settings, accepting #RRGGBB, #AARRGGBB, or #RRGGBBAA."""
+        raw = get_setting(key, default)
+        text = str(raw).strip() if raw is not None else str(default)
+        color = QColor(text)
+        # Handle #RRGGBBAA (alpha at the end) by reordering
+        if not color.isValid() and isinstance(text, str) and text.startswith('#') and len(text) == 9:
+            alpha_last = text[-2:]
+            rgb = text[1:-2]
+            reordered = f"#{alpha_last}{rgb}"
+            color = QColor(reordered)
+        if not color.isValid():
+            color = QColor(default)
+        if not color.isValid():
+            color = QColor('#000000')
+        return color
+
+    def _color_to_css(self, color: QColor) -> str:
+        alpha = round(color.alphaF(), 3)
+        return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha:.3f})"
+
+    def _color_to_mpl(self, color: QColor):
+        r, g, b, a = color.getRgbF()
+        if a >= 0.999:
+            return '#{0:02X}{1:02X}{2:02X}'.format(color.red(), color.green(), color.blue())
+        return (r, g, b, a)
+
+    def _hover_color(self, color: QColor) -> QColor:
+        return color.lighter(120) if self._is_dark else color.darker(110)
+
     def _on_mode_toggled(self, checked: bool):
         """Toggle between candle and line rendering."""
         try:
             self._price_mode = 'candles' if checked else 'line'
             if hasattr(self, 'mode_btn') and self.mode_btn is not None:
-                self.mode_btn.setText('Linea' if checked else 'Candles')
+                self.mode_btn.setText('Candles' if checked else 'Line')
             if self._last_df is not None and not self._last_df.empty:
                 prev_xlim = self.ax.get_xlim() if hasattr(self.ax, 'get_xlim') else None
                 prev_ylim = self.ax.get_ylim() if hasattr(self.ax, 'get_ylim') else None
@@ -568,50 +608,79 @@ class PlotService(ChartServiceBase):
             logger.debug('Price mode toggle failed: {}', exc)
 
     def _apply_theme(self, theme: str):
-        from PySide6.QtGui import QPalette, QColor
+        from PySide6.QtGui import QPalette
         from PySide6.QtWidgets import QApplication
+
         t = (theme or "Dark").lower()
         self._is_dark = (t == "dark")
         app = QApplication.instance()
-        # Colori da settings (con fallback per dark/light)
-        window_bg = self._get_color("window_bg", "#0f1115" if self._is_dark else "#f3f5f8")
-        panel_bg = self._get_color("panel_bg", "#12151b" if self._is_dark else "#ffffff")
-        text_color = self._get_color("text_color", "#e0e0e0" if self._is_dark else "#1a1e25")
-        chart_bg = self._get_color("chart_bg", "#0f1115" if self._is_dark else "#ffffff")
+
+        window_bg_q = self._get_qcolor("window_bg", "#0f1115" if self._is_dark else "#f3f5f8")
+        panel_bg_q = self._get_qcolor("panel_bg", "#12151b" if self._is_dark else "#ffffff")
+        text_q = self._get_qcolor("text_color", "#e0e0e0" if self._is_dark else "#1a1e25")
+        chart_bg_q = self._get_qcolor("chart_bg", "#0f1115" if self._is_dark else "#ffffff")
+        mini_bg_q = self._get_qcolor("mini_chart_bg", "#14181f" if self._is_dark else "#f5f7fb")
+        border_q = self._get_qcolor("border_color", "#2a2f3a" if self._is_dark else "#c7cfdb")
+        splitter_q = self._get_qcolor("splitter_handle_color", "#2f3541" if self._is_dark else "#d0d7e6")
+        bidask_q = self._get_qcolor("bidask_color", "#ffd479" if self._is_dark else "#2d384f")
+        price_line_q = self._get_qcolor("price_line_color", "#e0e0e0" if self._is_dark else "#1a1e25")
+
+        hover_css = self._color_to_css(self._hover_color(panel_bg_q))
         base_css = f"""
-        QWidget {{ background-color: {window_bg}; color: {text_color}; }}
-        QPushButton, QComboBox, QToolButton {{ background-color: {('#1c1f26' if self._is_dark else '#ffffff')}; color: {text_color}; border: 1px solid {('#2a2f3a' if self._is_dark else '#cfd6e1')}; padding: 4px 8px; border-radius: 4px; }}
-        QPushButton:hover, QToolButton:hover {{ background-color: {('#242a35' if self._is_dark else '#eaeef4')}; }}
-        QTableWidget, QListWidget {{ background-color: {panel_bg}; color: {text_color}; gridline-color: {('#2a2f3a' if self._is_dark else '#cfd6e1')}; }}
-        QHeaderView::section {{ background-color: {('#1a1e25' if self._is_dark else '#e8edf4')}; color: {text_color}; border: 0px; }}
+        QWidget {{ background-color: {self._color_to_css(window_bg_q)}; color: {self._color_to_css(text_q)}; }}
+        QPushButton, QComboBox, QToolButton {{ background-color: {self._color_to_css(panel_bg_q)}; color: {self._color_to_css(text_q)}; border: 1px solid {self._color_to_css(border_q)}; padding: 4px 8px; border-radius: 4px; }}
+        QPushButton:hover, QToolButton:hover {{ background-color: {hover_css}; }}
+        QTableWidget, QListWidget {{ background-color: {self._color_to_css(panel_bg_q)}; color: {self._color_to_css(text_q)}; gridline-color: {self._color_to_css(border_q)}; }}
+        QHeaderView::section {{ background-color: {self._color_to_css(panel_bg_q)}; color: {self._color_to_css(text_q)}; border: 0px; }}
+        QSplitter::handle {{ background-color: {self._color_to_css(splitter_q)}; }}
+        QWidget#chart_container {{ border: 1px solid {self._color_to_css(border_q)}; border-radius: 4px; }}
+        QWidget#drawbar_container {{ border-bottom: 1px solid {self._color_to_css(border_q)}; }}
+        QWidget#chartTab {{ border: 1px solid {self._color_to_css(border_q)}; border-radius: 4px; }}
         """
         custom_qss = get_setting("custom_qss", "")
         if app:
             app.setStyleSheet(base_css + "\n" + (custom_qss or ""))
             pal = QPalette()
-            pal.setColor(QPalette.Window, QColor(window_bg))
-            pal.setColor(QPalette.WindowText, QColor(text_color))
-            pal.setColor(QPalette.Base, QColor(panel_bg))
-            pal.setColor(QPalette.AlternateBase, QColor(panel_bg))
-            pal.setColor(QPalette.Text, QColor(text_color))
-            pal.setColor(QPalette.Button, QColor(panel_bg))
-            pal.setColor(QPalette.ButtonText, QColor(text_color))
+            pal.setColor(QPalette.Window, window_bg_q)
+            pal.setColor(QPalette.WindowText, text_q)
+            pal.setColor(QPalette.Base, panel_bg_q)
+            pal.setColor(QPalette.AlternateBase, panel_bg_q)
+            pal.setColor(QPalette.Text, text_q)
+            pal.setColor(QPalette.Button, panel_bg_q)
+            pal.setColor(QPalette.ButtonText, text_q)
             app.setPalette(pal)
-        # colori figure
+
+        # Update chart visuals
         try:
-            self.canvas.figure.set_facecolor(chart_bg)
-            self.ax.set_facecolor(chart_bg)
+            mpl_chart_bg = self._color_to_mpl(chart_bg_q)
+            self.canvas.figure.set_facecolor(mpl_chart_bg)
+            self.ax.set_facecolor(mpl_chart_bg)
+            if self._osc_ax is not None:
+                self._osc_ax.set_facecolor(self._color_to_mpl(mini_bg_q))
         except Exception:
             pass
+
+        self._mini_chart_color = mini_bg_q
+        if hasattr(self, '_price_line') and self._price_line is not None:
+            try:
+                self._price_line.set_color(self._color_to_mpl(price_line_q))
+            except Exception:
+                pass
+
+        if hasattr(self.view, 'bidask_label') and self.view.bidask_label is not None:
+            self.view.bidask_label.setStyleSheet(f"font-weight: bold; color: {self._color_to_css(bidask_q)};")
+
         set_setting("ui_theme", "Dark" if self._is_dark else "Light")
-        try: self.canvas.draw()
-        except Exception: pass
+        try:
+            self.canvas.draw()
+        except Exception:
+            pass
 
     def _get_color(self, key: str, default: str) -> str:
-        try:
-            return str(get_setting(key, default))
-        except Exception:
-            return default
+        return self._color_to_css(self._get_qcolor(key, default))
+
+    def _get_color_mpl(self, key: str, default: str):
+        return self._color_to_mpl(self._get_qcolor(key, default))
 
     def _open_color_settings(self):
         try:

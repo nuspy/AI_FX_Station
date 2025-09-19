@@ -4,14 +4,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Dict, List
 import pandas as pd
+import time
+
+import matplotlib.dates as mdates
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QTableWidgetItem,
-    QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox
+    QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
+    QToolButton, QCheckBox
 )
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QTimer, Qt, Signal, QSize, QFile
+from PySide6.QtCore import QTimer, Qt, Signal, QSize, QFile, QSignalBlocker
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -31,6 +34,7 @@ class ChartTab(QWidget):
 
     def __init__(self, parent=None, viewer=None):
         super().__init__(parent)
+        self.setObjectName("chartTab")
         self._main_window = parent
 
         # attach controller immediately if present on parent
@@ -55,26 +59,11 @@ class ChartTab(QWidget):
 
         self._build_ui()
         self._init_control_defaults()
+        self._connect_ui_signals()
 
-        try:
-            self.toggle_drawbar_btn.toggled.connect(self._toggle_drawbar)
-        except Exception:
-            pass
-        try:
-            self.tb_home.clicked.connect(self._on_nav_home)
-            self.tb_pan.clicked.connect(self._on_nav_pan)
-            self.tb_zoom.clicked.connect(self._on_nav_zoom)
-        except Exception:
-            pass
-        try:
-            self.tb_cross.clicked.connect(lambda: self._set_drawing_mode(None))
-            self.tb_hline.clicked.connect(lambda: self._set_drawing_mode("hline"))
-            self.tb_trend.clicked.connect(lambda: self._set_drawing_mode("trend"))
-            self.tb_rect.clicked.connect(lambda: self._set_drawing_mode("rect"))
-            self.tb_fib.clicked.connect(lambda: self._set_drawing_mode("fib"))
-            self.tb_label.clicked.connect(lambda: self._set_drawing_mode("label"))
-        except Exception:
-            pass
+        theme_combo = getattr(self, "theme_combo", None)
+        if theme_combo is not None:
+            self._apply_theme(theme_combo.currentText())
 
         self.ax = self.canvas.figure.subplots()
         try:
@@ -166,12 +155,12 @@ class ChartTab(QWidget):
 
         try:
             # conserva il gestore esistente per strumenti/testing (left click)
-            self.canvas.mpl_connect("button_press_event", self.chart_controller.on_canvas_click)
+            self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
             # nuovi handler UX (pan/zoom)
-            self.canvas.mpl_connect("button_press_event", self.chart_controller.on_mouse_press)
-            self.canvas.mpl_connect("button_release_event", self.chart_controller.on_mouse_release)
-            self.canvas.mpl_connect("motion_notify_event", self.chart_controller.on_mouse_move)
-            self.canvas.mpl_connect("scroll_event", self.chart_controller.on_scroll_zoom)
+            self.canvas.mpl_connect("button_press_event", self._on_mouse_press)
+            self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
+            self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
+            self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
         except Exception:
             logger.debug("Failed to connect mpl mouse events for zoom/pan.")
         # registry for adherence badges
@@ -184,7 +173,6 @@ class ChartTab(QWidget):
         self.adv_forecast_btn.clicked.connect(self.chart_controller.on_advanced_forecast_clicked)
         self.clear_forecasts_btn.clicked.connect(self.chart_controller.clear_all_forecasts)
         # Symbol change
-        self.symbol_combo.currentTextChanged.connect(self.chart_controller.on_symbol_changed)
 
         # try to auto-connect to controller signals if available
         try:
@@ -198,10 +186,14 @@ class ChartTab(QWidget):
     def _build_ui(self) -> None:
         "Use the original programmatic layout for the chart tab."
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(4)
         self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
         self.toolbar = NavigationToolbar(self.canvas, self)
 
         topbar = QWidget()
+        topbar.setObjectName("chartTopbar")
+        self.topbar = topbar
         top_layout = QHBoxLayout(topbar)
         top_layout.setContentsMargins(4, 1, 4, 1)
         top_layout.setSpacing(4)
@@ -239,8 +231,6 @@ class ChartTab(QWidget):
         self.adv_forecast_btn = QPushButton("Advanced Forecast")
         top_layout.addWidget(self.adv_settings_btn)
         top_layout.addWidget(self.adv_forecast_btn)
-
-        from PySide6.QtWidgets import QToolButton
 
         self.toggle_drawbar_btn = QToolButton()
         self.toggle_drawbar_btn.setText("Draw")
@@ -287,7 +277,9 @@ class ChartTab(QWidget):
         self.mode_btn.setChecked(True)
         top_layout.addWidget(self.mode_btn)
 
-        top_layout.addStretch()
+        self.follow_checkbox = QCheckBox("Segui")
+        top_layout.addWidget(self.follow_checkbox)
+
         self.bidask_label = QLabel("Bid: -    Ask: -")
         self.bidask_label.setStyleSheet("font-weight: bold;")
         top_layout.addWidget(self.bidask_label)
@@ -299,30 +291,44 @@ class ChartTab(QWidget):
         top_layout.addWidget(QLabel("Theme:"))
         top_layout.addWidget(self.theme_combo)
 
+        self.settings_btn = QPushButton("Settings")
+        top_layout.addWidget(self.settings_btn)
+
+        top_layout.addStretch()
+
         self.layout.addWidget(topbar)
 
         self._drawbar = self._create_drawbar()
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("main_splitter")
         self.main_splitter = splitter
         self.market_watch = QListWidget()
         splitter.addWidget(self.market_watch)
 
         right_vert = QSplitter(Qt.Vertical)
+        right_vert.setObjectName("right_splitter")
         self.right_splitter = right_vert
         chart_area = QSplitter(Qt.Vertical)
+        chart_area.setObjectName("chart_area_splitter")
         chart_area.setHandleWidth(4)
         chart_area.setOpaqueResize(True)
         self._chart_area = chart_area
         chart_area.addWidget(self._drawbar)
 
         chart_wrap = QWidget()
+        chart_wrap.setObjectName("chart_container")
         chart_layout = QVBoxLayout(chart_wrap)
         chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.setSpacing(0)
         chart_layout.addWidget(self.canvas)
         chart_area.addWidget(chart_wrap)
+        chart_area.setStretchFactor(0, 0)
+        chart_area.setStretchFactor(1, 1)
 
         right_vert.addWidget(chart_area)
+        right_vert.setStretchFactor(0, 6)
+
         self.orders_table = QTableWidget(0, 9)
         self.orders_table.setHorizontalHeaderLabels([
             "ID",
@@ -337,8 +343,8 @@ class ChartTab(QWidget):
         ])
         right_vert.addWidget(self.orders_table)
         splitter.addWidget(right_vert)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 5)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 8)
         splitter.setHandleWidth(6)
         splitter.setOpaqueResize(True)
         right_vert.setHandleWidth(6)
@@ -348,7 +354,7 @@ class ChartTab(QWidget):
 
 
     def _init_control_defaults(self) -> None:
-        """Populate combo boxes and default UI state shared across layouts."""
+        """Populate UI controls and restore persisted settings."""
         self._symbols_supported = [
             "EUR/USD",
             "GBP/USD",
@@ -358,80 +364,346 @@ class ChartTab(QWidget):
             "GBP/EUR",
             "GBP/AUD",
         ]
+
+        self._follow_suspend_seconds = float(get_setting('chart.follow_suspend_seconds', 30))
+        self._follow_enabled = bool(get_setting('chart.follow_enabled', False))
+        self._follow_suspend_until = 0.0
+
+        follow_checkbox = getattr(self, 'follow_checkbox', None)
+        if follow_checkbox is not None:
+            blocker = QSignalBlocker(follow_checkbox)
+            follow_checkbox.setChecked(self._follow_enabled)
+            del blocker
+        else:
+            self._follow_enabled = False
+
+        self._set_combo_with_items(
+            getattr(self, "symbol_combo", None),
+            self._symbols_supported,
+            "chart.symbol",
+            self._symbols_supported[0],
+        )
+
+        self._set_combo_with_items(
+            getattr(self, "tf_combo", None),
+            ["auto", "tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+            "chart.timeframe",
+            "auto",
+        )
+
+        self._set_combo_with_items(
+            getattr(self, "pred_step_combo", None),
+            ["auto", "1m"],
+            "chart.pred_step",
+            "auto",
+        )
+
+        self._set_combo_with_items(
+            getattr(self, "years_combo", None),
+            [str(x) for x in [0, 1, 2, 3, 4, 5, 10, 15, 20, 30]],
+            "chart.backfill_years",
+            "0",
+        )
+
+        self._set_combo_with_items(
+            getattr(self, "months_combo", None),
+            [str(x) for x in range(0, 13)],
+            "chart.backfill_months",
+            "0",
+        )
+
+        theme_default = get_setting("ui_theme", "Dark")
+        self._set_combo_with_items(
+            getattr(self, "theme_combo", None),
+            ["Dark", "Light"],
+            "chart.theme",
+            str(theme_default),
+        )
+
         try:
-            self.symbol_combo.clear()
-            self.symbol_combo.addItems(self._symbols_supported)
-        except Exception:
-            pass
-    
-        try:
-            self.tf_combo.clear()
-            self.tf_combo.addItems(["auto", "tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"])
-            self.tf_combo.setCurrentText("auto")
-            self.tf_combo.setToolTip("Seleziona il timeframe di visualizzazione. 'auto' sceglie il TF in base allo zoom.")
-        except Exception:
-            pass
-    
-        try:
-            self.pred_step_combo.clear()
-            self.pred_step_combo.addItems(["auto", "1m"])
-            self.pred_step_combo.setCurrentText("auto")
-            self.pred_step_combo.setToolTip(
-                "Granularità dei punti di previsione. 'auto' usa gli horizons, '1m' aggiunge punti a minuto."
-            )
-        except Exception:
-            pass
-    
-        try:
-            self.years_combo.clear()
-            self.years_combo.addItems([str(x) for x in [0, 1, 2, 3, 4, 5, 10, 15, 20, 30]])
-            self.years_combo.setCurrentText("0")
-        except Exception:
-            pass
-    
-        try:
-            self.months_combo.clear()
-            self.months_combo.addItems([str(x) for x in range(0, 13)])
-            self.months_combo.setCurrentText("0")
-        except Exception:
-            pass
-    
-        try:
-            self.theme_combo.clear()
-            self.theme_combo.addItems(["Dark", "Light"])
-            self.theme_combo.setCurrentText(get_setting("ui_theme", "Dark"))
-        except Exception:
-            pass
-    
-        try:
-            self.market_watch.clear()
-            for symbol in self._symbols_supported:
-                QListWidgetItem(f"{symbol}  -", self.market_watch)
-        except Exception:
-            pass
-    
-        try:
-            self.toggle_drawbar_btn.setChecked(True)
-        except Exception:
-            pass
-    
-        try:
-            self.mode_btn.setText("Linea" if self.mode_btn.isChecked() else "Candles")
-        except Exception:
-            pass
-    
-        try:
-            self.backfill_progress.setRange(0, 100)
-            self.backfill_progress.setValue(0)
+            market_watch = getattr(self, "market_watch", None)
+            if market_watch is not None:
+                blocker = QSignalBlocker(market_watch)
+                market_watch.clear()
+                for sym in self._symbols_supported:
+                    QListWidgetItem(f"{sym}  -", market_watch)
+                del blocker
         except Exception:
             pass
 
+        toggle_drawbar = getattr(self, "toggle_drawbar_btn", None)
+        if toggle_drawbar is not None:
+            blocker = QSignalBlocker(toggle_drawbar)
+            toggle_drawbar.setChecked(True)
+            del blocker
+
+        saved_mode = str(get_setting("chart.price_mode", "candles")).lower()
+        if saved_mode not in ("candles", "line"):
+            saved_mode = "candles"
+        self._price_mode = saved_mode
+        mode_btn = getattr(self, "mode_btn", None)
+        if mode_btn is not None:
+            blocker = QSignalBlocker(mode_btn)
+            mode_btn.setChecked(self._price_mode == "candles")
+            mode_btn.setText("Candles" if self._price_mode == "candles" else "Line")
+            del blocker
+
+        backfill_progress = getattr(self, "backfill_progress", None)
+        if backfill_progress is not None:
+            backfill_progress.setRange(0, 100)
+            backfill_progress.setValue(0)
+
+        self._restore_splitters()
+
+        symbol_combo = getattr(self, "symbol_combo", None)
+        self.symbol = symbol_combo.currentText() if symbol_combo is not None else self._symbols_supported[0]
+        tf_combo = getattr(self, "tf_combo", None)
+        self.timeframe = tf_combo.currentText() if tf_combo is not None else "auto"
+
+    def _connect_ui_signals(self) -> None:
+        toggle_drawbar = getattr(self, "toggle_drawbar_btn", None)
+        if toggle_drawbar is not None:
+            toggle_drawbar.toggled.connect(self._toggle_drawbar)
+
+        mode_btn = getattr(self, "mode_btn", None)
+        if mode_btn is not None:
+            mode_btn.toggled.connect(self._on_price_mode_toggled)
+
+        follow_checkbox = getattr(self, "follow_checkbox", None)
+        if follow_checkbox is not None:
+            follow_checkbox.toggled.connect(self._on_follow_toggled)
+
+        symbol_combo = getattr(self, "symbol_combo", None)
+        if symbol_combo is not None:
+            symbol_combo.currentTextChanged.connect(self._on_symbol_combo_changed)
+
+        tf_combo = getattr(self, "tf_combo", None)
+        if tf_combo is not None:
+            tf_combo.currentTextChanged.connect(self._on_timeframe_changed)
+
+        pred_combo = getattr(self, "pred_step_combo", None)
+        if pred_combo is not None:
+            pred_combo.currentTextChanged.connect(self._on_pred_step_changed)
+
+        years_combo = getattr(self, "years_combo", None)
+        if years_combo is not None:
+            years_combo.currentTextChanged.connect(self._on_backfill_range_changed)
+
+        months_combo = getattr(self, "months_combo", None)
+        if months_combo is not None:
+            months_combo.currentTextChanged.connect(self._on_backfill_range_changed)
+
+        theme_combo = getattr(self, "theme_combo", None)
+        if theme_combo is not None:
+            theme_combo.currentTextChanged.connect(self._on_theme_changed)
+
+        settings_btn = getattr(self, "settings_btn", None)
+        if settings_btn is not None:
+            settings_btn.clicked.connect(self._open_settings_dialog)
+
+        nav_buttons = (
+            (getattr(self, "tb_home", None), self._on_nav_home),
+            (getattr(self, "tb_pan", None), self._on_nav_pan),
+            (getattr(self, "tb_zoom", None), self._on_nav_zoom),
+        )
+        for button, handler in nav_buttons:
+            if button is not None:
+                button.clicked.connect(handler)
+
+        draw_buttons = [
+            (getattr(self, "tb_cross", None), None),
+            (getattr(self, "tb_hline", None), "hline"),
+            (getattr(self, "tb_trend", None), "trend"),
+            (getattr(self, "tb_rect", None), "rect"),
+            (getattr(self, "tb_fib", None), "fib"),
+            (getattr(self, "tb_label", None), "label"),
+        ]
+        for button, mode in draw_buttons:
+            if button is not None:
+                button.clicked.connect(lambda checked=False, m=mode: self._set_drawing_mode(m))
+
+        for key, splitter in (
+            ('chart.splitter.main', getattr(self, "main_splitter", None)),
+            ('chart.splitter.right', getattr(self, "right_splitter", None)),
+            ('chart.splitter.chart', getattr(self, "_chart_area", None)),
+        ):
+            if isinstance(splitter, QSplitter):
+                splitter.splitterMoved.connect(lambda _pos, _index, k=key, s=splitter: self._persist_splitter_positions(k, s))
+
+    def _set_combo_with_items(self, combo: Optional[QComboBox], items: List[str], setting_key: str, default: str) -> str:
+        if combo is None:
+            return default
+        saved = str(get_setting(setting_key, default)) if setting_key else default
+        blocker = QSignalBlocker(combo)
+        combo.clear()
+        combo.addItems(items)
+        if saved and combo.findText(saved) == -1:
+            combo.addItem(saved)
+        combo.setCurrentText(saved if saved else default)
+        del blocker
+        return saved if saved else default
+
+    def _restore_splitters(self) -> None:
+        for key, splitter in (
+            ('chart.splitter.main', getattr(self, 'main_splitter', None)),
+            ('chart.splitter.right', getattr(self, 'right_splitter', None)),
+            ('chart.splitter.chart', getattr(self, '_chart_area', None)),
+        ):
+            if splitter is None:
+                continue
+            sizes = get_setting(key, None)
+            if not isinstance(sizes, (list, tuple)):
+                continue
+            cleaned: List[int] = []
+            for val in sizes:
+                try:
+                    cleaned.append(int(float(val)))
+                except Exception:
+                    continue
+            if cleaned:
+                try:
+                    splitter.setSizes(cleaned)
+                except Exception:
+                    pass
+
+    def _persist_splitter_positions(self, key: str, splitter: QSplitter) -> None:
+        try:
+            set_setting(key, splitter.sizes())
+        except Exception:
+            pass
+
+    def _on_symbol_combo_changed(self, new_symbol: str) -> None:
+        if not new_symbol:
+            return
+        set_setting('chart.symbol', new_symbol)
+        self.symbol = new_symbol
+        self.chart_controller.on_symbol_changed(new_symbol=new_symbol)
+
+    def _on_timeframe_changed(self, value: str) -> None:
+        set_setting('chart.timeframe', value)
+        self.timeframe = value
+        self._schedule_view_reload()
+
+    def _on_pred_step_changed(self, value: str) -> None:
+        set_setting('chart.pred_step', value)
+
+    def _on_backfill_range_changed(self, _value: str) -> None:
+        years_combo = getattr(self, 'years_combo', None)
+        months_combo = getattr(self, 'months_combo', None)
+        if years_combo is not None:
+            set_setting('chart.backfill_years', years_combo.currentText())
+        if months_combo is not None:
+            set_setting('chart.backfill_months', months_combo.currentText())
+
+    def _on_theme_changed(self, theme: str) -> None:
+        set_setting('chart.theme', theme)
+        self._apply_theme(theme)
+
+    def _open_settings_dialog(self) -> None:
+        try:
+            from .settings_dialog import SettingsDialog
+        except Exception as exc:
+            logger.warning("Unable to import SettingsDialog: {}", exc)
+            QMessageBox.warning(self, "Settings", f"Unable to open settings dialog: {exc}")
+            return
+
+        dialog = SettingsDialog(self)
+        if dialog.exec():
+            # Refresh theme / palette in case colors changed
+            theme_combo = getattr(self, 'theme_combo', None)
+            if theme_combo is not None:
+                self._apply_theme(theme_combo.currentText())
+
+            # Refresh follow behaviour in case preferences changed
+            try:
+                self._follow_suspend_seconds = float(get_setting('chart.follow_suspend_seconds', self._follow_suspend_seconds))
+            except Exception:
+                self._follow_suspend_seconds = 30.0
+
+            self._follow_enabled = bool(get_setting('chart.follow_enabled', self._follow_enabled))
+            if self._follow_enabled:
+                self._follow_suspend_until = 0.0
+
+            follow_checkbox = getattr(self, 'follow_checkbox', None)
+            if follow_checkbox is not None:
+                blocker = QSignalBlocker(follow_checkbox)
+                follow_checkbox.setChecked(self._follow_enabled)
+                del blocker
+
+            # Re-render plot to apply freshly chosen colors
+            if getattr(self, '_last_df', None) is not None and not self._last_df.empty:
+                prev_xlim = prev_ylim = None
+                try:
+                    prev_xlim = self.ax.get_xlim()
+                    prev_ylim = self.ax.get_ylim()
+                except Exception:
+                    pass
+                self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+
+            self._follow_center_if_needed()
+
+    def _on_price_mode_toggled(self, checked: bool) -> None:
+        self._price_mode = 'candles' if checked else 'line'
+        mode_btn = getattr(self, 'mode_btn', None)
+        if mode_btn is not None:
+            mode_btn.setText('Candles' if checked else 'Line')
+        set_setting('chart.price_mode', self._price_mode)
+        self.chart_controller.on_mode_toggled(checked=checked)
+
+    def _on_follow_toggled(self, checked: bool) -> None:
+        self._follow_enabled = bool(checked)
+        set_setting('chart.follow_enabled', self._follow_enabled)
+        if self._follow_enabled:
+            self._follow_suspend_until = 0.0
+            self._follow_center_if_needed()
+
+    def _suspend_follow(self) -> None:
+        if getattr(self, '_follow_enabled', False):
+            duration = float(get_setting('chart.follow_suspend_seconds', getattr(self, '_follow_suspend_seconds', 30)))
+            self._follow_suspend_seconds = duration
+            self._follow_suspend_until = time.time() + max(duration, 1.0)
+
+    def _follow_center_if_needed(self) -> None:
+        if not getattr(self, '_follow_enabled', False):
+            return
+        if time.time() < getattr(self, '_follow_suspend_until', 0.0):
+            return
+        if self._last_df is None or self._last_df.empty:
+            return
+        ax = getattr(self, 'ax', None)
+        if ax is None:
+            return
+        y_col = 'close' if 'close' in self._last_df.columns else 'price'
+        try:
+            last_row = self._last_df.iloc[-1]
+            last_ts = float(last_row['ts_utc'])
+            last_price = float(last_row.get(y_col, last_row.get('price')))
+        except Exception:
+            return
+        try:
+            last_dt = mdates.date2num(pd.to_datetime(last_ts, unit='ms', utc=True).tz_convert(None))
+        except Exception:
+            return
+        try:
+            xlim = ax.get_xlim()
+            if xlim[1] > xlim[0]:
+                span_x = xlim[1] - xlim[0]
+                ax.set_xlim(last_dt - span_x / 2.0, last_dt + span_x / 2.0)
+            ylim = ax.get_ylim()
+            if ylim[1] > ylim[0]:
+                span_y = ylim[1] - ylim[0]
+                ax.set_ylim(last_price - span_y / 2.0, last_price + span_y / 2.0)
+            self.canvas.draw_idle()
+        except Exception:
+            pass
     def _create_drawbar(self) -> QWidget:
         from PySide6.QtWidgets import QToolButton, QStyle
 
         drawbar = QWidget()
+        drawbar.setObjectName("drawbar_container")
         dlay = QHBoxLayout(drawbar)
         dlay.setContentsMargins(4, 2, 4, 2)
+        dlay.setSpacing(4)
 
         self.tb_home = QToolButton()
         self.tb_home.setToolTip("Reset view")
@@ -444,8 +716,8 @@ class ChartTab(QWidget):
         self.tb_zoom.setToolTip("Zoom")
         self.tb_zoom.setCheckable(True)
         self.tb_zoom.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
-        for b in (self.tb_home, self.tb_pan, self.tb_zoom):
-            dlay.addWidget(b)
+        for button in (self.tb_home, self.tb_pan, self.tb_zoom):
+            dlay.addWidget(button)
         dlay.addSpacing(12)
 
         self.tb_cross = QToolButton()
@@ -477,7 +749,7 @@ class ChartTab(QWidget):
         self.tb_orders.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
         self.tb_orders.toggled.connect(self._toggle_orders)
 
-        for b in (
+        for button in (
             self.tb_cross,
             self.tb_hline,
             self.tb_trend,
@@ -487,7 +759,7 @@ class ChartTab(QWidget):
             self.tb_colors,
             self.tb_orders,
         ):
-            dlay.addWidget(b)
+            dlay.addWidget(button)
         dlay.addStretch()
         return drawbar
     def _handle_tick(self, payload: dict):
@@ -500,7 +772,9 @@ class ChartTab(QWidget):
 
     def _rt_flush(self):
         """Throttled redraw preserving zoom/pan."""
-        return self.chart_controller.rt_flush()
+        result = self.chart_controller.rt_flush()
+        self._follow_center_if_needed()
+        return result
 
     def _set_drawing_mode(self, mode: Optional[str]):
         return self.chart_controller.set_drawing_mode(mode=mode)
@@ -610,6 +884,24 @@ class ChartTab(QWidget):
         return self.chart_controller.tf_to_timedelta(tf=tf)
 
     def set_symbol_timeframe(self, db_service, symbol: str, timeframe: str):
+        symbol_combo = getattr(self, "symbol_combo", None)
+        if symbol_combo is not None:
+            blocker = QSignalBlocker(symbol_combo)
+            if symbol_combo.findText(symbol) == -1:
+                symbol_combo.addItem(symbol)
+            symbol_combo.setCurrentText(symbol)
+            del blocker
+        tf_combo = getattr(self, "tf_combo", None)
+        if tf_combo is not None:
+            blocker = QSignalBlocker(tf_combo)
+            if tf_combo.findText(timeframe) == -1:
+                tf_combo.addItem(timeframe)
+            tf_combo.setCurrentText(timeframe)
+            del blocker
+        self.symbol = symbol
+        self.timeframe = timeframe
+        set_setting('chart.symbol', symbol)
+        set_setting('chart.timeframe', timeframe)
         return self.chart_controller.set_symbol_timeframe(db_service=db_service, symbol=symbol, timeframe=timeframe)
 
     def _on_symbol_changed(self, new_symbol: str):
@@ -619,21 +911,29 @@ class ChartTab(QWidget):
     def _open_forecast_settings(self):
         return self.chart_controller.open_forecast_settings()
 
-    def _on_canvas_click(self, event):
-        """Gestisce strumenti di disegno e click di testing."""
-        return self.chart_controller.on_canvas_click(event=event)
-
     # --- Mouse UX: zoom con rotellina e tasto destro (drag) ---
     def _on_scroll_zoom(self, event):
+        if event is not None:
+            self._suspend_follow()
         return self.chart_controller.on_scroll_zoom(event=event)
 
     def _on_mouse_press(self, event):
+        if event is not None and getattr(event, "button", None) in (1, 3):
+            self._suspend_follow()
         return self.chart_controller.on_mouse_press(event=event)
 
     def _on_mouse_move(self, event):
+        if event is not None:
+            btn = getattr(event, "button", None)
+            gui_event = getattr(event, "guiEvent", None)
+            buttons = getattr(gui_event, "buttons", lambda: 0)() if gui_event is not None else 0
+            if btn in (1, 3) or buttons:
+                self._suspend_follow()
         return self.chart_controller.on_mouse_move(event=event)
 
     def _on_mouse_release(self, event):
+        if event is not None and getattr(event, "button", None) in (1, 3):
+            self._suspend_follow()
         return self.chart_controller.on_mouse_release(event=event)
 
     def _zoom_axis(self, axis: str, center: float, factor: float):
@@ -728,6 +1028,8 @@ class ChartTabUI(ChartTab):
 
         main_layout = self.layout()
         if main_layout is not None:
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.setSpacing(4)
             self.layout = main_layout
 
         toolbar_container = getattr(self, "toolbar_placeholder", None)
@@ -740,6 +1042,7 @@ class ChartTabUI(ChartTab):
             if chart_layout is None:
                 chart_layout = QVBoxLayout(chart_container)
             chart_layout.setContentsMargins(0, 0, 0, 0)
+            chart_layout.setSpacing(0)
             chart_layout.addWidget(self.canvas)
 
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -748,6 +1051,7 @@ class ChartTabUI(ChartTab):
             if toolbar_layout is None:
                 toolbar_layout = QHBoxLayout(toolbar_container)
             toolbar_layout.setContentsMargins(0, 0, 0, 0)
+            toolbar_layout.setSpacing(0)
             toolbar_layout.addWidget(self.toolbar)
 
         try:
@@ -769,6 +1073,8 @@ class ChartTabUI(ChartTab):
             drawbar_layout = drawbar_container.layout()
             if drawbar_layout is None:
                 drawbar_layout = QHBoxLayout(drawbar_container)
+            drawbar_layout.setContentsMargins(0, 0, 0, 0)
+            drawbar_layout.setSpacing(0)
             while drawbar_layout.count():
                 item = drawbar_layout.takeAt(0)
                 widget = item.widget()
@@ -798,19 +1104,24 @@ class ChartTabUI(ChartTab):
         self.backfill_progress = getattr(self, "backfill_progress", None)
         self.clear_forecasts_btn = getattr(self, "clear_forecasts_btn", None)
         self.mode_btn = getattr(self, "mode_btn", None)
+        self.follow_checkbox = getattr(self, "follow_checkbox", None)
         self.bidask_label = getattr(self, "bidask_label", None)
         self.trade_btn = getattr(self, "trade_btn", None)
         self.theme_combo = getattr(self, "theme_combo", None)
+        self.settings_btn = getattr(self, "settings_btn", None)
 
         if self.main_splitter is not None:
-            self.main_splitter.setStretchFactor(0, 1)
-            self.main_splitter.setStretchFactor(1, 5)
+            self.main_splitter.setStretchFactor(0, 2)
+            self.main_splitter.setStretchFactor(1, 8)
             self.main_splitter.setHandleWidth(6)
             self.main_splitter.setOpaqueResize(True)
         if self.right_splitter is not None:
+            self.right_splitter.setStretchFactor(0, 6)
             self.right_splitter.setHandleWidth(6)
             self.right_splitter.setOpaqueResize(True)
         if self._chart_area is not None:
+            self._chart_area.setStretchFactor(0, 0)
+            self._chart_area.setStretchFactor(1, 1)
             self._chart_area.setHandleWidth(4)
             self._chart_area.setOpaqueResize(True)
 

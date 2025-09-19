@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1200</width>
+     <width>1200</width>
     <height>800</height>
    </rect>
   </property>
@@ -126,6 +126,12 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="follow_checkbox">
+        <property name="text"><string>Segui</string></property>
+        <property name="checked"><bool>false</bool></property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="bidask_label">
         <property name="text"><string>Bid: -    Ask: -</string></property>
        </widget>
@@ -142,6 +148,11 @@
       </item>
       <item>
        <widget class="QComboBox" name="theme_combo"/>
+      </item>
+      <item>
+       <widget class="QPushButton" name="settings_btn">
+        <property name="text"><string>Settings</string></property>
+       </widget>
       </item>
       <item>
        <spacer name="topbar_spacer">
