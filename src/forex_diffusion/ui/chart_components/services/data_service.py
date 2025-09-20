@@ -27,12 +27,10 @@ class DataService(ChartServiceBase):
             sym = payload.get("symbol") or getattr(self, "symbol", None)
             # Market watch update
             try:
-                px = payload.get("price")
-                if px is not None and sym:
-                    for i in range(self.market_watch.count()):
-                        it = self.market_watch.item(i)
-                        if it and it.text().split()[0] == sym:
-                            it.setText(f"{sym}  {px:.5f}")
+                if sym:
+                    bid_val = payload.get('bid')
+                    ask_val = payload.get('ask', payload.get('offer'))
+                    self._update_market_quote(sym, bid_val, ask_val, payload.get('ts_utc'))
             except Exception:
                 pass
 
@@ -41,14 +39,17 @@ class DataService(ChartServiceBase):
                 try:
                     ts = int(payload.get("ts_utc"))
                     y = payload.get("close", payload.get("price"))
+                    bid_val = payload.get('bid')
+                    ask_val = payload.get('ask', payload.get('offer'))
                     # se buffer vuoto: crea
                     if self._last_df is None or self._last_df.empty:
-                        self._last_df = pd.DataFrame([{"ts_utc": ts, "price": y}])
+                        row = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
+                        self._last_df = pd.DataFrame([row])
                     else:
                         last_ts = int(self._last_df["ts_utc"].iloc[-1])
                         if ts > last_ts:
                             # append
-                            self._last_df.loc[len(self._last_df)] = {"ts_utc": ts, "price": y}
+                            self._last_df.loc[len(self._last_df)] = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
                             # trim buffer
                             if len(self._last_df) > 10000:
                                 self._last_df = self._last_df.iloc[-10000:].reset_index(drop=True)
@@ -56,6 +57,10 @@ class DataService(ChartServiceBase):
                             # update last row
                             col = "close" if "close" in self._last_df.columns else "price"
                             self._last_df.at[len(self._last_df)-1, col] = y
+                            if bid_val is not None:
+                                self._last_df.at[len(self._last_df)-1, 'bid'] = bid_val
+                            if ask_val is not None:
+                                self._last_df.at[len(self._last_df)-1, 'ask'] = ask_val
                         # se ts < last_ts, ignora (fuori ordine)
                 except Exception:
                     pass

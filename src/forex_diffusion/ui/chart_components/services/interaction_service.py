@@ -259,6 +259,10 @@ class InteractionService(ChartServiceBase):
                 self._update_badge_visibility(event)
             except Exception:
                 pass
+            try:
+                self._update_hover_info(event)
+            except Exception:
+                pass
             # PAN con LMB: sposta i limiti in base allo spostamento del cursore in coordinate dati
             if self._lbtn_pan and self._pan_last_xy is not None:
                 x_last, y_last = self._pan_last_xy

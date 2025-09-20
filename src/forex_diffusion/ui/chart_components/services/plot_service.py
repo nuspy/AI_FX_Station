@@ -737,6 +737,10 @@ class PlotService(ChartServiceBase):
                 return
 
             legend = self.ax.legend([h for h, _ in unique], [l for _, l in unique], loc=loc, fontsize=8, frameon=False)
+            try:
+                legend.set_draggable(True)
+            except Exception:
+                pass
             self._legend_artist = legend
         except Exception as exc:
             logger.debug('Legend refresh failed: {}', exc)

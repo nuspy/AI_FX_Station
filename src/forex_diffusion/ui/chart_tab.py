@@ -4,20 +4,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Dict, List
 import pandas as pd
+import numpy as np
 import time
 
 import matplotlib.dates as mdates
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
-    QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
-    QToolButton, QCheckBox
+    QSplitter, QTableWidget, QComboBox,
+    QToolButton, QCheckBox, QTableWidgetItem, QAbstractItemView, QHeaderView
 )
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QFile, QSignalBlocker
+from PySide6.QtGui import QBrush, QColor, QCursor
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.legend import Legend
+from matplotlib.lines import Line2D
 from loguru import logger
 
 from ..utils.user_settings import get_setting, set_setting
@@ -60,6 +64,9 @@ class ChartTab(QWidget):
         self._build_ui()
         self._init_control_defaults()
         self._connect_ui_signals()
+
+        self._hover_legend = None
+        self._hover_legend_text = None
 
         theme_combo = getattr(self, "theme_combo", None)
         if theme_combo is not None:
@@ -161,6 +168,8 @@ class ChartTab(QWidget):
             self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
             self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
             self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
+            self.canvas.mpl_connect("figure_enter_event", self._on_figure_enter)
+            self.canvas.mpl_connect("figure_leave_event", self._on_figure_leave)
         except Exception:
             logger.debug("Failed to connect mpl mouse events for zoom/pan.")
         # registry for adherence badges
@@ -303,7 +312,25 @@ class ChartTab(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("main_splitter")
         self.main_splitter = splitter
-        self.market_watch = QListWidget()
+
+        self.market_watch = QTableWidget()
+        self.market_watch.setObjectName("market_watch")
+        self.market_watch.setColumnCount(3)
+        self.market_watch.setHorizontalHeaderLabels(["Symbol", "Bid", "Offer"])
+        self.market_watch.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.market_watch.setSelectionMode(QAbstractItemView.NoSelection)
+        self.market_watch.setFocusPolicy(Qt.NoFocus)
+        self.market_watch.setShowGrid(False)
+        header = self.market_watch.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        self.market_watch.verticalHeader().setVisible(False)
+        self.market_watch.setToolTip(
+            "Offer/Bid: verde quando lo spread aumenta, rosso quando diminuisce, "
+            "nero dopo 10 aggiornamenti senza variazione."
+        )
         splitter.addWidget(self.market_watch)
 
         right_vert = QSplitter(Qt.Vertical)
@@ -365,6 +392,10 @@ class ChartTab(QWidget):
             "GBP/AUD",
         ]
 
+        self._symbol_row_map: Dict[str, int] = {}
+        self._spread_state: Dict[str, Dict[str, float]] = {}
+        self._last_bidask: Dict[str, Dict[str, float]] = {}
+
         self._follow_suspend_seconds = float(get_setting('chart.follow_suspend_seconds', 30))
         self._follow_enabled = bool(get_setting('chart.follow_enabled', False))
         self._follow_suspend_until = 0.0
@@ -420,16 +451,30 @@ class ChartTab(QWidget):
             str(theme_default),
         )
 
-        try:
-            market_watch = getattr(self, "market_watch", None)
-            if market_watch is not None:
-                blocker = QSignalBlocker(market_watch)
-                market_watch.clear()
-                for sym in self._symbols_supported:
-                    QListWidgetItem(f"{sym}  -", market_watch)
-                del blocker
-        except Exception:
-            pass
+        market_watch = getattr(self, "market_watch", None)
+        if isinstance(market_watch, QTableWidget):
+            blocker = QSignalBlocker(market_watch)
+            market_watch.setRowCount(len(self._symbols_supported))
+            for idx, sym in enumerate(self._symbols_supported):
+                symbol_item = QTableWidgetItem(sym)
+                symbol_item.setFlags(Qt.ItemIsEnabled)
+                market_watch.setItem(idx, 0, symbol_item)
+
+                bid_item = QTableWidgetItem("-")
+                bid_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                market_watch.setItem(idx, 1, bid_item)
+
+                ask_item = QTableWidgetItem("-")
+                ask_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                market_watch.setItem(idx, 2, ask_item)
+
+                self._symbol_row_map[sym] = idx
+                self._spread_state[sym] = {
+                    "prev_spread": None,
+                    "color": "#000000",
+                    "hold": 0,
+                }
+            del blocker
 
         toggle_drawbar = getattr(self, "toggle_drawbar_btn", None)
         if toggle_drawbar is not None:
@@ -599,6 +644,173 @@ class ChartTab(QWidget):
         set_setting('chart.theme', theme)
         self._apply_theme(theme)
 
+    def _standardize_color(self, value: str, fallback: str) -> QColor:
+        text = (value or fallback) if isinstance(value, str) else fallback
+        color = QColor(text)
+        if not color.isValid() and isinstance(text, str) and text.lower().startswith("rgba"):
+            try:
+                rgba = text[text.find("(") + 1:text.find(")")]
+                parts = [float(p.strip()) for p in rgba.split(",") if p.strip()]
+                if len(parts) == 4:
+                    color = QColor(int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+            except Exception:
+                color = QColor(fallback)
+        if not color.isValid():
+            color = QColor(fallback)
+        return color
+
+    def _update_market_quote(self, symbol: str, bid: Optional[float], ask: Optional[float], ts_ms: Optional[int]) -> None:
+        table = getattr(self, 'market_watch', None)
+        if not isinstance(table, QTableWidget) or not symbol:
+            return
+
+        if symbol not in self._symbol_row_map:
+            row = table.rowCount()
+            table.insertRow(row)
+            symbol_item = QTableWidgetItem(symbol)
+            symbol_item.setFlags(Qt.ItemIsEnabled)
+            table.setItem(row, 0, symbol_item)
+            bid_item = QTableWidgetItem('-')
+            bid_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            ask_item = QTableWidgetItem('-')
+            ask_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 1, bid_item)
+            table.setItem(row, 2, ask_item)
+            self._symbol_row_map[symbol] = row
+            self._spread_state[symbol] = {'prev_spread': None, 'color': '#000000', 'hold': 0}
+
+        row = self._symbol_row_map[symbol]
+        bid_item = table.item(row, 1)
+        ask_item = table.item(row, 2)
+        if bid_item is None:
+            bid_item = QTableWidgetItem('-')
+            bid_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 1, bid_item)
+        if ask_item is None:
+            ask_item = QTableWidgetItem('-')
+            ask_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 2, ask_item)
+
+        bid_val = float(bid) if bid is not None else None
+        ask_val = float(ask) if ask is not None else None
+        bid_item.setText('-' if bid_val is None else f"{bid_val:.5f}")
+        ask_item.setText('-' if ask_val is None else f"{ask_val:.5f}")
+
+        spread = None
+        if bid_val is not None and ask_val is not None:
+            spread = max(0.0, ask_val - bid_val)
+
+        state = self._spread_state.setdefault(symbol, {'prev_spread': None, 'color': '#000000', 'hold': 0})
+        up_color = self._standardize_color(str(get_setting('candle_up_color', '#2ecc71')), '#2ecc71')
+        down_color = self._standardize_color(str(get_setting('candle_down_color', '#e74c3c')), '#e74c3c')
+        neutral_color = QColor('#000000')
+
+        if spread is None:
+            state['color'] = '#000000'
+            state['hold'] = 0
+        else:
+            prev_spread = state.get('prev_spread')
+            tol = 1e-9
+            if prev_spread is None:
+                state['color'] = '#000000'
+                state['hold'] = 0
+            else:
+                if spread > prev_spread + tol:
+                    state['color'] = up_color.name(QColor.HexRgb)
+                    state['hold'] = 0
+                elif spread < prev_spread - tol:
+                    state['color'] = down_color.name(QColor.HexRgb)
+                    state['hold'] = 0
+                else:
+                    state['hold'] = state.get('hold', 0) + 1
+                    if state['hold'] >= 10:
+                        state['color'] = '#000000'
+                        state['hold'] = 0
+            state['prev_spread'] = spread
+
+        qcolor = QColor(state.get('color', '#000000'))
+        if not qcolor.isValid():
+            qcolor = neutral_color
+        brush = QBrush(qcolor)
+        bid_item.setForeground(brush)
+        ask_item.setForeground(brush)
+
+        self._last_bidask[symbol] = {
+            'bid': bid_val,
+            'ask': ask_val,
+            'ts': ts_ms,
+        }
+
+    def _ensure_hover_legend(self) -> None:
+        if getattr(self, '_hover_legend', None) is not None:
+            return
+        dummy = Line2D([], [])
+        dummy.set_visible(False)
+        legend = Legend(self.ax, [dummy], ["Time: -\nBid: -\nOffer: -"], loc='upper left', frameon=True, fontsize=8)
+        legend.set_title('Cursor')
+        legend._legend_box.align = "left"
+        legend.set_draggable(True)
+        texts = legend.get_texts()
+        if texts:
+            texts[0].set_multialignment('left')
+        self.ax.add_artist(legend)
+        self._hover_legend = legend
+        self._hover_legend_text = texts[0] if texts else None
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            self.canvas.draw()
+
+    def _reset_hover_info(self) -> None:
+        if getattr(self, '_hover_legend_text', None) is not None:
+            self._hover_legend_text.set_text("Time: -\nBid: -\nOffer: -")
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
+
+    def _update_hover_info(self, event) -> None:
+        if event is None or getattr(event, 'inaxes', None) != self.ax:
+            return
+        self._ensure_hover_legend()
+        text_artist = getattr(self, '_hover_legend_text', None)
+        if text_artist is None:
+            return
+
+        time_str = '-'
+        bid_str = '-'
+        ask_str = '-'
+
+        if event.xdata is not None and self._last_df is not None and not self._last_df.empty:
+            try:
+                target_ts = int(mdates.num2date(event.xdata).timestamp() * 1000)
+                ts_series = self._last_df['ts_utc'].astype('int64')
+                ts_array = ts_series.to_numpy()
+                if len(ts_array):
+                    idx = int(np.argmin(np.abs(ts_array - target_ts)))
+                    row = self._last_df.iloc[idx]
+                    ts_val = int(row.get('ts_utc', target_ts))
+                    dt = pd.to_datetime(ts_val, unit='ms', utc=True)
+                    try:
+                        dt = dt.tz_convert(None)
+                    except Exception:
+                        dt = dt.tz_localize(None) if dt.tzinfo is not None else dt
+                    time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    bid_val = row.get('bid', row.get('close', row.get('price')))
+                    ask_val = row.get('ask', row.get('close', row.get('price')))
+                    if bid_val is not None and not pd.isna(bid_val):
+                        bid_str = f"{float(bid_val):.5f}"
+                    if ask_val is not None and not pd.isna(ask_val):
+                        ask_str = f"{float(ask_val):.5f}"
+            except Exception:
+                pass
+
+        text_artist.set_text(f"Time: {time_str}\nBid: {bid_str}\nOffer: {ask_str}")
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            self.canvas.draw()
+
     def _open_settings_dialog(self) -> None:
         try:
             from .settings_dialog import SettingsDialog
@@ -696,6 +908,19 @@ class ChartTab(QWidget):
             self.canvas.draw_idle()
         except Exception:
             pass
+
+    def _on_figure_enter(self, _event):
+        try:
+            self.canvas.setCursor(QCursor(Qt.CrossCursor))
+        except Exception:
+            pass
+
+    def _on_figure_leave(self, _event):
+        try:
+            self.canvas.setCursor(QCursor(Qt.ArrowCursor))
+        except Exception:
+            pass
+        self._reset_hover_info()
     def _create_drawbar(self) -> QWidget:
         from PySide6.QtWidgets import QToolButton, QStyle
 
