@@ -98,7 +98,9 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # General provider/broker form
-        form = QFormLayout()
+        form_group = QGroupBox("General Provider/Broker")
+        form = QGridLayout(form_group)
+
         self.alpha_input = QLineEdit()
         self.alpha_input.setPlaceholderText("AlphaVantage API key")
         self.tiingo_input = QLineEdit()
@@ -125,25 +127,47 @@ class SettingsDialog(QDialog):
         self.mt_login = QLineEdit(); self.mt_login.setPlaceholderText("login")
         self.mt_pass = QLineEdit(); self.mt_pass.setEchoMode(QLineEdit.Password); self.mt_pass.setPlaceholderText("password")
 
-        form.addRow(QLabel("AlphaVantage API Key:"), self.alpha_input)
-        form.addRow(QLabel("Tiingo API Key:"), self.tiingo_input)
-        form.addRow(QLabel("ADMIN_TOKENS:"), self.admin_input)
-        form.addRow(QLabel("Broker Mode:"), self.broker_mode)
-        form.addRow(QLabel("Active Account:"), self.acc_name)
-        form.addRow(QLabel("Currency:"), self.acc_currency)
-        form.addRow(QLabel("Balance:"), self.acc_balance)
-        form.addRow(QLabel("Leverage:"), self.acc_leverage)
-        form.addRow(QLabel("Account Tiingo Key:"), self.acc_tiingo)
-        form.addRow(QLabel("IB Host:"), self.ib_host)
-        form.addRow(QLabel("IB Port:"), self.ib_port)
-        form.addRow(QLabel("IB Client ID:"), self.ib_client)
-        form.addRow(QLabel("IB Username:"), self.ib_user)
-        form.addRow(QLabel("IB Password:"), self.ib_pass)
-        form.addRow(QLabel("MT Server:"), self.mt_server)
-        form.addRow(QLabel("MT Login:"), self.mt_login)
-        form.addRow(QLabel("MT Password:"), self.mt_pass)
+        # Left column
+        form.addWidget(QLabel("AlphaVantage API Key:"), 0, 0)
+        form.addWidget(self.alpha_input, 0, 1)
+        form.addWidget(QLabel("Tiingo API Key:"), 1, 0)
+        form.addWidget(self.tiingo_input, 1, 1)
+        form.addWidget(QLabel("ADMIN_TOKENS:"), 2, 0)
+        form.addWidget(self.admin_input, 2, 1)
+        form.addWidget(QLabel("Broker Mode:"), 3, 0)
+        form.addWidget(self.broker_mode, 3, 1)
+        form.addWidget(QLabel("Active Account:"), 4, 0)
+        form.addWidget(self.acc_name, 4, 1)
+        form.addWidget(QLabel("Currency:"), 5, 0)
+        form.addWidget(self.acc_currency, 5, 1)
+        form.addWidget(QLabel("Balance:"), 6, 0)
+        form.addWidget(self.acc_balance, 6, 1)
+        form.addWidget(QLabel("Leverage:"), 7, 0)
+        form.addWidget(self.acc_leverage, 7, 1)
 
-        layout.addLayout(form)
+        # Right column
+        form.addWidget(QLabel("IB Host:"), 0, 2)
+        form.addWidget(self.ib_host, 0, 3)
+        form.addWidget(QLabel("IB Port:"), 1, 2)
+        form.addWidget(self.ib_port, 1, 3)
+        form.addWidget(QLabel("IB Client ID:"), 2, 2)
+        form.addWidget(self.ib_client, 2, 3)
+        form.addWidget(QLabel("IB Username:"), 3, 2)
+        form.addWidget(self.ib_user, 3, 3)
+        form.addWidget(QLabel("IB Password:"), 4, 2)
+        form.addWidget(self.ib_pass, 4, 3)
+        form.addWidget(QLabel("MT Server:"), 5, 2)
+        form.addWidget(self.mt_server, 5, 3)
+        form.addWidget(QLabel("MT Login:"), 6, 2)
+        form.addWidget(self.mt_login, 6, 3)
+        form.addWidget(QLabel("MT Password:"), 7, 2)
+        form.addWidget(self.mt_pass, 7, 3)
+
+        # Spanning field
+        form.addWidget(QLabel("Account Tiingo Key:"), 8, 0)
+        form.addWidget(self.acc_tiingo, 8, 1, 1, 3)
+
+        layout.addWidget(form_group)
 
         # Accounts list + controls
         accounts_group = QGroupBox("Accounts")
@@ -174,16 +198,18 @@ class SettingsDialog(QDialog):
         # Color configuration
         colors_group = QGroupBox("Theme Colors")
         colors_layout = QGridLayout(colors_group)
-        for row, (key, label) in enumerate(COLOR_FIELDS):
-            colors_layout.addWidget(QLabel(label), row, 0)
+        num_colors = len(COLOR_FIELDS)
+        num_rows = (num_colors + 1) // 2  # Ceiling division
+        for i, (key, label) in enumerate(COLOR_FIELDS):
+            row = i % num_rows
+            col_offset = (i // num_rows) * 3
+            colors_layout.addWidget(QLabel(label), row, col_offset)
             edit = QLineEdit()
             edit.setReadOnly(True)
             btn = QPushButton("Change")
-            #btn.clicked.connect(lambda _, k=key: self._pick_color(k))
             btn.clicked.connect(partial(self._pick_color, key))
-
-            colors_layout.addWidget(edit, row, 1)
-            colors_layout.addWidget(btn, row, 2)
+            colors_layout.addWidget(edit, row, col_offset + 1)
+            colors_layout.addWidget(btn, row, col_offset + 2)
             self.color_edits[key] = edit
         layout.addWidget(colors_group)
 
