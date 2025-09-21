@@ -66,7 +66,7 @@ def main():
     app = QApplication(sys.argv)
     main_win = QMainWindow()
     main_win.setWindowTitle("Forex-Diffusion")
-    main_win.setGeometry(100, 100, 1600, 900)
+    # main_win.setGeometry(100, 100, 1600, 900)
 
     central_widget = QWidget()
     main_win.setCentralWidget(central_widget)
