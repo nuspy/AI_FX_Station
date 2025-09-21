@@ -27,7 +27,7 @@ _btq_local = None
 def setup_ui(
     main_window: QWidget, 
     layout, 
-    menu_bar, 
+    menu_bar,
     viewer, 
     status_label, 
     engine_url: str = "http://127.0.0.1:8000", 
@@ -36,6 +36,9 @@ def setup_ui(
     """
     Initializes all UI components, services, and their connections.
     """
+
+
+
     logger.critical("--- EXECUTING LATEST APP.PY VERSION ---")
     result: dict[str, Any] = {}
 
@@ -75,18 +78,13 @@ def setup_ui(
     # ensure main area and tab fill available space
     try:
         main_window.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Couldn´t set main window size policy: {}", e )
     try:
         tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Couldn´t set tab_widget size policy: {}", e )
 
-    # Ensure main area and tabs fill available space
-    try:
-        main_window.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    except Exception:
-        pass
     try:
         # If main_window is a QMainWindow, expand its central widget too
         cw = main_window.centralWidget() if hasattr(main_window, "centralWidget") else None
@@ -96,18 +94,19 @@ def setup_ui(
                 _cwl = cw.layout()
                 if _cwl is not None and hasattr(_cwl, "setContentsMargins"):
                     _cwl.setContentsMargins(0, 0, 0, 0)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Couldn´t set main_window.centralWidget size policy: {}", e )
     try:
         tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Couldn´t set tab_widget size policy: {}", e )
 
     chart_tab_ui = ChartTabUI(main_window)
     try:
         chart_tab_ui.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Couldn´t set chart_tab_ui size policy: {}", e)
+
     chart_tab = ChartTab(main_window)
     primary_chart = chart_tab_ui
     legacy_chart = chart_tab
