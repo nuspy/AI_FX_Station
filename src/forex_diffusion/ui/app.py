@@ -4,10 +4,10 @@ UI application helpers for MagicForex GUI.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, List
 
 from loguru import logger
-from PySide6.QtWidgets import QWidget, QTabWidget
+from PySide6.QtWidgets import QWidget, QTabWidget, QSizePolicy
 
 from ..services.db_service import DBService
 from ..services.db_writer import DBWriter
@@ -72,7 +72,42 @@ def setup_ui(
         pass
 
     tab_widget = QTabWidget()
+    # ensure main area and tab fill available space
+    try:
+        main_window.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    except Exception:
+        pass
+    try:
+        tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    except Exception:
+        pass
+
+    # Ensure main area and tabs fill available space
+    try:
+        main_window.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    except Exception:
+        pass
+    try:
+        # If main_window is a QMainWindow, expand its central widget too
+        cw = main_window.centralWidget() if hasattr(main_window, "centralWidget") else None
+        if cw is not None:
+            cw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            if hasattr(cw, "layout") and callable(cw.layout):
+                _cwl = cw.layout()
+                if _cwl is not None and hasattr(_cwl, "setContentsMargins"):
+                    _cwl.setContentsMargins(0, 0, 0, 0)
+    except Exception:
+        pass
+    try:
+        tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    except Exception:
+        pass
+
     chart_tab_ui = ChartTabUI(main_window)
+    try:
+        chart_tab_ui.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    except Exception:
+        pass
     chart_tab = ChartTab(main_window)
     primary_chart = chart_tab_ui
     legacy_chart = chart_tab
@@ -86,6 +121,33 @@ def setup_ui(
     tab_widget.addTab(signals_tab, "Signals")
     tab_widget.addTab(backtesting_tab, "Backtesting")
     layout.addWidget(tab_widget)
+    # Prefer tab area to stretch to the right and occupy full width
+    try:
+        if hasattr(layout, "setContentsMargins"):
+            layout.setContentsMargins(0, 0, 0, 0)
+        # QBoxLayout-like behavior
+        if hasattr(layout, "count") and hasattr(layout, "itemAt") and hasattr(layout, "setStretch"):
+            _n = layout.count()
+            for _i in range(_n):
+                _w = layout.itemAt(_i).widget()
+                layout.setStretch(_i, 1 if _w is tab_widget else 0)
+        # QSplitter-like behavior
+        if hasattr(layout, "count") and hasattr(layout, "widget") and hasattr(layout, "setStretchFactor"):
+            _n2 = layout.count()
+            for _i2 in range(_n2):
+                _w2 = layout.widget(_i2)
+                layout.setStretchFactor(_i2, 1 if _w2 is tab_widget else 0)
+    except Exception:
+        pass
+    # prefer tab area to stretch to the right
+    try:
+        idx = layout.indexOf(tab_widget) if hasattr(layout, "indexOf") else -1
+        if idx != -1 and hasattr(layout, "setStretch"):
+            layout.setStretch(idx, 1)  # QBoxLayout-like
+        if hasattr(layout, "setStretchFactor") and idx != -1:
+            layout.setStretchFactor(idx, 1)  # QSplitter-like
+    except Exception:
+        pass
     result["chart_tab_ui"] = chart_tab_ui
     result["chart_tab_legacy"] = chart_tab
     result["chart_tab"] = chart_tab_ui
