@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from matplotlib.ticker import AutoMinorLocator
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -119,6 +120,18 @@ class PlotService(ChartServiceBase):
             formatter = mdates.ConciseDateFormatter(locator)
             self.ax.xaxis.set_major_locator(locator)
             self.ax.xaxis.set_major_formatter(formatter)
+            # Smart minor ticks between majors
+            try:
+                self.ax.xaxis.set_minor_locator(AutoMinorLocator(n=2))
+            except Exception:
+                pass
+            # Grid styling from settings (major stronger, minor lighter)
+            grid_col = self._get_color_mpl('grid_color', '#3a4250' if getattr(self, '_is_dark', True) else '#d8dee9')
+            try:
+                self.ax.grid(True, which='major', axis='x', color=grid_col, alpha=0.35, linewidth=0.8)
+                self.ax.grid(True, which='minor', axis='x', color=grid_col, alpha=0.15, linewidth=0.5)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -565,8 +578,18 @@ class PlotService(ChartServiceBase):
         return res
 
     def _get_qcolor(self, key: str, default: str) -> QColor:
-        """Return a QColor from persisted settings, accepting #RRGGBB, #AARRGGBB, or #RRGGBBAA."""
-        raw = get_setting(key, default)
+        """Return a QColor. If theme preset != 'custom', ignore stored settings and use provided default."""
+        # Normalize current preset
+        preset = getattr(self, "_theme_current", None)
+        if isinstance(preset, str):
+            preset = preset.lower().strip()
+        else:
+            preset = ""
+        # Read from settings only for custom
+        if preset == "custom":
+            raw = get_setting(key, default)
+        else:
+            raw = default
         text = str(raw).strip() if raw is not None else str(default)
         color = QColor(text)
         # Handle #RRGGBBAA (alpha at the end) by reordering
@@ -611,20 +634,47 @@ class PlotService(ChartServiceBase):
         from PySide6.QtGui import QPalette
         from PySide6.QtWidgets import QApplication
 
-        t = (theme or "Dark").lower()
-        self._is_dark = (t == "dark")
+        # Normalize preset
+        t = (theme or "Dark").strip().lower()
         app = QApplication.instance()
 
-        window_bg_q = self._get_qcolor("window_bg", "#0f1115" if self._is_dark else "#f3f5f8")
-        panel_bg_q = self._get_qcolor("panel_bg", "#12151b" if self._is_dark else "#ffffff")
-        text_q = self._get_qcolor("text_color", "#e0e0e0" if self._is_dark else "#1a1e25")
-        chart_bg_q = self._get_qcolor("chart_bg", "#0f1115" if self._is_dark else "#ffffff")
-        mini_bg_q = self._get_qcolor("mini_chart_bg", "#14181f" if self._is_dark else "#f5f7fb")
-        border_q = self._get_qcolor("border_color", "#2a2f3a" if self._is_dark else "#c7cfdb")
-        splitter_q = self._get_qcolor("splitter_handle_color", "#2f3541" if self._is_dark else "#d0d7e6")
-        bidask_q = self._get_qcolor("bidask_color", "#ffd479" if self._is_dark else "#2d384f")
-        price_line_q = self._get_qcolor("price_line_color", "#e0e0e0" if self._is_dark else "#1a1e25")
+        # Resolve is_dark based on preset
+        def _is_system_dark() -> bool:
+            try:
+                pal = app.palette() if app else QPalette()
+                col = pal.color(QPalette.Window)
+                # lightnessF in [0..1]; dark if < ~0.5
+                return float(getattr(col, "lightnessF", lambda: col.lightness() / 255.0)()) < 0.5
+            except Exception:
+                return True
 
+        if t == "system":
+            self._is_dark = _is_system_dark()
+        elif t == "light":
+            self._is_dark = False
+        else:
+            # include 'dark' and fallback (default to dark)
+            self._is_dark = (t != "light")
+
+        # Persist current preset string for color resolution logic
+        self._theme_current = t  # used by _get_qcolor
+
+        # Base colors: when preset != 'custom' we ignore stored settings and use defaults here
+        window_bg_q = self._get_qcolor("window_bg", "#0f1115" if self._is_dark else "#f3f5f8")
+        panel_bg_q  = self._get_qcolor("panel_bg",  "#12151b" if self._is_dark else "#ffffff")
+        text_q      = self._get_qcolor("text_color", "#e0e0e0" if self._is_dark else "#1a1e25")
+        chart_bg_q  = self._get_qcolor("chart_bg",  "#0f1115" if self._is_dark else "#ffffff")
+        mini_bg_q   = self._get_qcolor("mini_chart_bg", "#14181f" if self._is_dark else "#f5f7fb")
+        border_q    = self._get_qcolor("border_color", "#2a2f3a" if self._is_dark else "#c7cfdb")
+        splitter_q  = self._get_qcolor("splitter_handle_color", "#2f3541" if self._is_dark else "#d0d7e6")
+        bidask_q    = self._get_qcolor("bidask_color", "#ffd479" if self._is_dark else "#2d384f")
+        price_line_q= self._get_qcolor("price_line_color", "#e0e0e0" if self._is_dark else "#1a1e25")
+        legend_q    = self._get_qcolor("legend_text_color", "#cfd6e1" if self._is_dark else "#1a1e25")
+        grid_q      = self._get_qcolor("grid_color", "#3a4250" if self._is_dark else "#d8dee9")
+        tab_bg_q    = self._get_qcolor("tab_bg", panel_bg_q.name(QColor.HexRgb) if hasattr(panel_bg_q, 'name') else "#12151b")
+        tab_text_q  = self._get_qcolor("tab_text_color", text_q.name(QColor.HexRgb) if hasattr(text_q, 'name') else "#e0e0e0")
+
+        # Update CSS / Palette
         hover_css = self._color_to_css(self._hover_color(panel_bg_q))
         base_css = f"""
         QWidget {{ background-color: {self._color_to_css(window_bg_q)}; color: {self._color_to_css(text_q)}; }}
@@ -636,6 +686,9 @@ class PlotService(ChartServiceBase):
         QWidget#chart_container {{ border: 1px solid {self._color_to_css(border_q)}; border-radius: 4px; }}
         QWidget#drawbar_container {{ border-bottom: 1px solid {self._color_to_css(border_q)}; }}
         QWidget#chartTab {{ border: 1px solid {self._color_to_css(border_q)}; border-radius: 4px; }}
+        QTabWidget::pane {{ border: 1px solid {self._color_to_css(border_q)}; }}
+        QTabBar::tab {{ background: {self._color_to_css(tab_bg_q)}; color: {self._color_to_css(tab_text_q)}; padding: 4px 10px; border: 1px solid {self._color_to_css(border_q)}; border-bottom-color: {self._color_to_css(border_q)}; }}
+        QTabBar::tab:selected {{ background: {hover_css}; color: {self._color_to_css(tab_text_q)}; }}
         """
         custom_qss = get_setting("custom_qss", "")
         if app:
@@ -660,6 +713,7 @@ class PlotService(ChartServiceBase):
         except Exception:
             pass
 
+        # Store for other methods
         self._mini_chart_color = mini_bg_q
         if hasattr(self, '_price_line') and self._price_line is not None:
             try:
@@ -670,7 +724,28 @@ class PlotService(ChartServiceBase):
         if hasattr(self.view, 'bidask_label') and self.view.bidask_label is not None:
             self.view.bidask_label.setStyleSheet(f"font-weight: bold; color: {self._color_to_css(bidask_q)};")
 
-        set_setting("ui_theme", "Dark" if self._is_dark else "Light")
+        # Persist ui_theme exactly as chosen preset (System/Light/Dark/Custom)
+        try:
+            from forex_diffusion.utils.user_settings import set_setting
+            if t in ("system", "light", "dark", "custom"):
+                set_setting("ui_theme", {"system": "System", "light": "Light", "dark": "Dark", "custom": "Custom"}[t])
+            else:
+                set_setting("ui_theme", "Dark" if self._is_dark else "Light")
+        except Exception:
+            pass
+
+        # Try to recolor existing legend (if present) to new legend color
+        try:
+            existing = getattr(self.ax, 'legend_', None)
+            if existing is not None:
+                for txt in existing.get_texts() or []:
+                    txt.set_color(self._color_to_mpl(legend_q))
+                ttl = existing.get_title()
+                if ttl:
+                    ttl.set_color(self._color_to_mpl(legend_q))
+        except Exception:
+            pass
+
         try:
             self.canvas.draw()
         except Exception:
@@ -739,6 +814,22 @@ class PlotService(ChartServiceBase):
             legend = self.ax.legend([h for h, _ in unique], [l for _, l in unique], loc=loc, fontsize=8, frameon=False)
             try:
                 legend.set_draggable(True)
+            except Exception:
+                pass
+            # Apply unified legend/cursor text color
+            try:
+                txt_col = self._get_color_mpl("legend_text_color", "#cfd6e1" if getattr(self, "_is_dark", True) else "#1a1e25")
+                for txt in legend.get_texts() or []:
+                    try:
+                        txt.set_color(txt_col)
+                    except Exception:
+                        pass
+                ttl = legend.get_title()
+                if ttl:
+                    try:
+                        ttl.set_color(txt_col)
+                    except Exception:
+                        pass
             except Exception:
                 pass
             self._legend_artist = legend

@@ -228,7 +228,7 @@ class ChartTabUI(QWidget):
         self._set_combo_with_items(getattr(self, "pred_step_combo", None), ["auto", "1m"], "chart.pred_step", "auto")
         self._set_combo_with_items(getattr(self, "years_combo", None), [str(x) for x in [0, 1, 2, 3, 4, 5, 10, 15, 20, 30]], "chart.backfill_years", "0")
         self._set_combo_with_items(getattr(self, "months_combo", None), [str(x) for x in range(0, 13)], "chart.backfill_months", "0")
-        self._set_combo_with_items(getattr(self, "theme_combo", None), ["Dark", "Light"], "chart.theme", str(get_setting("ui_theme", "Dark")))
+        self._set_combo_with_items(getattr(self, "theme_combo", None), ["System", "Dark", "Light", "Custom"], "chart.theme", str(get_setting("ui_theme", "Dark")))
 
         if market_watch := getattr(self, "market_watch", None):
             with QSignalBlocker(market_watch):

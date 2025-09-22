@@ -43,6 +43,10 @@ COLOR_FIELDS = [
     ("title_bar_color", "Titolo grafico"),
     ("text_color", "Testo"),
     ("bidask_color", "Label Bid/Ask"),
+    ("legend_text_color", "Testo legenda/cursore"),
+    ("grid_color", "Griglia asse X"),
+    ("tab_bg", "Sfondo tab selector"),
+    ("tab_text_color", "Testo tab selector"),
     ("candle_up_color", "Candela rialzista"),
     ("candle_down_color", "Candela ribassista"),
 ]
@@ -59,6 +63,10 @@ COLOR_DEFAULTS = {
     "title_bar_color": "#cfd6e1",
     "text_color": "#e0e0e0",
     "bidask_color": "#ffd479",
+    "legend_text_color": "#cfd6e1",
+    "grid_color": "#3a4250",
+    "tab_bg": "#12151b",
+    "tab_text_color": "#e0e0e0",
     "candle_up_color": "#2ecc71",
     "candle_down_color": "#e74c3c",
 }

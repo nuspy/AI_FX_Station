@@ -446,7 +446,7 @@ class ChartTab(QWidget):
         theme_default = get_setting("ui_theme", "Dark")
         self._set_combo_with_items(
             getattr(self, "theme_combo", None),
-            ["Dark", "Light"],
+            ["System", "Dark", "Light", "Custom"],
             "chart.theme",
             str(theme_default),
         )
@@ -753,6 +753,22 @@ class ChartTab(QWidget):
         texts = legend.get_texts()
         if texts:
             texts[0].set_multialignment('left')
+        # Apply unified legend/cursor text color from settings
+        try:
+            txt_col = self._get_color("legend_text_color", "#cfd6e1")
+            for t in legend.get_texts() or []:
+                try:
+                    t.set_color(txt_col)
+                except Exception:
+                    pass
+            ttl = legend.get_title()
+            if ttl:
+                try:
+                    ttl.set_color(txt_col)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         self.ax.add_artist(legend)
         self._hover_legend = legend
         self._hover_legend_text = texts[0] if texts else None
