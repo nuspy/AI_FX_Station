@@ -166,7 +166,7 @@ class MarketDataService:
         # Note: "60m" is an alias of "1h" -> keep only "1h" to avoid duplicates
         self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"]
             # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
-        self.rest_enabled: bool = False
+        self.rest_enabled: bool = True
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
@@ -179,7 +179,7 @@ class MarketDataService:
         """
         logger.info("Starting backfill for {} {} (override={}, force_full={})", symbol, timeframe, start_ms_override, force_full)
         # Guard: block any REST backfill unless explicitly enabled (UI backfill button)
-        if not getattr(self, "rest_enabled", False):
+        if not getattr(self, "rest_enabled", True):
             logger.info("REST backfill disabled; skipping backfill for {} {}.", symbol, timeframe)
             if progress_cb:
                 try: progress_cb(100)

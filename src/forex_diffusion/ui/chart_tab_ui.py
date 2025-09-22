@@ -398,7 +398,12 @@ class ChartTabUI(QWidget):
             ax.set_xlim(last_dt - span_x * 0.8, last_dt + span_x * 0.2)
         if ylim[1] > ylim[0]:
             span_y = ylim[1] - ylim[0]
-            ax.set_ylim(last_price - span_y / 2.0, last_price + span_y / 2.0)
+            try:
+                import math
+                if math.isfinite(span_y) and math.isfinite(last_price):
+                    ax.set_ylim(last_price - span_y / 2.0, last_price + span_y / 2.0)
+            except Exception:
+                pass
         self.canvas.draw_idle()
 
     def _create_drawbar(self) -> QWidget:

@@ -11,6 +11,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from matplotlib.ticker import AutoMinorLocator
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
+from forex_diffusion.utils.time_utils import split_range_avoid_weekend
 
 from forex_diffusion.utils.user_settings import get_setting, set_setting
 
@@ -84,12 +85,88 @@ class PlotService(ChartServiceBase):
                     pass
             self._render_candles(df2, x_dt)
         else:
+            # break line across large gaps to avoid bridging closed-market periods
             if self._price_line is not None:
                 try:
+                    # compute expected seconds from timeframe; fallback to median spacing
+                    tf = str(getattr(self, 'timeframe', 'auto') or 'auto').lower()
+                    try:
+                        if tf != "auto":
+                            exp_td = self.controller.tf_to_timedelta(tf=tf)
+                            exp_sec = float(getattr(exp_td, "total_seconds", lambda: 60.0)())
+                        else:
+                            diffs_days = np.diff(mdates.date2num(x_dt)) if len(x_dt) > 1 else np.array([])
+                            exp_sec = float(np.median(diffs_days) * 86400.0) if len(diffs_days) else 60.0
+                    except Exception:
+                        exp_sec = 60.0
+                    # build y with NaN at gaps
+                    y_plot = y_vals.copy()
+                    if len(x_dt) > 1:
+                        tnum = mdates.date2num(x_dt)
+                        dsec = np.diff(tnum) * 86400.0
+                        gap_idx = np.where(dsec > exp_sec * 3.0)[0]  # break at i+1
+                        for gi in gap_idx:
+                            if 0 <= gi + 1 < len(y_plot):
+                                y_plot[gi + 1] = np.nan
                     self._price_line.set_visible(True)
+                    self._price_line.set_data(x_dt, y_plot)
+                except Exception:
+                    try:
+                        self._price_line.set_visible(True)
+                    except Exception:
+                        pass
+            self._clear_candles()
+
+        # draw vertical cut lines for closed-market spans
+        try:
+            # cleanup previous markers
+            for art in list(getattr(self, "_cut_lines", []) or []):
+                try:
+                    art.remove()
                 except Exception:
                     pass
-            self._clear_candles()
+            self._cut_lines = []
+            if len(x_dt) > 1:
+                tnum = mdates.date2num(x_dt)
+                dsec = np.diff(tnum) * 86400.0
+                # expected spacing
+                tf = str(getattr(self, 'timeframe', 'auto') or 'auto').lower()
+                try:
+                    if tf != "auto":
+                        exp_td = self.controller.tf_to_timedelta(tf=tf)
+                        exp_sec = float(getattr(exp_td, "total_seconds", lambda: 60.0)())
+                    else:
+                        exp_sec = float(np.median(dsec)) if len(dsec) else 60.0
+                except Exception:
+                    exp_sec = 60.0
+                thr = exp_sec * 3.0
+                cut_col = self._get_color_mpl("market_cut_color", "#7f8fa6")
+                for i, gap in enumerate(dsec):
+                    if gap <= thr:
+                        continue
+                    # classify gap as closed-market if it includes weekend
+                    try:
+                        dt_left = pd.to_datetime(df2["ts_utc"].iloc[i], unit="ms", utc=True).tz_convert(None)
+                        dt_right = pd.to_datetime(df2["ts_utc"].iloc[i+1], unit="ms", utc=True).tz_convert(None)
+                    except Exception:
+                        continue
+                    try:
+                        # build daily range and check weekend presence
+                        days = pd.date_range(dt_left.normalize(), dt_right.normalize(), freq="D")
+                        has_weekend = any(d.weekday() >= 5 for d in days)
+                    except Exception:
+                        wd_l = getattr(dt_left, "weekday", lambda: 0)()
+                        wd_r = getattr(dt_right, "weekday", lambda: 0)()
+                        has_weekend = (wd_l >= 5) or (wd_r >= 5)
+                    if not has_weekend:
+                        continue  # not a closed-market span -> do not mark as cut
+                    try:
+                        line = self.ax.axvline(x_dt.iloc[i+1], color=cut_col, linestyle='--', linewidth=0.8, alpha=0.6, zorder=2)
+                        self._cut_lines.append(line)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         self._plot_indicators(df2, x_dt)
 
@@ -178,14 +255,24 @@ class PlotService(ChartServiceBase):
 
             self._clear_candles()
 
+            # build xs (mdates numbers) either from provided compressed x or from timestamps
             if x_dt is None:
                 ts = pd.to_numeric(df2['ts_utc'], errors='coerce').dropna()
                 if ts.empty:
                     self._clear_candles()
                     return
-                x_dt = pd.to_datetime(ts.astype('int64'), unit='ms', utc=True).tz_convert(None)
+                xs = mdates.date2num(pd.to_datetime(ts.astype('int64'), unit='ms', utc=True).tz_convert(None))
+            else:
+                # accept compressed numeric x (mdates numbers) or datetime-like
+                try:
+                    arr = np.asarray(x_dt)
+                    if np.issubdtype(arr.dtype, np.number):
+                        xs = arr.astype(float)
+                    else:
+                        xs = mdates.date2num(pd.to_datetime(x_dt))
+                except Exception:
+                    xs = mdates.date2num(pd.to_datetime(x_dt))
 
-            xs = mdates.date2num(pd.to_datetime(x_dt))
             diffs = xs[1:] - xs[:-1] if len(xs) > 1 else []
             positive = [d for d in diffs if d > 0]
             width = (float(np.median(positive)) * 0.7) if positive else self._default_candle_width()

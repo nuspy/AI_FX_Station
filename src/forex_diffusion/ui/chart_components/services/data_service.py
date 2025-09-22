@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 import pandas as pd
+import numpy as np
 from loguru import logger
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
@@ -130,10 +131,12 @@ class DataService(ChartServiceBase):
             xlim = self.ax.get_xlim()
             if not xlim or xlim[0] >= xlim[1]:
                 return
-            # matplotlib date floats -> UTC ms
+            # matplotlib floats on X may be compressed (weekend removed) -> expand to real time
             import matplotlib.dates as mdates
-            left_dt = mdates.num2date(xlim[0])
-            right_dt = mdates.num2date(xlim[1])
+            left_num = float(self._expand_compressed_x(float(xlim[0])))
+            right_num = float(self._expand_compressed_x(float(xlim[1])))
+            left_dt = mdates.num2date(left_num)
+            right_dt = mdates.num2date(right_num)
             # ensure UTC ms
             from datetime import timezone
             if left_dt.tzinfo is None:
@@ -201,10 +204,244 @@ class DataService(ChartServiceBase):
         except Exception:
             return pd.to_timedelta(1, unit="m")
 
+    # ---- compressed X helpers ----
+    def _expand_compressed_x(self, x_c: float) -> float:
+        """Map compressed x (weekend removed) back to real matplotlib date float."""
+        try:
+            segs = getattr(self, "_x_segments_compressed", None)
+            if not segs:
+                return float(x_c)
+            for s_c, e_c, closed_before in segs:
+                if float(s_c) <= float(x_c) <= float(e_c):
+                    return float(x_c) + float(closed_before)
+            if float(x_c) < float(segs[0][0]):
+                return float(x_c) + float(segs[0][2])
+            return float(x_c) + float(segs[-1][2])
+        except Exception:
+            return float(x_c)
+
+    # ---- backfill 1m completo (saltando weekend) ----
+    def _compute_missing_1m_gaps(self, start_ms: int, end_ms: int) -> list[tuple[int, int]]:
+        """Return list of (gap_start_ms, gap_end_ms) where 1m candles are missing between start..end, excluding weekend minutes."""
+        try:
+            sym = getattr(self, "symbol", None)
+            if not sym or start_ms is None or end_ms is None or start_ms >= end_ms:
+                return []
+            # load actual 1m candles in range
+            df1 = self._load_candles_from_db(sym, "1m", limit=500000, start_ms=int(start_ms), end_ms=int(end_ms))
+            actual = np.array([], dtype=np.int64)
+            if df1 is not None and not df1.empty and "ts_utc" in df1.columns:
+                actual = df1["ts_utc"].astype("int64").dropna().values
+            # expected timestamps for each non-weekend segment
+            from forex_diffusion.utils.time_utils import split_range_avoid_weekend
+            import pandas as _pd
+            sdt = _pd.to_datetime(int(start_ms), unit="ms", utc=True)
+            edt = _pd.to_datetime(int(end_ms), unit="ms", utc=True)
+            segs = split_range_avoid_weekend(sdt.to_pydatetime(), edt.to_pydatetime())
+            expected_list: list[np.ndarray] = []
+            for (sd, ed) in segs:
+                s = _pd.to_datetime(sd, utc=True)
+                e = _pd.to_datetime(ed, utc=True)
+                # 1-min grid; include end boundary
+                idx = _pd.date_range(start=s, end=e, freq="1min", tz="UTC")
+                if len(idx):
+                    expected_list.append((idx.astype("int64") // 10**6).to_numpy(dtype=np.int64))
+            expected = np.concatenate(expected_list) if expected_list else np.array([], dtype=np.int64)
+            if expected.size == 0:
+                return []
+            # missing := expected \ actual
+            if actual.size:
+                missing = np.setdiff1d(expected, actual, assume_unique=False)
+            else:
+                missing = expected
+            if missing.size == 0:
+                return []
+            # group contiguous minutes into ranges
+            diffs = np.diff(missing)
+            splits = np.where(diffs != 60000)[0] + 1
+            groups = np.split(missing, splits)
+            gaps: list[tuple[int, int]] = []
+            for g in groups:
+                if g.size == 0:
+                    continue
+                gaps.append((int(g[0]), int(g[-1])))
+            return gaps
+        except Exception:
+            return []
+
+    def _backfill_all_missing_1m(self) -> None:
+        """Scan all 1m gaps (excluding weekend) and backfill them sequentially up to now via REST."""
+        try:
+            sym = getattr(self, "symbol", None)
+            if not sym:
+                return
+            # pick scan range: from earliest loaded candle if available, else last 30 days
+            if getattr(self, "_last_df", None) is not None and not self._last_df.empty:
+                start_ms = int(self._last_df["ts_utc"].iloc[0])
+            else:
+                from datetime import datetime, timezone, timedelta
+                start_ms = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp() * 1000)
+            from datetime import datetime, timezone
+            end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+            gaps = self._compute_missing_1m_gaps(start_ms, end_ms)
+            if not gaps:
+                return
+
+            controller = getattr(self._main_window, "controller", None)
+            ms = getattr(controller, "market_service", None) if controller else None
+            if ms is None:
+                return
+
+            from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+            class _Signals(QObject):
+                finished = Signal(bool)
+
+            class _Job(QRunnable):
+                def __init__(self, svc, symbol, timeframe, start_ms, signals):
+                    super().__init__()
+                    self.svc = svc; self.symbol = symbol; self.timeframe = timeframe
+                    self.start_ms = int(start_ms); self.signals = signals
+                def run(self):
+                    ok = True
+                    try:
+                        # backfill da earliest gap fino ad oggi
+                        self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=None, start_ms_override=self.start_ms)
+                    except Exception:
+                        ok = False
+                    finally:
+                        try:
+                            self.signals.finished.emit(ok)
+                        except Exception:
+                            pass
+
+            # kick first job from earliest gap; upon finish, re-check and repeat if needed
+            def _launch_next():
+                cur_gaps = self._compute_missing_1m_gaps(start_ms, end_ms)
+                if not cur_gaps:
+                    # all good -> reload view to reflect new data
+                    try:
+                        self._schedule_view_reload()
+                    except Exception:
+                        pass
+                    return
+                sig = _Signals(self.view)
+                sig.finished.connect(lambda _ok: _launch_next())
+                QThreadPool.globalInstance().start(_Job(ms, sym, "1m", int(cur_gaps[0][0]), sig))
+
+            _launch_next()
+        except Exception:
+            pass
+
+    # ---- compressed X helpers & backfill-on-open ----
+    def _expand_compressed_x(self, x_c: float) -> float:
+        """Map compressed x (weekend removed) back to real matplotlib date float."""
+        try:
+            segs = getattr(self, "_x_segments_compressed", None)
+            if not segs:
+                return float(x_c)
+            # segs: list of (s_comp, e_comp, closed_before_days)
+            for s_c, e_c, closed_before in segs:
+                if float(s_c) <= float(x_c) <= float(e_c):
+                    return float(x_c) + float(closed_before)
+            # outside known segments: best-effort
+            if float(x_c) < float(segs[0][0]):
+                return float(x_c) + float(segs[0][2])
+            return float(x_c) + float(segs[-1][2])
+        except Exception:
+            return float(x_c)
+
+    def _period_includes_weekend(self, start_ms: int, end_ms: int) -> bool:
+        """True se [start..end] include sab/dom (chiusura mercato)."""
+        try:
+            s = pd.to_datetime(int(start_ms), unit="ms", utc=True).tz_convert(None)
+            e = pd.to_datetime(int(end_ms), unit="ms", utc=True).tz_convert(None)
+            days = pd.date_range(s.normalize(), e.normalize(), freq="D")
+            return any(d.weekday() >= 5 for d in days)
+        except Exception:
+            return False
+
+    def _find_earliest_data_gap(self, df: pd.DataFrame, timeframe: str) -> int | None:
+        """Trova il più antico buco non-weekend nel df e ritorna lo start_ms suggerito per backfill."""
+        try:
+            if df is None or df.empty or "ts_utc" not in df.columns:
+                return None
+            ts = df["ts_utc"].astype("int64").to_numpy()
+            if len(ts) < 2:
+                return None
+            # expected spacing
+            try:
+                tf = str(timeframe or "auto").lower()
+                if tf != "auto":
+                    td = self._tf_to_timedelta(tf)
+                    exp_ms = int(td.total_seconds() * 1000.0)
+                else:
+                    diffs = (ts[1:] - ts[:-1]).astype("int64")
+                    exp_ms = int(max(60000, float(pd.Series(diffs).median())))
+            except Exception:
+                exp_ms = 60000
+            for i in range(1, len(ts)):
+                gap = int(ts[i] - ts[i-1])
+                if gap > exp_ms * 2:
+                    if self._period_includes_weekend(ts[i-1], ts[i]):
+                        continue
+                    return int(ts[i-1] + exp_ms)
+            return None
+        except Exception:
+            return None
+
+    def _backfill_on_open(self, df: pd.DataFrame) -> None:
+        """Lancia backfill dal primo buco non-weekend fino ad oggi, poi ricarica la finestra."""
+        try:
+            start_override = self._find_earliest_data_gap(df, getattr(self, "timeframe", "auto"))
+            if start_override is None:
+                return
+            controller = getattr(self._main_window, "controller", None)
+            ms = getattr(controller, "market_service", None) if controller else None
+            if ms is None:
+                return
+
+            from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+            class _Signals(QObject):
+                finished = Signal(bool)
+
+            class _Job(QRunnable):
+                def __init__(self, svc, symbol, timeframe, start_ms, signals):
+                    super().__init__()
+                    self.svc = svc; self.symbol = symbol; self.timeframe = timeframe
+                    self.start_ms = int(start_ms); self.signals = signals
+                def run(self):
+                    ok = True
+                    try:
+                        self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=None, start_ms_override=self.start_ms)
+                    except Exception:
+                        ok = False
+                    finally:
+                        try:
+                            self.signals.finished.emit(ok)
+                        except Exception:
+                            pass
+
+            sig = _Signals(self.view)
+            def _on_done(_ok: bool):
+                try:
+                    self._schedule_view_reload()
+                except Exception:
+                    pass
+            sig.finished.connect(_on_done)
+            QThreadPool.globalInstance().start(_Job(ms, getattr(self, "symbol", ""), getattr(self, "timeframe", ""), int(start_override), sig))
+        except Exception:
+            pass
+
     def set_symbol_timeframe(self, db_service, symbol: str, timeframe: str):
         self.db_service = db_service
         self.symbol = symbol
         self.timeframe = timeframe
+        # reset view-window cache on context change
+        self._current_cache_tf = None
+        self._current_cache_range = None
         # reset view-window cache on context change
         self._current_cache_tf = None
         self._current_cache_range = None
@@ -229,7 +466,11 @@ class DataService(ChartServiceBase):
             df = self._load_candles_from_db(self.symbol, self.timeframe, limit=3000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
-                # logger.info("Plotted {} points for {} {}", len(df), self.symbol, self.timeframe)
+                # backfill-on-open: fill data holes across the visible history (skip weekend closures)
+                try:
+                    self._backfill_on_open(df)
+                except Exception:
+                    pass
             else:
                 logger.info("No candles found in DB for {} {}", self.symbol, self.timeframe)
         except Exception as e:
@@ -241,6 +482,15 @@ class DataService(ChartServiceBase):
             if not new_symbol:
                 return
             self.symbol = new_symbol
+            # reset cache so next reload uses the new context
+            self._current_cache_tf = None
+            self._current_cache_range = None
+            # reset cache so next reload uses the new context
+            self._current_cache_tf = None
+            self._current_cache_range = None
+            # reset cache so next reload uses the new context
+            self._current_cache_tf = None
+            self._current_cache_range = None
             # reset cache so next reload uses the new context
             self._current_cache_tf = None
             self._current_cache_range = None
@@ -256,8 +506,108 @@ class DataService(ChartServiceBase):
             df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=3000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
+                try:
+                    self._backfill_all_missing_1m()
+                except Exception:
+                    pass
+            try:
+                self._backfill_on_open(df)
+            except Exception:
+                pass
+            try:
+                self._backfill_on_open(df)
+            except Exception:
+                    pass
         except Exception as e:
             logger.exception("Failed to switch symbol: {}", e)
+
+    # --- Backfill-on-open helpers ---
+    def _period_includes_weekend(self, start_ms: int, end_ms: int) -> bool:
+        """Return True if [start..end] overlaps Saturday/Sunday."""
+        try:
+            import pandas as _pd
+            s = _pd.to_datetime(int(start_ms), unit="ms", utc=True).tz_convert(None)
+            e = _pd.to_datetime(int(end_ms), unit="ms", utc=True).tz_convert(None)
+            days = _pd.date_range(s.normalize(), e.normalize(), freq="D")
+            return any(d.weekday() >= 5 for d in days)
+        except Exception:
+            return False
+
+    def _find_earliest_data_gap(self, df: pd.DataFrame, timeframe: str) -> int | None:
+        """Find earliest missing-data gap (weekday hours), return suggested start_ms for backfill."""
+        try:
+            if df is None or df.empty or "ts_utc" not in df.columns:
+                return None
+            ts = df["ts_utc"].astype("int64").to_numpy()
+            if len(ts) < 2:
+                return None
+            # expected spacing from timeframe; fallback to median
+            try:
+                tf = str(timeframe or "auto").lower()
+                if tf != "auto":
+                    td = self._tf_to_timedelta(tf)
+                    exp_ms = int(td.total_seconds() * 1000.0)
+                else:
+                    diffs = (ts[1:] - ts[:-1]).astype("int64")
+                    exp_ms = int(max(60000, float(pd.Series(diffs).median())))
+            except Exception:
+                exp_ms = 60000
+            for i in range(1, len(ts)):
+                gap = int(ts[i] - ts[i-1])
+                if gap > exp_ms * 2:
+                    # skip if the gap overlaps weekend/market-close
+                    if self._period_includes_weekend(ts[i-1], ts[i]):
+                        continue
+                    # earliest backfill start within the gap
+                    return int(ts[i-1] + exp_ms)
+            return None
+        except Exception:
+            return None
+
+    def _backfill_on_open(self, df: pd.DataFrame) -> None:
+        """Launch background backfill from earliest hole to present (skip weekend closures)."""
+        try:
+            start_override = self._find_earliest_data_gap(df, getattr(self, "timeframe", "auto"))
+            if start_override is None:
+                return
+            controller = getattr(self._main_window, "controller", None)
+            ms = getattr(controller, "market_service", None) if controller else None
+            if ms is None:
+                return
+
+            from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+            class _Signals(QObject):
+                finished = Signal(bool)
+
+            class _Job(QRunnable):
+                def __init__(self, svc, symbol, timeframe, start_ms, signals):
+                    super().__init__()
+                    self.svc = svc; self.symbol = symbol; self.timeframe = timeframe
+                    self.start_ms = start_ms; self.signals = signals
+                def run(self):
+                    ok = True
+                    try:
+                        self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=None, start_ms_override=int(self.start_ms))
+                    except Exception:
+                        ok = False
+                    finally:
+                        try:
+                            self.signals.finished.emit(ok)
+                        except Exception:
+                            pass
+
+            sig = _Signals(self.view)
+            def _on_done(_ok: bool):
+                # reload current window after backfill to fill the holes
+                try:
+                    self._schedule_view_reload()
+                except Exception:
+                    pass
+            sig.finished.connect(_on_done)
+            QThreadPool.globalInstance().start(_Job(ms, getattr(self, "symbol", ""), getattr(self, "timeframe", ""), int(start_override), sig))
+        except Exception:
+            pass
 
     def _on_backfill_missing_clicked(self):
         """Trigger backfill for current symbol/timeframe asynchronously with determinate progress."""
@@ -312,6 +662,12 @@ class DataService(ChartServiceBase):
             def run(self):
                 ok = True
                 try:
+                    # enable REST backfill for this job scope
+                    prev = getattr(self.svc, "rest_enabled", False)
+                    try:
+                        self.svc.rest_enabled = True
+                    except Exception:
+                        pass
                     def _cb(pct: int):
                         try:
                             self.signals.progress.emit(int(pct))
@@ -321,7 +677,11 @@ class DataService(ChartServiceBase):
                 except Exception as e:
                     ok = False
                 finally:
-                    # keep REST setting unchanged
+                    # restore REST flag and emit completion
+                    try:
+                        self.svc.rest_enabled = prev
+                    except Exception:
+                        pass
                     try:
                         self.signals.finished.emit(ok)
                     except Exception:
@@ -331,7 +691,7 @@ class DataService(ChartServiceBase):
         self.backfill_progress.setRange(0, 100)
         self.backfill_progress.setValue(0)
 
-        self._bf_signals = BackfillSignals(self)
+        self._bf_signals = BackfillSignals(self.view)
         self._bf_signals.progress.connect(self.backfill_progress.setValue)
 
         def _on_done(ok: bool):
