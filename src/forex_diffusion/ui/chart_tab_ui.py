@@ -10,7 +10,7 @@ import matplotlib.dates as mdates
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
-    QToolButton, QCheckBox, QProgressBar
+    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker
 from matplotlib.figure import Figure
@@ -21,6 +21,46 @@ from loguru import logger
 from ..utils.user_settings import get_setting, set_setting
 from ..services.brokers import get_broker_service
 from .chart_components.controllers.chart_controller import ChartTabController
+
+class DraggableOverlay(QLabel):
+    """Small draggable label overlay used for legend and cursor values."""
+    dragStarted = Signal()
+    dragEnded = Signal()
+
+    def __init__(self, text: str, parent: QWidget):
+        super().__init__(parent)
+        self.setText(text)
+        self.setStyleSheet("QLabel { background: rgba(0,0,0,160); color: white; border: 1px solid rgba(255,255,255,80); border-radius: 4px; padding: 4px; }")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.setMouseTracking(True)
+        self._dragging = False
+        self._drag_offset = None
+
+    def mousePressEvent(self, event):
+        if event and event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._drag_offset = event.pos()
+            self.dragStarted.emit()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging and self._drag_offset is not None:
+            # Move the label keeping the offset
+            new_pos = self.mapToParent(event.pos() - self._drag_offset)
+            # Keep inside parent bounds
+            parent = self.parentWidget()
+            if parent:
+                x = max(0, min(new_pos.x(), parent.width() - self.width()))
+                y = max(0, min(new_pos.y(), parent.height() - self.height()))
+                self.move(x, y)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event and event.button() == Qt.LeftButton and self._dragging:
+            self._dragging = False
+            self._drag_offset = None
+            self.dragEnded.emit()
+        super().mouseReleaseEvent(event)
 
 class ChartTabUI(QWidget):
     """
@@ -83,6 +123,13 @@ class ChartTabUI(QWidget):
         self._drag_axis = None
         self._connect_mouse_events()
 
+        # Overlays and grid setup
+        self._overlay_dragging = False
+        self._suppress_line_update = False
+        self._x_cache_comp = None  # cached compressed X for nearest lookup
+        self._init_overlays()
+        self._apply_grid_style()
+
     def _build_ui(self) -> None:
         """Programmatically builds the entire UI with a two-row topbar."""
         self.setLayout(QVBoxLayout())
@@ -125,6 +172,7 @@ class ChartTabUI(QWidget):
         chart_container_layout = QVBoxLayout(chart_container)
         chart_container_layout.setContentsMargins(0,0,0,0)
         chart_container_layout.addWidget(self.canvas)
+        self.chart_container = chart_container  # keep reference for overlays
         chart_area_splitter.addWidget(chart_container)
 
         right_splitter.addWidget(chart_area_splitter)
@@ -352,12 +400,40 @@ class ChartTabUI(QWidget):
     def _on_theme_changed(self, theme: str) -> None:
         set_setting('chart.theme', theme)
         self._apply_theme(theme)
+        # Re-apply grid styling after theme change
+        try:
+            self._apply_grid_style()
+        except Exception as e:
+            logger.warning(f"Failed to apply grid style after theme change: {e}")
 
     def _open_settings_dialog(self) -> None:
         from .settings_dialog import SettingsDialog
+        # Wrap settings dialog in a scrollable container to provide vertical scrollbar
         dialog = SettingsDialog(self)
-        if dialog.exec():
+        accepted = False
+        try:
+            wrapper = QDialog(self)
+            wrapper.setWindowTitle(getattr(dialog, "windowTitle", lambda: "Settings")())
+            area = QScrollArea(wrapper)
+            area.setWidgetResizable(True)
+            # Make inner dialog act as a widget
+            dialog.setWindowFlags(Qt.Widget)
+            area.setWidget(dialog)
+            lay = QVBoxLayout(wrapper)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.addWidget(area)
+            accepted = bool(wrapper.exec())
+        except Exception as e:
+            logger.debug(f"Scrollable settings wrapper failed, fallback: {e}")
+            accepted = bool(dialog.exec())
+
+        if accepted:
             if (tc := getattr(self, 'theme_combo', None)): self._apply_theme(tc.currentText())
+            # Apply grid style again to reflect unified grid color setting
+            try:
+                self._apply_grid_style()
+            except Exception as e:
+                logger.warning(f"Failed to apply grid style after settings: {e}")
             self._follow_suspend_seconds = float(get_setting('chart.follow_suspend_seconds', self._follow_suspend_seconds))
             self._follow_enabled = bool(get_setting('chart.follow_enabled', self._follow_enabled))
             if self._follow_enabled: self._follow_suspend_until = 0.0
@@ -391,7 +467,12 @@ class ChartTabUI(QWidget):
         y_col = 'close' if 'close' in ldf.columns else 'price'
         last_row = ldf.iloc[-1]
         last_ts, last_price = float(last_row['ts_utc']), float(last_row.get(y_col, last_row.get('price')))
-        last_dt = mdates.date2num(pd.to_datetime(last_ts, unit='ms', utc=True).tz_convert(None))
+        # Convert to naive datetime (local) safely, then to mdates number
+        try:
+            ts_obj = pd.to_datetime(last_ts, unit='ms', utc=True).tz_convert('UTC').tz_localize(None)
+            last_dt = mdates.date2num(ts_obj)
+        except Exception:
+            last_dt = mdates.date2num(pd.to_datetime(last_ts, unit='ms'))
         # map to compressed X if compression is active
         try:
             comp = getattr(self.chart_controller.plot_service, "_compress_real_x", None)
@@ -460,7 +541,17 @@ class ChartTabUI(QWidget):
     def _plot_indicators(self, df2: pd.DataFrame, x_dt: pd.Series): return self.chart_controller.plot_indicators(df2=df2, x_dt=x_dt)
     def _on_build_latents_clicked(self): return self.chart_controller.on_build_latents_clicked()
     def _refresh_orders(self): return self.chart_controller.refresh_orders()
-    def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None): return self.chart_controller.update_plot(df=df, quantiles=quantiles, restore_xlim=restore_xlim, restore_ylim=restore_ylim)
+    def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
+        res = self.chart_controller.update_plot(df=df, quantiles=quantiles, restore_xlim=restore_xlim, restore_ylim=restore_ylim)
+        # Keep reference for overlays and rebuild X cache
+        try:
+            if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                self._last_df = df
+                self._rebuild_x_cache()
+            self._apply_grid_style()
+        except Exception as e:
+            logger.debug(f"post-update_plot hooks failed: {e}")
+        return res
     def _apply_theme(self, theme: str): return self.chart_controller.apply_theme(theme=theme)
     def _get_color(self, key: str, default: str) -> str: return self.chart_controller.get_color(key=key, default=default)
     def _open_color_settings(self): return self.chart_controller.open_color_settings()
@@ -486,6 +577,15 @@ class ChartTabUI(QWidget):
         return self.chart_controller.on_mouse_press(event=event)
     def _on_mouse_move(self, event):
         if event and (getattr(event, "button", None) in (1, 3) or (ge := getattr(event, "guiEvent", None)) and getattr(ge, "buttons", lambda: 0)()): self._suspend_follow()
+        # Update overlays with cursor info unless dragging an overlay
+        try:
+            if not getattr(self, "_overlay_dragging", False):
+                self._update_cursor_overlays(event)
+        except Exception as e:
+            logger.debug(f"_update_cursor_overlays failed: {e}")
+        # Suppress line update during overlay drag
+        if getattr(self, "_overlay_dragging", False) or getattr(self, "_suppress_line_update", False):
+            return None
         return self.chart_controller.on_mouse_move(event=event)
     def _on_mouse_release(self, event):
         if event and getattr(event, "button", None) in (1, 3): self._suspend_follow()
@@ -502,6 +602,162 @@ class ChartTabUI(QWidget):
     def _auto_forecast_tick(self): return self.chart_controller.auto_forecast_tick()
     def _on_backfill_missing_clicked(self): return self.chart_controller.on_backfill_missing_clicked()
     def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None, end_ms: Optional[int] = None): return self.chart_controller.load_candles_from_db(symbol=symbol, timeframe=timeframe, limit=limit, start_ms=start_ms, end_ms=end_ms)
+
+    # --- Grid and Overlays helpers ---
+
+    def _apply_grid_style(self) -> None:
+        """Ensure Y axis values and grid lines are visible using unified grid color."""
+        if not hasattr(self, "ax") or self.ax is None: return
+        try:
+            grid_color = str(get_setting("chart.grid_color", "#404040"))
+        except Exception:
+            grid_color = "#404040"
+        ax = self.ax
+        # Enable grid on both axes
+        ax.grid(True, which='major', axis='both', color=grid_color, alpha=0.35, linewidth=0.6)
+        ax.grid(True, which='minor', axis='y', color=grid_color, alpha=0.20, linewidth=0.4)
+        # Ensure Y axis tick labels are visible
+        ax.tick_params(axis='y', which='both', labelleft=True)
+        # Draw minor ticks for more y-lines if formatter allows
+        try:
+            ax.minorticks_on()
+        except Exception:
+            pass
+        self.canvas.draw_idle()
+
+    def _init_overlays(self) -> None:
+        """Create draggable overlays: legend-like and cursor values."""
+        parent = getattr(self, "chart_container", None) or self
+        # Legend-like overlay
+        self.legend_overlay = DraggableOverlay("X: -\nY: -", parent)
+        self.legend_overlay.resize(160, 56)
+        self.legend_overlay.move(10, 10)
+        # Cursor values overlay (mouse position)
+        self.cursor_overlay = DraggableOverlay("Mouse: X -, Y -", parent)
+        self.cursor_overlay.resize(240, 30)
+        self.cursor_overlay.move(10, 70)
+
+        # Connect drag events to suspend pan and line updates
+        def _on_drag_start():
+            self._overlay_dragging = True
+            self._suppress_line_update = True
+            # Disable pan if active
+            try:
+                prev = getattr(self.toolbar, "_active", None)
+                self._prev_toolbar_active = prev
+                if str(prev).upper() == "PAN":
+                    # toggle off pan
+                    self.toolbar.pan()
+            except Exception:
+                pass
+
+        def _on_drag_end():
+            # restore pan if it was active before dragging
+            try:
+                if getattr(self, "_prev_toolbar_active", None) and str(self._prev_toolbar_active).upper() == "PAN":
+                    self.toolbar.pan()
+            except Exception:
+                pass
+            self._overlay_dragging = False
+            self._suppress_line_update = False
+
+        for w in (self.legend_overlay, self.cursor_overlay):
+            w.dragStarted.connect(_on_drag_start)
+            w.dragEnded.connect(_on_drag_end)
+            w.show()
+            w.raise_()  # ensure overlays stay on top of the canvas
+
+    def _update_cursor_overlays(self, event) -> None:
+        """Update overlays content with X/Y info: mouse pos and nearest data value at cursor X."""
+        if event is None:
+            return
+        xdata, ydata = getattr(event, "xdata", None), getattr(event, "ydata", None)
+        if xdata is None:
+            return
+
+        # 1) Mouse position (use axis formatters)
+        try:
+            x_mouse_txt = self.ax.format_xdata(xdata) if hasattr(self, "ax") and self.ax else f"{xdata:.6f}"
+        except Exception:
+            x_mouse_txt = f"{xdata:.6f}"
+        try:
+            y_mouse_txt = self.ax.format_ydata(ydata) if (hasattr(self, "ax") and self.ax and ydata is not None) else ("-" if ydata is None else f"{ydata:.6f}")
+        except Exception:
+            y_mouse_txt = "-" if ydata is None else f"{ydata:.6f}"
+        if hasattr(self, "cursor_overlay") and self.cursor_overlay:
+            self.cursor_overlay.setText(f"Mouse: X {x_mouse_txt}, Y {y_mouse_txt}")
+            self.cursor_overlay.adjustSize()
+
+        # 2) Nearest data point at this X (compressed axis aware)
+        ldf = getattr(self, "_last_df", None)
+        if ldf is None or ldf.empty:
+            return
+
+        # Build/computed compressed X cache
+        if getattr(self, "_x_cache_comp", None) is None:
+            self._rebuild_x_cache()
+        xcomp = self._x_cache_comp
+        if xcomp is None or len(xcomp) == 0:
+            return
+
+        # Find nearest index on compressed X
+        try:
+            import numpy as np
+            idx = int(np.searchsorted(xcomp, xdata))
+            idx = max(0, min(idx, len(xcomp) - 1))
+            # pick closer between idx and idx-1
+            if idx > 0 and abs(xcomp[idx] - xdata) > abs(xcomp[idx - 1] - xdata):
+                idx -= 1
+        except Exception:
+            idx = max(0, min(int(len(ldf) / 2), len(ldf) - 1))
+
+        row = ldf.iloc[idx]
+        ts_ms = float(row["ts_utc"])
+        # Choose Y series based on current price mode
+        if getattr(self, "_price_mode", "candles") == "line" and "price" in ldf.columns:
+            y_col = "price"
+        elif "close" in ldf.columns:
+            y_col = "close"
+        elif "price" in ldf.columns:
+            y_col = "price"
+        else:
+            y_col = None
+        try:
+            y_val = float(row[y_col]) if (y_col and y_col in row) else (float(ydata) if ydata is not None else float("nan"))
+        except Exception:
+            y_val = float("nan")
+        # Format date/time for the nearest candle timestamp (safe tz handling)
+        try:
+            ts_obj = pd.to_datetime(ts_ms, unit='ms', utc=True).tz_convert('UTC').tz_localize(None)
+            dt_txt = ts_obj.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            dt_txt = str(ts_ms)
+
+        # Update legend-like overlay (data values)
+        if hasattr(self, "legend_overlay") and self.legend_overlay:
+            self.legend_overlay.setText(f"X: {dt_txt}\nY: {y_val:.6f}")
+            self.legend_overlay.adjustSize()
+
+    def _rebuild_x_cache(self) -> None:
+        """Rebuild compressed X cache from last_df timestamps."""
+        ldf = getattr(self, "_last_df", None)
+        if ldf is None or ldf.empty or "ts_utc" not in ldf.columns:
+            self._x_cache_comp = None
+            return
+        try:
+            x_ser = pd.to_datetime(ldf["ts_utc"], unit='ms', utc=True)
+            # Convert to naive datetimes safely using Series.dt
+            x_dt = x_ser.dt.tz_convert('UTC').dt.tz_localize(None)
+            x_mpl = mdates.date2num(x_dt)
+            comp = getattr(getattr(self.chart_controller, "plot_service", None), "_compress_real_x", None)
+            if callable(comp):
+                import numpy as np
+                self._x_cache_comp = np.array([comp(float(v)) for v in x_mpl], dtype=float)
+            else:
+                self._x_cache_comp = x_mpl
+        except Exception as e:
+            logger.debug(f"_rebuild_x_cache failed: {e}")
+            self._x_cache_comp = None
 
     # --- Internal Implementation Methods (Restored) ---
     def _on_mode_toggled(self, checked: bool):
