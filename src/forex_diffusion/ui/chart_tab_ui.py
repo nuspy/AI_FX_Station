@@ -21,6 +21,7 @@ from loguru import logger
 from ..utils.user_settings import get_setting, set_setting
 from ..services.brokers import get_broker_service
 from .chart_components.controllers.chart_controller import ChartTabController
+from .chart_components.services.patterns_service import PatternsService
 
 class DraggableOverlay(QLabel):
     """Small draggable label overlay used for legend and cursor values."""
@@ -235,6 +236,10 @@ class ChartTabUI(QWidget):
         self.clear_forecasts_btn = QPushButton("Clear Forecasts"); row2_layout.addWidget(self.clear_forecasts_btn)
         self.toggle_drawbar_btn = QToolButton(); self.toggle_drawbar_btn.setText("Draw"); self.toggle_drawbar_btn.setCheckable(True); row2_layout.addWidget(self.toggle_drawbar_btn)
         self.mode_btn = QToolButton(); self.mode_btn.setText("Candles"); self.mode_btn.setCheckable(True); row2_layout.addWidget(self.mode_btn)
+        self.chart_patterns_checkbox = QCheckBox("Chart patterns"); row2_layout.addWidget(self.chart_patterns_checkbox)
+        self.candle_patterns_checkbox = QCheckBox("Candlestick patterns"); row2_layout.addWidget(self.candle_patterns_checkbox)
+        self.history_patterns_checkbox = QCheckBox("Patterns storici"); row2_layout.addWidget(self.history_patterns_checkbox)
+
         self.follow_checkbox = QCheckBox("Segui"); row2_layout.addWidget(self.follow_checkbox)
         self.bidask_label = QLabel("Bid: -    Ask: -"); row2_layout.addWidget(self.bidask_label)
         self.trade_btn = QPushButton("Trade"); row2_layout.addWidget(self.trade_btn)
@@ -268,6 +273,18 @@ class ChartTabUI(QWidget):
         self._reload_timer.timeout.connect(self.chart_controller.reload_view_window)
 
     def _init_control_defaults(self) -> None:
+        # Pattern toggles default states
+        try:
+            chart_on = bool(get_setting('patterns.chart_enabled', False))
+            candle_on = bool(get_setting('patterns.candle_enabled', False))
+            hist_on = bool(get_setting('patterns.history_enabled', False))
+        except Exception:
+            chart_on = False; candle_on = False; hist_on = False
+        for attr, val in [('chart_patterns_checkbox', chart_on), ('candle_patterns_checkbox', candle_on), ('history_patterns_checkbox', hist_on)]:
+            cb = getattr(self, attr, None)
+            if cb:
+                from PySide6.QtCore import QSignalBlocker as _SB
+                with _SB(cb): cb.setChecked(val)
         """Populate UI controls and restore persisted settings."""
         self._symbols_supported = ["EUR/USD", "GBP/USD", "AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"]
         self._follow_suspend_seconds = float(get_setting('chart.follow_suspend_seconds', 30))
