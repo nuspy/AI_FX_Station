@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 from loguru import logger
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 
 from .base import ChartServiceBase
 
@@ -205,6 +205,9 @@ class DataService(ChartServiceBase):
         self.db_service = db_service
         self.symbol = symbol
         self.timeframe = timeframe
+        # reset view-window cache on context change
+        self._current_cache_tf = None
+        self._current_cache_range = None
         # sync combo if present
         try:
             if hasattr(self, "symbol_combo") and symbol:
@@ -238,6 +241,9 @@ class DataService(ChartServiceBase):
             if not new_symbol:
                 return
             self.symbol = new_symbol
+            # reset cache so next reload uses the new context
+            self._current_cache_tf = None
+            self._current_cache_range = None
             # reload last candles for this symbol/timeframe (respect view range)
             from datetime import datetime, timezone, timedelta
             try:

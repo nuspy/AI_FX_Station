@@ -67,6 +67,12 @@ class ChartTabUI(QWidget):
         self.max_forecasts = int(get_setting("max_forecasts", 20))
         self._legend_once = set()
         self.broker = get_broker_service()
+        # dynamic data cache used by DataService._reload_view_window
+        self._current_cache_tf = None
+        self._current_cache_range = None
+        # dynamic data cache state (used by DataService._reload_view_window)
+        self._current_cache_tf = None
+        self._current_cache_range = None
         self._setup_timers()
 
         self.tickArrived.connect(self.chart_controller.on_tick_main)
