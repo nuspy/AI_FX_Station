@@ -58,6 +58,11 @@ class PlotService(ChartServiceBase):
             except Exception:
                 pass
             y_vals = df2[y_col].astype(float).to_numpy()
+            # Hook: update pattern overlays
+            try:
+                self.controller.patterns_service.on_update_plot(df2)
+            except Exception:
+                pass
         except Exception as e:
             logger.exception('Failed to normalize data for plotting: {}', e)
             return

@@ -1,0 +1,25 @@
+{
+  "broadening_bottom": {
+    "name": "Broadening Bottom",
+    "effect": "Reversal",
+    "description": "Diverging envelope after decline; breakout often upward.",
+    "benchmarks": {
+      "Performance Rank": "\u2014",
+      "Breakeven Failure Rate": "\u2014",
+      "Average Rise": "\u2014",
+      "Change After Trend Ends": "\u2014",
+      "Volume Trend": "\u2014",
+      "Throwbacks": "\u2014",
+      "% Meeting Price Target": "\u2014",
+      "Surprising Findings": "\u2014"
+    },
+    "bull": {
+      "Notes": "Upward bias on breakout"
+    },
+    "bear": {
+      "Notes": "Downside break less reliable"
+    },
+    "image": null,
+    "links": []
+  }
+}

@@ -280,11 +280,18 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.clear_forecasts_btn)
 
         self.mode_btn = QToolButton()
+        # Pattern toggles
+        self.chart_patterns_checkbox = QCheckBox("Chart patterns")
+        self.candle_patterns_checkbox = QCheckBox("Candlestick patterns")
+        self.history_patterns_checkbox = QCheckBox("Patterns storici")
         self.mode_btn.setCheckable(True)
         self.mode_btn.setText("Candles")
         self.mode_btn.setToolTip("Commuta visualizzazione prezzo: Candles (candele OHLC) / Line (linea).")
         self.mode_btn.setChecked(True)
         top_layout.addWidget(self.mode_btn)
+        top_layout.addWidget(self.chart_patterns_checkbox)
+        top_layout.addWidget(self.candle_patterns_checkbox)
+        top_layout.addWidget(self.history_patterns_checkbox)
 
         self.follow_checkbox = QCheckBox("Segui")
         top_layout.addWidget(self.follow_checkbox)
@@ -513,6 +520,16 @@ class ChartTab(QWidget):
         mode_btn = getattr(self, "mode_btn", None)
         if mode_btn is not None:
             mode_btn.toggled.connect(self._on_price_mode_toggled)
+        # Pattern toggles
+        cpp = getattr(self, 'chart_patterns_checkbox', None)
+        if cpp is not None:
+            cpp.toggled.connect(lambda v: getattr(self.chart_controller, 'patterns_service').set_chart_enabled(v))
+        cdp = getattr(self, 'candle_patterns_checkbox', None)
+        if cdp is not None:
+            cdp.toggled.connect(lambda v: getattr(self.chart_controller, 'patterns_service').set_candle_enabled(v))
+        hsp = getattr(self, 'history_patterns_checkbox', None)
+        if hsp is not None:
+            hsp.toggled.connect(lambda v: getattr(self.chart_controller, 'patterns_service').set_history_enabled(v))
 
         follow_checkbox = getattr(self, "follow_checkbox", None)
         if follow_checkbox is not None:

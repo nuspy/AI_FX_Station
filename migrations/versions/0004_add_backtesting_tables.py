@@ -1,7 +1,7 @@
 """
 Add backtesting tables: bt_job, bt_config, bt_result, bt_trace
 
-Revision ID: 0004_add_backtesting
+Revision ID: 0004_add_backtesting_tables
 Revises: 0003_fix_ticks_and_constraints
 Create Date: 2025-09-17 00:00:00.000000
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "0004_add_backtesting"
+revision = "0004_add_backtesting_tables"
 down_revision = "0003_fix_ticks_and_constraints"
 branch_labels = None
 depends_on = None

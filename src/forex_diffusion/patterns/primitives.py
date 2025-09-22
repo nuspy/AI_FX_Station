@@ -1,0 +1,52 @@
+from __future__ import annotations
+from typing import Tuple, List
+import numpy as np
+import pandas as pd
+
+def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
+    high = df["high"].astype(float).to_numpy()
+    low = df["low"].astype(float).to_numpy()
+    close = df["close"].astype(float).to_numpy()
+    prev_close = np.roll(close, 1)
+    tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+    tr[0] = high[0] - low[0]
+    atr_vals = pd.Series(tr).rolling(n, min_periods=1).mean().astype(float)
+    return atr_vals
+
+def zigzag_pivots(df: pd.DataFrame, atr_mult: float = 2.0, n_atr: int = 14) -> List[Tuple[int,int]]:
+    """
+    Causal zigzag: returns list of (index, typ) where typ=+1 swing-high, -1 swing-low.
+    Threshold based on ATR to be scale-invariant.
+    """
+    a = atr(df, n_atr).to_numpy()
+    c = df["close"].astype(float).to_numpy()
+    piv: List[Tuple[int,int]] = []
+    if len(c) < 3:
+        return piv
+    last = 0
+    mode = 0 # 0 unk, +1 up leg, -1 down leg
+    for i in range(1, len(c)):
+        thr = max(a[i] * atr_mult, 1e-9)
+        if mode >= 0 and c[i] <= c[last] - thr:
+            if last > 0: piv.append((last, +1))  # last was swing-high
+            mode = -1
+            last = i
+        elif mode <= 0 and c[i] >= c[last] + thr:
+            if last > 0: piv.append((last, -1))  # last was swing-low
+            mode = +1
+            last = i
+        else:
+            # extend leg if new extreme found
+            if (mode >= 0 and c[i] > c[last]) or (mode <= 0 and c[i] < c[last]):
+                last = i
+    return piv
+
+def fit_line_indices(y: np.ndarray, i0: int, i1: int) -> Tuple[float, float]:
+    """Return slope, intercept of least-squares fit over indices [i0, i1] inclusive."""
+    x = np.arange(i0, i1+1, dtype=float)
+    yy = y[i0:i1+1].astype(float)
+    if len(x) < 2:
+        return 0.0, float(yy[-1] if len(yy) else 0.0)
+    A = np.vstack([x, np.ones_like(x)]).T
+    slope, intercept = np.linalg.lstsq(A, yy, rcond=None)[0]
+    return float(slope), float(intercept)

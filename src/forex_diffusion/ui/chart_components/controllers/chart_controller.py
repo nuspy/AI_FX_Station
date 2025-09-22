@@ -10,9 +10,11 @@ from ..services.forecast_service import ForecastService
 from ..services.interaction_service import InteractionService
 from ..services.data_service import DataService
 from ..services.action_service import ActionService
+from ..services.patterns_service import PatternsService
 
 
 class ChartTabController:
+    """Coordinator between ChartTab view and its domain services."""
     """Coordinator between ChartTab view and its domain services."""
 
     def __init__(self, view: "ChartTab", app_controller: Optional[Any] = None) -> None:
