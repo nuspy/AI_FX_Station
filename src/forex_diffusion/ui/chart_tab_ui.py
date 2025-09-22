@@ -392,10 +392,16 @@ class ChartTabUI(QWidget):
         last_row = ldf.iloc[-1]
         last_ts, last_price = float(last_row['ts_utc']), float(last_row.get(y_col, last_row.get('price')))
         last_dt = mdates.date2num(pd.to_datetime(last_ts, unit='ms', utc=True).tz_convert(None))
+        # map to compressed X if compression is active
+        try:
+            comp = getattr(self.chart_controller.plot_service, "_compress_real_x", None)
+            last_dt_comp = comp(last_dt) if callable(comp) else last_dt
+        except Exception:
+            last_dt_comp = last_dt
         xlim, ylim = ax.get_xlim(), ax.get_ylim()
         if xlim[1] > xlim[0]:
             span_x = xlim[1] - xlim[0]
-            ax.set_xlim(last_dt - span_x * 0.8, last_dt + span_x * 0.2)
+            ax.set_xlim(last_dt_comp - span_x * 0.8, last_dt_comp + span_x * 0.2)
         if ylim[1] > ylim[0]:
             span_y = ylim[1] - ylim[0]
             try:

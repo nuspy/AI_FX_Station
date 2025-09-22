@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from matplotlib.ticker import AutoMinorLocator
+from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
 from forex_diffusion.utils.time_utils import split_range_avoid_weekend
@@ -948,3 +948,37 @@ class PlotService(ChartServiceBase):
             return sessions.get(def_name, {}) or {}
         except Exception:
             return {}
+
+    # ---- compressed X mapping helpers ----
+    def _expand_compressed_x(self, x_c: float) -> float:
+        """Map compressed x (weekend removed) back to real matplotlib date float."""
+        try:
+            segs = getattr(self, "_x_segments_compressed", None)
+            if not segs:
+                return float(x_c)
+            # segs: (start_comp, end_comp, closed_before)
+            for s_c, e_c, closed_before in segs:
+                if float(s_c) <= float(x_c) <= float(e_c):
+                    return float(x_c) + float(closed_before)
+            # outside known segments
+            if float(x_c) < float(segs[0][0]):
+                return float(x_c) + float(segs[0][2])
+            return float(x_c) + float(segs[-1][2])
+        except Exception:
+            return float(x_c)
+
+    def _compress_real_x(self, x_r: float) -> float:
+        """Map real matplotlib date float to compressed coordinate removing weekend gaps."""
+        try:
+            segs = getattr(self, "_x_segments_real", None)
+            if not segs:
+                return float(x_r)
+            # segs: (start_real, end_real, closed_before)
+            for s_r, e_r, closed_before in segs:
+                if float(s_r) <= float(x_r) <= float(e_r):
+                    return float(x_r) - float(closed_before)
+            if float(x_r) < float(segs[0][0]):
+                return float(x_r) - float(segs[0][2])
+            return float(x_r) - float(segs[-1][2])
+        except Exception:
+            return float(x_r)
