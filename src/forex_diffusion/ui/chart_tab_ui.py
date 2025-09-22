@@ -275,9 +275,7 @@ class ChartTabUI(QWidget):
             getattr(self, "follow_checkbox", None): ("toggled", self._on_follow_toggled),
             getattr(self, "trade_btn", None): ("clicked", self.chart_controller.open_trade_dialog),
             # Drawbar
-            getattr(self, "tb_home", None): ("clicked", self._on_nav_home),
-            getattr(self, "tb_pan", None): ("toggled", self._on_nav_pan),
-            getattr(self, "tb_zoom", None): ("toggled", self._on_nav_zoom),
+
             getattr(self, "tb_orders", None): ("toggled", self._toggle_orders),
         }
         for widget, (signal, handler) in connections.items():
@@ -407,9 +405,6 @@ class ChartTabUI(QWidget):
 
         style = self.style()
         buttons_spec = {
-            'tb_home': (QStyle.SP_BrowserReload, "Reset view", False, self._on_nav_home),
-            'tb_pan': (QStyle.SP_ArrowUp, "Pan", True, self._on_nav_pan),
-            'tb_zoom': (QStyle.SP_ArrowDown, "Zoom", True, self._on_nav_zoom),
             'tb_cross': (QStyle.SP_DialogYesButton, "Cross", True, lambda: self._set_drawing_mode(None)),
             'tb_hline': (QStyle.SP_TitleBarShadeButton, "H-Line", True, lambda: self._set_drawing_mode('hline')),
             'tb_trend': (QStyle.SP_ArrowRight, "Trend", True, lambda: self._set_drawing_mode('trend')),
@@ -428,7 +423,6 @@ class ChartTabUI(QWidget):
             if handler: btn.clicked.connect(handler)
             setattr(self, name, btn)
             dlay.addWidget(btn)
-            if name == 'tb_zoom': dlay.addSpacing(12)
         if (orders_btn := getattr(self, 'tb_orders', None)): orders_btn.setChecked(True)
         if (cross_btn := getattr(self, 'tb_cross', None)): cross_btn.setChecked(True)
 
@@ -450,9 +444,6 @@ class ChartTabUI(QWidget):
     def _on_build_latents_clicked(self): return self.chart_controller.on_build_latents_clicked()
     def _refresh_orders(self): return self.chart_controller.refresh_orders()
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None): return self.chart_controller.update_plot(df=df, quantiles=quantiles, restore_xlim=restore_xlim, restore_ylim=restore_ylim)
-    def _on_nav_home(self): return self.chart_controller.on_nav_home()
-    def _on_nav_pan(self, checked: bool): return self.chart_controller.on_nav_pan(checked=checked)
-    def _on_nav_zoom(self, checked: bool): return self.chart_controller.on_nav_zoom(checked=checked)
     def _apply_theme(self, theme: str): return self.chart_controller.apply_theme(theme=theme)
     def _get_color(self, key: str, default: str) -> str: return self.chart_controller.get_color(key=key, default=default)
     def _open_color_settings(self): return self.chart_controller.open_color_settings()
