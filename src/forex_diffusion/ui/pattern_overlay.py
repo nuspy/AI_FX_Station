@@ -1,14 +1,16 @@
 from __future__ import annotations
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 import matplotlib.dates as mdates
 from matplotlib.patches import FancyArrowPatch, Circle
 from PySide6.QtWidgets import QMessageBox
-from .chart_components.controllers.chart_controller import ChartTabController
 from ..patterns.engine import PatternEvent
 from ..patterns.info_provider import PatternInfoProvider
 
+if TYPE_CHECKING:
+    from .chart_components.controllers.chart_controller import ChartTabController
+
 class PatternOverlayRenderer:
-    def __init__(self, controller: ChartTabController, info_provider: Optional[PatternInfoProvider]=None) -> None:
+    def __init__(self, controller: "ChartTabController", info_provider: Optional[PatternInfoProvider]=None) -> None:
         self.controller = controller
         self.view = controller.view
         self.ax = getattr(self.view, "ax", None)
