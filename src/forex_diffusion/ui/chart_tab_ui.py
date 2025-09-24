@@ -20,6 +20,9 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from loguru import logger
 
+from .chart_tab_ui_patch import _wire_pattern_checkboxes as _wire_patterns
+
+
 # PATTERNS HOOK (import relativo con fallback assoluto, per evitare unresolved in IDE)
 try:
     from .chart_components.services.patterns_hook import (
@@ -145,6 +148,7 @@ class ChartTabUI(QWidget):
         self._x_cache_comp = None  # cached compressed X for nearest lookup
         self._init_overlays()
         self._apply_grid_style()
+        _wire_patterns(self)
 
     def _build_ui(self) -> None:
         """Programmatically builds the entire UI with a two-row topbar."""
@@ -276,6 +280,9 @@ class ChartTabUI(QWidget):
                 if df is None or getattr(df, "empty", True):
                     logger.info("Scan patterns: df è vuoto o mancante")
                     return
+                if hasattr(self, "scan_patterns_now"):
+                    self.scan_patterns_now(df)  # df con ts_utc/open/high/low/close/(volume)
+
                 ps.on_update_plot(df)
             except Exception as e:
                 logger.exception("Scan patterns failed: {}", e)
@@ -692,6 +699,9 @@ class ChartTabUI(QWidget):
     def _on_mouse_move(self, event):
         # 1) guard-rails: niente assi, niente x
         price_ax = getattr(self, "price_ax", None)
+        from .chart_tab_ui_patch import _wire_pattern_checkboxes as _wire_patterns
+        # ...
+        _wire_patterns(self)
         if event is None or price_ax is None or event.inaxes is None:
             return
         if event.inaxes is not price_ax:
@@ -728,7 +738,7 @@ class ChartTabUI(QWidget):
             # downgrade a DEBUG senza flood
             if getattr(self, "_mouse_err_once", True):
                 self._mouse_err_once = False
-                self._logger.debug("cursor overlay update skipped: %s", ex)
+                logger.debug("cursor overlay update skipped: %s", ex)
 
 
 
