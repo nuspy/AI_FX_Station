@@ -1,54 +1,64 @@
-# pattern_overlay.py
 from __future__ import annotations
-from typing import Iterable, List, Tuple, Optional, Dict
-import math
+from typing import Iterable, List, Tuple, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 import matplotlib.dates as mdates
 import matplotlib.axes as mpla
+from matplotlib.backend_bases import MouseEvent
 from loguru import logger
 
-# Limiti UI
+# ---------------- UI CONSTANTS ----------------
 MAX_OVERLAYS = 80
 MIN_SEP_BARS = 8
-HIT_RADIUS_PX = 12  # raggio hit-test per hover/click
+HIT_RADIUS_PX = 12  # hit-test raggio in pixel
+FORMATION_LINE_ALPHA = 0.35
+FORMATION_LINE_WIDTH = 3.0
+FORMATION_LINE_COLOR = "#33A1FD"  # light blue
 
+# --------------- RENDERER ---------------------
 class PatternOverlayRenderer:
     """
-    Renderizza badge pattern + tooltip + dialog info + freccia target.
-    Funziona con asse X in ms-epoch o matplotlib date2num; autodetect.
+    Renderizza:
+      - badge con nome pattern (colore: verde bull, rosso bear),
+      - tooltip on-hover col nome pattern,
+      - click → dialog dettagli (usa controller.open_pattern_info se disponibile),
+      - freccia target (se target_price),
+      - linea di formazione del pattern: segmento della price-line dietro al prezzo
+        (azzurro semi-trasparente), o fallback ad axvspan se nessuna price-line.
+    Supporta asse X in ms-epoch o in date2num; autodetect.
     """
-    def __init__(self, controller, info_provider):
+    def __init__(self, controller, info_provider=None):
         self.controller = controller
         self.info = info_provider
-        self.ax: Optional[mpla.Axes] = getattr(controller, "axes_price", None) or getattr(getattr(controller, "view", None), "ax_price", None)
-        self.use_badges = True
-
+        # prova a trovare un asse prezzo noto
+        self.ax: Optional[mpla.Axes] = getattr(controller, "axes_price", None) \
+                                       or getattr(getattr(controller, "view", None), "ax_price", None)
         # Stato grafico
         self._badges: List[mpla.Artist] = []
         self._arrows: List[mpla.Artist] = []
-        self._artist_map: Dict[mpla.Artist, object] = {}   # artist -> event obj
+        self._formations: List[mpla.Arist] = []  # typo fixed below
+        self._formations: List[mpla.Artist] = []
+        self._artist_map: Dict[mpla.Axes, object] = {}  # types corrected below
+        self._artist_map: Dict[mpla.Artist, object] = {}
         self._last_mode_log: Optional[str] = None
 
         # Interazione
         self._cid_move = None
         self._cid_click = None
         self._tooltip = None
+        self._last_hover_artist: Optional[mpla.Axes] = None  # types corrected below
         self._last_hover_artist: Optional[mpla.Artist] = None
 
     # ---------- Public API ----------
     def set_axes(self, ax: mpla.Axes) -> None:
-        """Permette a plot_service di passare esplicitamente l'asse prezzo."""
         self.ax = ax
         self._bind_canvas_events()
 
     def clear(self) -> None:
         self._clear_all()
         if self.ax and self.ax.figure:
-            try:
-                self.ax.figure.canvas.draw_idle()
-            except Exception:
-                pass
+            try: self.ax.figure.canvas.draw_idle()
+            except Exception: pass
 
     def draw(self, events: Iterable[object]) -> None:
         ax = self._resolve_axes()
@@ -68,21 +78,25 @@ class PatternOverlayRenderer:
         mode = self._axis_mode(ax)
         logger.info(f"PatternOverlay: drawing {len(kept)}/{len(evs)} events on ax=Axes (mode={mode})")
 
-        # Disegno badge + testo + freccia target
-        for x, y, key, kind, direction, e in kept:
+        # Disegna in ordine: formazione (dietro), poi badge/testo + target (davanti)
+        for x, y, label, kind, direction, e in kept:
             try:
-                self._draw_badge(x, y, key, direction, e)
-                self._draw_target_arrow(x, y, direction, e)
+                self._draw_formation_segment(x, e)  # dietro
+            except Exception as ex:
+                logger.debug(f"formation draw failed: {ex}")
+
+        for x, y, label, kind, direction, e in kept:
+            try:
+                self._draw_badge(x, y, label, direction, e)  # davanti
+                self._draw_target_arrow(x, y, direction, e)  # davanti
             except Exception as ex:
                 logger.debug(f"overlay draw_event failed: {ex}")
 
-        self._bind_canvas_events()  # assicura eventi attivi
-        try:
-            ax.figure.canvas.draw_idle()
-        except Exception:
-            pass
+        self._bind_canvas_events()
+        try: ax.figure.canvas.draw_idle()
+        except Exception: pass
 
-    # ---------- Internals: axes & time ----------
+    # ---------- Axes & Time Helpers ----------
     def _resolve_axes(self) -> Optional[mpla.Axes]:
         if getattr(self, "ax", None) is not None and getattr(self.ax, "figure", None) is not None:
             return self.ax
@@ -90,12 +104,10 @@ class PatternOverlayRenderer:
         candidates: List[mpla.Axes] = []
 
         def _collect(obj):
-            if not obj:
-                return
+            if not obj: return
             for name in ("ax_price", "axes_price", "price_ax", "ax", "axes"):
                 a = getattr(obj, name, None)
-                if isinstance(a, mpla.Axes):
-                    candidates.append(a)
+                if isinstance(a, mpla.Axes): candidates.append(a)
                 elif isinstance(a, dict):
                     candidates.extend([v for v in a.values() if isinstance(v, mpla.Axes)])
                 elif isinstance(a, (list, tuple)):
@@ -114,7 +126,6 @@ class PatternOverlayRenderer:
             self.ax = max(candidates, key=_score)
             return self.ax
 
-        logger.debug("PatternOverlayRenderer: nessun axes trovato")
         return None
 
     def _axis_mode(self, ax: mpla.Axes) -> str:
@@ -126,20 +137,19 @@ class PatternOverlayRenderer:
                     if x0 > 1e10: return "ms_epoch"
                     if 1e3 < x0 < 1e7: return "matplotlib_date"
                     return "index"
-        except Exception:
-            pass
+        except Exception: pass
         xmin, xmax = ax.get_xlim()
         if xmax > 1e10: return "ms_epoch"
         if 1e3 < xmax < 1e7: return "matplotlib_date"
         return "index"
 
-    def _to_ts(self, ts) -> Optional[pd.Timestamp]:
+    def _to_ts(self, ts):
         try:
             if isinstance(ts, (pd.Timestamp, np.datetime64)):
                 t = pd.Timestamp(ts)
-            elif isinstance(ts, (int, np.integer, float)) and ts > 1e11:   # ms epoch
+            elif isinstance(ts, (int, np.integer, float)) and ts > 1e11:
                 t = pd.to_datetime(int(ts), unit="ms", utc=True)
-            elif isinstance(ts, (int, np.integer, float)) and ts > 1e9:    # s epoch
+            elif isinstance(ts, (int, np.integer, float)) and ts > 1e9:
                 t = pd.to_datetime(int(ts), unit="s", utc=True)
             else:
                 t = pd.to_datetime(ts, utc=True)
@@ -147,7 +157,7 @@ class PatternOverlayRenderer:
         except Exception:
             return None
 
-    def _x_from_ts_bimode(self, ts) -> Tuple[float, float]:
+    def _x_from_ts_bimode(self, ts):
         t = self._to_ts(ts)
         if t is None:
             return (np.nan, np.nan)
@@ -169,22 +179,34 @@ class PatternOverlayRenderer:
         in_date, d_date = score(x_date)
         in_ms, d_ms = score(x_ms)
         if in_date and not in_ms:
-            mode, x = "date2num", x_date
+            x = x_date
         elif in_ms and not in_date:
-            mode, x = "ms_epoch", x_ms
+            x = x_ms
         else:
-            mode, x = ("date2num", x_date) if d_date <= d_ms else ("ms_epoch", x_ms)
-
-        if self._last_mode_log != mode:
-            logger.info(f"PatternOverlay: auto X-mode → {mode} (xlim=({xmin:.2f},{xmax:.2f}))")
-            self._last_mode_log = mode
+            x = x_date if d_date <= d_ms else x_ms
         return x
 
-    # ---------- Internals: normalize & density ----------
-    def _normalize_events(self, ax: mpla.Axes, evs: List[object]) -> List[Tuple[float,float,str,str,str,object]]:
+    # ---------- Event normalization & density ----------
+    def _pattern_label(self, e: object) -> str:
+        for k in ("name", "key", "pattern_name", "pattern", "label", "kind"):
+            if isinstance(e, dict) and k in e and e[k]:
+                return str(e[k])
+            v = getattr(e, k, None)
+            if v: return str(v)
+        return type(e).__name__
+
+    def _direction_color(self, direction: str) -> str:
+        d = str(direction or "").lower()
+        if d in ("up", "bull", "bullish", "long", "buy"):
+            return "#2ecc71"  # green
+        if d in ("down", "bear", "bearish", "short", "sell"):
+            return "#e74c3c"  # red
+        return "#3498db"     # neutral
+
+    def _normalize_events(self, ax: mpla.Axes, evs):
         norm = []
         for e in evs:
-            key = getattr(e, "key", getattr(e, "name", type(e).__name__))
+            label = self._pattern_label(e)
             ts = getattr(e, "confirm_ts", getattr(e, "ts", None))
             px = getattr(e, "confirm_price", getattr(e, "price", getattr(e, "target_price", None)))
             kind = getattr(e, "kind", "unknown")
@@ -197,69 +219,57 @@ class PatternOverlayRenderer:
                 y = np.nan
 
             if not np.isnan(x) and not np.isnan(y):
-                norm.append((x, y, key, kind, direction, e))
+                norm.append((x, y, label, kind, direction, e))
 
         try:
-            norm.sort(key=lambda t: float(t[0]), reverse=True)  # più recenti
+            norm.sort(key=lambda t: float(t[0]), reverse=True)
         except Exception:
             pass
         return norm
 
-    def _density_filter(self, ax: mpla.Axes, norm: List[Tuple[float,float,str,str,str,object]]):
+    def _density_filter(self, ax: mpla.Axes, norm):
         kept = []
-        picked_any = set()
-        last_x_by_key: Dict[str, float] = {}
+        picked_lbl = set()
+        last_x_by_lbl: Dict[str, float] = {}
         try:
             xd = ax.lines[0].get_xdata()
             step = float(xd[-1]) - float(xd[-2]) if len(xd) > 2 else 1.0
         except Exception:
             step = 1.0
 
-        for x, y, key, kind, direction, e in norm:
-            if key not in picked_any:
-                kept.append((x, y, key, kind, direction, e))
-                picked_any.add(key); last_x_by_key[key] = x
+        for x, y, label, kind, direction, e in norm:
+            if label not in picked_lbl:
+                kept.append((x, y, label, kind, direction, e))
+                picked_lbl.add(label); last_x_by_lbl[label] = x
             else:
-                if abs(x - last_x_by_key.get(key, -1e18)) < max(step * MIN_SEP_BARS, 1.0):
+                if abs(x - last_x_by_lbl.get(label, -1e18)) < max(step * MIN_SEP_BARS, 1.0):
                     continue
-                last_x_by_key[key] = x
-                kept.append((x, y, key, kind, direction, e))
+                last_x_by_lbl[label] = x
+                kept.append((x, y, label, kind, direction, e))
             if len(kept) >= MAX_OVERLAYS:
                 break
         return kept
 
-    # ---------- Drawing primitives ----------
+    # ---------- Drawing ----------
     def _clear_all(self) -> None:
-        for art in self._badges + self._arrows:
+        for art in self._badges + self._arrows + self._formations:
             try: art.remove()
             except Exception: pass
-        self._badges.clear()
-        self._arrows.clear()
+        self._badges.clear(); self._arrows.clear(); self._formations.clear()
         self._artist_map.clear()
-        # tooltip
         if self._tooltip is not None:
-            try:
-                self._tooltip.remove()
-            except Exception:
-                pass
+            try: self._tooltip.remove()
+            except Exception: pass
         self._tooltip = None
         self._last_hover_artist = None
 
-    def _badge_color(self, direction: str) -> str:
-        d = str(direction).lower()
-        if d.startswith("up"): return "#2ecc71"
-        if d.startswith("down"): return "#e74c3c"
-        return "#3498db"
-
-    def _draw_badge(self, x: float, y: float, key: str, direction: str, event_obj: object) -> None:
+    def _draw_badge(self, x: float, y: float, label: str, direction: str, event_obj: object) -> None:
         ax = self.ax
-        color = self._badge_color(direction)
+        color = self._direction_color(direction)
         ms = 9.0
-        # marcatore
         ln = ax.plot([x], [y], marker="o", markersize=ms, markerfacecolor=color,
                      markeredgecolor="black", markeredgewidth=0.8, zorder=120, picker=HIT_RADIUS_PX)[0]
-        # etichetta compatta
-        txt = ax.text(x, y, f" {key} ", color="white",
+        txt = ax.text(x, y, f" {label} ", color="white",
                       bbox=dict(boxstyle="round,pad=0.25", fc=color, ec="black", lw=0.6, alpha=0.95),
                       fontsize=9, va="bottom", ha="left", zorder=121)
         self._badges.extend([ln, txt])
@@ -275,24 +285,99 @@ class PatternOverlayRenderer:
         except Exception:
             return
         ax = self.ax
-        color = self._badge_color(direction)
+        color = self._direction_color(direction)
         dy = ty - y
         if abs(dy) < 1e-12:
-            dy = 0.0001  # evita zero-length
-        # una freccia orizzontalmente corta, verticale verso target
+            dy = 0.0001
         arr = ax.annotate(
             "", xy=(x, ty), xytext=(x, y),
             arrowprops=dict(arrowstyle="-|>", lw=1.2, color=color, shrinkA=0, shrinkB=0),
             zorder=119
         )
-        # piccolo label del target
         lab = ax.text(x, ty, f"{ty:.5f}", fontsize=8, color=color,
                       va="bottom" if dy>0 else "top", ha="left",
                       bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, lw=0.6, alpha=0.8),
                       zorder=119)
         self._arrows.extend([arr, lab])
 
-    # ---------- Interaction (hover/click) ----------
+    def _event_window(self, e: object):
+        ax = self.ax
+        if not ax: return None
+        start = getattr(e, "start_ts", None) or getattr(e, "begin_ts", None) \
+                or getattr(e, "left_ts", None) or getattr(e, "formation_start_ts", None)
+        end   = getattr(e, "end_ts", None)   or getattr(e, "finish_ts", None) \
+                or getattr(e, "right_ts", None) or getattr(e, "formation_end_ts", None)
+
+        if start is None and end is None:
+            confirm = getattr(e, "confirm_ts", None)
+            lookback = getattr(e, "lookback", None) or getattr(e, "window", None)
+            if confirm is None or lookback is None:
+                return None
+            x_c = self._x_from_ts_safest(ax, confirm)
+            try:
+                xd = ax.lines[0].get_xdata()
+                if len(xd) >= 3:
+                    step = float(xd[-1]) - float(xd[-2])
+                else:
+                    step = 1.0
+            except Exception:
+                step = 1.0
+            x0 = x_c - step * float(lookback)
+            x1 = x_c
+            return (x0, x1)
+
+        if start is None:
+            start = getattr(e, "ts", None)
+        if end is None:
+            end = getattr(e, "confirm_ts", None) or getattr(e, "ts", None)
+
+        if start is None or end is None:
+            return None
+
+        x0 = self._x_from_ts_safest(ax, start)
+        x1 = self._x_from_ts_safest(ax, end)
+        if not np.isfinite(x0) or not np.isfinite(x1):
+            return None
+        if x1 < x0: x0, x1 = x1, x0
+        return (x0, x1)
+
+    def _get_main_price_line(self):
+        ax = self.ax
+        if not ax or not ax.lines:
+            return None
+        lines = [ln for ln in ax.lines if len(getattr(ln, "get_xdata", lambda:[])()) >= 2]
+        if not lines:
+            return None
+        return max(lines, key=lambda ln: len(ln.get_xdata()))
+
+    def _draw_formation_segment(self, x_confirm: float, e: object) -> None:
+        ax = self.ax
+        if not ax:
+            return
+        win = self._event_window(e)
+        if not win:
+            return
+        x0, x1 = win
+        if not np.isfinite(x0) or not np.isfinite(x1) or x1 <= x0:
+            return
+
+        price_line = self._get_main_price_line()
+        if price_line is not None:
+            xd = np.asarray(price_line.get_xdata(), dtype=float)
+            yd = np.asarray(price_line.get_ydata(), dtype=float)
+            mask = (xd >= x0) & (xd <= x1)
+            if mask.sum() >= 2:
+                z = max(price_line.get_zorder() - 1, 1)
+                ln, = ax.plot(xd[mask], yd[mask], color=FORMATION_LINE_COLOR,
+                              linewidth=FORMATION_LINE_WIDTH, alpha=FORMATION_LINE_ALPHA, zorder=z)
+                self._formations.append(ln)
+                return
+
+        # Fallback
+        span = ax.axvspan(x0, x1, color=FORMATION_LINE_COLOR, alpha=FORMATION_LINE_ALPHA*0.7, zorder=1)
+        self._formations.append(span)
+
+    # ---------- Interaction ----------
     def _bind_canvas_events(self) -> None:
         ax = self._resolve_axes()
         if not ax or not ax.figure:
@@ -303,8 +388,7 @@ class PatternOverlayRenderer:
         if self._cid_click is None:
             self._cid_click = canvas.mpl_connect("button_press_event", self._on_mouse_click)
 
-    def _hit_test(self, event) -> Optional[mpla.Artist]:
-        """Ritorna l’artist più vicino entro HIT_RADIUS_PX, in coordinate pixel."""
+    def _hit_test(self, event: MouseEvent) -> Optional[mpla.Artist]:
         if event.inaxes is not self.ax:
             return None
         if not self._badges:
@@ -313,10 +397,7 @@ class PatternOverlayRenderer:
         ex, ey = event.x, event.y
         best = None
         best_d2 = HIT_RADIUS_PX**2 + 1
-        # Consideriamo solo i marker Line2D (più precisi per hit-test)
         for art in self._badges:
-            if not hasattr(art, "get_position") and not hasattr(art, "get_xdata"):
-                continue
             try:
                 if hasattr(art, "get_xdata"):
                     xdata, ydata = art.get_xdata(), art.get_ydata()
@@ -344,7 +425,7 @@ class PatternOverlayRenderer:
             )
             self._tooltip.set_visible(False)
 
-    def _on_mouse_move(self, event) -> None:
+    def _on_mouse_move(self, event: MouseEvent) -> None:
         ax = self.ax
         if not ax or event.inaxes is not ax:
             if self._tooltip and self._tooltip.get_visible():
@@ -363,21 +444,18 @@ class PatternOverlayRenderer:
             return
 
         if art is self._last_hover_artist and self._tooltip.get_visible():
-            # niente da aggiornare
             return
 
         ev = self._artist_map.get(art)
-        key = getattr(ev, "key", getattr(ev, "name", type(ev).__name__)) if ev else "pattern"
+        label = self._pattern_label(ev) if ev is not None else "pattern"
         self._tooltip.xy = (event.xdata, event.ydata)
-        self._tooltip.set_text(str(key))
+        self._tooltip.set_text(str(label))
         self._tooltip.set_visible(True)
         self._last_hover_artist = art
-        try:
-            ax.figure.canvas.draw_idle()
-        except Exception:
-            pass
+        try: ax.figure.canvas.draw_idle()
+        except Exception: pass
 
-    def _on_mouse_click(self, event) -> None:
+    def _on_mouse_click(self, event: MouseEvent) -> None:
         ax = self.ax
         if not ax or event.inaxes is not ax or event.button != 1:
             return
@@ -387,31 +465,45 @@ class PatternOverlayRenderer:
         ev = self._artist_map.get(art)
         if ev is None:
             return
-        # prova la dialog custom del controller
         opener = getattr(self.controller, "open_pattern_info", None)
         if callable(opener):
             try:
-                opener(ev)
-                return
-            except Exception as ex:
-                logger.debug(f"open_pattern_info failed: {ex}")
-        # fallback: QMessageBox con riassunto
+                opener(ev); return
+            except Exception:
+                pass
+        self._fallback_info_dialog(ev)
+
+    def _fallback_info_dialog(self, ev: object) -> None:
         try:
             from PySide6 import QtWidgets
-            ts = getattr(ev, "confirm_ts", getattr(ev, "ts", None))
-            price = getattr(ev, "confirm_price", getattr(ev, "price", None))
-            tprice = getattr(ev, "target_price", None)
-            direction = getattr(ev, "direction", "neutral")
-            kind = getattr(ev, "kind", "unknown")
-            key = getattr(ev, "key", getattr(ev, "name", type(ev).__name__))
-            # format timestamp
-            t = self._to_ts(ts)
-            t_str = str(t.tz_convert(None).strftime("%Y-%m-%d %H:%M:%S")) if t is not None else str(ts)
-            msg = (f"<b>{key}</b><br>"
-                   f"Kind: {kind}<br>"
-                   f"Direction: {direction}<br>"
-                   f"Confirm: {t_str} @ {price}<br>"
-                   f"Target: {'' if tprice is None else tprice}")
-            QtWidgets.QMessageBox.information(None, f"Pattern: {key}", msg)
-        except Exception as ex:
-            logger.debug(f"fallback info dialog failed: {ex}")
+            from PySide6.QtCore import Qt
+        except Exception:
+            return
+
+        def _esc(x):
+            try: return str(x).replace("<","&lt;").replace(">","&gt;")
+            except Exception: return str(x)
+
+        key = self._pattern_label(ev)
+        kind = getattr(ev, "kind", "unknown")
+        direction = getattr(ev, "direction", "neutral")
+        ts = getattr(ev, "confirm_ts", getattr(ev, "ts", None))
+        price = getattr(ev, "confirm_price", getattr(ev, "price", None))
+        tprice = getattr(ev, "target_price", None)
+
+        t = self._to_ts(ts)
+        t_str = str(t.tz_convert(None).strftime("%Y-%m-%d %H:%M:%S")) if t is not None else str(ts)
+
+        html = (
+            f"<h3 style='margin:0'>{_esc(key)}</h3>"
+            f"<p><b>Kind:</b> {_esc(kind)} &nbsp; <b>Direction:</b> {_esc(direction)}</p>"
+            f"<p><b>Confirm:</b> {_esc(t_str)} @ {_esc(price)}</p>"
+            f"<p><b>Target:</b> {_esc('' if tprice is None else tprice)}</p>"
+        )
+
+        dlg = QtWidgets.QMessageBox(getattr(self.controller, "window", None) or None)
+        dlg.setWindowTitle(f"Pattern: {key}")
+        dlg.setTextFormat(Qt.TextFormat.RichText)
+        dlg.setText(html)
+        dlg.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        dlg.exec()
