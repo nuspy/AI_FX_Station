@@ -10,7 +10,6 @@ from ..services.forecast_service import ForecastService
 from ..services.interaction_service import InteractionService
 from ..services.data_service import DataService
 from ..services.action_service import ActionService
-from ..services.patterns_service import PatternsService
 
 
 class ChartTabController:
@@ -199,4 +198,55 @@ class ChartTabController:
 
     def on_build_latents_clicked(self, *args, **kwargs):
         return self.action_service._on_build_latents_clicked(*args, **kwargs)
+
+    def open_pattern_info(self, event_obj) -> None:
+        """Mostra un dialog ricco con i dettagli del pattern, includendo immagine se disponibile."""
+        from PySide6 import QtWidgets, QtCore, QtGui
+        key = str(getattr(event_obj, "key", getattr(event_obj, "name", "Pattern")))
+        # recupera metadati (se hai un registry usa quello)
+        desc = getattr(event_obj, "description", "—")
+        direction = getattr(event_obj, "direction", "neutral")
+        tgt = getattr(event_obj, "target_price", None)
+        tgt_txt = f"{tgt:.5f}" if isinstance(tgt, (float, int)) else "—"
+        bench = getattr(event_obj, "benchmark", {})
+        # immagine opzionale in assets (metti file in resources)
+        img_path = getattr(event_obj, "image_path", None)
+
+        dlg = QtWidgets.QDialog(self.view)
+        dlg.setWindowTitle(key)
+        lay = QtWidgets.QVBoxLayout(dlg)
+
+        title = QtWidgets.QLabel(f"<h3>{key}</h3><i>{direction}</i>")
+        title.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        lay.addWidget(title)
+
+        if img_path:
+            pm = QtGui.QPixmap(img_path)
+            if not pm.isNull():
+                lbl_img = QtWidgets.QLabel()
+                lbl_img.setPixmap(pm.scaledToWidth(320, QtCore.Qt.TransformationMode.SmoothTransformation))
+                lay.addWidget(lbl_img)
+
+        info = QtWidgets.QLabel(f"<p>{desc}</p><p><b>Target:</b> {tgt_txt}</p>")
+        info.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        if isinstance(bench, dict) and bench:
+            tbl = QtWidgets.QTableWidget(dlg)
+            tbl.setColumnCount(2)
+            tbl.setHorizontalHeaderLabels(["Benchmark", "Valore"])
+            tbl.horizontalHeader().setStretchLastSection(True)
+            tbl.setRowCount(len(bench))
+            for r, (k, v) in enumerate(bench.items()):
+                tbl.setItem(r, 0, QtWidgets.QTableWidgetItem(str(k)))
+                tbl.setItem(r, 1, QtWidgets.QTableWidgetItem(str(v)))
+            lay.addWidget(tbl)
+
+        btn = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
+        btn.accepted.connect(dlg.accept)
+        lay.addWidget(btn)
+        dlg.resize(480, 520)
+        dlg.exec()
+
 

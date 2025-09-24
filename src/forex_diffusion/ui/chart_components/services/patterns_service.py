@@ -51,7 +51,7 @@ class PatternsService(ChartServiceBase):
     # ----- toggles -----
     def set_chart_enabled(self, on: bool):
         self._enabled_chart = bool(on)
-        from loguru import logger;
+        from loguru import logger
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
         self._repaint()
 
@@ -75,7 +75,7 @@ class PatternsService(ChartServiceBase):
         logger.debug(f"Patterns.detect_async: shape={getattr(df, 'shape', None)} "
                      f"cols={list(df.columns)[:8] if hasattr(df, 'columns') else None}")
 
-        from loguru import logger;
+        from loguru import logger
         logger.debug(f"Patterns.detect_async: received df={type(df).__name__ if df is not None else None}")
 
 
@@ -182,92 +182,113 @@ class PatternsService(ChartServiceBase):
             logger.exception("Patterns _run_detection failed: {}", e)
 
     def _nearest_close_at_ts(self, dfN, ts_ms: int) -> float | None:
-        """Ritorna il close della candela temporalmente più vicina a ts_ms (millisecondi epoch)."""
+        import numpy as np
         try:
-            import numpy as np
             ts_arr = dfN["ts_utc"].to_numpy(dtype="int64")
             i = np.searchsorted(ts_arr, ts_ms, side="left")
-            if i == 0:
-                j = 0
-            elif i >= len(ts_arr):
-                j = len(ts_arr) - 1
-            else:
-                j = i if (ts_ms - ts_arr[i - 1]) > (ts_arr[i] - ts_ms) else i - 1
-            val = dfN["close"].iloc[j]
-            return float(val)
+            j = 0 if i == 0 else (len(ts_arr) - 1 if i >= len(ts_arr) else (
+                i if (ts_ms - ts_arr[i - 1]) > (ts_arr[i] - ts_ms) else i - 1))
+            return float(dfN["close"].iloc[j])
+        except Exception:
+            return None
+
+    def _fallback_amplitude(self, dfN, e) -> float | None:
+        """Ampiezza del pattern per stimare il target."""
+        import numpy as np
+        # 1) upper/lower
+        up = getattr(e, "upper", None)
+        lo = getattr(e, "lower", None)
+        try:
+            if up is not None and lo is not None:
+                return float(abs(up - lo))
+        except Exception:
+            pass
+        # 2) bounds da indici
+        for s_name, e_name in (("start_idx", "end_idx"), ("i_start", "i_end"), ("confirm_idx", "end_idx")):
+            s = getattr(e, s_name, None)
+            t = getattr(e, e_name, None)
+            if isinstance(s, int) and isinstance(t, int) and 0 <= s < t < len(dfN):
+                try:
+                    w_hi = float(dfN["high"].iloc[s:t + 1].max())
+                    w_lo = float(dfN["low"].iloc[s:t + 1].min())
+                    return abs(w_hi - w_lo)
+                except Exception:
+                    pass
+        # 3) ATR di default (se presente)
+        if "atr" in dfN.columns:
+            try:
+                return float(np.nanmedian(dfN["atr"].tail(100)))
+            except Exception:
+                pass
+        # 4) high-low della finestra recente
+        try:
+            w_hi = float(dfN["high"].tail(60).max())
+            w_lo = float(dfN["low"].tail(60).min())
+            return abs(w_hi - w_lo) * 0.5
         except Exception:
             return None
 
     def _enrich_events_for_plot(self, dfN, events: list) -> list:
-        """Garantisce che ogni evento abbia confirm_ts (ms) e confirm_price (float).
-           Inoltre imposta una direction ragionevole se assente."""
         import pandas as pd
         enriched = []
         for e in events:
-            # --- TS ---
-            ts = getattr(e, "confirm_ts", None)
+            # --- timestamp ms ---
+            ts = getattr(e, "confirm_ts", None) or getattr(e, "end_ts", None) or getattr(e, "ts", None)
             if ts is None:
-                # prova altre varianti comuni
-                for name in ("end_ts", "ts", "timestamp", "t_end"):
-                    ts = getattr(e, name, None)
-                    if ts is not None:
-                        break
-            if ts is None:
-                # prova index
-                for name in ("confirm_idx", "end_idx", "idx", "i_end"):
-                    idx = getattr(e, name, None)
-                    if isinstance(idx, (int,)) and 0 <= idx < len(dfN):
-                        ts = int(dfN["ts_utc"].iloc[idx])
-                        break
-            # fallback: ultima riga
-            if ts is None:
-                ts = int(dfN["ts_utc"].iloc[-1])
-
-            # normalizza a ms-epoch
+                idx = getattr(e, "confirm_idx", None)
+                if isinstance(idx, int) and 0 <= idx < len(dfN): ts = int(dfN["ts_utc"].iloc[idx])
             try:
-                ts_pd = pd.to_datetime(ts, utc=True)
-                ts_ms = int(ts_pd.value // 1_000_000)
+                ts_ms = int(pd.to_datetime(ts, utc=True).value // 1_000_000)
             except Exception:
                 try:
-                    ts_ms = int(ts)  # già ms?
+                    ts_ms = int(ts)
                 except Exception:
-                    continue  # evento inutilizzabile
-
-            # --- PRICE ---
-            px = (getattr(e, "confirm_price", None)
-                  or getattr(e, "price", None)
-                  or getattr(e, "target_price", None))
-            if px is None:
-                px = self._nearest_close_at_ts(dfN, ts_ms)
-
-            try:
-                px = float(px)
-            except Exception:
-                continue  # senza y non disegniamo
-
-            # setta i campi sull'oggetto evento (senza rompere classi tipo namedtuple/dict)
+                    continue
             try:
                 setattr(e, "confirm_ts", ts_ms)
             except Exception:
                 pass
+
+            # --- prezzo di conferma ---
+            px = getattr(e, "confirm_price", None) or getattr(e, "price", None)
+            if px is None: px = self._nearest_close_at_ts(dfN, ts_ms)
             try:
+                px = float(px)
                 setattr(e, "confirm_price", px)
             except Exception:
-                pass
+                continue
 
-            # --- direction di default: confronta target con confirm_price se presente ---
+            # --- direzione ---
             direction = getattr(e, "direction", None)
             if direction is None:
-                tgt = getattr(e, "target_price", None)
-                if tgt is not None:
-                    try:
-                        direction = "up" if float(tgt) >= px else "down"
-                    except Exception:
+                try:
+                    # se pattern_key suggerisce (es. "...Top" → down, "...Bottom" → up)
+                    key = str(getattr(e, "key", getattr(e, "name", ""))).lower()
+                    if "top" in key or "descending" in key:
+                        direction = "down"
+                    elif "bottom" in key or "ascending" in key:
+                        direction = "up"
+                    else:
                         direction = "neutral"
-                else:
+                except Exception:
                     direction = "neutral"
                 try:
                     setattr(e, "direction", direction)
+                except Exception:
+                    pass
+
+            # --- target ---
+            tgt = getattr(e, "target_price", None)
+            if tgt is None:
+                amp = self._fallback_amplitude(dfN, e)
+                if amp is not None:
+                    if str(direction).lower().startswith("down"):
+                        tgt = px - amp
+                    else:
+                        tgt = px + amp
+            if tgt is not None:
+                try:
+                    setattr(e, "target_price", float(tgt))
                 except Exception:
                     pass
 
@@ -378,7 +399,7 @@ class PatternsService(ChartServiceBase):
         # --- wiring toggles "Patterns" tramite hook sicuro (nessun attributo sul controller) ---
         try:
             # lazy import per evitare dipendenze circolari in fase di import del modulo
-            from .chart_components.services.patterns_hook import (
+            from ..services.patterns_hook import (
                 get_patterns_service,
                 set_patterns_toggle,
             )
@@ -409,6 +430,7 @@ class PatternsService(ChartServiceBase):
                 df_now = getattr(plot, "_last_df", None)
                 call_patterns_detection(ps, self, df_now)
             except Exception as e:
+                from loguru import logger
                 logger.debug(f"Patterns immediate scan failed: {e}")
 
             # Sincronizza immediatamente lo stato iniziale (nessun flicker, nessun freeze)
