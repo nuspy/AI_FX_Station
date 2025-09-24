@@ -11,7 +11,7 @@ import argparse
 import subprocess
 import atexit
 from pathlib import Path
-from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QStatusBar
+from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QStatusBar, QSizePolicy
 from loguru import logger
 
 # --- Global variable for the simulator process ---
@@ -66,7 +66,7 @@ def main():
     app = QApplication(sys.argv)
     main_win = QMainWindow()
     main_win.setWindowTitle("Forex-Diffusion")
-    main_win.setGeometry(100, 100, 1600, 900)
+    # main_win.setGeometry(100, 100, 1600, 900)
 
     central_widget = QWidget()
     main_win.setCentralWidget(central_widget)
@@ -90,8 +90,8 @@ def main():
         status_label=status_label,
         use_test_server=args.testserver
     )
-
     main_win.show()
+    main_win.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     sys.exit(app.exec())
 
 if __name__ == "__main__":

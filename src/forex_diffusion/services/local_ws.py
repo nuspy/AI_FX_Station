@@ -38,7 +38,7 @@ class LocalWebsocketServer:
                     continue
                 
                 self.db_service.write_tick(data)
-                logger.debug(f"local_ws: Persisted tick for {data.get('symbol')}")
+                # logger.debug(f"local_ws: Persisted tick for {data.get('symbol')}")
 
             except Exception as e:
                 logger.exception(f"local_ws: Failed to process message: {e}")

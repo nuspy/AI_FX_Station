@@ -1,0 +1,467 @@
+
+import argparse, json, math, warnings
+from pathlib import Path
+from typing import Dict, Any, List, Tuple
+import numpy as np
+import pandas as pd
+from joblib import dump
+from sklearn.linear_model import Ridge, Lasso, ElasticNet
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.decomposition import PCA
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import train_test_split
+
+# Use project's MarketDataService (SQLAlchemy) to load candles for training.
+# This avoids file-based adapters and ensures a single DB access mode across the app.
+try:
+    from forex_diffusion.services.marketdata import MarketDataService  # type: ignore
+except Exception:
+    # fallback relative import if run as module inside repo
+    from ..services.marketdata import MarketDataService  # type: ignore
+
+import datetime
+from sqlalchemy import text
+
+def fetch_candles_from_db(symbol: str, timeframe: str, days_history: int) -> pd.DataFrame:
+    """
+    Fetch candles using SQLAlchemy engine from MarketDataService.
+    Returns DataFrame with columns ['ts_utc','open','high','low','close','volume'] ordered ASC.
+    """
+    # Get engine
+    try:
+        ms = MarketDataService()
+        engine = getattr(ms, "engine", None)
+    except Exception as e:
+        raise RuntimeError(f"Failed to instantiate MarketDataService: {e}")
+
+    if engine is None:
+        raise RuntimeError("Database engine not available from MarketDataService")
+
+    # compute start timestamp (ms)
+    try:
+        now_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+        start_ms = now_ms - int(max(0, int(days_history)) * 24 * 3600 * 1000)
+    except Exception:
+        start_ms = None
+
+    # Query DB
+    try:
+        with engine.connect() as conn:
+            if start_ms is None:
+                q = text(
+                    "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
+                    "FROM market_data_candles "
+                    "WHERE symbol = :symbol AND timeframe = :timeframe "
+                    "ORDER BY ts_utc ASC"
+                )
+                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe}).fetchall()
+            else:
+                q = text(
+                    "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
+                    "FROM market_data_candles "
+                    "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc >= :start_ms "
+                    "ORDER BY ts_utc ASC"
+                )
+                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "start_ms": int(start_ms)}).fetchall()
+    except Exception as e:
+        raise RuntimeError(f"Failed to query market_data_candles: {e}")
+
+    if not rows:
+        raise RuntimeError(f"No candles found for {symbol} {timeframe} in last {days_history} days")
+
+    df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
+    df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("int64")
+    for c in ["open", "high", "low", "close", "volume"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["ts_utc", "open", "high", "low", "close"]).sort_values("ts_utc").reset_index(drop=True)
+    return df[["ts_utc", "open", "high", "low", "close", "volume"]]
+
+try:
+    import ta
+    _HAS_TA = True
+except Exception:
+    _HAS_TA = False
+    warnings.warn("Package 'ta' non trovato: indicatori avanzati limitati.", RuntimeWarning)
+
+
+def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.index = pd.to_datetime(out["ts_utc"], unit="ms", utc=True)
+    return out
+
+
+def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
+    tf = str(tf).strip().lower()
+    if tf.endswith("ms"):
+        return pd.Timedelta(milliseconds=int(tf[:-2]))
+    if tf.endswith("s") and not tf.endswith("ms"):
+        return pd.Timedelta(seconds=int(tf[:-1]))
+    if tf.endswith("m"):
+        return pd.Timedelta(minutes=int(tf[:-1]))
+    if tf.endswith("h"):
+        return pd.Timedelta(hours=int(tf[:-1]))
+    if tf.endswith("d"):
+        return pd.Timedelta(days=int(tf[:-1]))
+    raise ValueError(f"Timeframe non supportato: {tf}")
+
+
+def _coerce_indicator_tfs(raw_value: Any) -> Dict[str, List[str]]:
+    if not raw_value:
+        return {}
+    data: Dict[str, Any]
+    if isinstance(raw_value, dict):
+        data = raw_value
+    else:
+        try:
+            data = json.loads(str(raw_value))
+        except Exception:
+            warnings.warn("indicator_tfs non parseable; uso dizionario vuoto", RuntimeWarning)
+            return {}
+    out: Dict[str, List[str]] = {}
+    for k, v in data.items():
+        if not v:
+            continue
+        key = str(k).lower()
+        if isinstance(v, (list, tuple, set)):
+            vals = [str(x) for x in v if str(x).strip()]
+        else:
+            vals = [str(v)]
+        dedup: List[str] = []
+        for tf in vals:
+            tf_norm = tf.strip()
+            if tf_norm and tf_norm not in dedup:
+                dedup.append(tf_norm)
+        if dedup:
+            out[key] = dedup
+    return out
+
+
+def _realized_vol_feature(df: pd.DataFrame, window: int) -> pd.DataFrame:
+    if window <= 1:
+        return pd.DataFrame(index=df.index)
+    close = pd.to_numeric(df["close"], errors="coerce").replace(0.0, np.nan).fillna(method="ffill")
+    log_ret = np.log(close).diff().fillna(0.0)
+    rv = log_ret.pow(2).rolling(window=window, min_periods=2).sum().pow(0.5)
+    feature = pd.DataFrame({f"rv_{window}": rv}, index=df.index)
+    return feature
+
+def _resample(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    if timeframe.endswith("m"): rule = f"{int(timeframe[:-1])}T"
+    elif timeframe.endswith("h"): rule = f"{int(timeframe[:-1])}H"
+    else: raise ValueError(f"Timeframe non supportato: {timeframe}")
+    x = df.copy(); x.index = pd.to_datetime(x["ts_utc"], unit="ms", utc=True)
+    ohlc = x[["open","high","low","close"]].astype(float).resample(rule, label="right").agg(
+        {"open":"first","high":"max","low":"min","close":"last"}
+    )
+    if "volume" in x.columns: ohlc["volume"] = x["volume"].astype(float).resample(rule, label="right").sum()
+    ohlc["ts_utc"] = (ohlc.index.view("int64") // 10**6)
+    return ohlc.reset_index(drop=True)
+
+def _relative_ohlc(df: pd.DataFrame) -> pd.DataFrame:
+    eps = 1e-12
+    prev_close = df["close"].shift(1).astype(float).clip(lower=eps)
+    o = df["open"].astype(float).clip(lower=eps)
+    h = df["high"].astype(float).clip(lower=eps)
+    l = df["low"].astype(float).clip(lower=eps)
+    c = df["close"].astype(float).clip(lower=eps)
+    out = pd.DataFrame(index=df.index)
+    out["r_open"]  = np.log(o / prev_close)
+    out["r_high"]  = np.log(h / o)
+    out["r_low"]   = np.log(l / o)
+    out["r_close"] = np.log(c / o)
+    return out
+
+def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
+    ts = pd.to_datetime(df["ts_utc"], unit="ms", utc=True)
+    hour = ts.dt.hour; dow = ts.dt.dayofweek
+    out = pd.DataFrame(index=df.index)
+    out["hour_sin"] = np.sin(2*np.pi*hour/24.0); out["hour_cos"] = np.cos(2*np.pi*hour/24.0)
+    out["dow_sin"]  = np.sin(2*np.pi*dow/7.0);   out["dow_cos"]  = np.cos(2*np.pi*dow/7.0)
+    return out
+
+
+def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[str, List[str]], base_tf: str) -> pd.DataFrame:
+    frames: List[pd.DataFrame] = []
+    base = _ensure_dt_index(df)
+    base_lookup = base[["ts_utc"]].copy()
+    try:
+        base_delta = _timeframe_to_timedelta(base_tf)
+    except Exception:
+        base_delta = pd.Timedelta("1min")
+    for name, params in ind_cfg.items():
+        key = str(name).lower()
+        tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
+        for tf in tfs:
+            tmp = df.copy()
+            if tf != base_tf:
+                try:
+                    tmp = _resample(tmp, tf)
+                except Exception:
+                    continue
+            tmp = _ensure_dt_index(tmp)
+            cols: Dict[str, pd.Series] = {}
+            if not _HAS_TA:
+                if key == "rsi":
+                    n = int(params.get("n", 14))
+                    delta = tmp["close"].diff()
+                    up = delta.clip(lower=0.0).rolling(n).mean()
+                    down = (-delta.clip(upper=0.0)).rolling(n).mean()
+                    rs = (up / (down + 1e-12))
+                    cols[f"rsi_{tf}_{n}"] = 100 - (100 / (1 + rs))
+                elif key == "atr":
+                    n = int(params.get("n", 14))
+                    hl = (tmp["high"] - tmp["low"]).abs()
+                    hc = (tmp["high"] - tmp["close"].shift(1)).abs()
+                    lc = (tmp["low"] - tmp["close"].shift(1)).abs()
+                    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+                    cols[f"atr_{tf}_{n}"] = tr.rolling(n).mean()
+            else:
+                if key == "rsi":
+                    n = int(params.get("n", 14))
+                    cols[f"rsi_{tf}_{n}"] = ta.momentum.RSIIndicator(close=tmp["close"], window=n).rsi()
+                elif key == "atr":
+                    n = int(params.get("n", 14))
+                    cols[f"atr_{tf}_{n}"] = ta.volatility.AverageTrueRange(
+                        high=tmp["high"], low=tmp["low"], close=tmp["close"], window=n
+                    ).average_true_range()
+                elif key == "bollinger":
+                    n = int(params.get("n", 20))
+                    dev = float(params.get("dev", 2.0))
+                    bb = ta.volatility.BollingerBands(close=tmp["close"], window=n, window_dev=dev)
+                    cols[f"bb_m_{tf}_{n}_{dev}"] = bb.bollinger_mavg()
+                    cols[f"bb_h_{tf}_{n}_{dev}"] = bb.bollinger_hband()
+                    cols[f"bb_l_{tf}_{n}_{dev}"] = bb.bollinger_lband()
+                elif key == "macd":
+                    f = int(params.get("fast", 12))
+                    s = int(params.get("slow", 26))
+                    sig = int(params.get("signal", 9))
+                    macd = ta.trend.MACD(close=tmp["close"], window_fast=f, window_slow=s, window_sign=sig)
+                    cols[f"macd_{tf}_{f}_{s}_{sig}"] = macd.macd()
+                    cols[f"macd_sig_{tf}_{f}_{s}_{sig}"] = macd.macd_signal()
+                    cols[f"macd_diff_{tf}_{f}_{s}_{sig}"] = macd.macd_diff()
+                elif key == "donchian":
+                    n = int(params.get("n", 20))
+                    u = tmp["high"].rolling(n).max()
+                    l = tmp["low"].rolling(n).min()
+                    cols[f"donch_mid_{tf}_{n}"] = (u + l) / 2.0
+                elif key == "keltner":
+                    ema = int(params.get("ema", 20))
+                    atr_n = int(params.get("atr", 10))
+                    mult = float(params.get("mult", 1.5))
+                    mid = tmp["close"].ewm(span=ema, adjust=False).mean()
+                    hl = (tmp["high"] - tmp["low"]).abs()
+                    hc = (tmp["high"] - tmp["close"].shift(1)).abs()
+                    lc = (tmp["low"] - tmp["close"].shift(1)).abs()
+                    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+                    atr = tr.rolling(atr_n).mean()
+                    cols[f"kelt_mid_{tf}_{ema}_{atr_n}_{mult}"] = mid
+                    cols[f"kelt_up_{tf}_{ema}_{atr_n}_{mult}"] = mid + mult * atr
+                    cols[f"kelt_lo_{tf}_{ema}_{atr_n}_{mult}"] = mid - mult * atr
+                elif key == "hurst":
+                    w = int(params.get("window", 128))
+                    series = tmp["close"].astype(float)
+                    roll = series.rolling(w)
+                    def _h(x):
+                        vals = x.values
+                        if len(vals) < 2:
+                            return np.nan
+                        vals = vals - vals.mean()
+                        z = np.cumsum(vals)
+                        R = z.max() - z.min()
+                        S = vals.std() + 1e-12
+                        return math.log((R / S) + 1e-12) / math.log(len(vals) + 1e-12)
+                    cols[f"hurst_{tf}_{w}"] = roll.apply(_h, raw=False)
+            if not cols:
+                continue
+            feat = pd.DataFrame(cols)
+            feat["ts_utc"] = (tmp.index.view("int64") // 10**6)
+            right = _ensure_dt_index(feat)
+            try:
+                tol = max(_timeframe_to_timedelta(tf), base_delta)
+            except Exception:
+                tol = base_delta
+            merged = pd.merge_asof(
+                left=base_lookup,
+                right=right,
+                left_index=True,
+                right_index=True,
+                direction="nearest",
+                tolerance=tol
+            )
+            merged = merged.reset_index(drop=True).drop(columns=["ts_utc_y"], errors="ignore").rename(columns={"ts_utc_x": "ts_utc"})
+            frames.append(merged.drop(columns=["ts_utc"], errors="ignore"))
+    return pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
+
+
+
+def _build_features(candles: pd.DataFrame, args):
+    H = int(args.horizon)
+    if H <= 0:
+        raise ValueError("horizon deve essere > 0")
+    c = pd.to_numeric(candles["close"], errors="coerce").astype(float)
+    if len(c) <= H:
+        raise ValueError(f"Non abbastanza barre ({len(c)}) per orizzonte {H}")
+    y = (c.shift(-H) / c) - 1.0
+    feats: List[pd.DataFrame] = []
+    if getattr(args, "use_relative_ohlc", True):
+        feats.append(_relative_ohlc(candles))
+    if getattr(args, "use_temporal_features", True):
+        feats.append(_temporal_feats(candles))
+    rv_window = int(getattr(args, "rv_window", 0) or 0)
+    if rv_window > 1:
+        feats.append(_realized_vol_feature(candles, rv_window))
+    indicator_tfs = _coerce_indicator_tfs(getattr(args, "indicator_tfs", {}))
+    ind_cfg: Dict[str, Dict[str, Any]] = {}
+    if "atr" in indicator_tfs:
+        ind_cfg["atr"] = {"n": int(args.atr_n)}
+    if "rsi" in indicator_tfs:
+        ind_cfg["rsi"] = {"n": int(args.rsi_n)}
+    if "bollinger" in indicator_tfs:
+        ind_cfg["bollinger"] = {"n": int(args.bb_n), "dev": 2.0}
+    if "macd" in indicator_tfs:
+        ind_cfg["macd"] = {"fast": 12, "slow": 26, "signal": 9}
+    if "donchian" in indicator_tfs:
+        ind_cfg["donchian"] = {"n": 20}
+    if "keltner" in indicator_tfs:
+        ind_cfg["keltner"] = {"ema": 20, "atr": 10, "mult": 1.5}
+    if "hurst" in indicator_tfs:
+        ind_cfg["hurst"] = {"window": int(args.hurst_window)}
+    if ind_cfg:
+        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe))
+    if not feats:
+        raise RuntimeError("Nessuna feature disponibile per il training")
+    X = pd.concat(feats, axis=1)
+    X = X.replace([np.inf, -np.inf], np.nan)
+
+    # rimuovi colonne quasi vuote prima di forzare dropna
+    coverage = X.notna().mean()
+    min_cov = float(getattr(args, "min_feature_coverage", 0.15) or 0.0)
+    dropped_feats: List[str] = []
+    if min_cov > 0.0:
+        low_cov = coverage[coverage < min_cov]
+        if not low_cov.empty:
+            dropped_feats = list(low_cov.index)
+            X = X.drop(columns=dropped_feats, errors="ignore")
+            warnings.warn(f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}", RuntimeWarning)
+
+            X = X.dropna()
+            y = y.loc[X.index].dropna()
+            # riallinea X e y su indice comune dopo dropna
+            common_idx = X.index.intersection(y.index)
+            X = X.loc[common_idx]
+            y = y.loc[common_idx]
+            if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
+                X = X.iloc[int(args.warmup_bars):]
+                y = y.iloc[int(args.warmup_bars):]
+            if X.empty or y.empty:
+                raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
+            meta = {"features": list(X.columns), "indicator_tfs": indicator_tfs, "dropped_features": dropped_feats, "args_used": vars(args)}
+            return X, y, meta
+
+
+def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
+    Xtr, Xva, ytr, yva = train_test_split(X.values, y.values, test_size=val_frac, shuffle=False)
+    mu = Xtr.mean(axis=0); sigma = Xtr.std(axis=0); sigma[sigma==0] = 1.0
+    return ( (Xtr - mu)/sigma, ytr ), ( (Xva - mu)/sigma, yva ), (mu, sigma)
+
+def _fit_model(algo: str, Xtr, ytr, args):
+    if   algo == "ridge":      return Ridge(alpha=float(args.alpha), random_state=args.random_state)
+    elif algo == "lasso":      return Lasso(alpha=float(args.alpha), random_state=args.random_state)
+    elif algo == "elasticnet": return ElasticNet(alpha=float(args.alpha), l1_ratio=float(args.l1_ratio), random_state=args.random_state)
+    elif algo == "rf":         return RandomForestRegressor(n_estimators=int(args.n_estimators), max_depth=None, min_samples_leaf=2, n_jobs=-1, random_state=args.random_state)
+    else: raise ValueError(f"Algo non supportato: {algo}")
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--symbol", required=True)
+    ap.add_argument("--timeframe", required=True)
+    ap.add_argument("--horizon", type=int, required=True)
+    ap.add_argument("--algo", choices=["ridge","lasso","elasticnet","rf"], required=True)
+    ap.add_argument("--pca", type=int, default=0)
+    ap.add_argument("--artifacts_dir", required=True)
+    ap.add_argument("--warmup_bars", type=int, default=64)
+    ap.add_argument("--val_frac", type=float, default=0.2)
+    ap.add_argument("--alpha", type=float, default=0.001)
+    ap.add_argument("--l1_ratio", type=float, default=0.5)
+    ap.add_argument("--random_state", type=int, default=0)
+    ap.add_argument("--n_estimators", type=int, default=400)
+    ap.add_argument("--days_history", type=int, default=60)
+    ap.add_argument("--atr_n", type=int, default=14)
+    ap.add_argument("--rsi_n", type=int, default=14)
+    ap.add_argument("--bb_n", type=int, default=20)
+    ap.add_argument("--hurst_window", type=int, default=64)
+    ap.add_argument("--rv_window", type=int, default=60)
+    ap.add_argument("--min_feature_coverage", type=float, default=0.15)
+    ap.add_argument("--indicator_tfs", type=str, default="{}")
+    ap.add_argument("--use_relative_ohlc", action="store_true", default=True)
+    ap.add_argument("--use_temporal_features", action="store_true", default=True)
+    args = ap.parse_args()
+
+    candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
+    req = {"ts_utc","open","high","low","close"}
+    if not isinstance(candles, pd.DataFrame) or not req.issubset(candles.columns):
+        raise ValueError(f"Candles mancanti colonne: {req}")
+
+    X, y, meta = _build_features(candles, args)
+    (Xtr, ytr), (Xva, yva), (mu, sigma) = _standardize_train_val(X, y, args.val_frac)
+
+    # Ensure numpy arrays
+    Xtr = np.asarray(Xtr, dtype=float)
+    ytr = np.asarray(ytr, dtype=float)
+    Xva = np.asarray(Xva, dtype=float)
+    yva = np.asarray(yva, dtype=float)
+
+    # Remove rows containing NaN / inf in X or y for both train and val
+    def _filter_finite(Xa, ya):
+        if Xa.ndim == 1:
+            ok = np.isfinite(Xa) & np.isfinite(ya)
+            Xa_f = Xa[ok]
+            ya_f = ya[ok]
+            return Xa_f.reshape(-1, 1), ya_f
+        mask = np.isfinite(Xa).all(axis=1) & np.isfinite(ya)
+        return Xa[mask], ya[mask]
+
+    Xtr_f, ytr_f = _filter_finite(Xtr, ytr)
+    Xva_f, yva_f = _filter_finite(Xva, yva)
+
+    # Log removed rows if any
+    removed_tr = Xtr.shape[0] - Xtr_f.shape[0]
+    removed_va = Xva.shape[0] - Xva_f.shape[0]
+    if removed_tr > 0:
+        warnings.warn(f"Removed {removed_tr} training rows containing NaN/Inf after standardization.", RuntimeWarning)
+    if removed_va > 0:
+        warnings.warn(f"Removed {removed_va} validation rows containing NaN/Inf after standardization.", RuntimeWarning)
+
+    # Validate enough data remains
+    if Xtr_f.shape[0] < 2:
+        raise RuntimeError("Not enough training rows after NaN/Inf filtering; aborting training.")
+    if Xva_f.shape[0] < 1:
+        raise RuntimeError("Not enough validation rows after NaN/Inf filtering; aborting training.")
+
+    Xtr, ytr = Xtr_f, ytr_f
+    Xva, yva = Xva_f, yva_f
+
+    pca_model = None
+    if int(args.pca) > 0:
+        ncomp = min(int(args.pca), Xtr.shape[1], Xtr.shape[0])
+        if ncomp > 0:
+            pca_model = PCA(n_components=ncomp, whiten=False, random_state=args.random_state)
+            Xtr = pca_model.fit_transform(Xtr)
+            Xva = pca_model.transform(Xva)
+
+    model = _fit_model(args.algo, Xtr, ytr, args)
+    model.fit(Xtr, ytr)
+
+    val_pred = model.predict(Xva)
+    mae = float(mean_absolute_error(yva, val_pred))
+
+    out_dir = Path(args.artifacts_dir) / "models"; out_dir.mkdir(parents=True, exist_ok=True)
+    run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{args.horizon}_{args.algo}{'_pca'+str(args.pca) if int(args.pca)>0 else ''}"
+    payload = {"model_type": args.algo, "model": model, "scaler_mu": mu, "scaler_sigma": sigma, "pca": pca_model,
+               "features": meta["features"], "indicator_tfs": meta["indicator_tfs"], "params_used": meta["args_used"],
+               "val_mae": mae}
+    out_path = out_dir / f"{run_name}.pkl"; dump(payload, out_path, compress=3)
+    print(f"[OK] saved model to {out_path} (val_mae={mae:.6f})")
+
+if __name__ == "__main__": main()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # ensure-features helper (robust import)
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Dict, Tuple
 _ensure_features_for_prediction: Optional[Callable] = None
 try:
     from forex_diffusion.inference.prediction_config import ensure_features_for_prediction as _ensure_features_for_prediction
@@ -241,11 +241,41 @@ class ForecastWorker(QRunnable):
         limit = int(self.payload.get("limit_candles", 512))
         ftype = str(self.payload.get("forecast_type", "basic")).lower()
 
-        # 1) dati
-        df_candles = self._fetch_recent_candles(self.market_service.engine, sym, tf, n_bars=limit)
+        # 1) dati (ancorati all'eventuale timestamp del click)
+        anchor_ts = None
+        try:
+            a = self.payload.get("testing_point_ts", None)
+            if a is None:
+                a = self.payload.get("requested_at_ms", None)
+            if a is not None:
+                anchor_ts = int(a)
+        except Exception:
+            anchor_ts = None
+
+        # Sorgente dati: override esplicito o fetch dal DB; se anchor_ts è definito, non includere barre successive
+        if isinstance(self.payload.get("candles_override"), (list, tuple)):
+            import pandas as _pd
+            df_candles = _pd.DataFrame(self.payload["candles_override"]).copy()
+        else:
+            df_candles = self._fetch_recent_candles(
+                self.market_service.engine, sym, tf,
+                n_bars=limit,
+                end_ts=anchor_ts if anchor_ts is not None else None
+            )
+
         if df_candles is None or df_candles.empty:
             raise RuntimeError("No candles available for local inference")
+
+        # Normalizza ordine ASC e, se presente anchor_ts, taglia le barre > anchor
         df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
+        if anchor_ts is not None:
+            try:
+                df_candles["ts_utc"] = pd.to_numeric(df_candles["ts_utc"], errors="coerce").astype("int64")
+                df_candles = df_candles[df_candles["ts_utc"] <= int(anchor_ts)].reset_index(drop=True)
+            except Exception:
+                pass
+        if df_candles.empty:
+            raise RuntimeError("No candles available at anchor timestamp")
 
         # 2) carica modello (se non RW)
         used_model_path_str = ""
@@ -412,6 +442,21 @@ class UIController:
             pass
         self.db_writer = db_writer
         self._forecast_active = 0
+        # default indicators settings
+        self.indicators_settings: dict = {
+            "use_atr": True, "atr_n": 14,
+            "use_rsi": True, "rsi_n": 14,
+            "use_bollinger": True, "bb_n": 20, "bb_k": 2,
+            "use_hurst": True, "hurst_window": 64,
+        }
+        # Load persisted indicators settings if available
+        try:
+            from ..utils.user_settings import get_setting
+            saved = get_setting("indicators.last_settings", {}) or {}
+            if isinstance(saved, dict) and saved:
+                self.indicators_settings.update(saved)
+        except Exception:
+            pass
         try:
             self.signals.forecastReady.connect(self._on_forecast_finished)
             self.signals.error.connect(self._on_forecast_failed)
@@ -510,6 +555,58 @@ class UIController:
     def handle_prediction_settings_requested(self):
         dialog = PredictionSettingsDialog(self.main_window)
         dialog.exec()
+
+    from PySide6.QtCore import Slot
+
+    @Slot()
+    def handle_indicators_requested(self):
+        """
+        Apre il dialog degli indicatori se disponibile.
+        In fallback mostra un messaggio per confermare che il click funziona.
+        """
+        try:
+            # tenta il dialog “ufficiale”
+            from .indicators_dialog import IndicatorsDialog  # deve esistere nel tuo repo
+            # Se hai uno stato locale per gli indicatori, leggilo/aggiorna qui:
+            initial = getattr(self, "indicators_settings", {}) or {}
+            res = IndicatorsDialog.edit(self.main_window, initial=initial)
+            if res is None:
+                self.signals.status.emit("Indicators: annullato")
+                return
+            # salva le scelte
+            self.indicators_settings = dict(res)
+            # persist between sessions
+            try:
+                from ..utils.user_settings import set_setting
+                set_setting("indicators.last_settings", dict(self.indicators_settings))
+            except Exception:
+                pass
+            self.signals.status.emit("Indicators aggiornati")
+            try:
+                from loguru import logger
+                logger.info("Indicators updated: {}", self.indicators_settings)
+            except Exception:
+                pass
+        except ModuleNotFoundError:
+            # fallback: nessun dialog disponibile → mostra un messaggio
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self.main_window, "Indicators", "Dialog degli indicatori non disponibile.")
+            except Exception:
+                pass
+            self.signals.status.emit("Indicators: dialog non disponibile")
+        except Exception as e:
+            self.signals.status.emit("Indicators: errore")
+            try:
+                from loguru import logger
+                logger.exception("Indicators dialog failed: {}", e)
+            except Exception:
+                pass
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.main_window, "Indicators", str(e))
+            except Exception:
+                pass
 
     # ---- Forecast da menu (usa le settings correnti) ---------------------- #
     @Slot()
@@ -697,6 +794,21 @@ class UIController:
             # tipo: se >1 modello forza basic
             adv = bool(payload.get("advanced", False))
             forecast_type = "advanced" if (adv and len(models) == 1) else "basic"
+
+            # fallback: inietta indicator settings globali se mancanti
+            try:
+                ind = getattr(self, "indicators_settings", {}) or {}
+                if "use_atr" not in payload: payload["use_atr"] = bool(ind.get("use_atr", True))
+                if "atr_n" not in payload: payload["atr_n"] = int(ind.get("atr_n", 14))
+                if "use_rsi" not in payload: payload["use_rsi"] = bool(ind.get("use_rsi", True))
+                if "rsi_n" not in payload: payload["rsi_n"] = int(ind.get("rsi_n", 14))
+                if "use_bollinger" not in payload: payload["use_bollinger"] = bool(ind.get("use_bollinger", True))
+                if "bb_n" not in payload: payload["bb_n"] = int(ind.get("bb_n", 20))
+                if "bb_k" not in payload: payload["bb_k"] = int(ind.get("bb_k", 2))
+                if "use_hurst" not in payload: payload["use_hurst"] = bool(ind.get("use_hurst", True))
+                if "hurst_window" not in payload: payload["hurst_window"] = int(ind.get("hurst_window", 64))
+            except Exception:
+                pass
             logger.info("Forecast launching: models={}, type={}, symbol={}, tf={}", len(models), forecast_type, payload.get("symbol"), payload.get("timeframe"))
             self.signals.status.emit(f"Forecast: launching {len(models)} model(s)")
 
@@ -851,4 +963,5 @@ __all__ = [
     "ForecastWorker",
     "TrainingController",
     "TrainingControllerSignals",
+
 ]

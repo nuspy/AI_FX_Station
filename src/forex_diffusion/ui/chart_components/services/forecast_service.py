@@ -1,0 +1,569 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+import time
+
+import matplotlib.dates as mdates
+import numpy as np
+import pandas as pd
+from loguru import logger
+from PySide6.QtWidgets import QMessageBox
+
+from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
+from forex_diffusion.utils.user_settings import get_setting
+
+from .base import ChartServiceBase
+
+
+class ForecastService(ChartServiceBase):
+    """Auto-generated service extracted from ChartTab."""
+
+    def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
+        """
+        Plot quantiles on the chart. quantiles expected to have keys 'q50','q05','q95'
+        Each value can be a list/array of floats. Optionally 'future_ts' can provide UTC ms or datetimes.
+        """
+
+        try:
+            logger.info("Q95: ", quantiles.get("q95")  )
+        except Exception:
+            pass
+
+        try:
+            # extract and coerce to arrays
+            q50 = quantiles.get("q50")
+            q05 = quantiles.get("q05") or quantiles.get("q10")
+            q95 = quantiles.get("q95") or quantiles.get("q90")
+            label = str(quantiles.get("label", f"{source}"))
+
+            if q50 is None:
+                return
+
+            import numpy as np
+            q50_arr = np.asarray(q50, dtype=float).flatten()
+            q05_arr = np.asarray(q05, dtype=float).flatten() if q05 is not None else None
+            q95_arr = np.asarray(q95, dtype=float).flatten() if q95 is not None else None
+
+            # build x positions from future_ts or from last ts + tf
+            future_ts = quantiles.get("future_ts", None)
+            x_vals = None
+            if future_ts is not None:
+                # accetta lista di ms o datetime-like
+                try:
+                    x_vals = pd.to_datetime(future_ts, unit="ms", utc=True)
+                except Exception:
+                    x_vals = pd.to_datetime(future_ts, utc=True)
+            else:
+                # fallback: deriva da ultimo ts e TF corrente
+                if self._last_df is None or self._last_df.empty:
+                    return
+                try:
+                    last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
+                except Exception:
+                    last_ts = pd.Timestamp.utcnow().tz_localize("UTC")
+                td = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
+                x_vals = [last_ts + td * (i + 1) for i in range(len(q50_arr))]
+
+            # normalize to naive datetimes for Matplotlib
+            try:
+                x_vals = pd.to_datetime(x_vals, utc=True).tz_localize(None)
+            except Exception:
+                try:
+                    x_vals = pd.to_datetime(x_vals).tz_localize(None)
+                except Exception:
+                    pass
+
+            # align lengths
+            n = min(len(x_vals), len(q50_arr))
+            if n == 0:
+                return
+            if len(q50_arr) != n:
+                q50_arr = q50_arr[:n]
+            if q05_arr is not None and len(q05_arr) != n:
+                q05_arr = q05_arr[:n]
+            if q95_arr is not None and len(q95_arr) != n:
+                q95_arr = q95_arr[:n]
+            if len(x_vals) != n:
+                x_vals = x_vals[:n]
+
+            # prepend point 0 (t0 = requested_at_ms) con last_close
+            try:
+                req_ms = quantiles.get("requested_at_ms", None)
+                if req_ms is not None:
+                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
+                    last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
+                    import numpy as _np
+                    q50_arr = _np.insert(q50_arr, 0, last_close)
+                    if q05_arr is not None: q05_arr = _np.insert(q05_arr, 0, last_close)
+                    if q95_arr is not None: q95_arr = _np.insert(q95_arr, 0, last_close)
+            except Exception:
+                pass
+
+            # color per sorgente e gestione legenda per modello
+            def _color_for(src: str):
+                try:
+                    import hashlib, colorsys
+                    key = str(src or "default").encode("utf-8")
+                    hnum = int(hashlib.sha1(key).hexdigest()[:8], 16)
+                    hue = (hnum % 360) / 360.0
+                    sat = 0.65
+                    val = 0.95
+                    r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
+                    return (r, g, b)
+                except Exception:
+                    palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
+                    return palette[abs(hash(src)) % len(palette)] if src else "tab:orange"
+            color = _color_for(quantiles.get("source", source))
+
+            # nome modello per legenda (mostra una sola volta)
+            try:
+                model_name = str(quantiles.get("label") or quantiles.get("source") or label)
+            except Exception:
+                model_name = str(label)
+            if not hasattr(self, "_legend_once") or self._legend_once is None:
+                self._legend_once = set()
+            first_for_model = model_name not in self._legend_once
+            if first_for_model:
+                self._legend_once.add(model_name)
+
+            # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
+            line50, = self.ax.plot(
+                x_vals, q50_arr,
+                color=color, linestyle='-',
+                marker='o', markersize=3.5,
+                markerfacecolor=color, markeredgecolor=color,
+                alpha=0.95,
+                label=(model_name if first_for_model else None)
+            )
+            artists = [line50]
+
+            # Se abilitato, calcola/disegna indicatori anche sulla porzione di forecast
+            try:
+                cfg = self._get_indicator_settings() or {}
+            except Exception:
+                cfg = {}
+            try:
+                ind_on_fcst = bool(cfg.get("ind_on_forecast", get_setting("indicators.on_forecast", False)))
+            except Exception:
+                ind_on_fcst = False
+            if ind_on_fcst:
+                try:
+                    y_col = "close" if "close" in self._last_df.columns else "price"
+                    hist = self._last_df[["ts_utc", y_col]].dropna().copy()
+                    hist["ts_utc"] = pd.to_numeric(hist["ts_utc"], errors="coerce").astype("int64")
+                    hist = hist.sort_values("ts_utc").reset_index(drop=True)
+                    x_hist = pd.to_datetime(hist["ts_utc"], unit="ms", utc=True).tz_convert(None)
+                    close_hist = pd.to_numeric(hist[y_col], errors="coerce").astype(float)
+
+                    n_sma = int(cfg.get("sma_n", 20)) if cfg.get("use_sma", False) else 0
+                    n_ef = int(cfg.get("ema_fast", 12)) if cfg.get("use_ema", False) else 0
+                    n_es = int(cfg.get("ema_slow", 26)) if cfg.get("use_ema", False) else 0
+                    n_bb = int(cfg.get("bb_n", 20)) if cfg.get("use_bollinger", False) else 0
+                    n_k = int(cfg.get("bb_n", 20)) if cfg.get("use_keltner", False) else 0
+                    nmax = max(1, n_sma, n_ef, n_es, n_bb, n_k)
+                    tail = max(100, nmax * 4)
+                    close_hist_tail = close_hist.iloc[-tail:] if len(close_hist) > tail else close_hist
+
+                    import numpy as _np
+                    close_all = _np.concatenate([close_hist_tail.values, q50_arr])
+                    f_start = len(close_all) - len(q50_arr)
+
+                    # SMA
+                    if cfg.get("use_sma", False) and n_sma > 0:
+                        sma_all = self._sma(pd.Series(close_all), n_sma).to_numpy()
+                        try:
+                            ln, = self.ax.plot(x_vals, sma_all[f_start:], color=cfg.get("color_sma", "#7f7f7f"),
+                                               linestyle=":", linewidth=1.0, alpha=0.7, label=None)
+                            artists.append(ln)
+                        except Exception:
+                            pass
+                    # EMA
+                    if cfg.get("use_ema", False):
+                        if n_ef > 0:
+                            emaf_all = self._ema(pd.Series(close_all), n_ef).to_numpy()
+                            try:
+                                ln, = self.ax.plot(x_vals, emaf_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
+                                                   linestyle="--", linewidth=1.0, alpha=0.7, label=None)
+                                artists.append(ln)
+                            except Exception:
+                                pass
+                        if n_es > 0:
+                            emas_all = self._ema(pd.Series(close_all), n_es).to_numpy()
+                            try:
+                                ln, = self.ax.plot(x_vals, emas_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
+                                                   linestyle=":", linewidth=1.0, alpha=0.6, label=None)
+                                artists.append(ln)
+                            except Exception:
+                                pass
+                    # Bollinger
+                    if cfg.get("use_bollinger", False) and n_bb > 0:
+                        _, bb_up_all, bb_lo_all = self._bollinger(pd.Series(close_all), n_bb, float(cfg.get("bb_k", 2.0)))
+                        bu = bb_up_all.to_numpy()[f_start:]
+                        bl = bb_lo_all.to_numpy()[f_start:]
+                        c_bb = cfg.get("color_bollinger", "#2ca02c")
+                        try:
+                            l1, = self.ax.plot(x_vals, bu, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
+                            l2, = self.ax.plot(x_vals, bl, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
+                            artists.extend([l1, l2])
+                            try:
+                                poly = self.ax.fill_between(x_vals, bl, bu, color=c_bb, alpha=0.06)
+                                artists.append(poly)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    # Keltner
+                    if cfg.get("use_keltner", False) and n_k > 0:
+                        high_all = pd.Series(close_all)
+                        low_all = pd.Series(close_all)
+                        ku_all, kl_all = self._keltner(high_all, low_all, pd.Series(close_all), n_k, float(cfg.get("keltner_k", 1.5)))
+                        ku = (ku_all.to_numpy() if hasattr(ku_all, "to_numpy") else ku_all.values)[f_start:]
+                        kl = (kl_all.to_numpy() if hasattr(kl_all, "to_numpy") else kl_all.values)[f_start:]
+                        c_k = cfg.get("color_keltner", "#17becf")
+                        try:
+                            l1, = self.ax.plot(x_vals, ku, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
+                            l2, = self.ax.plot(x_vals, kl, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
+                            artists.extend([l1, l2])
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # se disponibili, punti ad alta risoluzione (es. 1m) come scatter
+            try:
+                f_hr = quantiles.get("future_ts_hr"); q50_hr = quantiles.get("q50_hr")
+                if f_hr and q50_hr and len(f_hr) == len(q50_hr):
+                    x_hr = pd.to_datetime(f_hr, unit="ms", utc=True).tz_convert(None)
+                    scat = self.ax.scatter(x_hr, q50_hr, s=10, color=color, alpha=0.6, edgecolors='none')
+                    artists.append(scat)
+            except Exception:
+                pass
+
+            # evidenzia il punto 0 (istante richiesta) con marker più grande
+            try:
+                req_ms = quantiles.get("requested_at_ms", None)
+                if req_ms is not None and len(q50_arr) > 0:
+                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
+                    m0 = self.ax.scatter([t0], [float(q50_arr[0])], s=28, color=color, edgecolor='white', linewidths=0.8, zorder=3.5)
+                    artists.append(m0)
+            except Exception:
+                pass
+
+            if q05_arr is not None and q95_arr is not None:
+                line05, = self.ax.plot(x_vals, q05_arr, color=color, linestyle='--', alpha=0.8, label=None)
+                line95, = self.ax.plot(x_vals, q95_arr, color=color, linestyle='--', alpha=0.8, label=None)
+                fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12, label=None)
+                artists.extend([line05, line95, fill])
+
+                # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
+                try:
+                    metrics = (quantiles or {}).get("adherence_metrics") or {}
+                    if not metrics:
+                        try:
+                            from forex_diffusion.postproc.adherence import adherence_metrics, atr_sigma_from_df
+                            anchor_ts = int(pd.to_datetime(self._last_df["ts_utc"].iloc[-1], unit="ms").value // 1_000_000) if (self._last_df is not None and not self._last_df.empty) else None
+                            atr_n = 14
+                            try:
+                                atr_n = int((self._get_indicator_settings() or {}).get("atr_n", 14))
+                            except Exception:
+                                pass
+                            sigma_vol = float(atr_sigma_from_df(self._last_df.rename(columns={"price":"close"}) if self._last_df is not None else pd.DataFrame(),
+                                                                n=atr_n, pre_anchor_only=True, anchor_ts=anchor_ts, robust=True))
+                            fut_ts_ms = list(quantiles.get("future_ts") or [])
+                            actual_ts, actual_y = [], []
+                            if fut_ts_ms:
+                                try:
+                                    controller = self.app_controller or getattr(self._main_window, "controller", None)
+                                    engine = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
+                                    if engine is not None:
+                                        from sqlalchemy import text
+                                        with engine.connect() as conn:
+                                            vals = ",".join(f"({int(t)})" for t in fut_ts_ms)
+                                            qsql = text(
+                                                f"WITH fut(ts) AS (VALUES {vals}) "
+                                                "SELECT c.ts_utc AS ts, c.close AS y "
+                                                "FROM fut JOIN market_data_candles c ON c.ts_utc = fut.ts "
+                                                "WHERE c.symbol = :symbol AND c.timeframe = :timeframe "
+                                                "ORDER BY c.ts_utc ASC"
+                                            )
+                                            sym = getattr(self, 'symbol', 'EUR/USD')
+                                            tf = getattr(self, 'timeframe', '1m')
+                                            rows = conn.execute(qsql, {'symbol': sym, 'timeframe': tf}).fetchall()
+                                            if rows:
+                                                tmp = pd.DataFrame(rows, columns=['ts', 'y'])
+                                                actual_ts = tmp['ts'].astype('int64').tolist()
+                                                actual_y = tmp['y'].astype(float).tolist()
+                                except Exception:
+                                    pass
+                                if not actual_ts and self._last_df is not None and not self._last_df.empty:
+                                    try:
+                                        ycol = 'close' if 'close' in self._last_df.columns else 'price'
+                                        dfa = self._last_df[['ts_utc', ycol]].dropna().copy()
+                                        dfa['ts'] = pd.to_numeric(dfa['ts_utc'], errors='coerce').astype('int64')
+                                        dfa['y'] = pd.to_numeric(dfa[ycol], errors='coerce').astype(float)
+                                        dfa['ts_dt'] = pd.to_datetime(dfa['ts'], unit='ms', utc=True).dt.tz_convert(None)
+                                        df_fut = pd.DataFrame({'ts': pd.to_numeric(fut_ts_ms, errors='coerce').astype('int64')}).sort_values('ts')
+                                        df_fut['ts_dt'] = pd.to_datetime(df_fut['ts'], unit='ms', utc=True).dt.tz_convert(None)
+                                        # tolerance: ~0.51×TF
+                                        def _tf_ms(tf: str) -> int:
+                                            try:
+                                                s = str(tf).strip().lower()
+                                                if s.endswith("m"): return int(s[:-1]) * 60_000
+                                                if s.endswith("h"): return int(s[:-1]) * 3_600_000
+                                                if s.endswith("d"): return int(s[:-1]) * 86_400_000
+                                            except Exception:
+                                                pass
+                                            return 60_000
+                                        tol_ms = max(1_000, int(0.51 * _tf_ms(getattr(self, 'timeframe', '1m') or '1m')))
+                                        merged = pd.merge_asof(
+                                            df_fut.sort_values('ts_dt'),
+                                            dfa.sort_values('ts_dt')[['ts_dt','ts','y']],
+                                            left_on='ts_dt',
+                                            right_on='ts_dt',
+                                            direction='nearest',
+                                            tolerance=pd.Timedelta(milliseconds=tol_ms),
+                                            suffixes=('', '_real')
+                                        ).dropna().reset_index(drop=True)
+                                        if not merged.empty:
+                                            actual_ts = (df_fut.loc[merged.index, "ts"]).astype("int64").tolist()
+                                            actual_y = merged["y"].astype(float).tolist()
+                                    except Exception:
+                                        pass
+                            if fut_ts_ms and actual_ts and actual_y:
+                                metrics = adherence_metrics(
+                                    fut_ts=fut_ts_ms, m=quantiles.get("q50") or [],
+                                    q05=quantiles.get("q05") or [], q95=quantiles.get("q95") or [],
+                                    actual_ts=actual_ts, actual_y=actual_y,
+                                    sigma_vol=sigma_vol, band_target=0.90
+                                )
+                                quantiles["adherence_metrics"] = metrics
+                        except Exception:
+                            metrics = {}
+                except Exception:
+                    metrics = {}
+
+                # Ensure forecast is visible in current axes (extend limits if needed)
+                try:
+                    last_x_dt = x_vals[-1]
+                    last_x_num = mdates.date2num(last_x_dt)
+                    xmin, xmax = self.ax.get_xlim()
+                    if last_x_num > xmax:
+                        span = (xmax - xmin) if (xmax > xmin) else 1.0
+                        margin = 0.02 * span
+                        self.ax.set_xlim(left=xmin, right=last_x_num + margin)
+                    ymin, ymax = self.ax.get_ylim()
+                    y_last = float(q95_arr[-1])
+                    pad = 0.02 * (ymax - ymin if ymax > ymin else 1.0)
+                    if y_last > ymax:
+                        self.ax.set_ylim(bottom=ymin, top=y_last + pad)
+                    elif y_last < ymin:
+                        self.ax.set_ylim(bottom=y_last - pad, top=ymax)
+                except Exception:
+                    pass
+
+                # Draw adherence badge (oval) at the end of q95 with median color; always show
+                try:
+                    adh = (metrics or {}).get("adherence", None)
+                    # Robust numeric conversion: handles numpy scalars too; fallback to "0.00"
+                    try:
+                        val = float(adh)
+                        if np.isnan(val):
+                            val = None
+                    except Exception:
+                        val = None
+                    txt = f"{val:.2f}" if val is not None else "0.00"
+                    badge = self.ax.annotate(
+                        txt,
+                        xy=(x_vals[-1], float(q95_arr[-1])),
+                        xycoords="data",
+                        textcoords="offset points",
+                        xytext=(6, 0),
+                        ha="left",
+                        va="center",
+                        fontsize=15,
+                        fontweight="bold",
+                        bbox=dict(
+                            facecolor="white",
+                            edgecolor=color,           # same as median line color
+                            boxstyle="round,pad=0.38", # rounded -> oval-like; auto width fits text
+                            linewidth=1.4,
+                            alpha=0.98
+                        ),
+                        zorder=100,
+                        clip_on=False
+                    )
+                    artists.append(badge)
+                    # register globally for hover-hide
+                    try:
+                        self._adh_badges.append(badge)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            # aggiorna legenda unica (no duplicati per modello)
+            try:
+                self._refresh_legend_unique(loc='upper left')
+            except Exception:
+                pass
+
+            fid = time.time()
+            forecast = {
+                "id": fid,
+                "created_at": fid,
+                "quantiles": quantiles,
+                "future_ts": quantiles.get("future_ts"),
+                "artists": artists,
+                "source": quantiles.get("source", source)
+            }
+            self._forecasts.append(forecast)
+            self._trim_forecasts()
+            # unique legend
+            try:
+                handles, labels = self.ax.get_legend_handles_labels()
+                uniq = {}
+                for h, l in zip(handles, labels):
+                    if not l:
+                        continue
+                    if l not in uniq:
+                        uniq[l] = h
+                self.ax.legend(list(uniq.values()), list(uniq.keys()))
+            except Exception:
+                try:
+                    self.ax.legend()
+                except Exception:
+                    pass
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
+        except Exception as e:
+            logger.exception(f"Failed to plot forecast overlay: {e}")
+
+    def _open_forecast_settings(self):
+        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
+        dialog = PredictionSettingsDialog(self.view)
+        # execute and then apply relevant runtime settings (max_forecasts, auto)
+        dialog.exec()
+        try:
+            settings = PredictionSettingsDialog.get_settings()
+            self.max_forecasts = int(settings.get("max_forecasts", self.max_forecasts))
+            auto = bool(settings.get("auto_predict", False))
+            interval = int(settings.get("auto_interval_seconds", self._auto_timer.interval() // 1000))
+            self._auto_timer.setInterval(max(1, interval) * 1000)
+            if auto:
+                self.start_auto_forecast()
+            else:
+                self.stop_auto_forecast()
+        except Exception:
+            pass
+
+    def _on_forecast_clicked(self):
+        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
+        settings = PredictionSettingsDialog.get_settings()
+        if not settings.get("model_path"):
+            QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")
+            return
+
+        payload = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
+        # add forecast granularity from UI
+        try:
+            if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None:
+                payload["forecast_step"] = self.pred_step_combo.currentText() or "auto"
+        except Exception:
+            pass
+        self.forecastRequested.emit(payload)
+
+    def _open_adv_forecast_settings(self):
+        # Reuse same dialog which now contains advanced options
+        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
+        dialog = PredictionSettingsDialog(self.view)
+        dialog.exec()
+
+    def _on_advanced_forecast_clicked(self):
+        # advanced forecast: use same settings but tag source
+        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
+        settings = PredictionSettingsDialog.get_settings()
+        if not settings.get("model_path"):
+            QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")
+            return
+        payload = {"symbol": self.symbol, "timeframe": self.timeframe, "advanced": True, **settings}
+        # add forecast granularity from UI
+        try:
+            if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None:
+                payload["forecast_step"] = self.pred_step_combo.currentText() or "auto"
+        except Exception:
+            pass
+        self.forecastRequested.emit(payload)
+
+    def on_forecast_ready(self, df: pd.DataFrame, quantiles: dict):
+        """
+        Slot to receive forecast results from controller/worker.
+        Adds the forecast overlay without removing existing ones (trimming oldest if needed).
+        """
+        try:
+            # Plot overlay and keep previous views
+            self.update_plot(self._last_df, quantiles=None)  # redraw base chart preserving zoom
+            # Plot forecast overlay, source label if present
+            source = quantiles.get("source", "basic") if isinstance(quantiles, dict) else "basic"
+            self._plot_forecast_overlay(quantiles, source=source)
+        except Exception as e:
+            logger.exception(f"Error handling forecast result: {e}")
+
+    def clear_all_forecasts(self):
+        """Remove all forecast artists from axes and clear internal list."""
+        try:
+            for f in self._forecasts:
+                for art in f.get("artists", []):
+                    try:
+                        art.remove()
+                    except Exception:
+                        pass
+            self._forecasts = []
+            # reset legenda/registro modelli
+            try:
+                self._legend_once = set()
+                leg = self.ax.get_legend()
+                if leg:
+                    try:
+                        leg.remove()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            self.canvas.draw()
+        except Exception as e:
+            logger.exception(f"Failed to clear forecasts: {e}")
+
+    def _trim_forecasts(self):
+        """Disabled: keep all forecast overlays visible."""
+        try:
+            return  # no trimming
+        except Exception:
+            return
+
+    def start_auto_forecast(self):
+        if not self._auto_timer.isActive():
+            self._auto_timer.start()
+            logger.info("Auto-forecast started")
+
+    def stop_auto_forecast(self):
+        if self._auto_timer.isActive():
+            self._auto_timer.stop()
+            logger.info("Auto-forecast stopped")
+
+    def _auto_forecast_tick(self):
+        """Called by timer: trigger both basic and advanced forecasts (emit signals)."""
+        try:
+            # Use saved settings to build payloads; emit two requests: basic and advanced
+            from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
+            settings = PredictionSettingsDialog.get_settings() or {}
+            # Basic
+            payload_basic = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
+            self.forecastRequested.emit(payload_basic)
+            # Advanced
+            payload_adv = {"symbol": self.symbol, "timeframe": self.timeframe, "advanced": True, **settings}
+            self.forecastRequested.emit(payload_adv)
+        except Exception as e:
+            logger.exception(f"Auto forecast tick failed: {e}")

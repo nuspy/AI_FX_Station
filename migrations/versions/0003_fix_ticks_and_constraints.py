@@ -1,22 +1,26 @@
-
-"""fix ticks table and add unique constraints for candles/ticks
+"""Fix ticks table and add unique constraints for candles/ticks.
 
 Revision ID: 0003_fix_ticks_and_constraints
-Revises: 0001_initial
+Revises: 0002_add_market_data_ticks
 Create Date: 2025-09-12 12:00:00.000000
 """
+
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "0003_fix_ticks_and_constraints"
-down_revision = "0001_initial"
+down_revision = "0002_add_market_data_ticks"
 branch_labels = None
 depends_on = None
+
 
 def _has_table(bind, name: str) -> bool:
     insp = sa.inspect(bind)
     return insp.has_table(name)
+
 
 def _has_index(bind, table: str, index_name: str) -> bool:
     insp = sa.inspect(bind)
@@ -25,6 +29,7 @@ def _has_index(bind, table: str, index_name: str) -> bool:
     except Exception:
         return False
     return any(ix.get("name") == index_name for ix in idxs)
+
 
 def upgrade() -> None:
     bind = op.get_bind()
@@ -38,7 +43,7 @@ def upgrade() -> None:
                 ["symbol", "timeframe", "ts_utc"],
                 unique=True,
             )
-        # Helpful non-unique index (if you want it)
+        # Helpful non-unique index (optional)
         if not _has_index(bind, "market_data_candles", "ix_market_data_candles_tf_ts"):
             op.create_index(
                 "ix_market_data_candles_tf_ts",
@@ -77,14 +82,14 @@ def upgrade() -> None:
             unique=False,
         )
 
+
 def downgrade() -> None:
     bind = op.get_bind()
-    # Drop helper indexes (leave core tables if they pre-existed from 0001)
+    # Drop helper indexes (leave core tables if they pre-existed)
     if _has_index(bind, "market_data_ticks", "ix_market_data_ticks_tf_ts"):
         op.drop_index("ix_market_data_ticks_tf_ts", table_name="market_data_ticks")
     if _has_index(bind, "market_data_ticks", "ux_market_data_ticks_sym_tf_ts"):
         op.drop_index("ux_market_data_ticks_sym_tf_ts", table_name="market_data_ticks")
-    # We drop the table only if it exists – safe on both branches
     if _has_table(bind, "market_data_ticks"):
         op.drop_table("market_data_ticks")
 

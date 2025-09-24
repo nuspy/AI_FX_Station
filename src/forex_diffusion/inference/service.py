@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -61,13 +62,17 @@ async def lifespan(app):
             tf_default = cfg.timeframes.native[0] if hasattr(cfg.timeframes, "native") else (cfg.timeframes.get("native", [])[0] if isinstance(cfg.timeframes, dict) else "1m")
         except Exception:
             tf_default = "1m"
+        # allow disabling realtime ingest in test/backtest environments
+        if os.environ.get("FOREX_DISABLE_RT_INGEST", "0") == "1":
+            raise RuntimeError("rt_ingest_disabled")
         rt = RealTimeIngestionService(engine=_engine, market_service=None, symbols=symbols, timeframe=tf_default, poll_interval=cfg.get("providers", {}).get("poll_interval", 2.0) if isinstance(cfg, dict) else 2.0, db_writer=db_writer)
         # expose globally so other components may reference or stop it
         globals()["rt_service"] = rt
         rt.start()
         logger.info("RealTimeIngestionService started in lifespan for symbols: {}", symbols)
     except Exception as e:
-        logger.exception("Failed to start RealTimeIngestionService in lifespan: {}", e)
+        if str(e) != "rt_ingest_disabled":
+            logger.exception("Failed to start RealTimeIngestionService in lifespan: {}", e)
 
     try:
         yield
@@ -83,6 +88,8 @@ async def lifespan(app):
 
 # Create FastAPI app with lifespan manager so uvicorn/ASGI server triggers start/stop per worker
 app = FastAPI(title="MagicForex Inference Service", lifespan=lifespan)
+from .backtest_api import router as backtest_router
+app.include_router(backtest_router)
 
 
 class ForecastRequest(BaseModel):

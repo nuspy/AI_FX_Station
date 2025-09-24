@@ -68,13 +68,13 @@ class TiingoClient:
             try:
                 headers = {"Authorization": f"Token {self.api_key}"} if self.api_key else {}
                 # log request (do not print token)
-                logger.info("HTTP GET {} params={} (attempt {}/{})", url, params, attempt, max_attempts)
+                # logger.info("HTTP GET {} params={} (attempt {}/{})", url, params, attempt, max_attempts)
                 r = self._client.get(url, params=params, headers=headers)
                 r.raise_for_status()
                 # success log
                 try:
                     size = len(r.content) if r.content is not None else 0
-                    logger.info("HTTP GET {} -> {} ({} bytes)", url, r.status_code, size)
+                    # logger.info("HTTP GET {} -> {} ({} bytes)", url, r.status_code, size)
                 except Exception:
                     pass
                 # Tiingo returns JSON array for prices endpoint
@@ -166,7 +166,7 @@ class MarketDataService:
         # Note: "60m" is an alias of "1h" -> keep only "1h" to avoid duplicates
         self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"]
             # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
-        self.rest_enabled: bool = False
+        self.rest_enabled: bool = True
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
@@ -179,7 +179,7 @@ class MarketDataService:
         """
         logger.info("Starting backfill for {} {} (override={}, force_full={})", symbol, timeframe, start_ms_override, force_full)
         # Guard: block any REST backfill unless explicitly enabled (UI backfill button)
-        if not getattr(self, "rest_enabled", False):
+        if not getattr(self, "rest_enabled", True):
             logger.info("REST backfill disabled; skipping backfill for {} {}.", symbol, timeframe)
             if progress_cb:
                 try: progress_cb(100)
@@ -263,7 +263,7 @@ class MarketDataService:
                 for (sub_s, sub_e) in subranges:
                     start_date = sub_s.date().isoformat()
                     end_date = sub_e.date().isoformat()
-                    logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
+                    # logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
                     df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                     if df is not None and not df.empty:
                         try:
@@ -276,7 +276,7 @@ class MarketDataService:
                         except Exception:
                             pass
                         report = data_io.upsert_candles(self.engine, df, symbol, "1m")
-                        logger.info("Upsert 1m report: %s", report)
+                        # logger.info("Upsert 1m report: %s", report)
                     processed += 1
                     _emit_progress()
         except Exception as e:
@@ -306,7 +306,7 @@ class MarketDataService:
                             except Exception:
                                 pass
                             report = data_io.upsert_candles(self.engine, df, symbol, tf)
-                            logger.info("Upsert report for %s %s: %s", symbol, tf, report)
+                            # logger.info("Upsert report for %s %s: %s", symbol, tf, report)
                         processed += 1
                         _emit_progress()
             except Exception as e:
@@ -336,14 +336,14 @@ class MarketDataService:
             for (sub_s, sub_e) in subranges:
                 start_date = sub_s.date().isoformat()
                 end_date = sub_e.date().isoformat()
-                logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
+                # logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
                 df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                 if df is None or df.empty:
                     logger.info("No tick/1m data returned for %s %s-%s", symbol, start_date, end_date)
                     continue
                 # Upsert as 1m timeframe
                 report = data_io.upsert_candles(self.engine, df, symbol, "1m")
-                logger.info("Upsert 1m report: %s", report)
+                # logger.info("Upsert 1m report: %s", report)
 
     def _backfill_timeframe_autonomous(self, symbol: str, timeframe: str, global_start_ms: int, global_end_ms: int):
         """
@@ -373,7 +373,7 @@ class MarketDataService:
                     continue
                 # Upsert into DB
                 report = data_io.upsert_candles(self.engine, df, symbol, timeframe)
-                logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
+                # logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
 
     def _tf_to_tiingo_resample(self, tf: str) -> str:
         """
