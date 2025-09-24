@@ -18,10 +18,23 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from loguru import logger
 
+# PATTERNS HOOK (import relativo con fallback assoluto, per evitare unresolved in IDE)
+try:
+    from .chart_components.services.patterns_hook import (
+        get_patterns_service, set_patterns_toggle, call_patterns_detection
+    )
+except Exception:
+    from src.forex_diffusion.ui.chart_components.services.patterns_hook import (
+        get_patterns_service, set_patterns_toggle, call_patterns_detection
+    )
+
+
 from ..utils.user_settings import get_setting, set_setting
 from ..services.brokers import get_broker_service
 from .chart_components.controllers.chart_controller import ChartTabController
-from .chart_components.services.patterns_service import PatternsService
+
+
+
 
 class DraggableOverlay(QLabel):
     """Small draggable label overlay used for legend and cursor values."""
@@ -240,6 +253,33 @@ class ChartTabUI(QWidget):
         self.candle_patterns_checkbox = QCheckBox("Candlestick patterns"); row2_layout.addWidget(self.candle_patterns_checkbox)
         self.history_patterns_checkbox = QCheckBox("Patterns storici"); row2_layout.addWidget(self.history_patterns_checkbox)
 
+        self.btn_scan_patterns = QToolButton()
+        self.btn_scan_patterns.setText("Scansiona patterns")
+        row2_layout.addWidget(self.btn_scan_patterns)
+
+
+
+        # handler
+        def _scan_patterns_now():
+            try:
+                ps = self.chart_controller.patterns_service
+                df = None
+                # prova a prendere tutto lo storico se disponibile
+                ds = getattr(self.chart_controller, "data_service", None)
+                if ds and hasattr(ds, "get_full_dataframe"):
+                    df = ds.get_full_dataframe()
+                # fallback: ultimo df plottato
+                if df is None:
+                    df = getattr(self.chart_controller.plot_service, "_last_df", None)
+                if df is None or getattr(df, "empty", True):
+                    logger.info("Scan patterns: df è vuoto o mancante")
+                    return
+                ps.on_update_plot(df)
+            except Exception as e:
+                logger.exception("Scan patterns failed: {}", e)
+
+        self.btn_scan_patterns.clicked.connect(_scan_patterns_now)
+
         self.follow_checkbox = QCheckBox("Segui"); row2_layout.addWidget(self.follow_checkbox)
         self.bidask_label = QLabel("Bid: -    Ask: -"); row2_layout.addWidget(self.bidask_label)
         self.trade_btn = QPushButton("Trade"); row2_layout.addWidget(self.trade_btn)
@@ -362,6 +402,58 @@ class ChartTabUI(QWidget):
 
         for key, splitter in self._get_splitters().items():
             if splitter: splitter.splitterMoved.connect(lambda _p, _i, k=key, s=splitter: self._persist_splitter_positions(k, s))
+        # >>> PATTERNS: collega i tre checkbox già presenti e sincronizza subito lo stato <<<
+        self._wire_pattern_checkboxes()
+
+    def _wire_pattern_checkboxes(self) -> None:
+        """
+        Collega i tre checkbox già presenti nella topbar:
+          - self.chart_patterns_checkbox  ("Chart patterns")
+          - self.candle_patterns_checkbox ("Candlestick patterns")
+          - self.history_patterns_checkbox ("Patterns storici")
+        al PatternsService tramite l'hook (niente accessi diretti al controller).
+        Esegue anche una sincronizzazione iniziale dello stato e un primo trigger.
+        """
+        from loguru import logger
+
+        # Devono già esistere: se qualcuno manca, non facciamo nulla
+        chart_cb = getattr(self, "chart_patterns_checkbox", None)
+        candle_cb = getattr(self, "candle_patterns_checkbox", None)
+        history_cb = getattr(self, "history_patterns_checkbox", None)
+        if not (chart_cb or candle_cb or history_cb):
+            logger.debug("Patterns wiring: nessun checkbox trovato in UI (chart/candle/history).")
+            return
+
+        ctrl = self.chart_controller
+        # Istanzia lazy il service (registry interno, no setattr sul controller)
+        get_patterns_service(ctrl, self, create=True)
+
+        # Collega i toggle → set_*_enabled(...)
+        if chart_cb:
+            chart_cb.toggled.connect(lambda v, c=ctrl: set_patterns_toggle(c, self, chart=bool(v)))
+        if candle_cb:
+            candle_cb.toggled.connect(lambda v, c=ctrl: set_patterns_toggle(c, self, candle=bool(v)))
+        if history_cb:
+            history_cb.toggled.connect(lambda v, c=ctrl: set_patterns_toggle(c, self, history=bool(v)))
+
+        # Sincronizza SUBITO lo stato dell’UI sul service (senza aspettare altri eventi)
+        init_chart = bool(chart_cb.isChecked()) if chart_cb else False
+        init_candle = bool(candle_cb.isChecked()) if candle_cb else False
+        init_history = bool(history_cb.isChecked()) if history_cb else False
+        set_patterns_toggle(ctrl, self, chart=init_chart, candle=init_candle, history=init_history)
+
+        # Primo trigger: passa il DF corrente (se disponibile) per far partire la detection
+        try:
+            plot = getattr(ctrl, "plot_service", None)
+            df_now = getattr(plot, "_last_df", None)
+            call_patterns_detection(ctrl, self, df_now)
+            logger.debug(
+                f"Patterns wiring: sync iniziale → chart={init_chart}, candle={init_candle}, history={init_history}; "
+                f"trigger con df={'ok' if df_now is not None else 'None'}"
+            )
+        except Exception as e:
+            logger.debug(f"Patterns wiring: primo trigger fallito: {e}")
+
 
     def _connect_mouse_events(self):
         self.canvas.mpl_connect("button_press_event", self._on_mouse_press)

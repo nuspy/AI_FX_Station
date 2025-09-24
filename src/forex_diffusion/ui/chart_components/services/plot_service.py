@@ -12,9 +12,11 @@ from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
 from forex_diffusion.utils.time_utils import split_range_avoid_weekend
+from .patterns_hook import call_patterns_detection
 
 from forex_diffusion.utils.user_settings import get_setting, set_setting
 
+from .patterns_hook import call_patterns_detection
 from .base import ChartServiceBase
 
 
@@ -58,11 +60,28 @@ class PlotService(ChartServiceBase):
             except Exception:
                 pass
             y_vals = df2[y_col].astype(float).to_numpy()
-            # Hook: update pattern overlays
+
+            # --- patterns: pass robusto del DataFrame corrente ---
             try:
-                self.controller.patterns_service.on_update_plot(df2)
-            except Exception:
-                pass
+                from .patterns_hook import call_patterns_detection
+                df_current = None
+
+                # tenta nomi locali comuni
+                for _name in ("df", "df2", "data", "df_plot"):
+                    if _name in locals():
+                        df_current = locals()[_name]
+                        break
+
+                # fallback: ultimo df usato dal plot_service
+                if df_current is None:
+                    df_current = getattr(self, "_last_df", None)
+
+                # chiama comunque: il service ha altri fallback/controlli
+                call_patterns_detection(self.controller, self.view, df_current)
+            except Exception as e:
+                logger.debug(f"patterns hook error: {e}")
+
+
         except Exception as e:
             logger.exception('Failed to normalize data for plotting: {}', e)
             return
@@ -245,10 +264,33 @@ class PlotService(ChartServiceBase):
         except Exception as exc:
             logger.debug('Legend refresh skipped: {}', exc)
 
+        # --- patterns: comunica l'asse prezzo al renderer ---
+        try:
+            from .patterns_hook import get_patterns_service
+            ps = get_patterns_service(self.controller, self.view, create=False)
+            if ps is not None and hasattr(ps, "renderer"):
+                ax_price = (locals().get("ax_price")
+                            or getattr(self, "ax_price", None)
+                            or getattr(self, "axes_price", None))
+                if ax_price is None:
+                    fig = getattr(getattr(self.view, "canvas", None), "figure", None)
+                    if fig and getattr(fig, "axes", None):
+                        ax_price = fig.axes[0]
+                if ax_price is not None:
+                    ps.renderer.set_axes(ax_price)
+        except Exception as e:
+            logger.debug(f"patterns set_axes failed: {e}")
+
         try:
             self.canvas.draw_idle()
         except Exception:
             self.canvas.draw()
+
+        # --- hook pattern detection ---
+        try:
+            call_patterns_detection(self.controller, self.view, df if 'df' in locals() else df2)
+        except Exception as e:
+            logger.debug(f'patterns hook error: {e}')
 
     def _render_candles(self, df2: pd.DataFrame, x_dt: Optional[pd.Series] = None):
         """Render OHLC candles on the main axis."""
@@ -987,3 +1029,7 @@ class PlotService(ChartServiceBase):
             return float(x_r) - float(segs[-1][2])
         except Exception:
             return float(x_r)
+
+# TODO: Inserire manualmente:
+# from .patterns_hook import call_patterns_detection
+# call_patterns_detection(self.controller, self.view, df2)
