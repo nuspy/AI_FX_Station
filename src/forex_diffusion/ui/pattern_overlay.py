@@ -1,509 +1,288 @@
+
 from __future__ import annotations
-from typing import Iterable, List, Tuple, Optional, Dict, Any
+
+import math
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
-import pandas as pd
-import matplotlib.dates as mdates
-import matplotlib.axes as mpla
-from matplotlib.backend_bases import MouseEvent
-from loguru import logger
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.patches import FancyBboxPatch
+from matplotlib.lines import Line2D
+from matplotlib.text import Text
 
-# ---------------- UI CONSTANTS ----------------
-MAX_OVERLAYS = 80
-MIN_SEP_BARS = 8
-HIT_RADIUS_PX = 12  # hit-test raggio in pixel
-FORMATION_LINE_ALPHA = 0.35
-FORMATION_LINE_WIDTH = 3.0
-FORMATION_LINE_COLOR = "#33A1FD"  # light blue
+# Qt is optional here; only used for the info dialog
+try:
+    from PySide6 import QtCore, QtWidgets
+    _HAVE_QT = True
+except Exception:
+    _HAVE_QT = False
 
-# --------------- RENDERER ---------------------
+
+@dataclass
+class PatternEvent:
+    key: str
+    name: str
+    kind: str            # "chart" | "candle"
+    direction: str       # "bull" | "bear" | "neutral"
+    start_ts: int        # ms epoch
+    confirm_ts: int      # ms epoch
+    end_ts: Optional[int] = None
+    confirm_price: Optional[float] = None
+    target_price: Optional[float] = None
+    info_html: Optional[str] = None
+    # Optional trail for "formation line": list of (ts_ms, price)
+    trail: Optional[List[Tuple[int, float]]] = None
+    # Storage for UI (not persisted)
+    _badge: Optional[FancyBboxPatch] = field(default=None, repr=False, compare=False)
+    _label: Optional[Text] = field(default=None, repr=False, compare=False)
+
+
 class PatternOverlayRenderer:
     """
-    Renderizza:
-      - badge con nome pattern (colore: verde bull, rosso bear),
-      - tooltip on-hover col nome pattern,
-      - click → dialog dettagli (usa controller.open_pattern_info se disponibile),
-      - freccia target (se target_price),
-      - linea di formazione del pattern: segmento della price-line dietro al prezzo
-        (azzurro semi-trasparente), o fallback ad axvspan se nessuna price-line.
-    Supporta asse X in ms-epoch o in date2num; autodetect.
+    Draws pattern badges and formation lines onto a Matplotlib Axes.
+    - set_axes(ax): provide axes to draw on
+    - set_events(events, *, mode): provide events and redraw
+    mode: "ms_epoch" (x are epoch ms) or "datetime"
     """
-    def __init__(self, controller, info_provider=None):
-        self.controller = controller
-        self.info = info_provider
-        # prova a trovare un asse prezzo noto
-        self.ax: Optional[mpla.Axes] = getattr(controller, "axes_price", None) \
-                                       or getattr(getattr(controller, "view", None), "ax_price", None)
-        # Stato grafico
-        self._badges: List[mpla.Artist] = []
-        self._arrows: List[mpla.Artist] = []
-        self._formations: List[mpla.Arist] = []  # typo fixed below
-        self._formations: List[mpla.Artist] = []
-        self._artist_map: Dict[mpla.Axes, object] = {}  # types corrected below
-        self._artist_map: Dict[mpla.Artist, object] = {}
-        self._last_mode_log: Optional[str] = None
+    def __init__(self):
+        self._ax: Optional[Axes] = None
+        self._canvas = None
+        self._artists: List[Any] = []
+        self._events: List[PatternEvent] = []
+        self._mode: str = "ms_epoch"
+        self._last_n_drawn: int = 0
+        self._hover_annot: Optional[Text] = None
+        self._mpl_cids: List[int] = []
+        self._last_mode_log: Optional[str] = None  # for diagnostics
 
-        # Interazione
-        self._cid_move = None
-        self._cid_click = None
-        self._tooltip = None
-        self._last_hover_artist: Optional[mpla.Axes] = None  # types corrected below
-        self._last_hover_artist: Optional[mpla.Artist] = None
+    # ------------- Axes / wiring -------------
 
-    # ---------- Public API ----------
-    def set_axes(self, ax: mpla.Axes) -> None:
-        self.ax = ax
-        self._bind_canvas_events()
+    def set_axes(self, ax: Axes):
+        """Attach axes and wire basic mpl events."""
+        self._ax = ax
+        self._canvas = ax.figure.canvas
+        self._wire_mpl_events()
+        # A redraw may be pending if events were set first
+        self.draw(self._events or [])
 
-    def clear(self) -> None:
-        self._clear_all()
-        if self.ax and self.ax.figure:
-            try: self.ax.figure.canvas.draw_idle()
-            except Exception: pass
-
-    def draw(self, events: Iterable[object]) -> None:
-        ax = self._resolve_axes()
-        if not ax:
-            logger.debug("PatternOverlay: no axes to draw on")
+    def _wire_mpl_events(self):
+        if not self._canvas:
             return
-
-        self._clear_all()
-        evs = list(events) if events else []
-        if not evs:
-            ax.figure.canvas.draw_idle()
-            return
-
-        # Normalizza e filtra densità
-        norm = self._normalize_events(ax, evs)
-        kept = self._density_filter(ax, norm)
-        mode = self._axis_mode(ax)
-        logger.info(f"PatternOverlay: drawing {len(kept)}/{len(evs)} events on ax=Axes (mode={mode})")
-
-        # Disegna in ordine: formazione (dietro), poi badge/testo + target (davanti)
-        for x, y, label, kind, direction, e in kept:
+        # disconnect previous
+        for cid in self._mpl_cids:
             try:
-                self._draw_formation_segment(x, e)  # dietro
-            except Exception as ex:
-                logger.debug(f"formation draw failed: {ex}")
-
-        for x, y, label, kind, direction, e in kept:
-            try:
-                self._draw_badge(x, y, label, direction, e)  # davanti
-                self._draw_target_arrow(x, y, direction, e)  # davanti
-            except Exception as ex:
-                logger.debug(f"overlay draw_event failed: {ex}")
-
-        self._bind_canvas_events()
-        try: ax.figure.canvas.draw_idle()
-        except Exception: pass
-
-    # ---------- Axes & Time Helpers ----------
-    def _resolve_axes(self) -> Optional[mpla.Axes]:
-        if getattr(self, "ax", None) is not None and getattr(self.ax, "figure", None) is not None:
-            return self.ax
-
-        candidates: List[mpla.Axes] = []
-
-        def _collect(obj):
-            if not obj: return
-            for name in ("ax_price", "axes_price", "price_ax", "ax", "axes"):
-                a = getattr(obj, name, None)
-                if isinstance(a, mpla.Axes): candidates.append(a)
-                elif isinstance(a, dict):
-                    candidates.extend([v for v in a.values() if isinstance(v, mpla.Axes)])
-                elif isinstance(a, (list, tuple)):
-                    candidates.extend([v for v in a if isinstance(v, mpla.Axes)])
-            fig = getattr(getattr(obj, "canvas", None), "figure", None) or getattr(obj, "figure", None)
-            if fig and getattr(fig, "axes", None):
-                candidates.extend([a for a in fig.axes if isinstance(a, mpla.Axes)])
-
-        _collect(self.controller)
-        _collect(getattr(self.controller, "plot_service", None))
-        _collect(getattr(self.controller, "view", None))
-
-        if candidates:
-            def _score(ax: mpla.Axes) -> int:
-                return len(ax.lines) + len(ax.collections) + len(ax.patches) + len(ax.texts)
-            self.ax = max(candidates, key=_score)
-            return self.ax
-
-        return None
-
-    def _axis_mode(self, ax: mpla.Axes) -> str:
-        try:
-            if ax.lines:
-                xd = ax.lines[0].get_xdata()
-                if len(xd):
-                    x0 = float(np.asarray(xd)[-1])
-                    if x0 > 1e10: return "ms_epoch"
-                    if 1e3 < x0 < 1e7: return "matplotlib_date"
-                    return "index"
-        except Exception: pass
-        xmin, xmax = ax.get_xlim()
-        if xmax > 1e10: return "ms_epoch"
-        if 1e3 < xmax < 1e7: return "matplotlib_date"
-        return "index"
-
-    def _to_ts(self, ts):
-        try:
-            if isinstance(ts, (pd.Timestamp, np.datetime64)):
-                t = pd.Timestamp(ts)
-            elif isinstance(ts, (int, np.integer, float)) and ts > 1e11:
-                t = pd.to_datetime(int(ts), unit="ms", utc=True)
-            elif isinstance(ts, (int, np.integer, float)) and ts > 1e9:
-                t = pd.to_datetime(int(ts), unit="s", utc=True)
-            else:
-                t = pd.to_datetime(ts, utc=True)
-            return t.tz_convert("UTC")
-        except Exception:
-            return None
-
-    def _x_from_ts_bimode(self, ts):
-        t = self._to_ts(ts)
-        if t is None:
-            return (np.nan, np.nan)
-        x_date = mdates.date2num(t.tz_convert(None).to_pydatetime())
-        x_ms = float(t.value // 1_000_000)  # ms
-        return (x_date, x_ms)
-
-    def _x_from_ts_safest(self, ax: mpla.Axes, ts) -> float:
-        xmin, xmax = ax.get_xlim()
-        x_date, x_ms = self._x_from_ts_bimode(ts)
-        mid = 0.5 * (xmin + xmax)
-
-        def score(x):
-            if np.isnan(x): return (False, np.inf)
-            inside = (xmin <= x <= xmax)
-            dist = abs(x - mid)
-            return (inside, dist)
-
-        in_date, d_date = score(x_date)
-        in_ms, d_ms = score(x_ms)
-        if in_date and not in_ms:
-            x = x_date
-        elif in_ms and not in_date:
-            x = x_ms
-        else:
-            x = x_date if d_date <= d_ms else x_ms
-        return x
-
-    # ---------- Event normalization & density ----------
-    def _pattern_label(self, e: object) -> str:
-        for k in ("name", "key", "pattern_name", "pattern", "label", "kind"):
-            if isinstance(e, dict) and k in e and e[k]:
-                return str(e[k])
-            v = getattr(e, k, None)
-            if v: return str(v)
-        return type(e).__name__
-
-    def _direction_color(self, direction: str) -> str:
-        d = str(direction or "").lower()
-        if d in ("up", "bull", "bullish", "long", "buy"):
-            return "#2ecc71"  # green
-        if d in ("down", "bear", "bearish", "short", "sell"):
-            return "#e74c3c"  # red
-        return "#3498db"     # neutral
-
-    def _normalize_events(self, ax: mpla.Axes, evs):
-        norm = []
-        for e in evs:
-            label = self._pattern_label(e)
-            ts = getattr(e, "confirm_ts", getattr(e, "ts", None))
-            px = getattr(e, "confirm_price", getattr(e, "price", getattr(e, "target_price", None)))
-            kind = getattr(e, "kind", "unknown")
-            direction = getattr(e, "direction", "neutral")
-
-            x = self._x_from_ts_safest(ax, ts)
-            try:
-                y = float(px) if px is not None else np.nan
-            except Exception:
-                y = np.nan
-
-            if not np.isnan(x) and not np.isnan(y):
-                norm.append((x, y, label, kind, direction, e))
-
-        try:
-            norm.sort(key=lambda t: float(t[0]), reverse=True)
-        except Exception:
-            pass
-        return norm
-
-    def _density_filter(self, ax: mpla.Axes, norm):
-        kept = []
-        picked_lbl = set()
-        last_x_by_lbl: Dict[str, float] = {}
-        try:
-            xd = ax.lines[0].get_xdata()
-            step = float(xd[-1]) - float(xd[-2]) if len(xd) > 2 else 1.0
-        except Exception:
-            step = 1.0
-
-        for x, y, label, kind, direction, e in norm:
-            if label not in picked_lbl:
-                kept.append((x, y, label, kind, direction, e))
-                picked_lbl.add(label); last_x_by_lbl[label] = x
-            else:
-                if abs(x - last_x_by_lbl.get(label, -1e18)) < max(step * MIN_SEP_BARS, 1.0):
-                    continue
-                last_x_by_lbl[label] = x
-                kept.append((x, y, label, kind, direction, e))
-            if len(kept) >= MAX_OVERLAYS:
-                break
-        return kept
-
-    # ---------- Drawing ----------
-    def _clear_all(self) -> None:
-        for art in self._badges + self._arrows + self._formations:
-            try: art.remove()
-            except Exception: pass
-        self._badges.clear(); self._arrows.clear(); self._formations.clear()
-        self._artist_map.clear()
-        if self._tooltip is not None:
-            try: self._tooltip.remove()
-            except Exception: pass
-        self._tooltip = None
-        self._last_hover_artist = None
-
-    def _draw_badge(self, x: float, y: float, label: str, direction: str, event_obj: object) -> None:
-        ax = self.ax
-        color = self._direction_color(direction)
-        ms = 9.0
-        ln = ax.plot([x], [y], marker="o", markersize=ms, markerfacecolor=color,
-                     markeredgecolor="black", markeredgewidth=0.8, zorder=120, picker=HIT_RADIUS_PX)[0]
-        txt = ax.text(x, y, f" {label} ", color="white",
-                      bbox=dict(boxstyle="round,pad=0.25", fc=color, ec="black", lw=0.6, alpha=0.95),
-                      fontsize=9, va="bottom", ha="left", zorder=121)
-        self._badges.extend([ln, txt])
-        self._artist_map[ln] = event_obj
-        self._artist_map[txt] = event_obj
-
-    def _draw_target_arrow(self, x: float, y: float, direction: str, e: object) -> None:
-        target = getattr(e, "target_price", None)
-        if target is None:
-            return
-        try:
-            ty = float(target)
-        except Exception:
-            return
-        ax = self.ax
-        color = self._direction_color(direction)
-        dy = ty - y
-        if abs(dy) < 1e-12:
-            dy = 0.0001
-        arr = ax.annotate(
-            "", xy=(x, ty), xytext=(x, y),
-            arrowprops=dict(arrowstyle="-|>", lw=1.2, color=color, shrinkA=0, shrinkB=0),
-            zorder=119
-        )
-        lab = ax.text(x, ty, f"{ty:.5f}", fontsize=8, color=color,
-                      va="bottom" if dy>0 else "top", ha="left",
-                      bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, lw=0.6, alpha=0.8),
-                      zorder=119)
-        self._arrows.extend([arr, lab])
-
-    def _event_window(self, e: object):
-        ax = self.ax
-        if not ax: return None
-        start = getattr(e, "start_ts", None) or getattr(e, "begin_ts", None) \
-                or getattr(e, "left_ts", None) or getattr(e, "formation_start_ts", None)
-        end   = getattr(e, "end_ts", None)   or getattr(e, "finish_ts", None) \
-                or getattr(e, "right_ts", None) or getattr(e, "formation_end_ts", None)
-
-        if start is None and end is None:
-            confirm = getattr(e, "confirm_ts", None)
-            lookback = getattr(e, "lookback", None) or getattr(e, "window", None)
-            if confirm is None or lookback is None:
-                return None
-            x_c = self._x_from_ts_safest(ax, confirm)
-            try:
-                xd = ax.lines[0].get_xdata()
-                if len(xd) >= 3:
-                    step = float(xd[-1]) - float(xd[-2])
-                else:
-                    step = 1.0
-            except Exception:
-                step = 1.0
-            x0 = x_c - step * float(lookback)
-            x1 = x_c
-            return (x0, x1)
-
-        if start is None:
-            start = getattr(e, "ts", None)
-        if end is None:
-            end = getattr(e, "confirm_ts", None) or getattr(e, "ts", None)
-
-        if start is None or end is None:
-            return None
-
-        x0 = self._x_from_ts_safest(ax, start)
-        x1 = self._x_from_ts_safest(ax, end)
-        if not np.isfinite(x0) or not np.isfinite(x1):
-            return None
-        if x1 < x0: x0, x1 = x1, x0
-        return (x0, x1)
-
-    def _get_main_price_line(self):
-        ax = self.ax
-        if not ax or not ax.lines:
-            return None
-        lines = [ln for ln in ax.lines if len(getattr(ln, "get_xdata", lambda:[])()) >= 2]
-        if not lines:
-            return None
-        return max(lines, key=lambda ln: len(ln.get_xdata()))
-
-    def _draw_formation_segment(self, x_confirm: float, e: object) -> None:
-        ax = self.ax
-        if not ax:
-            return
-        win = self._event_window(e)
-        if not win:
-            return
-        x0, x1 = win
-        if not np.isfinite(x0) or not np.isfinite(x1) or x1 <= x0:
-            return
-
-        price_line = self._get_main_price_line()
-        if price_line is not None:
-            xd = np.asarray(price_line.get_xdata(), dtype=float)
-            yd = np.asarray(price_line.get_ydata(), dtype=float)
-            mask = (xd >= x0) & (xd <= x1)
-            if mask.sum() >= 2:
-                z = max(price_line.get_zorder() - 1, 1)
-                ln, = ax.plot(xd[mask], yd[mask], color=FORMATION_LINE_COLOR,
-                              linewidth=FORMATION_LINE_WIDTH, alpha=FORMATION_LINE_ALPHA, zorder=z)
-                self._formations.append(ln)
-                return
-
-        # Fallback
-        span = ax.axvspan(x0, x1, color=FORMATION_LINE_COLOR, alpha=FORMATION_LINE_ALPHA*0.7, zorder=1)
-        self._formations.append(span)
-
-    # ---------- Interaction ----------
-    def _bind_canvas_events(self) -> None:
-        ax = self._resolve_axes()
-        if not ax or not ax.figure:
-            return
-        canvas = ax.figure.canvas
-        if self._cid_move is None:
-            self._cid_move = canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
-        if self._cid_click is None:
-            self._cid_click = canvas.mpl_connect("button_press_event", self._on_mouse_click)
-
-    def _hit_test(self, event: MouseEvent) -> Optional[mpla.Artist]:
-        if event.inaxes is not self.ax:
-            return None
-        if not self._badges:
-            return None
-        ax = self.ax
-        ex, ey = event.x, event.y
-        best = None
-        best_d2 = HIT_RADIUS_PX**2 + 1
-        for art in self._badges:
-            try:
-                if hasattr(art, "get_xdata"):
-                    xdata, ydata = art.get_xdata(), art.get_ydata()
-                    if len(xdata) != 1:
-                        continue
-                    x, y = float(xdata[0]), float(ydata[0])
-                else:
-                    x, y = art.get_position()
-                px, py = ax.transData.transform((x, y))
-                d2 = (px - ex)**2 + (py - ey)**2
-                if d2 < best_d2:
-                    best_d2 = d2; best = art
-            except Exception:
-                continue
-        if best is not None and best_d2 <= HIT_RADIUS_PX**2:
-            return best
-        return None
-
-    def _ensure_tooltip(self):
-        if self._tooltip is None and self.ax:
-            self._tooltip = self.ax.annotate(
-                "", xy=(0, 0), xytext=(12, 12), textcoords="offset points",
-                bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="white", lw=0.6, alpha=0.85),
-                color="white", fontsize=9, zorder=200
-            )
-            self._tooltip.set_visible(False)
-
-    def _on_mouse_move(self, event: MouseEvent) -> None:
-        ax = self.ax
-        if not ax or event.inaxes is not ax:
-            if self._tooltip and self._tooltip.get_visible():
-                self._tooltip.set_visible(False)
-                try: ax.figure.canvas.draw_idle()
-                except Exception: pass
-            return
-
-        art = self._hit_test(event)
-        self._ensure_tooltip()
-        if art is None:
-            if self._tooltip.get_visible():
-                self._tooltip.set_visible(False)
-                ax.figure.canvas.draw_idle()
-            self._last_hover_artist = None
-            return
-
-        if art is self._last_hover_artist and self._tooltip.get_visible():
-            return
-
-        ev = self._artist_map.get(art)
-        label = self._pattern_label(ev) if ev is not None else "pattern"
-        self._tooltip.xy = (event.xdata, event.ydata)
-        self._tooltip.set_text(str(label))
-        self._tooltip.set_visible(True)
-        self._last_hover_artist = art
-        try: ax.figure.canvas.draw_idle()
-        except Exception: pass
-
-    def _on_mouse_click(self, event: MouseEvent) -> None:
-        ax = self.ax
-        if not ax or event.inaxes is not ax or event.button != 1:
-            return
-        art = self._hit_test(event)
-        if art is None:
-            return
-        ev = self._artist_map.get(art)
-        if ev is None:
-            return
-        opener = getattr(self.controller, "open_pattern_info", None)
-        if callable(opener):
-            try:
-                opener(ev); return
+                self._canvas.mpl_disconnect(cid)
             except Exception:
                 pass
-        self._fallback_info_dialog(ev)
+        self._mpl_cids.clear()
 
-    def _fallback_info_dialog(self, ev: object) -> None:
-        try:
-            from PySide6 import QtWidgets
-            from PySide6.QtCore import Qt
-        except Exception:
+        def _on_motion(event):
+            if event.inaxes is not self._ax or not self._events:
+                return
+            # simple nearest-badge hover
+            x, y = event.xdata, event.ydata
+            if x is None or y is None:
+                return
+            hit = None
+            min_dx = float("inf")
+            for ev in self._events:
+                cx = ev.confirm_ts if self._mode == "ms_epoch" else ev.confirm_ts  # value used as-is
+                cy = ev.confirm_price if ev.confirm_price is not None else y
+                dx = abs(x - cx) + (abs(y - cy) if cy is not None else 0.0)
+                if dx < min_dx and dx < 0.02 * (self._ax.get_ylim()[1] - self._ax.get_ylim()[0]):
+                    hit = ev
+                    min_dx = dx
+            if hit:
+                self._show_hover(event, hit)
+            else:
+                self._hide_hover()
+
+        def _on_click(event):
+            if event.button != 1 or event.inaxes is not self._ax or not self._events:
+                return
+            ev = self._pick_event_near(event.xdata, event.ydata)
+            if ev:
+                self._open_info_dialog(ev)
+
+        self._mpl_cids.append(self._canvas.mpl_connect("motion_notify_event", _on_motion))
+        self._mpl_cids.append(self._canvas.mpl_connect("button_press_event", _on_click))
+
+    def _pick_event_near(self, x: float, y: float) -> Optional[PatternEvent]:
+        best = None
+        best_d = float("inf")
+        for ev in self._events:
+            cx = ev.confirm_ts
+            cy = ev.confirm_price if ev.confirm_price is not None else y
+            d = abs(x - cx) + (abs(y - cy) if cy is not None else 0.0)
+            if d < best_d and d < 0.02 * (self._ax.get_ylim()[1] - self._ax.get_ylim()[0]):
+                best = ev
+                best_d = d
+        return best
+
+    # ------------- Public API -------------
+
+    def set_events(self, events: List[PatternEvent], *, mode: str = "ms_epoch"):
+        self._mode = mode or "ms_epoch"
+        # normalize to PatternEvent
+        norm: List[PatternEvent] = []
+        for e in events:
+            if isinstance(e, PatternEvent):
+                norm.append(e)
+            elif isinstance(e, dict):
+                norm.append(PatternEvent(**e))
+        self._events = norm
+        self.draw(self._events)
+
+    def draw(self, events: List[PatternEvent]):
+        if self._ax is None:
+            # axes not yet set; nothing to draw
             return
+        self._clear_artists()
 
-        def _esc(x):
-            try: return str(x).replace("<","&lt;").replace(">","&gt;")
-            except Exception: return str(x)
+        n = 0
+        for ev in events:
+            try:
+                self._draw_formation(ev)
+                self._draw_badge(ev)
+                n += 1
+            except Exception:
+                # don't crash drawing loop
+                continue
 
-        key = self._pattern_label(ev)
-        kind = getattr(ev, "kind", "unknown")
-        direction = getattr(ev, "direction", "neutral")
-        ts = getattr(ev, "confirm_ts", getattr(ev, "ts", None))
-        price = getattr(ev, "confirm_price", getattr(ev, "price", None))
-        tprice = getattr(ev, "target_price", None)
+        self._last_n_drawn = n
+        if self._canvas:
+            try:
+                self._canvas.draw_idle()
+            except Exception:
+                pass
 
-        t = self._to_ts(ts)
-        t_str = str(t.tz_convert(None).strftime("%Y-%m-%d %H:%M:%S")) if t is not None else str(ts)
+    # ------------- Drawing helpers -------------
 
-        html = (
-            f"<h3 style='margin:0'>{_esc(key)}</h3>"
-            f"<p><b>Kind:</b> {_esc(kind)} &nbsp; <b>Direction:</b> {_esc(direction)}</p>"
-            f"<p><b>Confirm:</b> {_esc(t_str)} @ {_esc(price)}</p>"
-            f"<p><b>Target:</b> {_esc('' if tprice is None else tprice)}</p>"
+    def _clear_artists(self):
+        for a in self._artists:
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self._artists.clear()
+
+    def _draw_formation(self, ev: PatternEvent):
+        if ev.trail and len(ev.trail) >= 2:
+            xs = [t for (t, _p) in ev.trail]
+            ys = [p for (_t, p) in ev.trail]
+        else:
+            # fallback: simple segment start->confirm if prices provided
+            if ev.confirm_price is None:
+                return
+            xs = [ev.start_ts, ev.confirm_ts]
+            ys = [ev.confirm_price, ev.confirm_price]
+
+        # light blue, semi-transparent, thicker, behind price
+        ln = Line2D(xs, ys, linewidth=3.0, alpha=0.35, color="#4FC3F7", zorder=1)
+        self._ax.add_line(ln)
+        self._artists.append(ln)
+
+    def _draw_badge(self, ev: PatternEvent):
+        # badge rectangle near confirm point
+        if ev.confirm_price is None:
+            return
+        x = ev.confirm_ts
+        y = ev.confirm_price
+        label = ev.name or "Pattern"
+
+        pad_x = 40_000  # ms to shift badge right
+        bx = x + pad_x
+        by = y
+
+        color = "#2ECC71" if (ev.direction or "").lower().startswith("bull") else "#E74C3C"
+        facecolor = color
+        edgecolor = "black"
+
+        width = max(60_000, 7_000 * max(1, len(label)))  # crude width in ms
+        height = (self._ax.get_ylim()[1] - self._ax.get_ylim()[0]) * 0.03
+
+        box = FancyBboxPatch(
+            (bx, by),
+            width, height,
+            boxstyle="round,pad=0.02,rounding_size=0.015",
+            facecolor=facecolor, edgecolor=edgecolor, linewidth=0.6, alpha=0.75, zorder=4
         )
+        self._ax.add_patch(box)
+        self._artists.append(box)
 
-        dlg = QtWidgets.QMessageBox(getattr(self.controller, "window", None) or None)
-        dlg.setWindowTitle(f"Pattern: {key}")
-        dlg.setTextFormat(Qt.TextFormat.RichText)
-        dlg.setText(html)
+        txt = self._ax.text(
+            bx + width * 0.5, by + height * 0.5, label,
+            ha="center", va="center", fontsize=8, color="white", zorder=5
+        )
+        self._artists.append(txt)
+        ev._badge = box
+        ev._label = txt
+
+        # target arrow (always visible if present)
+        if ev.target_price is not None:
+            self._draw_target_arrow(ev)
+
+    def _draw_target_arrow(self, ev: PatternEvent):
+        x = ev.confirm_ts
+        y0 = ev.confirm_price if ev.confirm_price is not None else None
+        y1 = ev.target_price
+        if y0 is None or y1 is None:
+            return
+        col = "#27AE60" if y1 >= y0 else "#C0392B"
+        ln = Line2D([x, x], [y0, y1], linewidth=2.0, alpha=0.9, color=col, zorder=4)
+        self._ax.add_line(ln)
+        self._artists.append(ln)
+
+    # ------------- Hover + Dialog -------------
+
+    def _show_hover(self, mpl_event, ev: PatternEvent):
+        label = ev.name or "Pattern"
+        if self._hover_annot is None:
+            self._hover_annot = self._ax.annotate(
+                label, (ev.confirm_ts, ev.confirm_price or self._ax.get_ylim()[0]),
+                xytext=(12, 12), textcoords="offset points",
+                bbox=dict(boxstyle="round", fc="w", ec="0.4", alpha=0.9),
+                fontsize=8, zorder=6
+            )
+            self._artists.append(self._hover_annot)
+        else:
+            self._hover_annot.set_text(label)
+            self._hover_annot.set_position((ev.confirm_ts, ev.confirm_price or self._ax.get_ylim()[0]))
+        try:
+            self._canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _hide_hover(self):
+        if self._hover_annot is not None:
+            try:
+                self._hover_annot.remove()
+            except Exception:
+                pass
+            self._hover_annot = None
+            if self._canvas:
+                try:
+                    self._canvas.draw_idle()
+                except Exception:
+                    pass
+
+    def _open_info_dialog(self, ev: PatternEvent):
+        if not _HAVE_QT:
+            return
+        dlg = QtWidgets.QMessageBox(parent=None)
+        dlg.setWindowTitle(ev.name or "Pattern")
+        html = [
+            f"<b>{ev.name}</b>",
+            f"<div>Kind: {ev.kind} &nbsp; Direction: <b>{ev.direction}</b></div>",
+        ]
+        if ev.target_price is not None:
+            html.append(f"<div>Target: <b>{ev.target_price:.5f}</b></div>")
+        if ev.info_html:
+            html.append("<hr/>")
+            html.append(ev.info_html)
+        dlg.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        dlg.setText("<br/>".join(html))
         dlg.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
         dlg.exec()

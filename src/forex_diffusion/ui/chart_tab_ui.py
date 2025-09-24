@@ -5,6 +5,8 @@ from typing import Optional, Dict, List
 import pandas as pd
 import time
 
+import numpy as np
+
 import matplotlib.dates as mdates
 
 from PySide6.QtWidgets import (
@@ -684,18 +686,53 @@ class ChartTabUI(QWidget):
     def _on_mouse_press(self, event):
         if event and getattr(event, "button", None) in (1, 3): self._suspend_follow()
         return self.chart_controller.on_mouse_press(event=event)
+
+
+
     def _on_mouse_move(self, event):
-        if event and (getattr(event, "button", None) in (1, 3) or (ge := getattr(event, "guiEvent", None)) and getattr(ge, "buttons", lambda: 0)()): self._suspend_follow()
-        # Update overlays with cursor info unless dragging an overlay
+        # 1) guard-rails: niente assi, niente x
+        price_ax = getattr(self, "price_ax", None)
+        if event is None or price_ax is None or event.inaxes is None:
+            return
+        if event.inaxes is not price_ax:
+            return
+        if event.xdata is None:
+            return
+
+        # 2) x → ms
+        x_ms = self._x_to_ms(event.xdata)
+        if x_ms is None:
+            return
+
+        # 3) trova riga valida
+        idx = self._row_at_xms(x_ms)
+        if idx is None:
+            return
+
+        # 4) throttle anti-rumore: se la riga non cambia, non fare nulla
+        if getattr(self, "_last_cursor_idx", None) == idx:
+            return
+        self._last_cursor_idx = idx
+
+        # 5) usa la riga in sicurezza
+        df = self._get_active_df()
         try:
-            if not getattr(self, "_overlay_dragging", False):
-                self._update_cursor_overlays(event)
-        except Exception as e:
-            logger.debug(f"_update_cursor_overlays failed: {e}")
-        # Suppress line update during overlay drag
-        if getattr(self, "_overlay_dragging", False) or getattr(self, "_suppress_line_update", False):
-            return None
-        return self.chart_controller.on_mouse_move(event=event)
+            row = df.iloc[idx]
+        except Exception:
+            return
+
+        # 6) aggiorna overlays/cursori/tooltip con row
+        try:
+            self._update_cursor_overlays(row, idx)  # ← la tua funzione esistente
+        except Exception as ex:
+            # downgrade a DEBUG senza flood
+            if getattr(self, "_mouse_err_once", True):
+                self._mouse_err_once = False
+                self._logger.debug("cursor overlay update skipped: %s", ex)
+
+
+
+
     def _on_mouse_release(self, event):
         if event and getattr(event, "button", None) in (1, 3): self._suspend_follow()
         return self.chart_controller.on_mouse_release(event=event)
@@ -711,6 +748,57 @@ class ChartTabUI(QWidget):
     def _auto_forecast_tick(self): return self.chart_controller.auto_forecast_tick()
     def _on_backfill_missing_clicked(self): return self.chart_controller.on_backfill_missing_clicked()
     def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None, end_ms: Optional[int] = None): return self.chart_controller.load_candles_from_db(symbol=symbol, timeframe=timeframe, limit=limit, start_ms=start_ms, end_ms=end_ms)
+
+    # --- Helpers Mouse ---
+
+    def _x_to_ms(self, x):
+        """Converte l'ascissa matplotlib in ms epoch secondo la modalità usata nel plot."""
+        # Se hai già standardizzato tutto a ms (consigliato), ritorna int(x)
+        # Altrimenti rileva la modalità: 'ms_epoch' vs 'matplotlib_date'
+        mode = getattr(self, "_x_mode", "ms_epoch")
+        if x is None:
+            return None
+        if mode == "ms_epoch":
+            try:
+                return int(x)
+            except (TypeError, ValueError):
+                return None
+        # fallback: ascissa in date-number matplotlib
+        try:
+            dt = mdates.num2date(x)  # timezone-naive
+            return int(dt.timestamp() * 1000)
+        except Exception:
+            return None
+
+    def _get_active_df(self):
+        """Recupera il DataFrame attivo usato in chart (ts_ms, open, high, low, close)."""
+        # Adatta questi getter al tuo wiring attuale:
+        df = getattr(self.chart_controller, "last_df", None)
+        if df is None:
+            df = getattr(self.plot_service, "last_df", None) if hasattr(self, "plot_service") else None
+        return df
+
+    def _row_at_xms(self, x_ms):
+        """Restituisce l'indice riga più vicino e valido per il timestamp in ms."""
+        df = self._get_active_df()
+        if df is None or df.empty:
+            return None
+        col = "ts_ms" if "ts_ms" in df.columns else "ts_utc"
+        if col == "ts_utc" and df[col].dtype != np.int64 and df[col].dtype != np.int32:
+            # Se ts_utc è datetime, converti in ms
+            try:
+                ts = df[col].view("int64") // 10 ** 6  # pandas datetime64[ns] → ms
+            except Exception:
+                ts = (df[col].astype("int64") // 10 ** 6)
+        else:
+            ts = df[col].to_numpy()
+
+        # Cerca posizione e clamp
+        i = int(np.searchsorted(ts, x_ms, side="left"))
+        i = i - 1 if i > 0 else 0
+        if i < 0 or i >= len(df):
+            return None
+        return i
 
     # --- Grid and Overlays helpers ---
 
