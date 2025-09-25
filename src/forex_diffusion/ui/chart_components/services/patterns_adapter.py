@@ -175,7 +175,9 @@ def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 5
             if tgt is None:
                 amp = _amplitude_guess(df, e)
                 if amp is not None:
-                    sign = -1.0 if str(direction).startswith("down") else 1.0
+                    d = str(direction).lower()
+                    # negative move for bearish / down patterns
+                    sign = -1.0 if d in ("down", "bear", "bearish", "short", "sell") else 1.0
                     tgt = float(px) + sign * float(amp)
             try:
                 if tgt is not None:
