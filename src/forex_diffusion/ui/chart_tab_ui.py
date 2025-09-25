@@ -10,8 +10,7 @@ import matplotlib.dates as mdates
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
-    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog,
-    QTabWidget, QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox, QGroupBox
+    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker
 from matplotlib.figure import Figure
@@ -263,13 +262,10 @@ class ChartTabUI(QWidget):
         self.btn_scan_patterns = QToolButton()
         self.btn_scan_patterns.setText("Scansiona patterns")
         row2_layout.addWidget(self.btn_scan_patterns)
-        
-        self.btn_config_patterns = QToolButton()
-        self.btn_config_patterns.setText("Configura Patterns")
-        row2_layout.addWidget(self.btn_config_patterns)
+
+
 
         # handler
-        self.btn_config_patterns.clicked.connect(self._open_patterns_config)
         def _scan_patterns_now():
             try:
                 ps = self.chart_controller.patterns_service
@@ -1277,104 +1273,35 @@ class ChartTabUI(QWidget):
             logger.debug(f"_open_pattern_dialog failed: {e}")
 
 
-
-class PatternsConfigDialog(QDialog):
-    """
-    Dialog di configurazione con due tab: Chart e Candela.
-    Carica dinamicamente le chiavi da configs/patterns.yaml e consente di attivare/disattivare,
-    settare soglie, confidence e Target/Stop (altezza figura, flagpole, etc.).
-    """
-    def __init__(self, parent=None, app=None):
-        super().__init__(parent)
-        self.setWindowTitle("Configura Patterns")
-        self.resize(720, 520)
-        self.app = app
-        self._load_config()
-
-        layout = QVBoxLayout(self)
-        self.tabs = QTabWidget(self)
-        layout.addWidget(self.tabs)
-
-        self.chart_tab = QWidget(); self.candle_tab = QWidget()
-        self.tabs.addTab(self.chart_tab, "Patterns a Chart")
-        self.tabs.addTab(self.candle_tab, "Patterns a Candela")
-
-        self._build_tab(self.chart_tab, kind="chart")
-        self._build_tab(self.candle_tab, kind="candle")
-
-        # Buttons
-        btns = QHBoxLayout()
-        self.btn_save = QPushButton("Salva")
-        self.btn_cancel = QPushButton("Annulla")
-        btns.addStretch(1); btns.addWidget(self.btn_save); btns.addWidget(self.btn_cancel)
-        layout.addLayout(btns)
-        self.btn_cancel.clicked.connect(self.reject)
-        self.btn_save.clicked.connect(self._on_save)
-
-    def _load_config(self):
-        from pathlib import Path
-        import yaml, json
-        base = Path(__file__).resolve().parents[2] / "configs" / "patterns.yaml"
-        with open(base, "r", encoding="utf-8") as f:
-            self.cfg = yaml.safe_load(f)
-        self.pattern_info = {}
-        info_path = Path(__file__).resolve().parents[2] / "configs" / "pattern_info.json"
-        if info_path.exists():
-            try:
-                self.pattern_info = json.loads(info_path.read_text(encoding="utf-8"))
-            except Exception:
-                self.pattern_info = {}
-
-    def _save_config(self):
+    def _collect_and_save(self, kind: str, container: QWidget):
         from pathlib import Path
         import yaml
         base = Path(__file__).resolve().parents[2] / "configs" / "patterns.yaml"
+        with open(base, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        kp = cfg.get("patterns", {}).get(f"{kind}_patterns", {})
+        keys_enabled = set(kp.get("keys_enabled", []) or [])
+        params = kp.get("params", {}) or {}
+        for group in container.findChildren(QGroupBox):
+            key = group.title()
+            form = group.layout()
+            chk = form.itemAt(1).widget(); conf = form.itemAt(3).widget(); atr_mult = form.itemAt(5).widget()
+            min_touches = form.itemAt(7).widget(); min_span = form.itemAt(9).widget(); max_span = form.itemAt(11).widget()
+            target_box = form.itemAt(13).widget()
+            if chk.isChecked(): keys_enabled.add(key)
+            else: keys_enabled.discard(key)
+            p = params.get(key, {})
+            p["confidence"] = float(conf.value()); p["atr_mult"] = float(atr_mult.value())
+            p["min_touches"] = int(min_touches.value()); p["min_span"] = int(min_span.value()); p["max_span"] = int(max_span.value())
+            p["target_mode"] = target_box.currentText()
+            params[key] = p
+        kp["keys_enabled"] = list(keys_enabled)
+        kp["params"] = params
+        cfg["patterns"][f"{kind}_patterns"] = kp
         with open(base, "w", encoding="utf-8") as f:
-            yaml.safe_dump(self.cfg, f, allow_unicode=True, sort_keys=False)
-
-    def _pattern_keys(self, kind: str):
-        # Legge dinamicamente la lista da patterns.yaml
-        keys = self.cfg.get("patterns",{}).get(f"{kind}_patterns",{}).get("keys_enabled",[]) or []
-        return list(keys)
-
-    def _build_tab(self, tab_widget: QWidget, kind: str):
-        layout = QVBoxLayout(tab_widget)
-        keys = self._pattern_keys(kind)
-        for key in keys:
-            group = QGroupBox(key, tab_widget)
-            form = QFormLayout(group)
-            # Switch attivo
-            chk = QCheckBox("Attivo", group); chk.setChecked(True)
-            form.addRow("Stato:", chk)
-
-            # Confidence
-            conf = QDoubleSpinBox(group); conf.setRange(0.0,1.0); conf.setSingleStep(0.05); conf.setValue(0.5)
-            form.addRow("Confidence:", conf)
-
-            # Soglie generiche (es. ATR multipliers, min_touches, spans)
-            atr_mult = QDoubleSpinBox(group); atr_mult.setRange(0.0,10.0); atr_mult.setSingleStep(0.1); atr_mult.setValue(2.0)
-            form.addRow("ATR Mult:", atr_mult)
-
-            min_touches = QSpinBox(group); min_touches.setRange(0,20); min_touches.setValue(4)
-            form.addRow("Min touches:", min_touches)
-
-            min_span = QSpinBox(group); min_span.setRange(5,500); min_span.setValue(30)
-            form.addRow("Min span:", min_span)
-
-            max_span = QSpinBox(group); max_span.setRange(10,2000); max_span.setValue(180)
-            form.addRow("Max span:", max_span)
-
-            # Target/Stop selector
-            target_box = QComboBox(group)
-            target_box.addItems(["Altezza figura", "Flag pole", "Ampiezza canale", "Custom"])
-            form.addRow("Target/Stop:", target_box)
-
-            layout.addWidget(group)
-
-        layout.addStretch(1)
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
 
     def _on_save(self):
-        # TODO: raccogliere i valori UI e scriverli in cfg['patterns'][f'{kind}_patterns']['params'][key]...
-        # Qui salviamo solo il file così da sbloccare il wiring di base; l'implementazione può essere estesa.
-        self._save_config()
+        self._collect_and_save("chart", self.chart_tab)
+        self._collect_and_save("candle", self.candle_tab)
         self.accept()

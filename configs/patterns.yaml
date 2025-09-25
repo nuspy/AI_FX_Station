@@ -14,163 +14,90 @@ patterns:
     - right_angle_broadening_descending
     - broadening_wedge_ascending
     - broadening_wedge_descending
-    - ascending_triangle
-    - descending_triangle
-    - symmetrical_triangle
-    - bull_flag
-    - bear_flag
-    - bull_pennant
-    - bear_pennant
-    - rising_channel
-    - falling_channel
-    - head_and_shoulders
-    - inverse_head_and_shoulders
-    - double_top
-    - double_bottom
-    - triple_top
-    - triple_bottom
-    - wedge_ascending
-    - wedge_descending
-    - rectangle_range
-    - diamond_top
-    - diamond_bottom
-    params:
-      ascending_triangle:
-        min_span: 20
-        max_span: 120
-        min_touches: 4
-        atr_period: 14
-      descending_triangle:
-        min_span: 20
-        max_span: 120
-        min_touches: 4
-        atr_period: 14
-      symmetrical_triangle:
-        min_span: 20
-        max_span: 120
-        min_touches: 4
-        atr_period: 14
-      bull_flag:
-        impulse_mult: 2.0
-        window: 40
-      bear_flag:
-        impulse_mult: 2.0
-        window: 40
-      bull_pennant:
-        impulse_mult: 2.0
-        window: 40
-      bear_pennant:
-        impulse_mult: 2.0
-        window: 40
-      rising_channel:
-        min_span: 30
-        max_span: 180
-        min_touches: 4
-      falling_channel:
-        min_span: 30
-        max_span: 180
-        min_touches: 4
-      head_and_shoulders:
-        window: 120
-        tol: 0.02
-      inverse_head_and_shoulders:
-        window: 120
-        tol: 0.02
-      double_top:
-        window: 120
-        tol: 0.01
-      double_bottom:
-        window: 120
-        tol: 0.01
-      triple_top:
-        window: 140
-        tol: 0.015
-      triple_bottom:
-        window: 140
-        tol: 0.015
-      wedge_ascending:
-        min_span: 30
-        max_span: 200
-        min_touches: 4
-      wedge_descending:
-        min_span: 30
-        max_span: 200
-        min_touches: 4
-      rectangle_range:
-        window: 80
-        tightness: 0.8
-      diamond_top:
-        window: 120
-      diamond_bottom:
-        window: 120
   candle_patterns:
     enabled_default: true
     keys_enabled:
-    - hammer
-    - shooting_star
-    - bullish_engulfing
     - bearish_engulfing
-    - harami_bull
+    - bullish_engulfing
+    - dark_cloud_cover
+    - dragonfly_doji
+    - falling_three_methods
+    - gravestone_doji
+    - hammer
     - harami_bear
-    - harami_cross_bull
-    - harami_cross_bear
-    - belt_hold_bull
-    - belt_hold_bear
-    - mat_hold_bull
-    - mat_hold_bear
-    - kicker_bull
-    - kicker_bear
-    - tasuki_gap_up
-    - tasuki_gap_down
+    - harami_bull
+    - piercing_line
+    - rising_three_methods
+    - shooting_star
+    - three_black_crows
+    - three_white_soldiers
+    - tweezer_bottom
+    - tweezer_top
     params:
-      hammer:
-        confirm_with_volume: false
-        rr: 1.5
-      shooting_star:
-        confirm_with_volume: false
-        rr: 1.5
-      bullish_engulfing:
-        confirm_with_volume: false
-        rr: 1.5
       bearish_engulfing:
         confirm_with_volume: false
         rr: 1.5
-      harami_bull:
+        target_mode: Altezza figura
+      dragonfly_doji:
         confirm_with_volume: false
         rr: 1.5
+        target_mode: Altezza figura
+      tweezer_bottom:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      shooting_star:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      bullish_engulfing:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
       harami_bear:
         confirm_with_volume: false
         rr: 1.5
-      harami_cross_bull:
+        target_mode: Altezza figura
+      three_black_crows:
         confirm_with_volume: false
         rr: 1.5
-      harami_cross_bear:
+        target_mode: Altezza figura
+      rising_three_methods:
         confirm_with_volume: false
         rr: 1.5
-      belt_hold_bull:
+        target_mode: Altezza figura
+      falling_three_methods:
         confirm_with_volume: false
         rr: 1.5
-      belt_hold_bear:
+        target_mode: Altezza figura
+      dark_cloud_cover:
         confirm_with_volume: false
         rr: 1.5
-      mat_hold_bull:
+        target_mode: Altezza figura
+      piercing_line:
         confirm_with_volume: false
         rr: 1.5
-      mat_hold_bear:
+        target_mode: Altezza figura
+      gravestone_doji:
         confirm_with_volume: false
         rr: 1.5
-      kicker_bull:
+        target_mode: Altezza figura
+      tweezer_top:
         confirm_with_volume: false
         rr: 1.5
-      kicker_bear:
+        target_mode: Altezza figura
+      harami_bull:
         confirm_with_volume: false
         rr: 1.5
-      tasuki_gap_up:
+        target_mode: Altezza figura
+      hammer:
         confirm_with_volume: false
         rr: 1.5
-      tasuki_gap_down:
+        target_mode: Altezza figura
+      three_white_soldiers:
         confirm_with_volume: false
         rr: 1.5
+        target_mode: Altezza figura
   view:
     badge_info: true
     badge_font_pt: 8
