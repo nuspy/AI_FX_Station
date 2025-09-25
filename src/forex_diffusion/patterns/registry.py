@@ -4,6 +4,10 @@ from typing import Iterable, List, Optional
 # Import espliciti dei nostri detector
 from .candles import make_candle_detectors
 from .broadening import make_broadening_detectors
+from .triangles import make_triangle_detectors
+from .flags import make_flag_detectors
+from .channels import make_channel_detectors
+from .hns import make_hns_detectors
 
 class PatternRegistry:
     """
@@ -21,6 +25,10 @@ class PatternRegistry:
         out: List[object] = []
         if want_chart:
             out.extend(make_broadening_detectors())
+            out.extend(make_triangle_detectors())
+            out.extend(make_flag_detectors())
+            out.extend(make_channel_detectors())
+            out.extend(make_hns_detectors())
         if want_candle:
             out.extend(make_candle_detectors())
         return out
