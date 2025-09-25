@@ -8,21 +8,169 @@ patterns:
   chart_patterns:
     enabled_default: true
     keys_enabled:
-      - broadening_bottom
-      - broadening_top
-      - right_angle_broadening_ascending
-      - right_angle_broadening_descending
-      - broadening_wedge_ascending
-      - broadening_wedge_descending
+    - broadening_bottom
+    - broadening_top
+    - right_angle_broadening_ascending
+    - right_angle_broadening_descending
+    - broadening_wedge_ascending
+    - broadening_wedge_descending
+    - ascending_triangle
+    - descending_triangle
+    - symmetrical_triangle
+    - bull_flag
+    - bear_flag
+    - bull_pennant
+    - bear_pennant
+    - rising_channel
+    - falling_channel
+    - head_and_shoulders
+    - inverse_head_and_shoulders
+    - double_top
+    - double_bottom
+    - triple_top
+    - triple_bottom
+    - wedge_ascending
+    - wedge_descending
+    - rectangle_range
+    - diamond_top
+    - diamond_bottom
+    params:
+      ascending_triangle:
+        min_span: 20
+        max_span: 120
+        min_touches: 4
+        atr_period: 14
+      descending_triangle:
+        min_span: 20
+        max_span: 120
+        min_touches: 4
+        atr_period: 14
+      symmetrical_triangle:
+        min_span: 20
+        max_span: 120
+        min_touches: 4
+        atr_period: 14
+      bull_flag:
+        impulse_mult: 2.0
+        window: 40
+      bear_flag:
+        impulse_mult: 2.0
+        window: 40
+      bull_pennant:
+        impulse_mult: 2.0
+        window: 40
+      bear_pennant:
+        impulse_mult: 2.0
+        window: 40
+      rising_channel:
+        min_span: 30
+        max_span: 180
+        min_touches: 4
+      falling_channel:
+        min_span: 30
+        max_span: 180
+        min_touches: 4
+      head_and_shoulders:
+        window: 120
+        tol: 0.02
+      inverse_head_and_shoulders:
+        window: 120
+        tol: 0.02
+      double_top:
+        window: 120
+        tol: 0.01
+      double_bottom:
+        window: 120
+        tol: 0.01
+      triple_top:
+        window: 140
+        tol: 0.015
+      triple_bottom:
+        window: 140
+        tol: 0.015
+      wedge_ascending:
+        min_span: 30
+        max_span: 200
+        min_touches: 4
+      wedge_descending:
+        min_span: 30
+        max_span: 200
+        min_touches: 4
+      rectangle_range:
+        window: 80
+        tightness: 0.8
+      diamond_top:
+        window: 120
+      diamond_bottom:
+        window: 120
   candle_patterns:
     enabled_default: true
     keys_enabled:
-      - hammer
-      - shooting_star
-      - bullish_engulfing
-      - bearish_engulfing
-      - harami_bull
-      - harami_bear
+    - hammer
+    - shooting_star
+    - bullish_engulfing
+    - bearish_engulfing
+    - harami_bull
+    - harami_bear
+    - harami_cross_bull
+    - harami_cross_bear
+    - belt_hold_bull
+    - belt_hold_bear
+    - mat_hold_bull
+    - mat_hold_bear
+    - kicker_bull
+    - kicker_bear
+    - tasuki_gap_up
+    - tasuki_gap_down
+    params:
+      hammer:
+        confirm_with_volume: false
+        rr: 1.5
+      shooting_star:
+        confirm_with_volume: false
+        rr: 1.5
+      bullish_engulfing:
+        confirm_with_volume: false
+        rr: 1.5
+      bearish_engulfing:
+        confirm_with_volume: false
+        rr: 1.5
+      harami_bull:
+        confirm_with_volume: false
+        rr: 1.5
+      harami_bear:
+        confirm_with_volume: false
+        rr: 1.5
+      harami_cross_bull:
+        confirm_with_volume: false
+        rr: 1.5
+      harami_cross_bear:
+        confirm_with_volume: false
+        rr: 1.5
+      belt_hold_bull:
+        confirm_with_volume: false
+        rr: 1.5
+      belt_hold_bear:
+        confirm_with_volume: false
+        rr: 1.5
+      mat_hold_bull:
+        confirm_with_volume: false
+        rr: 1.5
+      mat_hold_bear:
+        confirm_with_volume: false
+        rr: 1.5
+      kicker_bull:
+        confirm_with_volume: false
+        rr: 1.5
+      kicker_bear:
+        confirm_with_volume: false
+        rr: 1.5
+      tasuki_gap_up:
+        confirm_with_volume: false
+        rr: 1.5
+      tasuki_gap_down:
+        confirm_with_volume: false
+        rr: 1.5
   view:
     badge_info: true
     badge_font_pt: 8

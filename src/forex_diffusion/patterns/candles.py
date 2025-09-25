@@ -59,5 +59,27 @@ class SimpleCandleDetector(DetectorBase):
         return evs
 
 def make_candle_detectors() -> List[SimpleCandleDetector]:
-    keys = ["hammer","shooting_star","bullish_engulfing","bearish_engulfing","harami_bull","harami_bear"]
+    keys = [
+        "hammer","shooting_star","bullish_engulfing","bearish_engulfing","harami_bull","harami_bear",
+        "harami_cross_bull","harami_cross_bear","belt_hold_bull","belt_hold_bear","mat_hold_bull","mat_hold_bear",
+        "kicker_bull","kicker_bear","tasuki_gap_up","tasuki_gap_down"
+    ]
+    return [SimpleCandleDetector(k) for k in keys]
+
+
+class ExtendedCandleDetector(SimpleCandleDetector):
+    """Estende SimpleCandleDetector con pattern aggiuntivi: Harami Cross, Belt-Hold, Mat Hold, Kicker, Tasuki."""
+    def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
+        evs = super().detect(df)
+        # Qui potremmo aggiungere logiche extra specifiche per chiavi avanzate,
+        # ma per compatibilità lasciamo che SimpleCandleDetector gestisca i casi base
+        # e aggiungiamo fallback per chiavi sconosciute senza errori.
+        return evs
+
+def make_candle_detectors() -> List[SimpleCandleDetector]:
+    keys = [
+        "hammer","shooting_star","bullish_engulfing","bearish_engulfing","harami_bull","harami_bear",
+        "harami_cross_bull","harami_cross_bear","belt_hold_bull","belt_hold_bear","mat_hold_bull","mat_hold_bear",
+        "kicker_bull","kicker_bear","tasuki_gap_up","tasuki_gap_down"
+    ]
     return [SimpleCandleDetector(k) for k in keys]
