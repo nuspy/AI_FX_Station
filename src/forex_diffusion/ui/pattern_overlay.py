@@ -188,12 +188,32 @@ class PatternOverlayRenderer:
 
     # ---------- Event normalization & density ----------
     def _pattern_label(self, e: object) -> str:
-        for k in ("name", "key", "pattern_name", "pattern", "label", "kind"):
+        # Prefer stable id, then human title from info provider
+        cand_keys = ("name", "key", "pattern_name", "pattern", "label", "kind")
+        raw = None
+        for k in cand_keys:
             if isinstance(e, dict) and k in e and e[k]:
-                return str(e[k])
+                raw = str(e[k]); break
             v = getattr(e, k, None)
-            if v: return str(v)
-        return type(e).__name__
+            if v:
+                raw = str(v); break
+        if not raw:
+            raw = type(e).__name__
+        # Try to map to human-friendly title via info provider
+        try:
+            if getattr(self, "info", None):
+                meta = None
+                if hasattr(self.info, "get"):
+                    meta = self.info.get(raw)
+                if meta is None and hasattr(self.info, "get_info"):
+                    meta = self.info.get_info(raw)
+                if isinstance(meta, dict):
+                    title = meta.get("title") or meta.get("name") or meta.get("label")
+                    if title:
+                        return str(title)
+        except Exception:
+            pass
+        return raw
 
     def _direction_color(self, direction: str) -> str:
         d = str(direction or "").lower()
@@ -342,13 +362,26 @@ class PatternOverlayRenderer:
         return (x0, x1)
 
     def _get_main_price_line(self):
+        # Prefer the underlying price line from PlotService even if hidden
+        try:
+            ps = getattr(self.controller, "plot_service", None)
+            pl = getattr(ps, "_price_line", None)
+            if pl is not None and hasattr(pl, "get_xdata") and len(pl.get_xdata()) >= 2:
+                return pl
+        except Exception:
+            pass
         ax = self.ax
-        if not ax or not ax.lines:
+        if not ax:
             return None
-        lines = [ln for ln in ax.lines if len(getattr(ln, "get_xdata", lambda:[])()) >= 2]
-        if not lines:
-            return None
-        return max(lines, key=lambda ln: len(ln.get_xdata()))
+        try:
+            if ax.lines:
+                # pick the line with most points
+                lines = [ln for ln in ax.lines if len(getattr(ln, "get_xdata", lambda:[])()) >= 2]
+                if lines:
+                    return max(lines, key=lambda ln: len(ln.get_xdata()))
+        except Exception:
+            pass
+        return None
 
     def _draw_formation_segment(self, x_confirm: float, e: object) -> None:
         ax = self.ax
@@ -362,20 +395,30 @@ class PatternOverlayRenderer:
             return
 
         price_line = self._get_main_price_line()
-        if price_line is not None:
-            xd = np.asarray(price_line.get_xdata(), dtype=float)
-            yd = np.asarray(price_line.get_ydata(), dtype=float)
-            mask = (xd >= x0) & (xd <= x1)
-            if mask.sum() >= 2:
-                z = max(price_line.get_zorder() - 1, 1)
-                ln, = ax.plot(xd[mask], yd[mask], color=FORMATION_LINE_COLOR,
-                              linewidth=FORMATION_LINE_WIDTH, alpha=FORMATION_LINE_ALPHA, zorder=z)
-                self._formations.append(ln)
-                return
+        if price_line is None:
+            # No vertical bands fallback: if price-line is unavailable, skip drawing
+            return
 
-        # Fallback
-        span = ax.axvspan(x0, x1, color=FORMATION_LINE_COLOR, alpha=FORMATION_LINE_ALPHA*0.7, zorder=1)
-        self._formations.append(span)
+        xd = np.asarray(price_line.get_xdata(), dtype=float)
+        yd = np.asarray(price_line.get_ydata(), dtype=float)
+        mask = (xd >= x0) & (xd <= x1)
+        if mask.sum() < 2:
+            return
+
+        # Thicker than the price line and color by direction (green bull, red bear)
+        try:
+            base_lw = float(getattr(price_line, "get_linewidth", lambda: 1.2)())
+        except Exception:
+            base_lw = 1.2
+        linewidth = max(base_lw * 1.8, base_lw + 1.5, 3.5)
+        direction = getattr(e, "direction", None)
+        color = self._direction_color(direction)
+        z = max(price_line.get_zorder() - 1, 1)
+
+        ln, = ax.plot(xd[mask], yd[mask],
+                      color=color, linewidth=linewidth,
+                      alpha=max(FORMATION_LINE_ALPHA, 0.5), zorder=z)
+        self._formations.append(ln)
 
     # ---------- Interaction ----------
     def _bind_canvas_events(self) -> None:

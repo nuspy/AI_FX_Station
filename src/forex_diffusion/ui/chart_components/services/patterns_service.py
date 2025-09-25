@@ -48,6 +48,17 @@ class PatternsService(ChartServiceBase):
             pass
 
         logger.debug("PatternsService initialized")
+        # Persistent cache (per symbol) and multi-timeframe scan state
+        self._cache: Dict[tuple, object] = {}
+        self._cache_symbol: Optional[str] = None
+        self._scanned_tfs_by_symbol: Dict[str, set] = {}
+        self._scanning_multi: bool = False
+        # Persistent cache (per symbol) to keep patterns across view reloads/zoom
+        self._cache: Dict[tuple, object] = {}
+        self._cache_symbol: Optional[str] = None
+        # Multi-timeframe scan state
+        self._scanned_tfs_by_symbol: Dict[str, set] = {}
+        self._scanning_multi: bool = False
 
     def set_chart_enabled(self, on: bool):
         self._enabled_chart = bool(on)
@@ -107,6 +118,19 @@ class PatternsService(ChartServiceBase):
                 self.renderer.clear()
                 return
 
+            # Reset cache if symbol changed
+            try:
+                cur_sym = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+                if self._cache_symbol is None:
+                    self._cache_symbol = cur_sym
+                elif cur_sym != self._cache_symbol:
+                    self._cache_symbol = cur_sym
+                    self._cache = {}
+                    self._events = []
+                    self.renderer.clear()
+            except Exception:
+                pass
+
             if self._enabled_history:
                 ds = getattr(self.controller, "data_service", None)
                 if ds and hasattr(ds, "get_full_dataframe"):
@@ -153,8 +177,47 @@ class PatternsService(ChartServiceBase):
                 f"candle={sum(1 for x in evs if getattr(x, 'kind', '') == 'candle')})"
             )
 
-            self._events = enrich_events(dfN, evs)
+            # Enrich, attach human info, annotate TF hint, and merge into persistent cache
+            enriched = enrich_events(dfN, evs)
+            tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
+
+            for e in enriched:
+                # Attach info from pattern_info.json (name, description, benchmarks, notes, image)
+                try:
+                    self._attach_info_to_event(e)
+                except Exception:
+                    pass
+                # Annotate timeframe
+                try:
+                    if tf_hint is not None:
+                        setattr(e, "tf", str(tf_hint))
+                except Exception:
+                    pass
+
+            if not isinstance(getattr(self, "_cache", None), dict):
+                self._cache = {}
+
+            for e in enriched:
+                try:
+                    name = getattr(e, "name", getattr(e, "key", type(e).__name__))
+                    start_ts = getattr(e, "start_ts", None) or getattr(e, "begin_ts", None)
+                    end_ts = getattr(e, "end_ts", None) or getattr(e, "finish_ts", None)
+                    confirm_ts = getattr(e, "confirm_ts", getattr(e, "ts", None))
+                    tfk = getattr(e, "tf", None)
+                    key = (str(name), int(start_ts or 0), int(end_ts or 0), int(confirm_ts or 0), str(tfk or "-"))
+                    self._cache[key] = e
+                except Exception:
+                    continue
+
+            self._events = list(self._cache.values())
             self._repaint()
+
+            # Scan other timeframes for the same symbol and merge (once per symbol session)
+            try:
+                cur_tf = str(tf_hint or getattr(self.controller, "timeframe", "") or "").lower()
+                self._scan_other_timeframes(current_tf=cur_tf)
+            except Exception:
+                pass
 
         except Exception as e:
             logger.exception("Patterns _run_detection failed: {}", e)
@@ -219,4 +282,218 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             from loguru import logger
             logger.debug(f"PatternsService._repaint skipped: {e}")
+
+    # ---- Helpers ----
+    def _attach_info_to_event(self, e: object) -> None:
+        """Attach human-friendly name, description, benchmarks, notes, image from info provider."""
+        try:
+            ip = getattr(self, "info", None)
+            if ip is None or not hasattr(ip, "describe"):
+                return
+            raw_key = str(getattr(e, "pattern_key", getattr(e, "key", "")) or "").strip()
+            raw_name = str(getattr(e, "name", "") or "").strip()
+            pi = ip.describe(raw_key) if raw_key else None
+            if pi is None and raw_name:
+                # try by name (case-insensitive) scanning db
+                db = getattr(ip, "_db", {}) or {}
+                low = raw_name.lower()
+                for k, v in db.items():
+                    try:
+                        if str(v.get("name", "")).lower() == low:
+                            pi = ip.describe(k)
+                            break
+                    except Exception:
+                        continue
+            if pi is None and raw_name:
+                pi = ip.describe(raw_name)
+
+            if pi is None:
+                return
+
+            if getattr(pi, "name", None):
+                try: setattr(e, "name", str(pi.name))
+                except Exception: pass
+            if getattr(pi, "description", None):
+                try: setattr(e, "description", str(pi.description))
+                except Exception: pass
+            bm = getattr(pi, "benchmarks", None)
+            if isinstance(bm, dict):
+                try: setattr(e, "benchmark", bm); setattr(e, "benchmarks", bm)
+                except Exception: pass
+            try:
+                bull = getattr(pi, "bull", None); bear = getattr(pi, "bear", None)
+                if isinstance(bull, dict):
+                    setattr(e, "notes_bull", bull.get("notes") or bull)
+                if isinstance(bear, dict):
+                    setattr(e, "notes_bear", bear.get("notes") or bear)
+            except Exception:
+                pass
+            img_rel = getattr(pi, "image_resource", None)
+            if img_rel:
+                from pathlib import Path
+                root = Path(getattr(self.view, "_app_root", ".")) if hasattr(self.view, "_app_root") else Path(".")
+                try: setattr(e, "image_path", (root / str(img_rel)).as_posix())
+                except Exception: pass
+        except Exception:
+            pass
+
+    def _scan_other_timeframes(self, current_tf: str = "") -> None:
+        """Scan 1m,5m,15m,30m,1h,4h,1d and merge results into cache (once per symbol session)."""
+        try:
+            sym = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+            if not sym:
+                return
+            if self._scanning_multi:
+                return
+            self._scanning_multi = True
+            try:
+                tfs_all = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+                cur_set = self._scanned_tfs_by_symbol.get(sym, set())
+                if current_tf:
+                    cur_set.add(str(current_tf))
+                for tf in tfs_all:
+                    if tf in cur_set:
+                        continue
+                    try:
+                        df_tf = self.controller.load_candles_from_db(sym, tf, limit=50000)
+                    except Exception:
+                        df_tf = None
+                    if df_tf is None or df_tf.empty:
+                        cur_set.add(tf); continue
+                    hint_prev = getattr(self.view, "_patterns_scan_tf_hint", None)
+                    try:
+                        setattr(self.view, "_patterns_scan_tf_hint", tf)
+                        self._run_detection(df_tf)
+                    finally:
+                        try:
+                            setattr(self.view, "_patterns_scan_tf_hint", hint_prev)
+                        except Exception:
+                            pass
+                    cur_set.add(tf)
+                self._scanned_tfs_by_symbol[sym] = cur_set
+            finally:
+                self._scanning_multi = False
+        except Exception:
+            self._scanning_multi = False
+
+    # ---------- Helpers: attach info & multi-timeframe scan ----------
+
+    def _attach_info_to_event(self, e: object) -> None:
+        """Attach human-friendly name, description, benchmarks, notes, image from info provider."""
+        try:
+            if not hasattr(self, "info"):
+                return
+            raw_key = str(getattr(e, "key", "") or "").strip()
+            raw_name = str(getattr(e, "name", "") or "").strip()
+            pi = None
+            # 1) try by canonical key
+            if raw_key and hasattr(self.info, "describe"):
+                pi = self.info.describe(raw_key)
+            # 2) fallback: try by human name (case-insensitive) by scanning provider DB
+            if pi is None:
+                try:
+                    db = getattr(self.info, "_db", {}) or {}
+                    low = raw_name.lower()
+                    for k, v in db.items():
+                        try:
+                            if str(v.get("name", "")).lower() == low:
+                                pi = self.info.describe(k)
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+            if pi is None:
+                # last resort: try name via describe (if DB happens to use same)
+                if raw_name and hasattr(self.info, "describe"):
+                    pi = self.info.describe(raw_name)
+            if pi is None:
+                return
+
+            # Name/title
+            try:
+                if getattr(pi, "name", None):
+                    setattr(e, "name", str(pi.name))
+            except Exception:
+                pass
+            # Description
+            try:
+                if getattr(pi, "description", None):
+                    setattr(e, "description", str(pi.description))
+            except Exception:
+                pass
+            # Benchmarks (attach both 'benchmark' and 'benchmarks' for consumers)
+            try:
+                bm = getattr(pi, "benchmarks", None)
+                if isinstance(bm, dict):
+                    setattr(e, "benchmark", bm)
+                    setattr(e, "benchmarks", bm)
+            except Exception:
+                pass
+            # Notes bull/bear (optional)
+            try:
+                bull = getattr(pi, "bull", None)
+                bear = getattr(pi, "bear", None)
+                if isinstance(bull, dict):
+                    setattr(e, "notes_bull", bull.get("notes") or bull)
+                if isinstance(bear, dict):
+                    setattr(e, "notes_bear", bear.get("notes") or bear)
+            except Exception:
+                pass
+            # Image path (optional)
+            try:
+                img_rel = getattr(pi, "image_resource", None)
+                if img_rel:
+                    from pathlib import Path
+                    root = Path(getattr(self.view, "_app_root", ".")) if hasattr(self.view, "_app_root") else Path(".")
+                    img_path = (root / str(img_rel)).as_posix()
+                    setattr(e, "image_path", img_path)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _scan_other_timeframes(self, current_tf: str = "") -> None:
+        """Scan remaining timeframes (1m,5m,15m,30m,1h,4h,1d) and merge results into cache (once per symbol)."""
+        try:
+            sym = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+            if not sym:
+                return
+            # guard reentrancy
+            if self._scanning_multi:
+                return
+            self._scanning_multi = True
+            try:
+                tfs_all = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+                cur_set = self._scanned_tfs_by_symbol.get(sym, set())
+                # always record that we've processed current tf (if any)
+                if current_tf:
+                    cur_set.add(str(current_tf))
+                for tf in tfs_all:
+                    if tf in cur_set:
+                        continue
+                    try:
+                        df_tf = self.controller.load_candles_from_db(sym, tf, limit=50000)
+                    except Exception:
+                        df_tf = None
+                    if df_tf is None or df_tf.empty:
+                        cur_set.add(tf)
+                        continue
+                    # annotate hint on view for tf tagging
+                    prev_hint = getattr(self.view, "_patterns_scan_tf_hint", None)
+                    try:
+                        setattr(self.view, "_patterns_scan_tf_hint", tf)
+                        # run detection inline to avoid debounce and to merge immediately
+                        self._run_detection(df_tf)
+                    finally:
+                        try:
+                            setattr(self.view, "_patterns_scan_tf_hint", prev_hint)
+                        except Exception:
+                            pass
+                    cur_set.add(tf)
+                self._scanned_tfs_by_symbol[sym] = cur_set
+            finally:
+                self._scanning_multi = False
+        except Exception:
+            self._scanning_multi = False
 

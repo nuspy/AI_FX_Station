@@ -143,6 +143,12 @@ class ChartTabUI(QWidget):
         self._x_cache_comp = None  # cached compressed X for nearest lookup
         self._init_overlays()
         self._apply_grid_style()
+        # Pattern overlays state/caches
+        self._pattern_artists = []        # list of matplotlib artists for patterns
+        self._artist_to_pattern = {}      # artist -> pattern dict
+        self._patterns_cache = []         # last detected patterns (raw dicts)
+        self._patterns_cache_map = {}     # key tuple -> canonical pattern
+        self._patterns_scan_tf_hint = None  # tf hint when scanning sequentially
 
     def _build_ui(self) -> None:
         """Programmatically builds the entire UI with a two-row topbar."""
@@ -263,18 +269,24 @@ class ChartTabUI(QWidget):
         def _scan_patterns_now():
             try:
                 ps = self.chart_controller.patterns_service
-                df = None
-                # prova a prendere tutto lo storico se disponibile
-                ds = getattr(self.chart_controller, "data_service", None)
-                if ds and hasattr(ds, "get_full_dataframe"):
-                    df = ds.get_full_dataframe()
-                # fallback: ultimo df plottato
-                if df is None:
-                    df = getattr(self.chart_controller.plot_service, "_last_df", None)
-                if df is None or getattr(df, "empty", True):
-                    logger.info("Scan patterns: df è vuoto o mancante")
+                if ps is None:
                     return
-                ps.on_update_plot(df)
+                symbol = getattr(self, "symbol", None) or (self.symbol_combo.currentText() if hasattr(self, "symbol_combo") else None)
+                if not symbol:
+                    logger.info("Scan patterns: simbolo non impostato")
+                    return
+                # scan across multiple timeframes and merge into cache
+                tfs_to_scan = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+                for tf in tfs_to_scan:
+                    try:
+                        df_tf = self._load_candles_from_db(symbol, tf, limit=10000)
+                        if df_tf is None or df_tf.empty:
+                            continue
+                        # tag hint so callback can attach tf to incoming results
+                        self._patterns_scan_tf_hint = tf
+                        ps.on_update_plot(df_tf)
+                    except Exception:
+                        continue
             except Exception as e:
                 logger.exception("Scan patterns failed: {}", e)
 
@@ -427,6 +439,23 @@ class ChartTabUI(QWidget):
         ctrl = self.chart_controller
         # Istanzia lazy il service (registry interno, no setattr sul controller)
         get_patterns_service(ctrl, self, create=True)
+        # Prova ad agganciare un callback/signal per ricevere i pattern rilevati
+        try:
+            ps = get_patterns_service(ctrl, self, create=False)
+            if ps is not None:
+                # Preferisci un eventuale Signal Qt
+                if hasattr(ps, "patternsDetected"):
+                    try:
+                        ps.patternsDetected.connect(self.on_patterns_ready)
+                    except Exception:
+                        pass
+                # Fallback: esponi una callback attribuita dal service
+                try:
+                    setattr(ps, "ui_on_patterns_ready", self.on_patterns_ready)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Patterns wiring: unable to attach callback: {e}")
 
         # Collega i toggle → set_*_enabled(...)
         if chart_cb:
@@ -461,6 +490,8 @@ class ChartTabUI(QWidget):
         self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
         self.canvas.mpl_connect("button_press_event", self._on_canvas_click) # For drawing
+        # Enable pick events for pattern badges (dialogs on click)
+        self.canvas.mpl_connect("pick_event", self._on_pick_pattern_artist)
 
     def _get_splitters(self) -> Dict[str, QSplitter]:
         return {
@@ -492,6 +523,13 @@ class ChartTabUI(QWidget):
 
     def _on_symbol_combo_changed(self, new_symbol: str) -> None:
         if not new_symbol: return
+        # reset pattern cache on symbol change
+        try:
+            self._clear_pattern_artists()
+            self._patterns_cache = []
+            self._patterns_cache_map = {}
+        except Exception:
+            pass
         set_setting('chart.symbol', new_symbol)
         self.symbol = new_symbol
         self.chart_controller.on_symbol_changed(new_symbol=new_symbol)
@@ -658,6 +696,15 @@ class ChartTabUI(QWidget):
                 self._last_df = df
                 self._rebuild_x_cache()
             self._apply_grid_style()
+            # Redraw cached patterns without re-detection (UI legacy fallback)
+            self._redraw_cached_patterns()
+            # Ask PatternsService to repaint overlays from its cache (no detection)
+            try:
+                ps = get_patterns_service(self.chart_controller, self, create=False)
+                if ps:
+                    ps._repaint()
+            except Exception:
+                pass
         except Exception as e:
             logger.debug(f"post-update_plot hooks failed: {e}")
         return res
@@ -916,3 +963,311 @@ class ChartTabUI(QWidget):
 
     def _hurst_roll(self, x: pd.Series, window: int):
         return self.chart_controller.hurst_roll(x=x, window=window)
+
+    # -------- Patterns UI integration --------
+
+    def on_patterns_ready(self, patterns: List[dict]) -> None:
+        """
+        Entry point for PatternsService: merge into canonical cache (by timestamps) and redraw.
+        Supported keys from service: name/pattern, description/desc, idx_start/idx_end, start_ts/end_ts/ts_start/ts_end/start/end
+        """
+        try:
+            if not isinstance(patterns, list) or len(patterns) == 0:
+                return
+            # ensure cache map exists
+            if not isinstance(getattr(self, "_patterns_cache_map", None), dict):
+                self._patterns_cache_map = {}
+            symbol = getattr(self, "symbol", None)
+            tf_hint = getattr(self, "_patterns_scan_tf_hint", None)
+            # process and merge
+            for raw in patterns:
+                try:
+                    p = dict(raw) if isinstance(raw, dict) else {}
+                    name = str(p.get("name") or p.get("pattern") or "Pattern")
+                    desc = p.get("description") or p.get("desc")
+                    # resolve timestamps
+                    ts_start = p.get("ts_start") or p.get("start_ts") or p.get("tsStart") or p.get("start")
+                    ts_end = p.get("ts_end") or p.get("end_ts") or p.get("tsEnd") or p.get("end")
+                    if (ts_start is None or ts_end is None) and getattr(self, "_last_df", None) is not None and not self._last_df.empty:
+                        idx_start = p.get("idx_start")
+                        idx_end = p.get("idx_end")
+                        if idx_start is not None and 0 <= int(idx_start) < len(self._last_df):
+                            ts_start = int(self._last_df["ts_utc"].iloc[int(idx_start)])
+                        if idx_end is not None and 0 <= int(idx_end) < len(self._last_df):
+                            ts_end = int(self._last_df["ts_utc"].iloc[int(idx_end)])
+                    # still missing? skip this entry
+                    if ts_start is None or ts_end is None:
+                        continue
+                    try:
+                        ts_start = int(float(ts_start))
+                        ts_end = int(float(ts_end))
+                    except Exception:
+                        continue
+                    tf_val = p.get("tf") or p.get("timeframe") or tf_hint
+                    # canonical pattern
+                    canon = dict(p)
+                    canon["name"] = name
+                    if desc is not None:
+                        canon["description"] = desc
+                    canon["ts_start"] = ts_start
+                    canon["ts_end"] = ts_end
+                    if symbol:
+                        canon["symbol"] = symbol
+                    if tf_val:
+                        canon["tf"] = str(tf_val)
+                    # key: allow same name across TF as separate entries
+                    key = (symbol or "-", name, ts_start, ts_end, canon.get("tf", "-"))
+                    self._patterns_cache_map[key] = canon
+                except Exception:
+                    continue
+            # refresh list cache and redraw
+            self._patterns_cache = list(self._patterns_cache_map.values())
+            self._redraw_cached_patterns()
+        except Exception as e:
+            logger.debug(f"on_patterns_ready failed: {e}")
+        finally:
+            # reset hint so future callbacks without explicit scan won't inherit it
+            try:
+                self._patterns_scan_tf_hint = None
+            except Exception:
+                pass
+
+    def _redraw_cached_patterns(self) -> None:
+        """Redraw previously detected patterns from cache."""
+        if getattr(self, "_patterns_cache", None):
+            self._draw_patterns(self._patterns_cache)
+
+    def _clear_pattern_artists(self) -> None:
+        """Remove previous pattern artists from axes."""
+        try:
+            for art in getattr(self, "_pattern_artists", []):
+                try:
+                    art.remove()
+                except Exception:
+                    pass
+            self._pattern_artists = []
+            self._artist_to_pattern = {}
+        except Exception:
+            self._pattern_artists = []
+            self._artist_to_pattern = {}
+
+    def _draw_patterns(self, patterns: List[dict]) -> None:
+        """Draw badges and formation line for patterns."""
+        if not hasattr(self, "ax") or self.ax is None:
+            return
+        if getattr(self, "_last_df", None) is None or self._last_df.empty:
+            return
+        # Clear previous drawings (we keep cache; no re-detection)
+        self._clear_pattern_artists()
+
+        for p in patterns:
+            try:
+                self._draw_single_pattern(p)
+            except Exception as e:
+                logger.debug(f"_draw_single_pattern error: {e}")
+
+        self.canvas.draw_idle()
+
+    def _draw_single_pattern(self, p: dict) -> None:
+        """Draw one pattern: thick baseline under price + name badge; make badge pickable to open dialog."""
+        df = self._last_df
+        # Resolve pattern name and description
+        name = str(p.get("name") or p.get("pattern") or "Pattern")
+        desc = str(p.get("description") or p.get("desc") or "Nessuna descrizione disponibile.")
+        tf_lbl = str(p.get("tf")) if p.get("tf") else None
+
+        # Resolve range preferring absolute timestamps
+        ts_start = p.get("ts_start") or p.get("start_ts") or p.get("tsStart") or p.get("start")
+        ts_end = p.get("ts_end") or p.get("end_ts") or p.get("tsEnd") or p.get("end")
+        idx_start = p.get("idx_start")
+        idx_end = p.get("idx_end")
+        if ts_start is not None and ts_end is not None:
+            try:
+                ts_start_f = float(ts_start); ts_end_f = float(ts_end)
+                idx_start = self._find_index_by_ts(ts_start_f)
+                idx_end = self._find_index_by_ts(ts_end_f)
+            except Exception:
+                pass
+        if idx_start is None or idx_end is None:
+            try:
+                # choose last 20 bars as fallback
+                idx_end = len(df) - 1 if idx_end is None else int(idx_end)
+                idx_start = max(0, idx_end - 20) if idx_start is None else int(idx_start)
+            except Exception:
+                return  # give up if cannot resolve
+
+        # Clamp and ensure start <= end
+        idx_start = max(0, min(int(idx_start), len(df) - 1))
+        idx_end = max(idx_start, min(int(idx_end), len(df) - 1))
+
+        # X coordinates (prefer timestamps for stability across TF/zoom)
+        try:
+            if ts_start is not None and ts_end is not None:
+                x_start = float(self._ts_to_x(float(ts_start)))
+                x_end = float(self._ts_to_x(float(ts_end)))
+            else:
+                if getattr(self, "_x_cache_comp", None) is None or len(self._x_cache_comp) != len(df):
+                    self._rebuild_x_cache()
+                x_start = float(self._x_cache_comp[idx_start])
+                x_end = float(self._x_cache_comp[idx_end])
+        except Exception:
+            x_start = float(idx_start)
+            x_end = float(idx_end)
+
+        # Y baseline: slightly under the local price line (use low if available)
+        y_series = self._series_for_y(df)
+        try:
+            if "low" in df.columns:
+                y_base = float(df["low"].iloc[idx_start:idx_end + 1].min())
+            else:
+                y_base = float(y_series.iloc[idx_start:idx_end + 1].min())
+        except Exception:
+            y_base = float(y_series.iloc[max(0, idx_end - 1)])
+
+        # Slight padding below the min to make it "under" the line
+        try:
+            ymin, ymax = self.ax.get_ylim()
+            pad = (ymax - ymin) * 0.01
+            y_base = max(ymin + pad * 0.5, y_base - pad * 2.0)
+        except Exception:
+            pass
+
+        # Color and styles
+        try:
+            color = self._get_color("pattern.color", "#FFA500")
+        except Exception:
+            color = "#FFA500"
+
+        # Draw thick horizontal "formation" line (no vertical band)
+        line_artists = self.ax.plot([x_start, x_end], [y_base, y_base],
+                                    color=color, linewidth=4.0, alpha=0.9, solid_capstyle="butt", zorder=12)
+        if line_artists:
+            self._pattern_artists.extend(line_artists)
+            for la in line_artists:
+                self._artist_to_pattern[la] = p
+
+        # Badge with pattern name (with TF if available) near the end of the segment
+        try:
+            # Place slightly above the baseline for readability
+            y_text = y_base
+            try:
+                ymin, ymax = self.ax.get_ylim()
+                y_text = min(y_base + (ymax - ymin) * 0.02, ymax)
+            except Exception:
+                pass
+            label_text = f"{name} [{tf_lbl}]" if tf_lbl else name
+            badge = self.ax.annotate(
+                label_text,
+                xy=(x_end, y_text),
+                xytext=(8, 4),
+                textcoords="offset points",
+                fontsize=9,
+                color="#ffffff",
+                ha="left",
+                va="bottom",
+                bbox=dict(boxstyle="round,pad=0.3", fc=color, ec="black", lw=0.6, alpha=0.95),
+                zorder=13,
+                picker=True  # enable pick to open dialog
+            )
+            self._pattern_artists.append(badge)
+            # Store augmented info for dialog
+            p_aug = dict(p)
+            p_aug.setdefault("name", name)
+            p_aug.setdefault("description", desc)
+            p_aug["idx_start"] = idx_start
+            p_aug["idx_end"] = idx_end
+            if ts_start is not None and ts_end is not None:
+                try:
+                    p_aug["ts_start"] = int(float(ts_start))
+                    p_aug["ts_end"] = int(float(ts_end))
+                except Exception:
+                    pass
+            self._artist_to_pattern[badge] = p_aug
+        except Exception as e:
+            logger.debug(f"badge annotate failed: {e}")
+
+    def _find_index_by_ts(self, ts_ms: float) -> int:
+        """Find nearest index by timestamp in ms."""
+        try:
+            import numpy as np
+            arr = self._last_df["ts_utc"].to_numpy(dtype="float64")
+            idx = int(np.searchsorted(arr, ts_ms))
+            idx = max(0, min(idx, len(arr) - 1))
+            # choose closer neighbor
+            if idx > 0 and abs(arr[idx] - ts_ms) > abs(arr[idx - 1] - ts_ms):
+                idx -= 1
+            return idx
+        except Exception:
+            return max(0, len(self._last_df) - 1)
+
+    def _ts_to_x(self, ts_ms: float) -> float:
+        """Convert timestamp (ms) to matplotlib X respecting compression."""
+        try:
+            import pandas as _pd
+            import matplotlib.dates as _md
+            dt = _pd.to_datetime(ts_ms, unit="ms", utc=True).tz_convert("UTC").tz_localize(None)
+            x = _md.date2num(dt)
+            comp = getattr(getattr(self.chart_controller, "plot_service", None), "_compress_real_x", None)
+            return float(comp(x)) if callable(comp) else float(x)
+        except Exception:
+            return float(ts_ms)
+
+    def _series_for_y(self, df: pd.DataFrame) -> pd.Series:
+        """Choose best Y series for badges/lines."""
+        if getattr(self, "_price_mode", "candles") == "line" and "price" in df.columns:
+            return df["price"]
+        if "close" in df.columns:
+            return df["close"]
+        if "price" in df.columns:
+            return df["price"]
+        # fallback: first numeric column
+        try:
+            num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+            return df[num_cols[0]] if num_cols else df.iloc[:, 0]
+        except Exception:
+            return df.iloc[:, 0]
+
+    def _on_pick_pattern_artist(self, event):
+        """Open dialog with pattern details when a badge (or related artist) is clicked."""
+        try:
+            art = getattr(event, "artist", None)
+            if art is None:
+                return
+            p = self._artist_to_pattern.get(art)
+            if p is None:
+                # try to resolve through line artists (no picker)
+                return
+            self._open_pattern_dialog(p)
+        except Exception as e:
+            logger.debug(f"_on_pick_pattern_artist failed: {e}")
+
+    def _open_pattern_dialog(self, p: dict) -> None:
+        """Show a dialog with pattern name, period and description."""
+        try:
+            dlg = QDialog(self)
+            dlg.setWindowTitle(str(p.get("name", "Pattern")))
+            lay = QVBoxLayout(dlg)
+            # Compose textual info
+            name = str(p.get("name", "Pattern"))
+            desc = str(p.get("description") or p.get("desc") or "Nessuna descrizione disponibile.")
+            idx_start = p.get("idx_start"); idx_end = p.get("idx_end")
+            period_txt = ""
+            try:
+                if idx_start is not None and idx_end is not None and "ts_utc" in self._last_df.columns:
+                    ts1 = pd.to_datetime(float(self._last_df["ts_utc"].iloc[int(idx_start)]), unit="ms", utc=True).tz_convert("UTC").tz_localize(None)
+                    ts2 = pd.to_datetime(float(self._last_df["ts_utc"].iloc[int(idx_end)]), unit="ms", utc=True).tz_convert("UTC").tz_localize(None)
+                    period_txt = f"Periodo: {ts1} → {ts2}"
+            except Exception:
+                pass
+            txt = f"<b>{name}</b><br/>{period_txt}<br/><br/>{desc}"
+            lbl = QLabel(txt, dlg)
+            lbl.setTextFormat(Qt.RichText)
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+            btn = QPushButton("Chiudi", dlg)
+            btn.clicked.connect(dlg.accept)
+            lay.addWidget(btn, alignment=Qt.AlignRight)
+            dlg.resize(420, 220)
+            dlg.exec()
+        except Exception as e:
+            logger.debug(f"_open_pattern_dialog failed: {e}")

@@ -87,7 +87,7 @@ def _infer_direction(e: Any) -> str:
     d = getattr(e, "direction", None)
     if isinstance(d, str) and d:
         return d.lower()
-    key = str(getattr(e, "key", getattr(e, "name", ""))).lower()
+    key = str(getattr(e, "pattern_key", getattr(e, "key", getattr(e, "name", "")))).lower()
     if any(w in key for w in ("bear", "top", "descending", "inverted", "down")):
         return "down"
     if any(w in key for w in ("bull", "bottom", "ascending", "up")):
@@ -98,13 +98,13 @@ def _infer_kind(e: Any) -> str:
     k = getattr(e, "kind", None)
     if isinstance(k, str) and k:
         return k
-    key = str(getattr(e, "key", getattr(e, "name", ""))).lower()
+    key = str(getattr(e, "pattern_key", getattr(e, "key", getattr(e, "name", "")))).lower()
     if "candle" in key:
         return "candle"
     return "chart"
 
 def _infer_name(e: Any) -> str:
-    n = getattr(e, "name", None) or getattr(e, "key", None) or e.__class__.__name__
+    n = getattr(e, "name", None) or getattr(e, "pattern_key", None) or getattr(e, "key", None) or e.__class__.__name__
     return str(n)
 
 def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 50) -> List[Any]:
