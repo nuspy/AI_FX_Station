@@ -69,7 +69,7 @@ class BroadeningDetector(DetectorBase):
                 height = float((up_last - lo_last)); mult=1.0
                 target = float(close[end] + (mult*height if direction=='bull' else -mult*height))
 
-            events.append(PatternEvent(self.key,"chart",direction,ts.iloc[start],ts.iloc[end],state,0.6,
+            events.append(PatternEvent(self.key,"chart",direction,ts[start],ts[end],state,0.6,
                                        float((up_last - lo_last)/max(tol,1e-9)),touches,win,target,min(120,win),
                                        {"upper_line":(start,end,float(slope_hi),float(icp_hi)),
                                         "lower_line":(start,end,float(slope_lo),float(icp_lo))}))

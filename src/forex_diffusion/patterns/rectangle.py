@@ -10,7 +10,7 @@ class RectangleDetector(DetectorBase):
     def __init__(self, key:str="rectangle_range", window:int=80, tightness:float=0.8, max_events:int=60) -> None:
         self.key=key; self.window=window; self.tightness=tightness; self.max_events=max_events
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index)
+        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()
         a = atr(df,14).to_numpy()
@@ -23,7 +23,7 @@ class RectangleDetector(DetectorBase):
             # rettangolo "tight": range relativamente stretto vs ATR cumulato
             atr_mean = float(np.mean(a[start:end+1]))
             if height <= self.tightness*atr_mean:
-                events.append(PatternEvent(self.key,"chart","neutral", ts.iloc[start], ts.iloc[end], "confirmed", 0.5, float(a[end]), 4, self.window, None, self.window//2, {"box":(start,end,float(lo.min()),float(hi.max()))}))
+                events.append(PatternEvent(self.key,"chart","neutral", ts[start], ts[end], "confirmed", 0.5, float(a[end]), 4, self.window, None, self.window//2, {"box":(start,end,float(lo.min()),float(hi.max()))}))
                 if len(events)>=self.max_events: break
         return events
 

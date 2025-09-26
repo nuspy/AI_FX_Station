@@ -39,7 +39,7 @@ class SimpleCandleDetector(DetectorBase):
                 else:
                     cond = body_ok and upper >= 2.0*body and lower <= 0.3*body; direction = "bear"
                 if cond:
-                    evs.append(PatternEvent(self.key,"candle",direction,ts.iloc[i],ts.iloc[i],"confirmed",0.5,tr,1,1,None,10,{"marker": i}))
+                    evs.append(PatternEvent(self.key,"candle",direction,ts[i],ts[i],"confirmed",0.5,tr,1,1,None,10,{"marker": i}))
             # Engulfing
             elif self.key in ("bullish_engulfing","bearish_engulfing"):
                 i2 = i-1
@@ -47,7 +47,7 @@ class SimpleCandleDetector(DetectorBase):
                 cond_bear = (c[i]<o[i]) and (c[i2]>o[i2]) and (c[i]<=o[i2]) and (o[i]>=c[i2])
                 if (self.key=="bullish_engulfing" and cond_bull) or (self.key=="bearish_engulfing" and cond_bear):
                     direction = "bull" if self.key.startswith("bull") else "bear"
-                    evs.append(PatternEvent(self.key,"candle",direction,ts.iloc[i2],ts.iloc[i],"confirmed",0.5,tr,2,2,None,10,{"marker": i}))
+                    evs.append(PatternEvent(self.key,"candle",direction,ts[i2],ts[i],"confirmed",0.5,tr,2,2,None,10,{"marker": i}))
             # Harami
             elif self.key in ("harami_bull","harami_bear"):
                 i2 = i-1
@@ -55,7 +55,7 @@ class SimpleCandleDetector(DetectorBase):
                 inside = (min(o[i],c[i]) >= min(o[i2],c[i2])) and (max(o[i],c[i]) <= max(o[i2],c[i2]))
                 if big_first and inside:
                     direction = "bull" if self.key.endswith("bull") else "bear"
-                    evs.append(PatternEvent(self.key,"candle",direction,ts.iloc[i2],ts.iloc[i],"confirmed",0.45,tr,2,2,None,10,{"marker": i}))
+                    evs.append(PatternEvent(self.key,"candle",direction,ts[i2],ts[i],"confirmed",0.45,tr,2,2,None,10,{"marker": i}))
         return evs
 
 def make_candle_detectors() -> List[SimpleCandleDetector]:

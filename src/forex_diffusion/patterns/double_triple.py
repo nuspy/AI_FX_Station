@@ -13,7 +13,7 @@ class _PeaksBase(DetectorBase):
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index)
+        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
         a = atr(df, 14).to_numpy()
         events: List[PatternEvent] = []
         n=len(df)
@@ -30,7 +30,7 @@ class _PeaksBase(DetectorBase):
                 heights = seg[idxs]
                 if (heights.max()-heights.min()) <= heights.mean()*self.tol*10:
                     direction = "bear" if self.top else "bull"
-                    events.append(PatternEvent(self.key,"chart",direction, ts.iloc[start+idxs[0]], ts.iloc[end], "confirmed", 0.52, float(a[end]), self.peaks, self.window, None, self.window//3, {"peaks":[start+j for j in idxs]}))
+                    events.append(PatternEvent(self.key,"chart",direction, ts[start+idxs[0]], ts[end], "confirmed", 0.52, float(a[end]), self.peaks, self.window, None, self.window//3, {"peaks":[start+j for j in idxs]}))
                     if len(events)>=self.max_events: return events
         return events
 

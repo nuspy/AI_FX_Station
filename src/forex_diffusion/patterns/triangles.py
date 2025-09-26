@@ -17,7 +17,7 @@ class TriangleDetector(DetectorBase):
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index)
+        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
         a = atr(df, self.atr_period).to_numpy()
         events: List[PatternEvent] = []
         n = len(df)
@@ -54,7 +54,7 @@ class TriangleDetector(DetectorBase):
                     touch_l = int(np.sum(np.abs(lo[start:end+1]-lower) <= tol))
                     if (touch_u + touch_l) >= self.min_touches and converge:
                         direction = "bull" if self.mode=="ascending" else ("bear" if self.mode=="descending" else "neutral")
-                        events.append(PatternEvent(self.key,"chart",direction, ts.iloc[start], ts.iloc[end], "confirmed", 0.55, float(a[end]), touch_u+touch_l, span, None, span//2, {"upper_line":(start,end,float(s_hi),float(b_hi)),"lower_line":(start,end,float(s_lo),float(b_lo))}))
+                        events.append(PatternEvent(self.key,"chart",direction, ts[start], ts[end], "confirmed", 0.55, float(a[end]), touch_u+touch_l, span, None, span//2, {"upper_line":(start,end,float(s_hi),float(b_hi)),"lower_line":(start,end,float(s_lo),float(b_lo))}))
                         if len(events)>=self.max_events: return events
         return events
 

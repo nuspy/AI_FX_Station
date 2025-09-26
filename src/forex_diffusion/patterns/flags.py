@@ -15,7 +15,7 @@ class FlagDetector(DetectorBase):
         c = df["close"].astype(float).to_numpy()
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index)
+        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
         a = atr(df, 14).to_numpy()
         events: List[PatternEvent] = []
         n = len(df)
@@ -36,7 +36,7 @@ class FlagDetector(DetectorBase):
             sub_h = h[j0:i]; sub_l = l[j0:i]
             height = sub_h.max() - sub_l.min()
             if height <= 0.8*amean:  # tight consolidation
-                events.append(PatternEvent(self.key,"chart",self.dir, ts.iloc[j0], ts.iloc[i], "confirmed", 0.52, float(a[i]), 3, w//2, None, w//2, {"box":(j0,i,float(sub_l.min()),float(sub_h.max()))}))
+                events.append(PatternEvent(self.key,"chart",self.dir, ts[j0], ts[i], "confirmed", 0.52, float(a[i]), 3, w//2, None, w//2, {"box":(j0,i,float(sub_l.min()),float(sub_h.max()))}))
                 if len(events)>=self.max_events: break
         return events
 

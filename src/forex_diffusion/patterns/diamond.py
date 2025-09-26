@@ -12,7 +12,7 @@ class DiamondDetector(DetectorBase):
     def detect(self, df: pd.DataFrame):
         # Heuristica: fase di allargamento (volatilità in aumento) seguita da contrazione (in calo)
         import numpy as np
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index)
+        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()
         a = atr(df,14).to_numpy()
@@ -26,7 +26,7 @@ class DiamondDetector(DetectorBase):
             if len(seg)<30: continue
             if seg[:len(seg)//2].mean() > seg[len(seg)//2:].mean()*1.1:  # da ampio a stretto (contrazione)
                 direction = "bear" if self.top else "bull"
-                events.append(PatternEvent(self.key,"chart",direction, ts.iloc[start], ts.iloc[end], "confirmed", 0.51, float(a[end]), 0, self.window, None, self.window//2, {}))
+                events.append(PatternEvent(self.key,"chart",direction, ts[start], ts[end], "confirmed", 0.51, float(a[end]), 0, self.window, None, self.window//2, {}))
                 if len(events)>=self.max_events: break
         return events
 
