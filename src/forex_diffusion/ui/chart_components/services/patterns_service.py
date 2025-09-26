@@ -6,6 +6,41 @@ import numpy as np
 from loguru import logger
 from PySide6.QtCore import QTimer
 
+from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
+
+class _ScanWorker(QObject):
+    produced = Signal(list)  # List[PatternEvent]
+
+    def __init__(self, parent, kind: str, interval_ms: int) -> None:
+        super().__init__(parent)
+        self._parent = parent
+        self._kind = kind  # "chart" or "candle"
+        self._timer = QTimer(self)
+        self._timer.setInterval(int(interval_ms))
+        self._timer.timeout.connect(self._tick)
+        self._enabled = False
+
+    @Slot()
+    def start(self):
+        self._enabled = True
+        self._timer.start()
+
+    @Slot()
+    def stop(self):
+        self._enabled = False
+        self._timer.stop()
+
+    @Slot()
+    def _tick(self):
+        if not self._enabled:
+            return
+        try:
+            evs = self._parent._scan_once(kind=self._kind) or []
+            self.produced.emit(evs)
+        except Exception:
+            pass
+
+
 from .base import ChartServiceBase
 from ....patterns.registry import PatternRegistry
 from ....patterns.engine import PatternEvent
@@ -53,19 +88,80 @@ class PatternsService(ChartServiceBase):
         self._cache_symbol: Optional[str] = None
         self._scanned_tfs_by_symbol: Dict[str, set] = {}
         self._scanning_multi: bool = False
+        # Dual background threads for scans
+        self._chart_thread = QThread(self.view)
+        self._candle_thread = QThread(self.view)
+        # Load intervals from config
+        import yaml, os
+        try:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', '..', 'configs', 'patterns.yaml'), 'r', encoding='utf-8') as fh:
+                _cfg = yaml.safe_load(fh) or {}
+        except Exception:
+            _cfg = {}
+        cur = (_cfg.get('patterns',{}).get('current_scan',{}) or {})
+        minutes = int(cur.get('interval_minutes', 5))
+        self._chart_worker = _ScanWorker(self, 'chart', minutes*60*1000)
+        self._candle_worker = _ScanWorker(self, 'candle', minutes*60*1000)
+        self._chart_worker.moveToThread(self._chart_thread)
+        self._candle_worker.moveToThread(self._candle_thread)
+        self._chart_thread.started.connect(self._chart_worker.start)
+        self._candle_thread.started.connect(self._candle_worker.start)
+        self._chart_worker.produced.connect(lambda evs: None)
+        self._candle_worker.produced.connect(lambda evs: None)
+        self._threads_started = False
         # Persistent cache (per symbol) to keep patterns across view reloads/zoom
         self._cache: Dict[tuple, object] = {}
         self._cache_symbol: Optional[str] = None
         # Multi-timeframe scan state
         self._scanned_tfs_by_symbol: Dict[str, set] = {}
         self._scanning_multi: bool = False
+        # Dual background threads for scans
+        self._chart_thread = QThread(self.view)
+        self._candle_thread = QThread(self.view)
+        # Load intervals from config
+        import yaml, os
+        try:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', '..', 'configs', 'patterns.yaml'), 'r', encoding='utf-8') as fh:
+                _cfg = yaml.safe_load(fh) or {}
+        except Exception:
+            _cfg = {}
+        cur = (_cfg.get('patterns',{}).get('current_scan',{}) or {})
+        minutes = int(cur.get('interval_minutes', 5))
+        self._chart_worker = _ScanWorker(self, 'chart', minutes*60*1000)
+        self._candle_worker = _ScanWorker(self, 'candle', minutes*60*1000)
+        self._chart_worker.moveToThread(self._chart_thread)
+        self._candle_worker.moveToThread(self._candle_thread)
+        self._chart_thread.started.connect(self._chart_worker.start)
+        self._candle_thread.started.connect(self._candle_worker.start)
+        self._chart_worker.produced.connect(lambda evs: None)
+        self._candle_worker.produced.connect(lambda evs: None)
+        self._threads_started = False
 
     def set_chart_enabled(self, on: bool):
+        self._enabled_chart = bool(on)
+        logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
+        # start/stop background thread
+        try:
+            if self._enabled_chart and not self._threads_started:
+                self._chart_thread.start(); self._threads_started = True
+            if (not self._enabled_chart) and self._chart_thread.isRunning(): self._chart_worker.stop(); self._chart_thread.quit()
+        except Exception: pass
+        self._repaint()
+
         self._enabled_chart = bool(on)
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
         self._repaint()
 
     def set_candle_enabled(self, on: bool):
+        self._enabled_candle = bool(on)
+        logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
+        try:
+            if self._enabled_candle and not self._threads_started:
+                self._candle_thread.start(); self._threads_started = True
+            if (not self._enabled_candle) and self._candle_thread.isRunning(): self._candle_worker.stop(); self._candle_thread.quit()
+        except Exception: pass
+        self._repaint()
+
         self._enabled_candle = bool(on)
         logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
         self._repaint()

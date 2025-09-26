@@ -65,3 +65,32 @@ def make_candle_detectors() -> List[SimpleCandleDetector]:
 
 # --- Extra candlestick keys (batch 2) ---
 EXTRA_CANDLE_KEYS = ['three_white_soldiers', 'three_black_crows', 'dark_cloud_cover', 'piercing_line', 'dragonfly_doji', 'gravestone_doji', 'tweezer_top', 'tweezer_bottom', 'rising_three_methods', 'falling_three_methods']
+
+
+# --- Extended Candlestick Patterns (skeleton heuristics) ---
+# Nota: euristiche compatte per prima iterazione; parametri fino a esposizione via patterns.yaml
+
+def _bool(v): return bool(v)
+
+class BeltHoldDetector(SimpleCandleDetector):
+    def __init__(self, bull: bool):
+        super().__init__("belt_hold_bull" if bull else "belt_hold_bear")
+    # uses inherited detect with key suffix
+
+class KickerDetector(SimpleCandleDetector):
+    def __init__(self, bull: bool):
+        super().__init__("kicker_bull" if bull else "kicker_bear")
+
+
+class TasukiDetector(SimpleCandleDetector):
+    def __init__(self, bull: bool):
+        super().__init__("tasuki_bull" if bull else "tasuki_bear")
+
+
+EXTRA_CANDLE_KEYS.extend([
+    'harami_cross_bull','harami_cross_bear',
+    'belt_hold_bull','belt_hold_bear',
+    'mat_hold_bull','mat_hold_bear',
+    'kicker_bull','kicker_bear',
+    'tasuki_bull','tasuki_bear'
+])

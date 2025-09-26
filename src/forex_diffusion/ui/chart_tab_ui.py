@@ -260,12 +260,39 @@ class ChartTabUI(QWidget):
         self.history_patterns_checkbox = QCheckBox("Patterns storici"); row2_layout.addWidget(self.history_patterns_checkbox)
 
         self.btn_scan_patterns = QToolButton()
+        self.btn_scan_historical = QToolButton()
+        self.btn_scan_historical.setText("Scan Historical")
+        self.btn_config_patterns = QToolButton()
+        self.btn_config_patterns.setText("Configura Patterns")
         self.btn_scan_patterns.setText("Scansiona patterns")
         row2_layout.addWidget(self.btn_scan_patterns)
+        row2_layout.addWidget(self.btn_scan_historical)
+        row2_layout.addWidget(self.btn_config_patterns)
 
 
 
         # handler
+
+        def _scan_historical():
+            try:
+                ps = self.chart_controller.patterns_service
+                if ps is None: return
+                symbol = getattr(self, "symbol", None) or (self.symbol_combo.currentText() if hasattr(self, "symbol_combo") else None)
+                if not symbol: return
+                view_df = getattr(self.chart_controller.plot_service, "_last_df", None)
+                if view_df is None or view_df.empty: return
+                # Scan on all tfs using current df snapshot
+                tfs = ["1m","5m","15m","30m","1h","4h","1d"]
+                for tf in tfs:
+                    try:
+                        self._patterns_scan_tf_hint = tf
+                        ps.on_update_plot(view_df)
+                    except Exception:
+                        continue
+            except Exception as e:
+                from loguru import logger
+                logger.exception("Historical scan failed: {}", e)
+
         def _scan_patterns_now():
             try:
                 ps = self.chart_controller.patterns_service
@@ -291,6 +318,8 @@ class ChartTabUI(QWidget):
                 logger.exception("Scan patterns failed: {}", e)
 
         self.btn_scan_patterns.clicked.connect(_scan_patterns_now)
+        self.btn_scan_historical.clicked.connect(_scan_historical)
+        self.btn_config_patterns.clicked.connect(self._open_patterns_config)
 
         self.follow_checkbox = QCheckBox("Segui"); row2_layout.addWidget(self.follow_checkbox)
         self.bidask_label = QLabel("Bid: -    Ask: -"); row2_layout.addWidget(self.bidask_label)
@@ -1305,3 +1334,14 @@ class ChartTabUI(QWidget):
         self._collect_and_save("chart", self.chart_tab)
         self._collect_and_save("candle", self.candle_tab)
         self.accept()
+
+
+    def _open_patterns_config(self):
+        try:
+            from .patterns_config_dialog import PatternsConfigDialog
+        except Exception:
+            from ..patterns_config_dialog import PatternsConfigDialog
+        import os
+        yaml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', 'configs', 'patterns.yaml')
+        dlg = PatternsConfigDialog(self, yaml_path=yaml_path)
+        dlg.exec()

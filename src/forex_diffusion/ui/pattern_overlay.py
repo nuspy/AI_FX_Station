@@ -6,6 +6,7 @@ import matplotlib.dates as mdates
 import matplotlib.axes as mpla
 from matplotlib.backend_bases import MouseEvent
 from loguru import logger
+from PySide6 import QtWidgets
 
 # ---------------- UI CONSTANTS ----------------
 MAX_OVERLAYS = 80
@@ -16,6 +17,27 @@ FORMATION_LINE_WIDTH = 3.0
 FORMATION_LINE_COLOR = "#33A1FD"  # light blue
 
 # --------------- RENDERER ---------------------
+
+class PatternDetailsDialog(QtWidgets.QDialog):
+    def __init__(self, parent, event):
+        super().__init__(parent)
+        self.setWindowTitle(f"Pattern: {event.pattern_key}")
+        lay = QtWidgets.QVBoxLayout(self)
+        def lab(s): 
+            l=QtWidgets.QLabel(s); l.setTextFormat(Qt.TextFormat.RichText); l.setWordWrap(True); return l
+        fields = [
+            ("Kind", getattr(event,'kind','')),
+            ("Direction", getattr(event,'direction','')),
+            ("Confirm", str(getattr(event,'confirm_ts',''))),
+            ("Target", str(getattr(event,'target_price', None))),
+            ("Failure", str(getattr(event,'failure_price', None))),
+            ("Info", str(getattr(event,'info',{})))
+        ]
+        html = "".join([f"<p><b>{k}:</b> {v}</p>" for k,v in fields])
+        lay.addWidget(lab(html))
+        btn = QtWidgets.QPushButton("Chiudi"); btn.clicked.connect(self.accept)
+        lay.addWidget(btn)
+
 class PatternOverlayRenderer:
     """
     Renderizza:
@@ -544,7 +566,7 @@ class PatternOverlayRenderer:
             f"<p><b>Target:</b> {_esc('' if tprice is None else tprice)}</p>"
         )
 
-        dlg = QtWidgets.QMessageBox(getattr(self.controller, "window", None) or None)
+        dlg = PatternDetailsDialog(getattr(self.controller, "window", None) or None)
         dlg.setWindowTitle(f"Pattern: {key}")
         dlg.setTextFormat(Qt.TextFormat.RichText)
         dlg.setText(html)
