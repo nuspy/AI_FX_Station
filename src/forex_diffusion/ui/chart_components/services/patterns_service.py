@@ -12,7 +12,7 @@ class _ScanWorker(QObject):
     produced = Signal(list)  # List[PatternEvent]
 
     def __init__(self, parent, kind: str, interval_ms: int) -> None:
-        super().__init__(parent)
+        super().__init__()
         self._parent = parent
         self._kind = kind  # "chart" or "candle"
         self._timer = QTimer(self)
