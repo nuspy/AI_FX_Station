@@ -202,21 +202,21 @@ class ChartTabController:
     def open_pattern_info(self, event_obj) -> None:
         """Mostra un dialog ricco con i dettagli del pattern, includendo immagine se disponibile."""
         from PySide6 import QtWidgets, QtCore, QtGui
-        key = str(getattr(event_obj, "key", getattr(event_obj, "name", "Pattern")))
-        # recupera metadati (se hai un registry usa quello)
+        # Preferisci il nome umano se presente; fallback a key
+        key = str(getattr(event_obj, "key", "") or "")
+        name = str(getattr(event_obj, "name", "") or "") or key or "Pattern"
         desc = getattr(event_obj, "description", "—")
         direction = getattr(event_obj, "direction", "neutral")
         tgt = getattr(event_obj, "target_price", None)
         tgt_txt = f"{tgt:.5f}" if isinstance(tgt, (float, int)) else "—"
-        bench = getattr(event_obj, "benchmark", {})
-        # immagine opzionale in assets (metti file in resources)
+        bench = getattr(event_obj, "benchmark", {}) or getattr(event_obj, "benchmarks", {})
         img_path = getattr(event_obj, "image_path", None)
 
         dlg = QtWidgets.QDialog(self.view)
-        dlg.setWindowTitle(key)
+        dlg.setWindowTitle(name)
         lay = QtWidgets.QVBoxLayout(dlg)
 
-        title = QtWidgets.QLabel(f"<h3>{key}</h3><i>{direction}</i>")
+        title = QtWidgets.QLabel(f"<h3>{name}</h3><i>{direction}</i>")
         title.setTextFormat(QtCore.Qt.TextFormat.RichText)
         lay.addWidget(title)
 

@@ -39,7 +39,7 @@ class SimpleCandleDetector(DetectorBase):
                 else:
                     cond = body_ok and upper >= 2.0*body and lower <= 0.3*body; direction = "bear"
                 if cond:
-                    evs.append(PatternEvent(self.key,"candle",direction,ts.iloc[i],ts.iloc[i],"confirmed",0.5,tr,1,1,None,10,{"marker": i}))
+                    evs.append(PatternEvent(self.key,"candle",direction,ts[i],ts[i],"confirmed",0.5,tr,1,1,None,10,{"marker": i}))
             # Engulfing
             elif self.key in ("bullish_engulfing","bearish_engulfing"):
                 i2 = i-1
@@ -47,7 +47,7 @@ class SimpleCandleDetector(DetectorBase):
                 cond_bear = (c[i]<o[i]) and (c[i2]>o[i2]) and (c[i]<=o[i2]) and (o[i]>=c[i2])
                 if (self.key=="bullish_engulfing" and cond_bull) or (self.key=="bearish_engulfing" and cond_bear):
                     direction = "bull" if self.key.startswith("bull") else "bear"
-                    evs.append(PatternEvent(self.key,"candle",direction,ts.iloc[i2],ts.iloc[i],"confirmed",0.5,tr,2,2,None,10,{"marker": i}))
+                    evs.append(PatternEvent(self.key,"candle",direction,ts[i2],ts[i],"confirmed",0.5,tr,2,2,None,10,{"marker": i}))
             # Harami
             elif self.key in ("harami_bull","harami_bear"):
                 i2 = i-1
@@ -55,9 +55,42 @@ class SimpleCandleDetector(DetectorBase):
                 inside = (min(o[i],c[i]) >= min(o[i2],c[i2])) and (max(o[i],c[i]) <= max(o[i2],c[i2]))
                 if big_first and inside:
                     direction = "bull" if self.key.endswith("bull") else "bear"
-                    evs.append(PatternEvent(self.key,"candle",direction,ts.iloc[i2],ts.iloc[i],"confirmed",0.45,tr,2,2,None,10,{"marker": i}))
+                    evs.append(PatternEvent(self.key,"candle",direction,ts[i2],ts[i],"confirmed",0.45,tr,2,2,None,10,{"marker": i}))
         return evs
 
 def make_candle_detectors() -> List[SimpleCandleDetector]:
-    keys = ["hammer","shooting_star","bullish_engulfing","bearish_engulfing","harami_bull","harami_bear"]
+    keys = ["hammer","shooting_star","bullish_engulfing","bearish_engulfing","harami_bull","harami_bear"]+EXTRA_CANDLE_KEYS
     return [SimpleCandleDetector(k) for k in keys]
+
+
+# --- Extra candlestick keys (batch 2) ---
+EXTRA_CANDLE_KEYS = ['three_white_soldiers', 'three_black_crows', 'dark_cloud_cover', 'piercing_line', 'dragonfly_doji', 'gravestone_doji', 'tweezer_top', 'tweezer_bottom', 'rising_three_methods', 'falling_three_methods']
+
+
+# --- Extended Candlestick Patterns (skeleton heuristics) ---
+# Nota: euristiche compatte per prima iterazione; parametri fino a esposizione via patterns.yaml
+
+def _bool(v): return bool(v)
+
+class BeltHoldDetector(SimpleCandleDetector):
+    def __init__(self, bull: bool):
+        super().__init__("belt_hold_bull" if bull else "belt_hold_bear")
+    # uses inherited detect with key suffix
+
+class KickerDetector(SimpleCandleDetector):
+    def __init__(self, bull: bool):
+        super().__init__("kicker_bull" if bull else "kicker_bear")
+
+
+class TasukiDetector(SimpleCandleDetector):
+    def __init__(self, bull: bool):
+        super().__init__("tasuki_bull" if bull else "tasuki_bear")
+
+
+EXTRA_CANDLE_KEYS.extend([
+    'harami_cross_bull','harami_cross_bear',
+    'belt_hold_bull','belt_hold_bear',
+    'mat_hold_bull','mat_hold_bear',
+    'kicker_bull','kicker_bear',
+    'tasuki_bull','tasuki_bear'
+])

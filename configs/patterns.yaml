@@ -8,23 +8,136 @@ patterns:
   chart_patterns:
     enabled_default: true
     keys_enabled:
-      - broadening_bottom
-      - broadening_top
-      - right_angle_broadening_ascending
-      - right_angle_broadening_descending
-      - broadening_wedge_ascending
-      - broadening_wedge_descending
+    - ascending_triangle
+    - bear_flag
+    - bear_pennant
+    - broadening_bottom
+    - broadening_top
+    - broadening_wedge_ascending
+    - broadening_wedge_descending
+    - bull_flag
+    - bull_pennant
+    - descending_triangle
+    - diamond_bottom
+    - diamond_top
+    - double_bottom
+    - double_top
+    - falling_channel
+    - head_and_shoulders
+    - inverse_head_and_shoulders
+    - rectangle_range
+    - right_angle_broadening_ascending
+    - right_angle_broadening_descending
+    - rising_channel
+    - symmetrical_triangle
+    - triple_bottom
+    - triple_top
+    - wedge_ascending
+    - wedge_descending
   candle_patterns:
     enabled_default: true
     keys_enabled:
-      - hammer
-      - shooting_star
-      - bullish_engulfing
-      - bearish_engulfing
-      - harami_bull
-      - harami_bear
+    - bearish_engulfing
+    - belt_hold_bear
+    - belt_hold_bull
+    - bullish_engulfing
+    - dark_cloud_cover
+    - doji
+    - dragonfly_doji
+    - evening_star
+    - falling_three_methods
+    - gravestone_doji
+    - hammer
+    - harami_bear
+    - harami_bull
+    - harami_cross_bear
+    - harami_cross_bull
+    - kicker_bear
+    - kicker_bull
+    - marubozu
+    - mat_hold_bear
+    - mat_hold_bull
+    - morning_star
+    - piercing_line
+    - rising_three_methods
+    - shooting_star
+    - spinning_top
+    - tasuki_bear
+    - tasuki_bull
+    - three_black_crows
+    - three_white_soldiers
+    - tweezer_bottom
+    - tweezer_top
+    params:
+      bearish_engulfing:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      dragonfly_doji:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      tweezer_bottom:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      shooting_star:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      bullish_engulfing:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      harami_bear:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      three_black_crows:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      rising_three_methods:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      falling_three_methods:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      dark_cloud_cover:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      piercing_line:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      gravestone_doji:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      tweezer_top:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      harami_bull:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      hammer:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
+      three_white_soldiers:
+        confirm_with_volume: false
+        rr: 1.5
+        target_mode: Altezza figura
   view:
     badge_info: true
     badge_font_pt: 8
     overlay_alpha: 0.6
     arrow_len_atr: 1.5
+  current_scan:
+    lookback_hours: 6
+    interval_minutes: 5
