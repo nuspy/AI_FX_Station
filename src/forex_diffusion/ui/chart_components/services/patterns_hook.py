@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 from loguru import logger
 
-from .patterns_service import PatternsService
+from .patterns_service import  PatternsService as PatternsService
 
 _SERVICE_ATTR = "_patterns_service"
 

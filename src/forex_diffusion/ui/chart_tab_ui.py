@@ -10,7 +10,7 @@ import matplotlib.dates as mdates
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
-    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog
+    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog, QGroupBox
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker
 from matplotlib.figure import Figure

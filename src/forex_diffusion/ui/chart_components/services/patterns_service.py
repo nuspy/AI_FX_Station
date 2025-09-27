@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Iterable
 import pandas as pd
 import numpy as np
 from loguru import logger
@@ -42,19 +42,33 @@ class _ScanWorker(QObject):
 
 
 from .base import ChartServiceBase
+# Assicurati che hns.py sia correttamente importato e contenga i detector per "chart"
+
+from ....patterns.candles import make_candle_detectors
+from ....patterns.broadening import make_broadening_detectors
+from ....patterns.wedges import make_wedge_detectors
+from ....patterns.triangles import make_triangle_detectors
+from ....patterns.rectangle import make_rectangle_detectors
+from ....patterns.diamond import make_diamond_detectors
+from ....patterns.double_triple import make_double_triple_detectors
+from ....patterns.channels import make_channel_detectors
+from ....patterns.flags import make_flag_detectors
+#Pluto from .variants import make_param_variants
+from  ....patterns.hns import make_hns_detectors
 from ....patterns.registry import PatternRegistry
+
+#from ..services.hns import make_broadening_detectors, make_wedge_detectors, make_triangle_detectors
 from ....patterns.engine import PatternEvent
 from ....patterns.info_provider import PatternInfoProvider
 from ...pattern_overlay import PatternOverlayRenderer
-
 from .patterns_adapter import enrich_events
 
 OHLC_SYNONYMS: Dict[str, str] = {
-    'o':'open','op':'open','open':'open','bidopen':'open','askopen':'open',
-    'h':'high','hi':'high','high':'high','bidhigh':'high','askhigh':'high',
-    'l':'low','lo':'low','low':'low','bidlow':'low','asklow':'low',
-    'c':'close','cl':'close','close':'close','bidclose':'close','askclose':'close','last':'close','price':'close','mid':'close'
-}
+        'o':'open','op':'open','open':'open','bidopen':'open','askopen':'open',
+        'h':'high','hi':'high','high':'high','bidhigh':'high','askhigh':'high',
+        'l':'low','lo':'low','low':'low','bidlow':'low','asklow':'low',
+        'c':'close','cl':'close','close':'close','bidclose':'close','askclose':'close','last':'close','price':'close','mid':'close'
+    }
 TS_SYNONYMS = ['ts_utc','timestamp','time','ts','datetime','date','dt','ts_ms','ts_ns']
 
 class PatternsService(ChartServiceBase):
@@ -267,7 +281,12 @@ class PatternsService(ChartServiceBase):
             except Exception:
                 pass
 
-            dets = list(self.registry.detectors(kinds=kinds))
+            dets_list = self.registry.detectors(kinds=kinds)
+            if dets_list is None:
+                logger.error(f"No detectors found for kinds: {kinds}")
+                return []  # Oppure gestisci l'assenza di detector
+            else:
+                dets = list(dets_list)
             logger.info(f"Patterns: normalized df rows={len(dfN)}; detectors={len(dets)}")
 
             evs: List[PatternEvent] = []
@@ -611,7 +630,7 @@ def _scan_once(self, kind: str):
     if dfN is None or len(dfN)==0: return []
     from src.forex_diffusion.patterns.registry import PatternRegistry
     from .patterns_adapter import enrich_events
-    from .pattern_info_provider import PatternInfoProvider
+    from ....patterns.info_provider import PatternInfoProvider
     reg = PatternRegistry(); dets = [d for d in reg.detectors([kind])]
     events=[]
     for d in dets:

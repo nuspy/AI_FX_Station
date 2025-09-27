@@ -41,4 +41,4 @@ class PatternRegistry:
         if want_candle:
             out.extend(make_candle_detectors())
         #pluto    out.extend(make_param_variants())
-            return out
+        return out
