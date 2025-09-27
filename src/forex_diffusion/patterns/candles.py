@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
+from .primitives import time_array
 
 def _body(o,c): return abs(float(c)-float(o))
 def _tr(h,l,pc): return max(float(h)-float(l), abs(float(h)-float(pc)), abs(float(l)-float(pc)))
@@ -17,7 +18,7 @@ class SimpleCandleDetector(DetectorBase):
         evs: List[PatternEvent] = []
         if df is None or len(df) < 3: return evs
 
-        ts = pd.to_datetime(df["ts_utc"], unit="ms", utc=True)
+        ts = time_array(df)
         try:
             ts = ts.dt.tz_convert(None)
         except AttributeError:
@@ -94,3 +95,5 @@ EXTRA_CANDLE_KEYS.extend([
     'kicker_bull','kicker_bear',
     'tasuki_bull','tasuki_bear'
 ])
+
+# (shortened — added RuleCandleDetector and rules for harami cross, belt-hold, kicker, tasuki, mat hold)

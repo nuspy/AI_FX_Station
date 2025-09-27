@@ -138,6 +138,11 @@ class PatternsService(ChartServiceBase):
         self._threads_started = False
 
     def set_chart_enabled(self, on: bool):
+        try:
+            if on and not self._chart_thread.isRunning(): self._chart_thread.start()
+            if (not on) and self._chart_thread.isRunning(): self._chart_worker.stop(); self._chart_thread.quit()
+        except Exception: pass
+
         self._enabled_chart = bool(on)
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
         # start/stop background thread
@@ -153,6 +158,11 @@ class PatternsService(ChartServiceBase):
         self._repaint()
 
     def set_candle_enabled(self, on: bool):
+        try:
+            if on and not self._candle_thread.isRunning(): self._candle_thread.start()
+            if (not on) and self._candle_thread.isRunning(): self._candle_worker.stop(); self._candle_thread.quit()
+        except Exception: pass
+
         self._enabled_candle = bool(on)
         logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
         try:
@@ -593,3 +603,70 @@ class PatternsService(ChartServiceBase):
         except Exception:
             self._scanning_multi = False
 
+
+
+def _scan_once(self, kind: str):
+    df = getattr(self.controller.plot_service, '_last_df', None)
+    dfN = self._normalize_df(df)
+    if dfN is None or len(dfN)==0: return []
+    from src.forex_diffusion.patterns.registry import PatternRegistry
+    from .patterns_adapter import enrich_events
+    from .pattern_info_provider import PatternInfoProvider
+    reg = PatternRegistry(); dets = [d for d in reg.detectors([kind])]
+    events=[]
+    for d in dets:
+        try: events.extend(d.detect(dfN))
+        except Exception: pass
+    events = enrich_events(events, PatternInfoProvider())
+    self._events=(self._events or [])+events
+    try: self._repaint()
+    except Exception: pass
+    return events
+
+class _HistoricalScanWorker(QObject):
+    finished=Signal()
+    def __init__(self,parent)->None:
+        super().__init__(); self._parent=parent; self._df_snapshot=None; self._tfs=['1m','5m','15m','30m','1h','4h','1d']
+    @Slot(object)
+    def set_snapshot(self,df): self._df_snapshot=df
+    @Slot()
+    def run(self):
+        try:
+            ps=self._parent
+            if self._df_snapshot is None or getattr(self._df_snapshot,'empty',True): self.finished.emit(); return
+            for tf in self._tfs:
+                try: setattr(ps.view,'_patterns_scan_tf_hint', tf)
+                except Exception: pass
+                try: ps.on_update_plot(self._df_snapshot)
+                except Exception: continue
+        finally:
+            self.finished.emit()
+
+
+def start_historical_scan(self, df_snapshot):
+    try:
+        self._hist_thread=QThread(self.view); self._hist_worker=_HistoricalScanWorker(self)
+        self._hist_worker.moveToThread(self._hist_thread)
+        self._hist_thread.started.connect(self._hist_worker.run)
+        try: self._hist_worker.finished.connect(self._hist_thread.quit)
+        except Exception: pass
+        try: self._hist_worker.set_snapshot(df_snapshot)
+        except Exception: pass
+        self._hist_thread.start()
+    except Exception:
+        try: self.on_update_plot(df_snapshot)
+        except Exception: pass
+
+
+def _min_required_bars(self, det) -> int:
+    for attr in ('window','max_span'):
+        if hasattr(det, attr):
+            try:
+                v = int(getattr(det, attr));
+                if v and v>0: return max(60, v)
+            except Exception: pass
+    key = getattr(det, 'key', '') or ''
+    long_families = {'head_and_shoulders':140,'inverse_head_and_shoulders':140,'diamond_':160,'triple_':140,'double_':120,'triangle':120,'wedge_':120,'channel':120,'broadening':120,'cup_and_handle':160,'rounding_':160,'barr_':200,'harmonic_':160}
+    for frag, v in long_families.items():
+        if frag in key: return v
+    return 80

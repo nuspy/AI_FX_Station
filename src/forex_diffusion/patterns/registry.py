@@ -11,6 +11,7 @@ from .diamond import make_diamond_detectors
 from .double_triple import make_double_triple_detectors
 from .channels import make_channel_detectors
 from .flags import make_flag_detectors
+#Pluto from .variants import make_param_variants
 from .hns import make_hns_detectors
 
 class PatternRegistry:
@@ -39,4 +40,5 @@ class PatternRegistry:
             out.extend(make_hns_detectors())
         if want_candle:
             out.extend(make_candle_detectors())
-        return out
+        #pluto    out.extend(make_param_variants())
+            return out

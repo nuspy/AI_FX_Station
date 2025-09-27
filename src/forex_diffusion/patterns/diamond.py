@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
+from .primitives import time_array
 from .primitives import atr
 
 class DiamondDetector(DetectorBase):
@@ -12,7 +13,7 @@ class DiamondDetector(DetectorBase):
     def detect(self, df: pd.DataFrame):
         # Heuristica: fase di allargamento (volatilità in aumento) seguita da contrazione (in calo)
         import numpy as np
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
+        ts = time_array(df)
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()
         a = atr(df,14).to_numpy()

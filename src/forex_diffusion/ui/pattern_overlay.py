@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.dates as mdates
 import matplotlib.axes as mpla
+from PySide6.QtCore import Qt
 from matplotlib.backend_bases import MouseEvent
 from loguru import logger
 from PySide6 import QtWidgets
@@ -82,6 +83,12 @@ class PatternOverlayRenderer:
             try: self.ax.figure.canvas.draw_idle()
             except Exception: pass
 
+    def _draw_target_failure(self, ax, e, x_pos):
+        try:
+            t=getattr(e,'target_price',None); f=getattr(e,'failure_price',None)
+            if t is not None: ax.axhline(t, linestyle='--', linewidth=1, zorder=2); ax.text(x_pos,t,f"T: {t:.5f}",fontsize=8,va='bottom',zorder=3)
+            if f is not None: ax.axhline(f, linestyle=':', linewidth=1, zorder=2); ax.text(x_pos,f,f"F: {f:.5f}",fontsize=8,va='top',zorder=3); ax.plot([x_pos,x_pos],[getattr(e,'price',f),f], color='black', linewidth=1, zorder=2)
+        except Exception: pass
     def draw(self, events: Iterable[object]) -> None:
         ax = self._resolve_axes()
         if not ax:

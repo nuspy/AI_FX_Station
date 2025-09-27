@@ -286,7 +286,7 @@ class ChartTabUI(QWidget):
                 for tf in tfs:
                     try:
                         self._patterns_scan_tf_hint = tf
-                        ps.on_update_plot(view_df)
+                        ps.start_historical_scan(view_df)
                     except Exception:
                         continue
             except Exception as e:
@@ -1337,11 +1337,9 @@ class ChartTabUI(QWidget):
 
 
     def _open_patterns_config(self):
-        try:
-            from .patterns_config_dialog import PatternsConfigDialog
-        except Exception:
-            from ..patterns_config_dialog import PatternsConfigDialog
+        from .patterns_config_dialog import PatternsConfigDialog
+
         import os
-        yaml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', 'configs', 'patterns.yaml')
+        yaml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'configs', 'patterns.yaml')
         dlg = PatternsConfigDialog(self, yaml_path=yaml_path)
         dlg.exec()

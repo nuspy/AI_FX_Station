@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
+from .primitives import time_array
 from .primitives import fit_line_indices, atr
 
 class ChannelDetector(DetectorBase):
@@ -14,7 +15,7 @@ class ChannelDetector(DetectorBase):
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
+        ts = time_array(df)
         a = atr(df, 14).to_numpy()
         events: List[PatternEvent]=[]
         n=len(df)

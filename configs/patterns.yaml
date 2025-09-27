@@ -9,31 +9,55 @@ patterns:
     enabled_default: true
     keys_enabled:
     - ascending_triangle
+    - ascending_triangle_narrow
+    - ascending_triangle_wide
     - bear_flag
+    - bear_flag_tight
+    - bear_flag_wide
     - bear_pennant
+    - bear_pennant_tight
+    - bear_pennant_wide
     - broadening_bottom
     - broadening_top
     - broadening_wedge_ascending
     - broadening_wedge_descending
     - bull_flag
+    - bull_flag_tight
+    - bull_flag_wide
     - bull_pennant
+    - bull_pennant_tight
+    - bull_pennant_wide
     - descending_triangle
+    - descending_triangle_narrow
+    - descending_triangle_wide
     - diamond_bottom
     - diamond_top
     - double_bottom
     - double_top
     - falling_channel
+    - falling_channel_tight
+    - falling_channel_wide
     - head_and_shoulders
     - inverse_head_and_shoulders
+    - rectangle_loose
     - rectangle_range
+    - rectangle_tight
     - right_angle_broadening_ascending
     - right_angle_broadening_descending
     - rising_channel
+    - rising_channel_tight
+    - rising_channel_wide
     - symmetrical_triangle
+    - symmetrical_triangle_narrow
+    - symmetrical_triangle_wide
     - triple_bottom
     - triple_top
     - wedge_ascending
+    - wedge_ascending_loose
+    - wedge_ascending_tight
     - wedge_descending
+    - wedge_descending_loose
+    - wedge_descending_tight
   candle_patterns:
     enabled_default: true
     keys_enabled:
@@ -41,6 +65,75 @@ patterns:
     - belt_hold_bear
     - belt_hold_bull
     - bullish_engulfing
+    - custom_candle_100
+    - custom_candle_32
+    - custom_candle_33
+    - custom_candle_34
+    - custom_candle_35
+    - custom_candle_36
+    - custom_candle_37
+    - custom_candle_38
+    - custom_candle_39
+    - custom_candle_40
+    - custom_candle_41
+    - custom_candle_42
+    - custom_candle_43
+    - custom_candle_44
+    - custom_candle_45
+    - custom_candle_46
+    - custom_candle_47
+    - custom_candle_48
+    - custom_candle_49
+    - custom_candle_50
+    - custom_candle_51
+    - custom_candle_52
+    - custom_candle_53
+    - custom_candle_54
+    - custom_candle_55
+    - custom_candle_56
+    - custom_candle_57
+    - custom_candle_58
+    - custom_candle_59
+    - custom_candle_60
+    - custom_candle_61
+    - custom_candle_62
+    - custom_candle_63
+    - custom_candle_64
+    - custom_candle_65
+    - custom_candle_66
+    - custom_candle_67
+    - custom_candle_68
+    - custom_candle_69
+    - custom_candle_70
+    - custom_candle_71
+    - custom_candle_72
+    - custom_candle_73
+    - custom_candle_74
+    - custom_candle_75
+    - custom_candle_76
+    - custom_candle_77
+    - custom_candle_78
+    - custom_candle_79
+    - custom_candle_80
+    - custom_candle_81
+    - custom_candle_82
+    - custom_candle_83
+    - custom_candle_84
+    - custom_candle_85
+    - custom_candle_86
+    - custom_candle_87
+    - custom_candle_88
+    - custom_candle_89
+    - custom_candle_90
+    - custom_candle_91
+    - custom_candle_92
+    - custom_candle_93
+    - custom_candle_94
+    - custom_candle_95
+    - custom_candle_96
+    - custom_candle_97
+    - custom_candle_98
+    - custom_candle_99
     - dark_cloud_cover
     - doji
     - dragonfly_doji

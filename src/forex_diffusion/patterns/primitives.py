@@ -50,3 +50,19 @@ def fit_line_indices(y: np.ndarray, i0: int, i1: int) -> Tuple[float, float]:
     A = np.vstack([x, np.ones_like(x)]).T
     slope, intercept = np.linalg.lstsq(A, yy, rcond=None)[0]
     return float(slope), float(intercept)
+
+
+import pandas as pd
+import numpy as np
+
+def time_array(df):
+    if df is None or len(df)==0:
+        return np.array([], dtype='datetime64[ns]')
+    if 'ts_utc' in df.columns:
+        try:
+            return pd.to_datetime(df['ts_utc'], unit='ms').to_numpy()
+        except Exception:
+            return pd.to_datetime(df['ts_utc']).to_numpy()
+    if 'time' in df.columns:
+        return pd.to_datetime(df['time']).to_numpy()
+    return pd.to_datetime(df.index).to_numpy()
