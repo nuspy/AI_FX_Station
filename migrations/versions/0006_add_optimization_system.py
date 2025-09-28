@@ -76,14 +76,16 @@ def upgrade():
         sa.Column('updated_at', sa.DateTime, nullable=False, server_default=sa.func.current_timestamp()),
         sa.Column('started_at', sa.DateTime, nullable=True),
         sa.Column('completed_at', sa.DateTime, nullable=True),
+
+        # Unique constraint for matrix cell
+        sa.UniqueConstraint('pattern_key', 'direction', 'asset', 'timeframe', 'regime_tag',
+                           name='uq_study_matrix_cell')
     )
 
-    # Create unique constraint and indexes for studies
+    # Create indexes for studies (unique constraint is in table definition)
     op.create_index('idx_study_status', 'optimization_studies', ['status'])
     op.create_index('idx_study_pattern', 'optimization_studies', ['pattern_key'])
     op.create_index('idx_study_asset_tf', 'optimization_studies', ['asset', 'timeframe'])
-    op.create_unique_constraint('uq_study_matrix_cell', 'optimization_studies',
-                               ['pattern_key', 'direction', 'asset', 'timeframe', 'regime_tag'])
 
     # optimization_trials table - individual parameter trials
     op.create_table('optimization_trials',
@@ -182,11 +184,13 @@ def upgrade():
         sa.Column('combined_score', sa.Float, nullable=True),
 
         sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.current_timestamp()),
+
+        # Unique constraint for trial metrics context
+        sa.UniqueConstraint('trial_id', 'dataset_id', 'regime_tag',
+                           name='uq_trial_metrics_context')
     )
 
-    # Create unique constraint and indexes for metrics
-    op.create_unique_constraint('uq_trial_metrics_context', 'trial_metrics',
-                               ['trial_id', 'dataset_id', 'regime_tag'])
+    # Create indexes for metrics
     op.create_index('idx_metrics_dataset', 'trial_metrics', ['dataset_id'])
     op.create_index('idx_metrics_regime', 'trial_metrics', ['regime_tag'])
     op.create_index('idx_metrics_success_rate', 'trial_metrics', ['success_rate'])
@@ -232,11 +236,13 @@ def upgrade():
         sa.Column('version', sa.Integer, server_default='1'),
 
         sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.current_timestamp()),
+
+        # Unique constraint for best parameters context
+        sa.UniqueConstraint('study_id', 'regime_tag',
+                           name='uq_best_params_context')
     )
 
-    # Create unique constraint and indexes for best parameters
-    op.create_unique_constraint('uq_best_params_context', 'best_parameters',
-                               ['study_id', 'regime_tag'])
+    # Create indexes for best parameters
     op.create_index('idx_best_params_promoted', 'best_parameters', ['is_promoted'])
     op.create_index('idx_best_params_hash', 'best_parameters', ['params_hash'])
 

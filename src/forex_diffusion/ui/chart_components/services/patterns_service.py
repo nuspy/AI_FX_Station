@@ -438,16 +438,7 @@ class PatternsService(ChartServiceBase):
         self._enabled_chart = bool(on)
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
 
-        # Check if historical patterns are enabled - disable continuous scanning
-        if self._historical_config.get('enabled', False):
-            logger.info("Historical patterns enabled - continuous scanning disabled for chart patterns")
-            if self._chart_thread.isRunning():
-                self._chart_worker.stop()
-                self._chart_thread.quit()
-                self._chart_thread.wait()
-            return
-
-        # Start/stop background thread properly for continuous scanning only
+        # Start/stop background thread for continuous scanning - independent of historical scanning
         try:
             if self._enabled_chart:
                 if not self._chart_thread.isRunning():
@@ -467,16 +458,7 @@ class PatternsService(ChartServiceBase):
         self._enabled_candle = bool(on)
         logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
 
-        # Check if historical patterns are enabled - disable continuous scanning
-        if self._historical_config.get('enabled', False):
-            logger.info("Historical patterns enabled - continuous scanning disabled for candle patterns")
-            if self._candle_thread.isRunning():
-                self._candle_worker.stop()
-                self._candle_thread.quit()
-                self._candle_thread.wait()
-            return
-
-        # Start/stop background thread properly for continuous scanning only
+        # Start/stop background thread for continuous scanning - independent of historical scanning
         try:
             if self._enabled_candle:
                 if not self._candle_thread.isRunning():
