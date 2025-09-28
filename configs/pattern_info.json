@@ -4,20 +4,342 @@
     "effect": "Reversal",
     "description": "Diverging envelope after decline; breakout often upward.",
     "benchmarks": {
-      "Performance Rank": "\u2014",
-      "Breakeven Failure Rate": "\u2014",
-      "Average Rise": "\u2014",
-      "Change After Trend Ends": "\u2014",
-      "Volume Trend": "\u2014",
-      "Throwbacks": "\u2014",
-      "% Meeting Price Target": "\u2014",
-      "Surprising Findings": "\u2014"
+      "Performance Rank": "—",
+      "Breakeven Failure Rate": "—",
+      "Average Rise": "—",
+      "Change After Trend Ends": "—",
+      "Volume Trend": "—",
+      "Throwbacks": "—",
+      "% Meeting Price Target": "—",
+      "Surprising Findings": "—"
     },
     "bull": {
       "Notes": "Upward bias on breakout"
     },
     "bear": {
       "Notes": "Downside break less reliable"
+    },
+    "image": null,
+    "links": []
+  },
+  "head_shoulders": {
+    "name": "Head and Shoulders",
+    "effect": "Reversal",
+    "description": "Classic reversal pattern with left shoulder, head (highest peak), and right shoulder.",
+    "benchmarks": {
+      "Performance Rank": "A",
+      "Breakeven Failure Rate": "7%",
+      "Average Rise": "21%",
+      "Change After Trend Ends": "16%",
+      "Volume Trend": "Downward",
+      "Throwbacks": "38%",
+      "% Meeting Price Target": "84%",
+      "Surprising Findings": "Higher volume on right shoulder signals weaker performance"
+    },
+    "bull": {
+      "Notes": "Inverse H&S - reversal from downtrend to uptrend"
+    },
+    "bear": {
+      "Notes": "Classic H&S - reversal from uptrend to downtrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "double_top": {
+    "name": "Double Top",
+    "effect": "Reversal",
+    "description": "Two peaks at approximately the same level indicating resistance and potential downward reversal.",
+    "benchmarks": {
+      "Performance Rank": "B+",
+      "Breakeven Failure Rate": "4%",
+      "Average Rise": "18%",
+      "Change After Trend Ends": "14%",
+      "Volume Trend": "Downward",
+      "Throwbacks": "57%",
+      "% Meeting Price Target": "79%",
+      "Surprising Findings": "Performance degrades with taller patterns"
+    },
+    "bull": {
+      "Notes": "Double bottom - reversal from downtrend"
+    },
+    "bear": {
+      "Notes": "Double top - reversal from uptrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "triangle_ascending": {
+    "name": "Ascending Triangle",
+    "effect": "Continuation",
+    "description": "Horizontal resistance line with ascending support, typically bullish continuation.",
+    "benchmarks": {
+      "Performance Rank": "A-",
+      "Breakeven Failure Rate": "6%",
+      "Average Rise": "22%",
+      "Change After Trend Ends": "18%",
+      "Volume Trend": "Downward",
+      "Throwbacks": "52%",
+      "% Meeting Price Target": "68%",
+      "Surprising Findings": "Upward breakouts perform better than downward"
+    },
+    "bull": {
+      "Notes": "Usually bullish continuation"
+    },
+    "bear": {
+      "Notes": "Downward breakout less common but still valid"
+    },
+    "image": null,
+    "links": []
+  },
+  "triangle_descending": {
+    "name": "Descending Triangle",
+    "effect": "Continuation",
+    "description": "Horizontal support line with descending resistance, typically bearish continuation.",
+    "benchmarks": {
+      "Performance Rank": "B",
+      "Breakeven Failure Rate": "9%",
+      "Average Rise": "16%",
+      "Change After Trend Ends": "13%",
+      "Volume Trend": "Downward",
+      "Throwbacks": "45%",
+      "% Meeting Price Target": "64%",
+      "Surprising Findings": "Downward breakouts more reliable than upward"
+    },
+    "bull": {
+      "Notes": "Upward breakout against expectation"
+    },
+    "bear": {
+      "Notes": "Usually bearish continuation"
+    },
+    "image": null,
+    "links": []
+  },
+  "triangle_symmetrical": {
+    "name": "Symmetrical Triangle",
+    "effect": "Continuation",
+    "description": "Converging trendlines forming triangle, continuation in direction of prior trend.",
+    "benchmarks": {
+      "Performance Rank": "B+",
+      "Breakeven Failure Rate": "8%",
+      "Average Rise": "20%",
+      "Change After Trend Ends": "15%",
+      "Volume Trend": "Downward",
+      "Throwbacks": "50%",
+      "% Meeting Price Target": "71%",
+      "Surprising Findings": "Breakout direction often matches prior trend"
+    },
+    "bull": {
+      "Notes": "Continuation of uptrend"
+    },
+    "bear": {
+      "Notes": "Continuation of downtrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "flag_bull": {
+    "name": "Bull Flag",
+    "effect": "Continuation",
+    "description": "Brief consolidation after strong upward move, typically continues upward.",
+    "benchmarks": {
+      "Performance Rank": "A",
+      "Breakeven Failure Rate": "3%",
+      "Average Rise": "24%",
+      "Change After Trend Ends": "19%",
+      "Volume Trend": "Downward during formation",
+      "Throwbacks": "28%",
+      "% Meeting Price Target": "87%",
+      "Surprising Findings": "High-volume breakouts perform better"
+    },
+    "bull": {
+      "Notes": "Strong bullish continuation pattern"
+    },
+    "bear": {
+      "Notes": "Failure leads to reversal"
+    },
+    "image": null,
+    "links": []
+  },
+  "flag_bear": {
+    "name": "Bear Flag",
+    "effect": "Continuation",
+    "description": "Brief consolidation after strong downward move, typically continues downward.",
+    "benchmarks": {
+      "Performance Rank": "A-",
+      "Breakeven Failure Rate": "4%",
+      "Average Rise": "21%",
+      "Change After Trend Ends": "17%",
+      "Volume Trend": "Downward during formation",
+      "Throwbacks": "32%",
+      "% Meeting Price Target": "83%",
+      "Surprising Findings": "Works well in strong downtrends"
+    },
+    "bull": {
+      "Notes": "Failure leads to reversal"
+    },
+    "bear": {
+      "Notes": "Strong bearish continuation pattern"
+    },
+    "image": null,
+    "links": []
+  },
+  "engulfing_bullish": {
+    "name": "Bullish Engulfing",
+    "effect": "Reversal",
+    "description": "Large bullish candle completely engulfs previous bearish candle.",
+    "benchmarks": {
+      "Performance Rank": "B+",
+      "Breakeven Failure Rate": "12%",
+      "Average Rise": "15%",
+      "Change After Trend Ends": "12%",
+      "Volume Trend": "Higher on engulfing candle",
+      "Throwbacks": "67%",
+      "% Meeting Price Target": "58%",
+      "Surprising Findings": "More reliable at support levels"
+    },
+    "bull": {
+      "Notes": "Reversal from downtrend"
+    },
+    "bear": {
+      "Notes": "Pattern invalid"
+    },
+    "image": null,
+    "links": []
+  },
+  "engulfing_bearish": {
+    "name": "Bearish Engulfing",
+    "effect": "Reversal",
+    "description": "Large bearish candle completely engulfs previous bullish candle.",
+    "benchmarks": {
+      "Performance Rank": "B",
+      "Breakeven Failure Rate": "15%",
+      "Average Rise": "13%",
+      "Change After Trend Ends": "11%",
+      "Volume Trend": "Higher on engulfing candle",
+      "Throwbacks": "71%",
+      "% Meeting Price Target": "54%",
+      "Surprising Findings": "More reliable at resistance levels"
+    },
+    "bull": {
+      "Notes": "Pattern invalid"
+    },
+    "bear": {
+      "Notes": "Reversal from uptrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "hammer": {
+    "name": "Hammer",
+    "effect": "Reversal",
+    "description": "Small body with long lower shadow, indicates potential upward reversal.",
+    "benchmarks": {
+      "Performance Rank": "C+",
+      "Breakeven Failure Rate": "18%",
+      "Average Rise": "11%",
+      "Change After Trend Ends": "9%",
+      "Volume Trend": "Variable",
+      "Throwbacks": "75%",
+      "% Meeting Price Target": "42%",
+      "Surprising Findings": "Needs confirmation on next candle"
+    },
+    "bull": {
+      "Notes": "Potential upward reversal"
+    },
+    "bear": {
+      "Notes": "Pattern invalid in uptrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "doji": {
+    "name": "Doji",
+    "effect": "Reversal",
+    "description": "Open and close prices are nearly equal, indicates indecision and potential reversal.",
+    "benchmarks": {
+      "Performance Rank": "C",
+      "Breakeven Failure Rate": "22%",
+      "Average Rise": "8%",
+      "Change After Trend Ends": "7%",
+      "Volume Trend": "Variable",
+      "Throwbacks": "80%",
+      "% Meeting Price Target": "35%",
+      "Surprising Findings": "More significant at market extremes"
+    },
+    "bull": {
+      "Notes": "Potential reversal from downtrend"
+    },
+    "bear": {
+      "Notes": "Potential reversal from uptrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "elliott_wave_impulse": {
+    "name": "Elliott Wave Impulse",
+    "effect": "Continuation",
+    "description": "Five-wave pattern in the direction of the main trend with Fibonacci relationships.",
+    "benchmarks": {
+      "Performance Rank": "B+",
+      "Breakeven Failure Rate": "12%",
+      "Average Rise": "25%",
+      "Change After Trend Ends": "20%",
+      "Volume Trend": "Increasing on waves 1, 3, 5",
+      "Throwbacks": "45%",
+      "% Meeting Price Target": "72%",
+      "Surprising Findings": "Wave 3 is usually the longest and strongest"
+    },
+    "bull": {
+      "Notes": "Five waves up in bull market"
+    },
+    "bear": {
+      "Notes": "Five waves down in bear market"
+    },
+    "image": null,
+    "links": []
+  },
+  "gartley": {
+    "name": "Gartley Pattern",
+    "effect": "Reversal",
+    "description": "Harmonic XABCD pattern with specific Fibonacci ratios, indicates potential reversal.",
+    "benchmarks": {
+      "Performance Rank": "A-",
+      "Breakeven Failure Rate": "8%",
+      "Average Rise": "23%",
+      "Change After Trend Ends": "18%",
+      "Volume Trend": "Variable",
+      "Throwbacks": "35%",
+      "% Meeting Price Target": "78%",
+      "Surprising Findings": "Precise Fibonacci ratios are critical for validation"
+    },
+    "bull": {
+      "Notes": "Bullish Gartley - reversal from downtrend"
+    },
+    "bear": {
+      "Notes": "Bearish Gartley - reversal from uptrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "butterfly": {
+    "name": "Butterfly Pattern",
+    "effect": "Reversal",
+    "description": "Harmonic pattern with extended CD leg, indicating strong reversal potential.",
+    "benchmarks": {
+      "Performance Rank": "A",
+      "Breakeven Failure Rate": "6%",
+      "Average Rise": "26%",
+      "Change After Trend Ends": "21%",
+      "Volume Trend": "Variable",
+      "Throwbacks": "30%",
+      "% Meeting Price Target": "81%",
+      "Surprising Findings": "127.2% extension critical for D point"
+    },
+    "bull": {
+      "Notes": "Bullish Butterfly - strong upward reversal"
+    },
+    "bear": {
+      "Notes": "Bearish Butterfly - strong downward reversal"
     },
     "image": null,
     "links": []

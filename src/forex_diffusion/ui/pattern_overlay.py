@@ -20,24 +20,108 @@ FORMATION_LINE_COLOR = "#33A1FD"  # light blue
 # --------------- RENDERER ---------------------
 
 class PatternDetailsDialog(QtWidgets.QDialog):
-    def __init__(self, parent, event):
+    def __init__(self, parent, event, info_provider=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Pattern: {event.pattern_key}")
+        pattern_key = getattr(event, 'pattern_key', 'unknown')
+        direction = getattr(event, 'direction', 'neutral').lower()
+
+        self.setWindowTitle(f"Pattern: {pattern_key}")
+        self.setMinimumSize(500, 400)
+
         lay = QtWidgets.QVBoxLayout(self)
-        def lab(s): 
-            l=QtWidgets.QLabel(s); l.setTextFormat(Qt.TextFormat.RichText); l.setWordWrap(True); return l
+
+        # Load pattern info from JSON
+        pattern_info = self._load_pattern_info(pattern_key, info_provider)
+
+        def lab(s, style=""):
+            l = QtWidgets.QLabel(s)
+            l.setTextFormat(Qt.TextFormat.RichText)
+            l.setWordWrap(True)
+            if style:
+                l.setStyleSheet(style)
+            return l
+
+        # Pattern name and effect
+        name = pattern_info.get('name', pattern_key)
+        effect = pattern_info.get('effect', 'Unknown')
+        effect_color = "#2ecc71" if effect == "Reversal" else "#3498db" if effect == "Continuation" else "#95a5a6"
+
+        title_html = f'<h2 style="color: {effect_color};">{name}</h2>'
+        title_html += f'<p style="color: {effect_color}; font-weight: bold; font-size: 14px;">{effect} Pattern</p>'
+        lay.addWidget(lab(title_html))
+
+        # Description
+        description = pattern_info.get('description', 'No description available.')
+        lay.addWidget(lab(f'<p style="font-size: 12px; color: #34495e;"><b>Description:</b> {description}</p>'))
+
+        # Direction-specific notes
+        direction_info = pattern_info.get(direction, {})
+        if direction_info:
+            notes = direction_info.get('Notes', '')
+            if notes:
+                lay.addWidget(lab(f'<p style="font-size: 12px; color: #8e44ad;"><b>{direction.title()} Direction:</b> {notes}</p>'))
+
+        # Performance benchmarks
+        benchmarks = pattern_info.get('benchmarks', {})
+        if benchmarks:
+            bench_html = '<h3 style="color: #2c3e50;">Performance Statistics:</h3><table style="width:100%; border-collapse: collapse;">'
+            for key, value in benchmarks.items():
+                bench_html += f'<tr><td style="padding: 2px; border-bottom: 1px solid #bdc3c7;"><b>{key}:</b></td><td style="padding: 2px; border-bottom: 1px solid #bdc3c7;">{value}</td></tr>'
+            bench_html += '</table>'
+            lay.addWidget(lab(bench_html))
+
+        # Event details
+        event_html = '<h3 style="color: #2c3e50;">Event Details:</h3>'
         fields = [
             ("Kind", getattr(event,'kind','')),
             ("Direction", getattr(event,'direction','')),
-            ("Confirm", str(getattr(event,'confirm_ts',''))),
-            ("Target", str(getattr(event,'target_price', None))),
-            ("Failure", str(getattr(event,'failure_price', None))),
-            ("Info", str(getattr(event,'info',{})))
+            ("Confirm Time", str(getattr(event,'confirm_ts',''))),
+            ("Target Price", str(getattr(event,'target_price', 'N/A'))),
+            ("Failure Price", str(getattr(event,'failure_price', 'N/A')))
         ]
-        html = "".join([f"<p><b>{k}:</b> {v}</p>" for k,v in fields])
-        lay.addWidget(lab(html))
-        btn = QtWidgets.QPushButton("Chiudi"); btn.clicked.connect(self.accept)
+
+        event_html += '<table style="width:100%; border-collapse: collapse;">'
+        for k, v in fields:
+            event_html += f'<tr><td style="padding: 2px; border-bottom: 1px solid #bdc3c7;"><b>{k}:</b></td><td style="padding: 2px; border-bottom: 1px solid #bdc3c7;">{v}</td></tr>'
+        event_html += '</table>'
+        lay.addWidget(lab(event_html))
+
+        # Close button
+        btn = QtWidgets.QPushButton("Chiudi")
+        btn.clicked.connect(self.accept)
+        btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; padding: 8px 16px; border: none; border-radius: 4px; } QPushButton:hover { background-color: #2980b9; }")
         lay.addWidget(btn)
+
+    def _load_pattern_info(self, pattern_key, info_provider):
+        """Load pattern information from JSON configuration"""
+        try:
+            import json
+            import os
+
+            # Try to use info_provider first
+            if info_provider and hasattr(info_provider, 'get_pattern_info'):
+                info = info_provider.get_pattern_info(pattern_key)
+                if info:
+                    return info
+
+            # Fallback: load directly from config file
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', 'configs', 'pattern_info.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    pattern_data = json.load(f)
+                    return pattern_data.get(pattern_key, {})
+        except Exception as e:
+            print(f"Error loading pattern info: {e}")
+
+        # Default fallback
+        return {
+            'name': pattern_key,
+            'effect': 'Unknown',
+            'description': 'Pattern information not available.',
+            'benchmarks': {},
+            'bull': {},
+            'bear': {}
+        }
 
 class PatternOverlayRenderer:
     """
@@ -118,6 +202,7 @@ class PatternOverlayRenderer:
             try:
                 self._draw_badge(x, y, label, direction, e)  # davanti
                 self._draw_target_arrow(x, y, direction, e)  # davanti
+                self._draw_invalidation_arrow(x, y, direction, e)  # freccia invalidazione
             except Exception as ex:
                 logger.debug(f"overlay draw_event failed: {ex}")
 
@@ -244,13 +329,24 @@ class PatternOverlayRenderer:
             pass
         return raw
 
-    def _direction_color(self, direction: str) -> str:
+    def _direction_color(self, direction: str, effect: str = None) -> str:
+        """
+        Return color based on direction and pattern effect:
+        - Green for bullish/up movement (reversal or continuation)
+        - Red for bearish/down movement (reversal or continuation)
+        - Blue for neutral/continuation patterns
+        """
         d = str(direction or "").lower()
+        e = str(effect or "").lower()
+
         if d in ("up", "bull", "bullish", "long", "buy"):
-            return "#2ecc71"  # green
-        if d in ("down", "bear", "bearish", "short", "sell"):
-            return "#e74c3c"  # red
-        return "#3498db"     # neutral
+            return "#2ecc71"  # green for bullish
+        elif d in ("down", "bear", "bearish", "short", "sell"):
+            return "#e74c3c"  # red for bearish
+        elif e in ("continuation", "continue"):
+            return "#3498db"  # blue for continuation
+        else:
+            return "#3498db"  # default blue for neutral
 
     def _normalize_events(self, ax: mpla.Axes, evs):
         norm = []
@@ -349,6 +445,32 @@ class PatternOverlayRenderer:
                       zorder=119)
         self._arrows.extend([arr, lab])
 
+    def _draw_invalidation_arrow(self, x: float, y: float, direction: str, e: object) -> None:
+        """Draw black vertical arrow indicating pattern invalidation point"""
+        failure_price = getattr(e, "failure_price", None)
+        if failure_price is None:
+            return
+        try:
+            fp = float(failure_price)
+        except Exception:
+            return
+
+        ax = self.ax
+        # Draw black vertical arrow pointing down to invalidation level
+        arrow = ax.annotate(
+            "", xy=(x, fp), xytext=(x, y),
+            arrowprops=dict(arrowstyle="-|>", lw=1.5, color='black', shrinkA=0, shrinkB=0),
+            zorder=120
+        )
+
+        # Add small label for invalidation point
+        label = ax.text(x, fp, f"INV", fontsize=7, color='black',
+                       va="bottom" if fp < y else "top", ha="center",
+                       bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="black", lw=0.5, alpha=0.9),
+                       zorder=120)
+
+        self._arrows.extend([arrow, label])
+
     def _event_window(self, e: object):
         ax = self.ax
         if not ax: return None
@@ -434,14 +556,16 @@ class PatternOverlayRenderer:
         if mask.sum() < 2:
             return
 
-        # Thicker than the price line and color by direction (green bull, red bear)
+        # Thicker than the price line and color by direction and effect
         try:
             base_lw = float(getattr(price_line, "get_linewidth", lambda: 1.2)())
         except Exception:
             base_lw = 1.2
-        linewidth = max(base_lw * 1.8, base_lw + 1.5, 3.5)
+        linewidth = max(base_lw * 2.0, base_lw + 2.0, 4.0)  # Make formation line more prominent
+
         direction = getattr(e, "direction", None)
-        color = self._direction_color(direction)
+        effect = getattr(e, "effect", None)
+        color = self._direction_color(direction, effect)
         z = max(price_line.get_zorder() - 1, 1)
 
         ln, = ax.plot(xd[mask], yd[mask],
@@ -552,6 +676,15 @@ class PatternOverlayRenderer:
         except Exception:
             return
 
+        # Use new enhanced dialog with pattern info
+        try:
+            dialog = PatternDetailsDialog(self.ax.figure.canvas.parent(), ev, self.info)
+            dialog.exec()
+            return
+        except Exception as e:
+            print(f"Error showing enhanced dialog: {e}")
+
+        # Fallback to old simple dialog
         def _esc(x):
             try: return str(x).replace("<","&lt;").replace(">","&gt;")
             except Exception: return str(x)

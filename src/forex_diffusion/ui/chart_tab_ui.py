@@ -712,54 +712,62 @@ class ChartTabUI(QWidget):
         group = QGroupBox("Execution Control")
         group_layout = QVBoxLayout(group)
 
-        # Main control buttons
+        # PRIMA RIGA: Main Training Buttons
         main_buttons_layout = QHBoxLayout()
 
-        # Start button with pattern family selection
-        start_chart_btn = QPushButton("🔧 Start Chart Patterns Training")
-        start_chart_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px; }")
+        start_chart_btn = QPushButton("🔧 Start Chart Training")
+        start_chart_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 6px 12px; min-height: 35px; }")
         start_chart_btn.setToolTip("Avvia training completo per tutti i chart patterns:\n• TUTTI i patterns chart disponibili\n• ENTRAMBE le direzioni (bull/bear)\n• TUTTI i regimi filter\n• Algoritmo genetico ottimizzato")
         start_chart_btn.clicked.connect(lambda: self._start_pattern_family_training("chart"))
         main_buttons_layout.addWidget(start_chart_btn)
 
-        start_candle_btn = QPushButton("🕯️ Start Candlestick Patterns Training")
-        start_candle_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
+        start_candle_btn = QPushButton("🕯️ Start Candlestick Training")
+        start_candle_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 6px 12px; min-height: 35px; }")
         start_candle_btn.setToolTip("Avvia training completo per tutti i candlestick patterns:\n• TUTTI i patterns candlestick disponibili\n• ENTRAMBE le direzioni (bull/bear)\n• TUTTI i regimi filter\n• Algoritmo genetico ottimizzato")
         start_candle_btn.clicked.connect(lambda: self._start_pattern_family_training("candlestick"))
         main_buttons_layout.addWidget(start_candle_btn)
 
+        self.resume_interrupted_btn = QPushButton("🔄 Resume Interrupted")
+        self.resume_interrupted_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 6px 12px; min-height: 35px; }")
+        self.resume_interrupted_btn.clicked.connect(self._resume_interrupted_training)
+        self.resume_interrupted_btn.setToolTip("Riprende training interrotto bruscamente da sessione precedente")
+        main_buttons_layout.addWidget(self.resume_interrupted_btn)
+
+        main_buttons_layout.addStretch()
         group_layout.addLayout(main_buttons_layout)
 
-        # Secondary control buttons
+        # SECONDA RIGA: Control Buttons
         control_buttons_layout = QHBoxLayout()
 
         self.pause_optimization_btn = QPushButton("⏸️ Pause")
+        self.pause_optimization_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 80px; }")
         self.pause_optimization_btn.clicked.connect(self._pause_optimization)
         self.pause_optimization_btn.setEnabled(False)
         self.pause_optimization_btn.setToolTip("Pausa il training - stato salvato automaticamente")
         control_buttons_layout.addWidget(self.pause_optimization_btn)
 
         self.resume_optimization_btn = QPushButton("▶️ Resume")
+        self.resume_optimization_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 80px; }")
         self.resume_optimization_btn.clicked.connect(self._resume_optimization)
         self.resume_optimization_btn.setEnabled(False)
         self.resume_optimization_btn.setToolTip("Riprende training dal punto di interruzione")
         control_buttons_layout.addWidget(self.resume_optimization_btn)
 
         self.stop_optimization_btn = QPushButton("⏹️ Stop")
-        self.stop_optimization_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
+        self.stop_optimization_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; padding: 4px 8px; min-width: 80px; }")
         self.stop_optimization_btn.clicked.connect(self._stop_optimization)
         self.stop_optimization_btn.setEnabled(False)
         self.stop_optimization_btn.setToolTip("Ferma definitivamente il training")
         control_buttons_layout.addWidget(self.stop_optimization_btn)
 
-        # Resume from interruption button
-        self.resume_interrupted_btn = QPushButton("🔄 Resume Interrupted Training")
-        self.resume_interrupted_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
-        self.resume_interrupted_btn.clicked.connect(self._resume_interrupted_training)
-        self.resume_interrupted_btn.setToolTip("Riprende training interrotto bruscamente da sessione precedente")
-        control_buttons_layout.addWidget(self.resume_interrupted_btn)
-
+        # Spacer per separare i controlli
         control_buttons_layout.addStretch()
+
+        # Status indicator
+        self.training_indicator = QLabel("⚪ Ready")
+        self.training_indicator.setStyleSheet("QLabel { color: #666; font-weight: bold; padding: 4px; }")
+        control_buttons_layout.addWidget(self.training_indicator)
+
         group_layout.addLayout(control_buttons_layout)
 
         # Status display with detailed info
