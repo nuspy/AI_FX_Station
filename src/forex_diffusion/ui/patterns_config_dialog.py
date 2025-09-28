@@ -3,11 +3,13 @@ from __future__ import annotations
 from typing import List, Dict, Any
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QWidget, QHBoxLayout,
     QPushButton, QListWidget, QListWidgetItem, QFormLayout, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QLabel, QComboBox, QLineEdit, QSplitter, QScrollArea, QFrame, QApplication)
+    QCheckBox, QLabel, QComboBox, QLineEdit, QSplitter, QScrollArea, QFrame, QApplication,
+    QGroupBox, QGridLayout)
 from PySide6.QtCore import Qt
 import yaml, os
 import inspect
 from ..patterns.registry import PatternRegistry
+from ..patterns.boundary_config import get_boundary_config
 
 class PatternsConfigDialog(QDialog):
     def __init__(self, parent=None, yaml_path:str="configs/patterns.yaml", patterns_service=None) -> None:
@@ -30,6 +32,10 @@ class PatternsConfigDialog(QDialog):
         # Initialize pattern registry to get available patterns
         self.registry = PatternRegistry()
         self.available_patterns = self._get_available_patterns()
+
+        # Initialize boundary configuration
+        self.boundary_config = get_boundary_config()
+
         with open(self.yaml_path, 'r', encoding='utf-8') as fh:
             self.cfg = yaml.safe_load(fh) or {}
         self.patterns = self.cfg.get('patterns', {})
@@ -347,6 +353,9 @@ class PatternsConfigDialog(QDialog):
         # Store enable checkbox
         self._enable_widgets[kind][pattern['key']] = enable_cb
 
+        # Add boundaries section
+        self._add_boundary_section(parameters_layout, pattern['key'], kind)
+
         # Load saved settings for this pattern
         self._load_pattern_settings(pattern, kind, enable_cb)
 
@@ -354,6 +363,95 @@ class PatternsConfigDialog(QDialog):
         if not hasattr(self, '_current_pattern'):
             self._current_pattern = {}
         self._current_pattern[kind] = pattern['key']
+
+    def _add_boundary_section(self, layout: QFormLayout, pattern_key: str, kind: str):
+        """Add historical boundaries configuration section"""
+        try:
+            # Add separator before boundaries
+            separator = QFrame()
+            separator.setFrameShape(QFrame.HLine)
+            layout.addRow(separator)
+
+            # Boundaries section header
+            boundaries_label = QLabel("Historical Boundaries (Candles from Present)")
+            boundaries_label.setStyleSheet("font-weight: bold; color: #0066cc;")
+            layout.addRow(boundaries_label)
+
+            # Helper text
+            help_text = QLabel("Define how many candles back to consider as 'current' vs 'historical'")
+            help_text.setStyleSheet("font-size: 10px; color: #666;")
+            help_text.setWordWrap(True)
+            layout.addRow(help_text)
+
+            # Create boundaries grid widget
+            boundaries_widget = QGroupBox("Boundaries by Timeframe")
+            boundaries_layout = QGridLayout(boundaries_widget)
+
+            # Get available timeframes
+            timeframes = self.boundary_config.get_timeframes()
+
+            # Initialize boundary widgets storage if needed
+            if not hasattr(self, '_boundary_widgets'):
+                self._boundary_widgets = {}
+            if kind not in self._boundary_widgets:
+                self._boundary_widgets[kind] = {}
+            if pattern_key not in self._boundary_widgets[kind]:
+                self._boundary_widgets[kind][pattern_key] = {}
+
+            # Add header row
+            boundaries_layout.addWidget(QLabel("Timeframe"), 0, 0)
+            boundaries_layout.addWidget(QLabel("Candles"), 0, 1)
+            boundaries_layout.addWidget(QLabel("Default"), 0, 2)
+
+            # Add boundary controls for each timeframe
+            for row, timeframe in enumerate(timeframes, start=1):
+                # Timeframe label
+                tf_label = QLabel(timeframe.upper())
+                boundaries_layout.addWidget(tf_label, row, 0)
+
+                # Boundary spinbox
+                boundary_spinbox = QSpinBox()
+                boundary_spinbox.setRange(1, 10000)
+                current_boundary = self.boundary_config.get_boundary(pattern_key, timeframe)
+                boundary_spinbox.setValue(current_boundary)
+                boundary_spinbox.setToolTip(f"Number of candles from present to consider as 'current' for {timeframe}")
+                boundaries_layout.addWidget(boundary_spinbox, row, 1)
+
+                # Default value label
+                default_boundary = self.boundary_config._get_default_boundaries().get(pattern_key, {}).get(timeframe, 50)
+                default_label = QLabel(f"({default_boundary})")
+                default_label.setStyleSheet("color: #666; font-size: 10px;")
+                boundaries_layout.addWidget(default_label, row, 2)
+
+                # Store widget reference
+                self._boundary_widgets[kind][pattern_key][timeframe] = boundary_spinbox
+
+            # Reset to defaults button
+            reset_btn = QPushButton("Reset to Defaults")
+            reset_btn.clicked.connect(lambda: self._reset_boundaries_to_default(pattern_key, kind))
+            boundaries_layout.addWidget(reset_btn, len(timeframes) + 1, 0, 1, 3)
+
+            layout.addRow(boundaries_widget)
+
+        except Exception as e:
+            print(f"Error adding boundary section: {e}")
+
+    def _reset_boundaries_to_default(self, pattern_key: str, kind: str):
+        """Reset boundaries for a pattern to default values"""
+        try:
+            # Reset in config
+            self.boundary_config.reset_to_defaults(pattern_key)
+
+            # Update UI widgets
+            if (kind in self._boundary_widgets and
+                pattern_key in self._boundary_widgets[kind]):
+
+                for timeframe, widget in self._boundary_widgets[kind][pattern_key].items():
+                    default_value = self.boundary_config.get_boundary(pattern_key, timeframe)
+                    widget.setValue(default_value)
+
+        except Exception as e:
+            print(f"Error resetting boundaries: {e}")
 
     def _save_current_pattern_state(self, kind: str):
         """Save current pattern state before switching to another pattern"""
@@ -566,15 +664,42 @@ class PatternsConfigDialog(QDialog):
         # Save historical patterns settings
         historical_settings = {
             'enabled': self.cb_historical_enabled.isChecked(),
-            'start_time': self.le_start_time.text().strip(),
-            'end_time': self.le_end_time.text().strip()
+            'start_time': self.le_start_time.text().strip()
+            # end_time removed - now defined per pattern via boundaries
         }
         self.cfg['historical_patterns'] = historical_settings
+
+        # Save boundary configurations
+        self._save_boundary_configurations()
 
         self.cfg['patterns'] = self.patterns
         with open(self.yaml_path, 'w', encoding='utf-8') as fh:
             yaml.safe_dump(self.cfg, fh, allow_unicode=True, sort_keys=False)
         self.accept()
+
+    def _save_boundary_configurations(self):
+        """Save boundary configurations from UI to boundary config"""
+        try:
+            if not hasattr(self, '_boundary_widgets'):
+                return
+
+            # Iterate through all boundary widgets and save values
+            for kind in self._boundary_widgets:
+                for pattern_key in self._boundary_widgets[kind]:
+                    for timeframe, widget in self._boundary_widgets[kind][pattern_key].items():
+                        try:
+                            if widget and hasattr(widget, 'value'):
+                                boundary_value = widget.value()
+                                self.boundary_config.set_boundary(pattern_key, timeframe, boundary_value)
+                        except RuntimeError:
+                            # Widget was deleted
+                            continue
+
+            # Save boundary config to file
+            self.boundary_config.save_config()
+
+        except Exception as e:
+            print(f"Error saving boundary configurations: {e}")
 
     def _make_common_settings_tab(self) -> QWidget:
         box = QWidget()
@@ -634,11 +759,11 @@ class PatternsConfigDialog(QDialog):
         self.le_start_time.setText(self.historical_settings.get('start_time', '30d'))
         settings_layout.addRow(QLabel("Tempo inizio patterns storici:"), self.le_start_time)
 
-        # Tempo fine patterns storici
-        self.le_end_time = QLineEdit()
-        self.le_end_time.setPlaceholderText("es. 7d, 12h, 60m")
-        self.le_end_time.setText(self.historical_settings.get('end_time', '7d'))
-        settings_layout.addRow(QLabel("Tempo fine patterns storici:"), self.le_end_time)
+        # Note about historical boundaries
+        note_label = QLabel("Nota: Il confine tra patterns 'attuali' e 'storici' è ora configurato per singolo pattern nei tab sopra (sezione 'Historical Boundaries')")
+        note_label.setStyleSheet("color: #0066cc; font-style: italic; font-size: 10px;")
+        note_label.setWordWrap(True)
+        settings_layout.addRow(note_label)
 
         # Visibilità basata sulle impostazioni salvate
         enabled = self.historical_settings.get('enabled', False)

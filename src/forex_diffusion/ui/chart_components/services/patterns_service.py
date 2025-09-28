@@ -77,10 +77,143 @@ class _ScanWorker(QObject):
                         new_interval = max(current_interval * 0.9, original_interval)
                         self._timer.setInterval(int(new_interval))
 
+            # Call the parent's _scan_once method from the worker thread
             evs = self._parent._scan_once(kind=self._kind) or []
             self.produced.emit(evs)
         except Exception as e:
             logger.debug(f"Error in scan worker tick ({self._kind}): {e}")
+
+
+class _DetectionWorker(QObject):
+    """Worker for running pattern detection batches in background thread"""
+    batch_completed = Signal(int, list)  # batch_number, events
+    detection_finished = Signal(list)    # all_events
+    progress_updated = Signal(int, str)  # percentage, status_message
+
+    def __init__(self):
+        super().__init__()
+        self._active = False
+
+    @Slot(object, list, int)
+    def process_detection_batch(self, df, detectors, batch_size):
+        """Process detection in background thread to keep GUI responsive"""
+        if self._active:
+            return  # Already processing
+
+        self._active = True
+        try:
+            # Import boundary config
+            from ....patterns.boundary_config import get_boundary_config
+            boundary_config = get_boundary_config()
+
+            all_events = []
+            total_batches = (len(detectors) + batch_size - 1) // batch_size
+
+            # Try to determine current timeframe from dataframe or default to 5m
+            timeframe = self._detect_timeframe_from_df(df)
+
+            for batch_num in range(total_batches):
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, len(detectors))
+                batch_detectors = detectors[start_idx:end_idx]
+
+                # Update progress in GUI thread
+                progress_percent = int((batch_num / total_batches) * 100)
+                status = f"Scanning patterns... {progress_percent}% ({batch_num + 1}/{total_batches})"
+                self.progress_updated.emit(progress_percent, status)
+
+                # Process detectors in this batch
+                batch_events = []
+                for i, det in enumerate(batch_detectors):
+                    try:
+                        detector_key = getattr(det, 'key', f'unknown_{i}')
+
+                        import time
+                        start_time = time.time()
+
+                        # Apply boundary-specific dataframe limitation
+                        detector_df = self._apply_boundary_to_df(df, detector_key, timeframe, boundary_config)
+
+                        events = det.detect(detector_df)
+                        elapsed = time.time() - start_time
+
+                        if elapsed > 1.0:  # Log slow detectors
+                            logger.debug(f"Detector {detector_key} took {elapsed:.2f}s")
+
+                        if events:
+                            batch_events.extend(events)
+
+                    except Exception as e:
+                        detector_key = getattr(det, 'key', f'unknown_{i}')
+                        logger.error(f"Detector {detector_key} failed: {e}")
+
+                # Emit batch completion
+                self.batch_completed.emit(batch_num, batch_events)
+                all_events.extend(batch_events)
+
+                # Allow other threads to run (yield)
+                import time
+                time.sleep(0.001)  # 1ms pause to keep GUI responsive
+
+            # Emit final completion
+            self.detection_finished.emit(all_events)
+
+        except Exception as e:
+            logger.error(f"Detection worker error: {e}")
+            self.detection_finished.emit([])
+        finally:
+            self._active = False
+
+    def _detect_timeframe_from_df(self, df):
+        """Try to detect timeframe from dataframe timestamps"""
+        try:
+            if len(df) < 2:
+                return "5m"  # Default
+
+            # Calculate average interval between timestamps
+            timestamps = df.index if hasattr(df.index, 'to_pydatetime') else df['timestamp']
+            if len(timestamps) < 2:
+                return "5m"
+
+            # Get time difference between first two rows
+            time_diff = timestamps[1] - timestamps[0]
+            total_seconds = time_diff.total_seconds()
+
+            # Map to standard timeframes
+            if total_seconds <= 60:  # <= 1 minute
+                return "1m"
+            elif total_seconds <= 300:  # <= 5 minutes
+                return "5m"
+            elif total_seconds <= 900:  # <= 15 minutes
+                return "15m"
+            elif total_seconds <= 3600:  # <= 1 hour
+                return "1h"
+            elif total_seconds <= 14400:  # <= 4 hours
+                return "4h"
+            elif total_seconds <= 86400:  # <= 1 day
+                return "1d"
+            else:
+                return "1w"
+
+        except Exception:
+            return "5m"  # Safe fallback
+
+    def _apply_boundary_to_df(self, df, detector_key, timeframe, boundary_config):
+        """Apply pattern-specific boundary to limit dataframe"""
+        try:
+            # Get boundary for this pattern/timeframe
+            boundary_candles = boundary_config.get_boundary(detector_key, timeframe)
+
+            # Limit dataframe to last N candles
+            if len(df) > boundary_candles:
+                limited_df = df.tail(boundary_candles).copy()
+                return limited_df
+            else:
+                return df
+
+        except Exception as e:
+            logger.debug(f"Error applying boundary for {detector_key}: {e}")
+            return df  # Return original on error
 
 
 from .base import ChartServiceBase
@@ -215,7 +348,127 @@ class PatternsService(ChartServiceBase):
         self._chart_worker.produced.connect(self._on_chart_patterns_detected)
         self._candle_worker.produced.connect(self._on_candle_patterns_detected)
 
+        # Create dedicated detection worker for non-blocking batch processing
+        self._detection_thread = QThread(self.view)
+        self._detection_worker = _DetectionWorker()
+        self._detection_worker.moveToThread(self._detection_thread)
+
+        # Connect detection worker signals
+        self._detection_worker.progress_updated.connect(self._on_detection_progress)
+        self._detection_worker.batch_completed.connect(self._on_detection_batch_completed)
+        self._detection_worker.detection_finished.connect(self._on_detection_finished)
+
+        # Start detection thread
+        self._detection_thread.start()
+
         self._threads_started = False
+
+    @Slot(int, str)
+    def _on_detection_progress(self, percentage, status):
+        """Handle progress updates from detection worker"""
+        try:
+            if hasattr(self.view, 'update_status'):
+                self.view.update_status(status)
+            elif hasattr(self.controller, 'update_status'):
+                self.controller.update_status(status)
+        except Exception as e:
+            logger.debug(f"Progress update error: {e}")
+
+    @Slot(int, list)
+    def _on_detection_batch_completed(self, batch_number, events):
+        """Handle batch completion from detection worker"""
+        try:
+            # Add events to the service's event list
+            if events:
+                self._events.extend(events)
+                # Update the chart with new events
+                self.renderer.add_events(events)
+        except Exception as e:
+            logger.debug(f"Batch completion error: {e}")
+
+    @Slot(list)
+    def _on_detection_finished(self, all_events):
+        """Handle detection completion from worker"""
+        try:
+            logger.info(
+                f"Patterns detected: total={len(all_events)} "
+                f"(chart={sum(1 for x in all_events if getattr(x, 'kind', '') == 'chart')}, "
+                f"candle={sum(1 for x in all_events if getattr(x, 'kind', '') == 'candle')})"
+            )
+
+            # Enrich events if we have any
+            if all_events:
+                try:
+                    from .patterns_adapter import enrich_events
+                    # Use a simple dataframe for enrichment if needed
+                    enriched = enrich_events(None, all_events)  # None df is handled in enrich_events
+                    tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
+
+                    for e in enriched:
+                        # Attach info from pattern_info.json
+                        try:
+                            if hasattr(e, 'pattern_key') and self.info:
+                                info_dict = self.info.get_pattern_info(e.pattern_key)
+                                if info_dict:
+                                    for k, v in info_dict.items():
+                                        try:
+                                            setattr(e, f"info_{k}", v)
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+
+                        # Attach timeframe hint
+                        if tf_hint:
+                            try:
+                                setattr(e, "tf_hint", tf_hint)
+                            except Exception:
+                                pass
+
+                    # Update events and refresh display
+                    self._events = enriched
+                    self._repaint()
+
+                    # Update status with completion
+                    pattern_count = len(enriched)
+                    if hasattr(self.view, 'update_status'):
+                        self.view.update_status(f"Pattern scan complete: {pattern_count} patterns found")
+                    elif hasattr(self.controller, 'update_status'):
+                        self.controller.update_status(f"Patterns: {pattern_count} found")
+
+                except Exception as e:
+                    logger.warning(f"Event enrichment failed: {e}")
+                    # Fallback without enrichment
+                    self._events = all_events
+                    if hasattr(self.view, 'update_status'):
+                        self.view.update_status(f"Pattern scan complete: {len(all_events)} patterns found")
+                    elif hasattr(self.controller, 'update_status'):
+                        self.controller.update_status(f"Patterns: {len(all_events)} found")
+            else:
+                # No patterns found
+                self._events = []
+                self.renderer.clear()
+                if hasattr(self.view, 'update_status'):
+                    self.view.update_status("Pattern scan complete: No patterns found")
+                elif hasattr(self.controller, 'update_status'):
+                    self.controller.update_status("No patterns found")
+
+            # Trigger final chart update
+            if hasattr(self.view, 'draw_idle'):
+                self.view.draw_idle()
+            elif hasattr(self.view, 'canvas') and hasattr(self.view.canvas, 'draw_idle'):
+                self.view.canvas.draw_idle()
+
+        except Exception as e:
+            logger.error(f"Detection finished error: {e}")
+            # Update status on error
+            try:
+                if hasattr(self.view, 'update_status'):
+                    self.view.update_status("Pattern scan failed")
+                elif hasattr(self.controller, 'update_status'):
+                    self.controller.update_status("Pattern scan error")
+            except Exception:
+                pass
 
     def _load_config(self) -> dict:
         """Load configuration for patterns service with resource limits"""
@@ -857,9 +1110,21 @@ class PatternsService(ChartServiceBase):
                     time.sleep(0.01)
             else:
                 # Use original synchronous detection for small datasets
+                # Import boundary config for synchronous detection too
+                from ...patterns.boundary_config import get_boundary_config
+                boundary_config = get_boundary_config()
+
+                # Detect timeframe from dataframe
+                timeframe = self._detect_timeframe_from_df(dfN)
+
                 for det in dets:
                     try:
-                        evs.extend(det.detect(dfN))
+                        detector_key = getattr(det, 'key', 'unknown')
+
+                        # Apply boundary-specific dataframe limitation for sync mode too
+                        detector_df = self._apply_boundary_to_df(dfN, detector_key, timeframe, boundary_config)
+
+                        evs.extend(det.detect(detector_df))
                     except Exception as e:
                         logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
 
@@ -920,26 +1185,8 @@ class PatternsService(ChartServiceBase):
         self.detect_async(df)
 
     def _run_detection_nonblocking(self, df: pd.DataFrame):
-        """Run pattern detection in non-blocking batches using QTimer"""
+        """Run pattern detection in background worker thread to keep GUI responsive"""
         try:
-            # Initialize state for non-blocking detection
-            if not hasattr(self, '_detection_state'):
-                self._detection_state = {
-                    'active': False,
-                    'df': None,
-                    'detectors': [],
-                    'current_batch': 0,
-                    'events': [],
-                    'batch_size': 8,
-                    'timer': QTimer()
-                }
-                self._detection_state['timer'].timeout.connect(self._process_detection_batch)
-
-            # If already running, queue this request
-            if self._detection_state['active']:
-                self._detection_state['df'] = df  # Update with latest data
-                return
-
             # Start new detection process
             kinds: list[str] = []
             if self._enabled_chart:
@@ -966,207 +1213,92 @@ class PatternsService(ChartServiceBase):
 
             dets = list(dets_list)
 
-            logger.info(f"Starting non-blocking detection: {len(dfN)} rows, {len(dets)} detectors - analyzing performance issues")
+            logger.info(f"Starting background detection: {len(dfN)} rows, {len(dets)} detectors (GUI will stay responsive)")
 
-            # Update status to show scan starting
+            # Clear previous events and update status
+            self._events.clear()
+            self.renderer.clear()
+
             try:
                 if hasattr(self.view, 'update_status'):
-                    self.view.update_status(f"Starting pattern scan: {len(dets)} detectors, {len(dfN)} bars")
+                    self.view.update_status("Starting pattern scan...")
                 elif hasattr(self.controller, 'update_status'):
                     self.controller.update_status("Starting pattern scan...")
             except Exception:
                 pass
 
-            # Initialize detection state
-            self._detection_state.update({
-                'active': True,
-                'df': dfN,
-                'detectors': dets,
-                'current_batch': 0,
-                'events': [],
-                'kinds': kinds
-            })
+            # Trigger detection in background worker thread (keeps GUI responsive)
+            batch_size = 8  # Process 8 detectors at a time
 
-            # Start processing
-            self._detection_state['timer'].start(10)  # Process every 10ms
+            # Emit a signal to the worker to start processing (thread-safe)
+            from PySide6.QtCore import QTimer
+            def start_worker():
+                self._detection_worker.process_detection_batch(dfN, dets, batch_size)
+
+            # Use single-shot timer to defer to event loop
+            QTimer.singleShot(0, start_worker)
 
         except Exception as e:
             logger.exception("Failed to start non-blocking detection: {}", e)
 
-    def _process_detection_batch(self):
-        """Process one batch of detectors"""
-        try:
-            state = self._detection_state
-            if not state['active']:
-                return
-
-            batch_size = state['batch_size']
-            current_batch = state['current_batch']
-            detectors = state['detectors']
-            dfN = state['df']
-
-            start_idx = current_batch * batch_size
-            end_idx = min(start_idx + batch_size, len(detectors))
-
-            if start_idx >= len(detectors):
-                # Detection complete
-                self._finish_detection()
-                return
-
-            # Check resource limits
-            if not self._check_resource_limits():
-                logger.warning("Resource limits exceeded, finishing detection early")
-                self._finish_detection()
-                return
-
-            # Process current batch
-            batch_detectors = detectors[start_idx:end_idx]
-            total_batches = (len(detectors) + batch_size - 1) // batch_size
-            progress_percent = int((current_batch / total_batches) * 100)
-
-            logger.debug(f"Processing detector batch {current_batch + 1}/{total_batches} ({len(batch_detectors)} detectors) - {progress_percent}%")
-
-            # Update progress indicator
-            try:
-                if hasattr(self.view, 'update_status'):
-                    self.view.update_status(f"Scanning patterns... {progress_percent}% ({current_batch + 1}/{total_batches})")
-                elif hasattr(self.controller, 'update_status'):
-                    self.controller.update_status(f"Scanning patterns... {progress_percent}%")
-            except Exception:
-                pass
-
-            for i, det in enumerate(batch_detectors):
-                try:
-                    detector_key = getattr(det, 'key', f'unknown_{i}')
-
-                    logger.debug(f"Starting detector {detector_key} (batch {current_batch + 1}, detector {i + 1}/{len(batch_detectors)})")
-
-                    # Simple timeout mechanism using time measurement
-                    import time
-                    start_time = time.time()
-
-                    batch_events = det.detect(dfN)
-
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Completed detector {detector_key} in {elapsed:.2f}s - found {len(batch_events) if batch_events else 0} events")
-
-                    # Warn if detector is taking too long
-                    if elapsed > 2.0:  # More than 2 seconds
-                        logger.warning(f"Detector {detector_key} took {elapsed:.2f}s - this may cause GUI blocking")
-
-                    # Skip detector result if it took too long (emergency brake)
-                    if elapsed > 10.0:  # More than 10 seconds
-                        logger.error(f"Detector {detector_key} took {elapsed:.2f}s - discarding results to prevent GUI blocking")
-                        continue  # Don't add events from slow detectors
-
-                    if batch_events:
-                        state['events'].extend(batch_events)
-
-                except Exception as e:
-                    detector_key = getattr(det, 'key', f'unknown_{i}')
-                    logger.error(f"Detector {detector_key} failed: {e}")
-                    # Continue with next detector instead of stopping
-
-            # Move to next batch
-            state['current_batch'] += 1
-
-            # Continue processing
-            if end_idx < len(detectors):
-                # Schedule next batch
-                pass  # Timer will call us again
-            else:
-                # All batches processed
-                self._finish_detection()
-
-        except Exception as e:
-            logger.error(f"Error in detection batch processing: {e}")
-            self._finish_detection()
-
     def _finish_detection(self):
-        """Finish non-blocking detection and update UI"""
+        """Legacy method - detection finishing is now handled by worker signals"""
+        # NOTE: This method is no longer used with the new background worker system.
+        # Detection completion is handled by _on_detection_finished signal from worker.
+        logger.debug("_finish_detection called - this is legacy code, worker handles completion now")
+        pass
+
+    def _detect_timeframe_from_df(self, df):
+        """Try to detect timeframe from dataframe timestamps"""
         try:
-            state = self._detection_state
-            if not state['active']:
-                return
+            if len(df) < 2:
+                return "5m"  # Default
 
-            # Stop timer
-            state['timer'].stop()
-            state['active'] = False
+            # Calculate average interval between timestamps
+            timestamps = df.index if hasattr(df.index, 'to_pydatetime') else df.get('timestamp')
+            if timestamps is None or len(timestamps) < 2:
+                return "5m"
 
-            evs = state['events']
-            dfN = state['df']
+            # Get time difference between first two rows
+            time_diff = timestamps[1] - timestamps[0]
+            total_seconds = time_diff.total_seconds()
 
-            logger.info(
-                f"Patterns detected: total={len(evs)} "
-                f"(chart={sum(1 for x in evs if getattr(x, 'kind', '') == 'chart')}, "
-                f"candle={sum(1 for x in evs if getattr(x, 'kind', '') == 'candle')})"
-            )
-
-            # Continue with existing enrichment logic
-            if evs:
-                from .patterns_adapter import enrich_events
-                enriched = enrich_events(dfN, evs)
-                tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
-
-                for e in enriched:
-                    # Attach info from pattern_info.json
-                    try:
-                        if hasattr(e, 'pattern_key') and self.info:
-                            info_dict = self.info.get_pattern_info(e.pattern_key)
-                            if info_dict:
-                                for k, v in info_dict.items():
-                                    try:
-                                        setattr(e, f"info_{k}", v)
-                                    except Exception:
-                                        pass
-                    except Exception:
-                        pass
-
-                    # Attach timeframe hint
-                    if tf_hint:
-                        try:
-                            setattr(e, "tf_hint", tf_hint)
-                        except Exception:
-                            pass
-
-                # Update events and refresh display
-                self._events = enriched
-                self._repaint()
-
-                # Update status with completion
-                try:
-                    pattern_count = len(enriched)
-                    if hasattr(self.view, 'update_status'):
-                        self.view.update_status(f"Pattern scan complete: {pattern_count} patterns found")
-                    elif hasattr(self.controller, 'update_status'):
-                        self.controller.update_status(f"Patterns: {pattern_count} found")
-                except Exception:
-                    pass
+            # Map to standard timeframes
+            if total_seconds <= 60:  # <= 1 minute
+                return "1m"
+            elif total_seconds <= 300:  # <= 5 minutes
+                return "5m"
+            elif total_seconds <= 900:  # <= 15 minutes
+                return "15m"
+            elif total_seconds <= 3600:  # <= 1 hour
+                return "1h"
+            elif total_seconds <= 14400:  # <= 4 hours
+                return "4h"
+            elif total_seconds <= 86400:  # <= 1 day
+                return "1d"
             else:
-                self._events = []
-                self.renderer.clear()
+                return "1w"
 
-                # Update status for no patterns
-                try:
-                    if hasattr(self.view, 'update_status'):
-                        self.view.update_status("Pattern scan complete: No patterns found")
-                    elif hasattr(self.controller, 'update_status'):
-                        self.controller.update_status("No patterns found")
-                except Exception:
-                    pass
+        except Exception:
+            return "5m"  # Safe fallback
+
+    def _apply_boundary_to_df(self, df, detector_key, timeframe, boundary_config):
+        """Apply pattern-specific boundary to limit dataframe"""
+        try:
+            # Get boundary for this pattern/timeframe
+            boundary_candles = boundary_config.get_boundary(detector_key, timeframe)
+
+            # Log boundary application for debugging
+            if len(df) > boundary_candles:
+                logger.debug(f"Applying boundary for {detector_key} on {timeframe}: {len(df)} → {boundary_candles} candles")
+                limited_df = df.tail(boundary_candles).copy()
+                return limited_df
+            else:
+                return df
 
         except Exception as e:
-            logger.error(f"Error finishing detection: {e}")
-            self._detection_state['active'] = False
-
-            # Update status on error
-            try:
-                if hasattr(self.view, 'update_status'):
-                    self.view.update_status("Pattern scan failed")
-                elif hasattr(self.controller, 'update_status'):
-                    self.controller.update_status("Pattern scan error")
-            except Exception:
-                pass
+            logger.debug(f"Error applying boundary for {detector_key}: {e}")
+            return df  # Return original on error
 
     def _default_info_path(self):
         from pathlib import Path
