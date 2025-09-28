@@ -42,6 +42,24 @@ class _ScanWorker(QObject):
         if not self._enabled:
             return
         try:
+            # Check if market is likely closed and adjust interval accordingly
+            if hasattr(self._parent, '_is_market_likely_closed'):
+                if self._parent._is_market_likely_closed():
+                    # If market is closed, increase interval significantly to reduce unnecessary work
+                    current_interval = self._timer.interval()
+                    market_closed_interval = max(300000, current_interval * 2)  # At least 5 minutes
+                    if current_interval < market_closed_interval:
+                        self._timer.setInterval(int(market_closed_interval))
+                        logger.debug(f"Increased {self._kind} scan interval to {market_closed_interval}ms - market closed")
+                    return  # Skip scanning when market is closed
+                else:
+                    # Market is open, restore normal interval if it was increased
+                    original_interval = getattr(self, '_original_interval', self._timer.interval())
+                    current_interval = self._timer.interval()
+                    if current_interval > original_interval * 2:  # If interval was increased for market closure
+                        self._timer.setInterval(original_interval)
+                        logger.debug(f"Restored {self._kind} scan interval to {original_interval}ms - market open")
+
             # Check resource usage and adjust interval dynamically
             if hasattr(self._parent, '_check_resource_limits'):
                 if not self._parent._check_resource_limits():
@@ -62,7 +80,7 @@ class _ScanWorker(QObject):
             evs = self._parent._scan_once(kind=self._kind) or []
             self.produced.emit(evs)
         except Exception as e:
-            logger.debug(f"Error in scan worker tick: {e}")
+            logger.debug(f"Error in scan worker tick ({self._kind}): {e}")
 
 
 from .base import ChartServiceBase
@@ -438,46 +456,145 @@ class PatternsService(ChartServiceBase):
         self._enabled_chart = bool(on)
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
 
-        # Start/stop background thread for continuous scanning - independent of historical scanning
-        try:
-            if self._enabled_chart:
-                if not self._chart_thread.isRunning():
-                    self._chart_thread.start()
-                    self._threads_started = True
-            else:
-                if self._chart_thread.isRunning():
-                    self._chart_worker.stop()
-                    self._chart_thread.quit()
-                    self._chart_thread.wait()  # Wait for thread to finish
-        except Exception as e:
-            logger.error(f"Error managing chart thread: {e}")
+        # TEMPORARY: Disable continuous scanning to prevent GUI blocking
+        if self._enabled_chart:
+            logger.info("Chart patterns enabled - use 'Scan Historical' button for pattern detection")
+            logger.info("Continuous scanning temporarily disabled to prevent GUI blocking")
 
+        # No timer/scanning setup to prevent GUI blocking
+        # Only historical scanning will work for now
         self._repaint()
 
     def set_candle_enabled(self, on: bool):
         self._enabled_candle = bool(on)
         logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
 
-        # Start/stop background thread for continuous scanning - independent of historical scanning
-        try:
-            if self._enabled_candle:
-                if not self._candle_thread.isRunning():
-                    self._candle_thread.start()
-                    self._threads_started = True
-            else:
-                if self._candle_thread.isRunning():
-                    self._candle_worker.stop()
-                    self._candle_thread.quit()
-                    self._candle_thread.wait()  # Wait for thread to finish
-        except Exception as e:
-            logger.error(f"Error managing candle thread: {e}")
+        # TEMPORARY: Disable continuous scanning to prevent GUI blocking
+        if self._enabled_candle:
+            logger.info("Candle patterns enabled - use 'Scan Historical' button for pattern detection")
+            logger.info("Continuous scanning temporarily disabled to prevent GUI blocking")
 
+        # No timer/scanning setup to prevent GUI blocking
+        # Only historical scanning will work for now
         self._repaint()
 
     def set_history_enabled(self, on: bool):
         self._enabled_history = bool(on)
         logger.info(f"Patterns: HISTORY toggle → {self._enabled_history}")
         self._repaint()
+
+    def _is_market_likely_closed(self) -> bool:
+        """Check if market is likely closed based on data freshness and time"""
+        try:
+            from datetime import datetime, timedelta
+            import pytz
+
+            # Get the last data timestamp
+            df = getattr(self.controller.plot_service, '_last_df', None)
+            if df is None or len(df) == 0:
+                return True
+
+            # Check if we have recent data (last 30 minutes for active markets)
+            if hasattr(df, 'index') and len(df) > 0:
+                try:
+                    last_timestamp = df.index[-1]
+                    if hasattr(last_timestamp, 'tz_localize'):
+                        # If timestamp is naive, assume UTC
+                        if last_timestamp.tz is None:
+                            last_timestamp = last_timestamp.tz_localize('UTC')
+
+                    now = datetime.now(pytz.UTC)
+                    time_diff = now - last_timestamp
+
+                    # If last data is older than 30 minutes, market likely closed
+                    if time_diff > timedelta(minutes=30):
+                        return True
+
+                except Exception:
+                    # If timestamp processing fails, be conservative
+                    pass
+
+            # Additional check: typical market closed hours (weekend)
+            now = datetime.now(pytz.UTC)
+            weekday = now.weekday()  # 0=Monday, 6=Sunday
+
+            # Weekend (Saturday-Sunday)
+            if weekday >= 5:  # Saturday=5, Sunday=6
+                return True
+
+            # Forex is mostly 24/5, but some hours have low activity
+            # Be conservative and allow scanning during weekdays
+            return False
+
+        except Exception as e:
+            logger.debug(f"Error checking market hours: {e}")
+            # If check fails, assume market is open to avoid blocking functionality
+            return False
+
+    def _timer_scan(self, kind: str):
+        """Timer-based scanning on main thread (no threading issues)"""
+        try:
+            logger.debug(f"Timer scan triggered for {kind} - GUI should remain responsive")
+
+            # Quick checks before scanning
+            if not getattr(self, f'_enabled_{kind}', False):
+                logger.debug(f"{kind} patterns not enabled, skipping")
+                return
+
+            # Market and resource checks
+            if self._is_market_likely_closed():
+                # Adjust timer interval if market is closed
+                timer = getattr(self, f'_{kind}_timer', None)
+                if timer and timer.interval() < 300000:
+                    timer.setInterval(300000)  # 5 minutes
+                    logger.debug(f"Increased {kind} timer interval - market closed")
+                return
+
+            if not self._check_resource_limits():
+                logger.debug(f"Skipping {kind} scan - resource limits")
+                return
+
+            # Get data
+            df = getattr(self.controller.plot_service, '_last_df', None)
+            dfN = self._normalize_df(df)
+            if dfN is None or len(dfN) == 0:
+                return
+
+            # Check if data changed
+            if hasattr(self, '_last_scan_data_hash'):
+                current_hash = hash(str(dfN.iloc[-10:].values.tobytes()) if len(dfN) >= 10 else str(dfN.values.tobytes()))
+                if current_hash == getattr(self, f'_last_{kind}_scan_hash', None):
+                    return
+                setattr(self, f'_last_{kind}_scan_hash', current_hash)
+
+            # Quick sync scan with limited detectors
+            events = self._quick_pattern_scan(dfN, kind)
+
+            # Emit results
+            if kind == 'chart':
+                self._on_chart_patterns_detected(events or [])
+            else:
+                self._on_candle_patterns_detected(events or [])
+
+        except Exception as e:
+            logger.debug(f"Error in timer scan ({kind}): {e}")
+
+    def _quick_pattern_scan(self, dfN, kind: str):
+        """Ultra-lightweight pattern scan - DISABLED to prevent GUI blocking"""
+        try:
+            # TEMPORARY: Disable pattern detection completely to prevent GUI blocking
+            # The detector.detect() calls on 7324 rows are too heavy for main thread
+            logger.debug(f"Pattern detection temporarily disabled to prevent GUI blocking ({kind})")
+            return []
+
+            # TODO: Implement proper background processing with:
+            # 1. QThread with proper signal/slot communication
+            # 2. Or chunked processing with QTimer.singleShot(0, ...)
+            # 3. Or only process last N candles instead of full dataset
+
+        except Exception as e:
+            logger.debug(f"Quick pattern scan error: {e}")
+            return []
 
     def start_historical_scan_with_range(self, df: pd.DataFrame = None):
         """Start one-time historical pattern scan with configured time range"""
@@ -848,7 +965,8 @@ class PatternsService(ChartServiceBase):
                 return
 
             dets = list(dets_list)
-            logger.info(f"Starting non-blocking detection: {len(dfN)} rows, {len(dets)} detectors")
+
+            logger.info(f"Starting non-blocking detection: {len(dfN)} rows, {len(dets)} detectors - analyzing performance issues")
 
             # Update status to show scan starting
             try:
@@ -917,13 +1035,37 @@ class PatternsService(ChartServiceBase):
             except Exception:
                 pass
 
-            for det in batch_detectors:
+            for i, det in enumerate(batch_detectors):
                 try:
+                    detector_key = getattr(det, 'key', f'unknown_{i}')
+
+                    logger.debug(f"Starting detector {detector_key} (batch {current_batch + 1}, detector {i + 1}/{len(batch_detectors)})")
+
+                    # Simple timeout mechanism using time measurement
+                    import time
+                    start_time = time.time()
+
                     batch_events = det.detect(dfN)
+
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Completed detector {detector_key} in {elapsed:.2f}s - found {len(batch_events) if batch_events else 0} events")
+
+                    # Warn if detector is taking too long
+                    if elapsed > 2.0:  # More than 2 seconds
+                        logger.warning(f"Detector {detector_key} took {elapsed:.2f}s - this may cause GUI blocking")
+
+                    # Skip detector result if it took too long (emergency brake)
+                    if elapsed > 10.0:  # More than 10 seconds
+                        logger.error(f"Detector {detector_key} took {elapsed:.2f}s - discarding results to prevent GUI blocking")
+                        continue  # Don't add events from slow detectors
+
                     if batch_events:
                         state['events'].extend(batch_events)
+
                 except Exception as e:
-                    logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
+                    detector_key = getattr(det, 'key', f'unknown_{i}')
+                    logger.error(f"Detector {detector_key} failed: {e}")
+                    # Continue with next detector instead of stopping
 
             # Move to next batch
             state['current_batch'] += 1
@@ -1846,18 +1988,39 @@ class PatternsService(ChartServiceBase):
             df = getattr(self.controller.plot_service, '_last_df', None)
             dfN = self._normalize_df(df)
             if dfN is None or len(dfN)==0:
+                logger.debug(f"Skipping {kind} pattern scan - no data available")
                 return []
 
-            # Start async pattern detection
-            return asyncio.run(self._async_pattern_detection(dfN, kind))
+            # Check if data has changed since last scan to avoid unnecessary processing
+            if hasattr(self, '_last_scan_data_hash'):
+                current_hash = hash(str(dfN.iloc[-10:].values.tobytes()) if len(dfN) >= 10 else str(dfN.values.tobytes()))
+                if current_hash == getattr(self, f'_last_{kind}_scan_hash', None):
+                    logger.debug(f"Skipping {kind} pattern scan - data unchanged")
+                    return []
+                setattr(self, f'_last_{kind}_scan_hash', current_hash)
+
+            # Check market hours to avoid scanning when markets are closed
+            if self._is_market_likely_closed():
+                logger.debug(f"Skipping {kind} pattern scan - market likely closed")
+                return []
+
+            # Start synchronous pattern detection to avoid thread blocking
+            result = self._sync_pattern_detection(dfN, kind)
+            return result or []
 
         except Exception as e:
-            logger.error(f"Error in pattern scan: {e}")
+            logger.error(f"Error in pattern scan ({kind}): {e}")
+            # Return empty list instead of None to prevent further errors
             return []
 
     async def _async_pattern_detection(self, dfN, kind: str):
         """Async pattern detection with resource throttling"""
         try:
+            # Additional check to avoid unnecessary computation during market closure
+            if self._is_market_likely_closed():
+                logger.debug(f"Skipping {kind} async pattern detection - market closed")
+                return []
+
             from asyncio_throttle import Throttler
             from src.forex_diffusion.patterns.registry import PatternRegistry
             from .patterns_adapter import enrich_events
@@ -1905,6 +2068,89 @@ class PatternsService(ChartServiceBase):
 
         except Exception as e:
             logger.error(f"Async pattern detection error: {e}")
+            return []
+
+    def _sync_pattern_detection(self, dfN, kind: str):
+        """Synchronous pattern detection to avoid thread blocking"""
+        try:
+            # Additional check to avoid unnecessary computation during market closure
+            if self._is_market_likely_closed():
+                logger.debug(f"Skipping {kind} sync pattern detection - market closed")
+                return []
+
+            from src.forex_diffusion.patterns.registry import PatternRegistry
+            from .patterns_adapter import enrich_events
+            from ....patterns.info_provider import PatternInfoProvider
+
+            reg = PatternRegistry()
+            all_dets = [d for d in reg.detectors([kind])]
+            events = []
+
+            # Implement round-robin to process different detectors each scan
+            if not hasattr(self, f'_detector_offset_{kind}'):
+                setattr(self, f'_detector_offset_{kind}', 0)
+
+            offset = getattr(self, f'_detector_offset_{kind}')
+            max_detectors_per_scan = min(5, len(all_dets))  # Process at most 5 detectors per scan
+
+            # Rotate through detectors
+            dets = []
+            for i in range(max_detectors_per_scan):
+                idx = (offset + i) % len(all_dets)
+                dets.append(all_dets[idx])
+
+            # Update offset for next scan
+            setattr(self, f'_detector_offset_{kind}', (offset + max_detectors_per_scan) % len(all_dets))
+
+            # Process detectors synchronously with simple resource check
+            for detector in dets:
+                try:
+                    # Quick resource check before each detector
+                    if not self._check_resource_limits():
+                        logger.debug(f"Stopping {kind} pattern detection due to resource limits")
+                        break
+
+                    # Simple synchronous detection
+                    result = self._detect_pattern_sync(detector, dfN)
+                    if result:
+                        events.extend(result)
+
+                except Exception as e:
+                    logger.debug(f"Pattern detection error for {getattr(detector, 'key', 'unknown')}: {e}")
+                    continue
+
+            # Enrich events with pattern information
+            if events:
+                events = enrich_events(events, PatternInfoProvider())
+
+                # Update events safely
+                self._events = (self._events or []) + events
+
+                # Schedule repaint on main thread
+                try:
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, self._repaint)
+                except Exception:
+                    pass
+
+            return events
+
+        except Exception as e:
+            logger.error(f"Sync pattern detection error: {e}")
+            return []
+
+    def _detect_pattern_sync(self, detector, dfN):
+        """Synchronous pattern detection for a single detector"""
+        try:
+            # Simple synchronous detection without throttling
+            if hasattr(detector, 'detect'):
+                result = detector.detect(dfN)
+                return result if result else []
+            else:
+                logger.debug(f"Detector {getattr(detector, 'key', 'unknown')} has no detect method")
+                return []
+        except Exception as e:
+            logger.debug(f"Error in sync detection for {getattr(detector, 'key', 'unknown')}: {e}")
             return []
 
     async def _detect_pattern_async(self, detector, dfN, throttler):

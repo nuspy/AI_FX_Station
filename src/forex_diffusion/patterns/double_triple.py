@@ -19,21 +19,41 @@ class _PeaksBase(DetectorBase):
         events: List[PatternEvent] = []
         n=len(df)
         series = h if self.top else -l
-        for end in range(self.window, n):
+
+        # PERFORMANCE FIX: Pre-compute all peaks once for entire series
+        all_peaks = self._find_all_peaks(series)
+        if len(all_peaks) < self.peaks:
+            return events
+
+        # Use much larger step size to reduce iterations
+        step_size = max(15, self.window // 8)
+
+        for end in range(self.window, n, step_size):
             start = end - self.window
-            seg = series[start:end+1]
-            locs = [i for i in range(1,len(seg)-1) if seg[i]>seg[i-1] and seg[i]>seg[i+1]]
-            if len(locs) < self.peaks: 
+
+            # Filter peaks to current window
+            window_peaks = [i for i in all_peaks if start <= i <= end]
+
+            if len(window_peaks) < self.peaks:
                 continue
+
             # scan groups of 'peaks' with approx equal heights
-            for i in range(len(locs)-self.peaks+1):
-                idxs = locs[i:i+self.peaks]
-                heights = seg[idxs]
+            for i in range(len(window_peaks) - self.peaks + 1):
+                idxs = window_peaks[i:i+self.peaks]
+                heights = np.array([series[j] for j in idxs])
                 if (heights.max()-heights.min()) <= heights.mean()*self.tol*10:
                     direction = "bear" if self.top else "bull"
-                    events.append(PatternEvent(self.key,"chart",direction, ts[start+idxs[0]], ts[end], "confirmed", 0.52, float(a[end]), self.peaks, self.window, None, self.window//3, {"peaks":[start+j for j in idxs]}))
+                    events.append(PatternEvent(self.key,"chart",direction, ts[idxs[0]], ts[end], "confirmed", 0.52, float(a[end]), self.peaks, self.window, None, self.window//3, {"peaks":idxs}))
                     if len(events)>=self.max_events: return events
         return events
+
+    def _find_all_peaks(self, series):
+        """Pre-compute all peaks in the series once"""
+        peaks = []
+        for i in range(1, len(series) - 1):
+            if series[i] > series[i-1] and series[i] > series[i+1]:
+                peaks.append(i)
+        return peaks
 
 def make_double_triple_detectors():
     return [

@@ -38,10 +38,25 @@ class HarmonicDetector(DetectorBase):
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
         ts = time_array(df); c = df["close"].astype(float).to_numpy(); a = atr(df, 14).to_numpy()
         n = len(df); out: List[PatternEvent] = []
-        for end in range(self.window, n):
-            start = end - self.window; seg = c[start:end+1]; piv = _zigzag(seg, pct=0.30)
-            if len(piv) < 5: continue
-            X, A, B, C, D = [start + p for p in piv[-5:]]
+
+        # PERFORMANCE FIX: Compute ZigZag once for entire dataset
+        full_pivots = _zigzag(c, pct=0.30)
+        if len(full_pivots) < 5:
+            return out
+
+        # Use step size to reduce iterations significantly
+        step_size = max(20, self.window // 10)  # Much larger steps
+
+        for end in range(self.window, n, step_size):
+            # Find pivots within current window using pre-computed pivots
+            start = end - self.window
+            window_pivots = [p for p in full_pivots if start <= p <= end]
+
+            if len(window_pivots) < 5:
+                continue
+
+            # Take last 5 pivots for pattern matching
+            X, A, B, C, D = window_pivots[-5:]
             XA = c[A] - c[X]; AB = c[B] - c[A]; BC = c[C] - c[B]; CD = c[D] - c[C]
             rs = (_ratio(AB, -XA), _ratio(BC, -AB), _ratio(CD, -BC))
             ok = True
