@@ -18,6 +18,7 @@ class TriangleDetector(DetectorBase):
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
+        c = df["close"].astype(float).to_numpy()  # Added missing close prices
         ts = time_array(df)
         a = atr(df, self.atr_period).to_numpy()
         events: List[PatternEvent] = []

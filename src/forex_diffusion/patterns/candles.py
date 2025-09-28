@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
-from .primitives import time_array
+from .primitives import time_array, safe_tz_convert
 
 def _body(o,c): return abs(float(c)-float(o))
 def _tr(h,l,pc): return max(float(h)-float(l), abs(float(h)-float(pc)), abs(float(l)-float(pc)))
@@ -19,10 +19,7 @@ class SimpleCandleDetector(DetectorBase):
         if df is None or len(df) < 3: return evs
 
         ts = time_array(df)
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = safe_tz_convert(ts, None)
 
         o = df["open"].astype(float).to_numpy()
         h = df["high"].astype(float).to_numpy()

@@ -493,7 +493,8 @@ class PatternOverlayRenderer:
 
             # Convert horizon_bars to time units (approximate)
             # Assuming each bar represents a time unit based on the current timeframe
-            invalidation_time_offset = horizon_bars * 0.5  # 50% of the horizon
+            horizon_value = float(horizon_bars) if not isinstance(horizon_bars, dict) else 40  # Default fallback
+            invalidation_time_offset = horizon_value * 0.5  # 50% of the horizon
 
             # Calculate end x position for the timeline
             start_x = x

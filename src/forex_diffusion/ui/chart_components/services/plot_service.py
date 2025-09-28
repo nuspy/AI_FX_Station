@@ -62,9 +62,12 @@ class PlotService(ChartServiceBase):
             y_vals = df2[y_col].astype(float).to_numpy()
 
             # Compress time axis by removing weekend periods
-            x_dt_compressed, y_vals_compressed, weekend_markers = self._compress_weekend_periods(x_dt, y_vals)
+            x_dt_compressed, y_vals_compressed, weekend_markers, compressed_df = self._compress_weekend_periods(x_dt, y_vals, df2)
             x_dt = x_dt_compressed
             y_vals = y_vals_compressed
+            # Use compressed dataframe for indicators
+            if compressed_df is not None:
+                df2 = compressed_df
 
             # --- patterns: pass robusto del DataFrame corrente ---
             try:
@@ -1038,10 +1041,10 @@ class PlotService(ChartServiceBase):
         except Exception:
             return float(x_r)
 
-    def _compress_weekend_periods(self, x_dt: pd.Series, y_vals: np.ndarray) -> tuple:
+    def _compress_weekend_periods(self, x_dt: pd.Series, y_vals: np.ndarray, df: pd.DataFrame = None) -> tuple:
         """
         Compress time axis by removing weekend periods (Friday 22:00 - Sunday 22:00).
-        Returns compressed time series, values, and weekend boundary markers.
+        Returns compressed time series, values, weekend boundary markers, and compressed DataFrame.
         """
         try:
             from forex_diffusion.utils.time_utils import is_in_weekend_range, WEEKEND_START_HOUR, WEEKEND_END_HOUR
@@ -1079,6 +1082,11 @@ class PlotService(ChartServiceBase):
                 x_compressed = x_dt.iloc[compressed_indices].reset_index(drop=True)
                 y_compressed = y_vals[compressed_indices]
 
+                # Compress DataFrame if provided
+                compressed_df = None
+                if df is not None:
+                    compressed_df = df.iloc[compressed_indices].reset_index(drop=True)
+
                 # Calculate weekend markers in compressed coordinates
                 weekend_markers = []
                 compressed_pos = 0
@@ -1093,13 +1101,13 @@ class PlotService(ChartServiceBase):
                 self._weekend_markers = weekend_markers
                 self._compressed_x_dt = x_compressed
 
-                return x_compressed, y_compressed, weekend_markers
+                return x_compressed, y_compressed, weekend_markers, compressed_df
             else:
-                return x_dt, y_vals, []
+                return x_dt, y_vals, [], df
 
         except Exception as e:
             logger.debug(f"Error compressing weekend periods: {e}")
-            return x_dt, y_vals, []
+            return x_dt, y_vals, [], df
 
     def _draw_weekend_markers(self):
         """Draw yellow dashed lines at weekend boundaries"""

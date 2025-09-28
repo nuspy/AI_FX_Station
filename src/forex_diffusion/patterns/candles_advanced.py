@@ -11,7 +11,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
-from .primitives import time_array
+from .primitives import time_array, safe_tz_convert
 
 
 def _body(o, c):
@@ -64,10 +64,7 @@ class AdvancedCandleDetector(DetectorBase):
 
         evs: List[PatternEvent] = []
         ts = time_array(df)
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = safe_tz_convert(ts, None)
 
         o = df["open"].astype(float).to_numpy()
         h = df["high"].astype(float).to_numpy()

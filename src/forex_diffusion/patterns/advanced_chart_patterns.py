@@ -16,7 +16,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
-from .primitives import time_array, fit_line_indices, atr
+from .primitives import time_array, fit_line_indices, atr, safe_tz_convert
 
 
 class RoundingPatternDetector(DetectorBase):
@@ -34,10 +34,7 @@ class RoundingPatternDetector(DetectorBase):
 
         evs: List[PatternEvent] = []
         ts = time_array(df)
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = safe_tz_convert(ts, None)
 
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
@@ -182,10 +179,7 @@ class IslandReversalDetector(DetectorBase):
 
         evs: List[PatternEvent] = []
         ts = time_array(df)
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = safe_tz_convert(ts, None)
 
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
@@ -277,10 +271,7 @@ class MeasuredMoveDetector(DetectorBase):
 
         evs: List[PatternEvent] = []
         ts = time_array(df)
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = safe_tz_convert(ts, None)
 
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
@@ -369,10 +360,7 @@ class ThreeDrivesDetector(DetectorBase):
 
         evs: List[PatternEvent] = []
         ts = time_array(df)
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = safe_tz_convert(ts, None)
 
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()

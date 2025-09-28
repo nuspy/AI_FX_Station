@@ -66,3 +66,25 @@ def time_array(df):
     if 'time' in df.columns:
         return pd.to_datetime(df['time']).to_numpy()
     return pd.to_datetime(df.index).to_numpy()
+
+def safe_tz_convert(ts, target_tz=None):
+    """
+    Safely convert timezone for different datetime types.
+    Handles pandas Series, DatetimeIndex, and numpy arrays.
+    """
+    try:
+        if hasattr(ts, 'dt'):
+            # Pandas Series with datetime
+            return ts.dt.tz_convert(target_tz)
+        elif hasattr(ts, 'tz_convert'):
+            # DatetimeIndex
+            return ts.tz_convert(target_tz)
+        else:
+            # Numpy array - convert to pandas and then back
+            if target_tz is None:
+                return pd.to_datetime(ts, utc=True).tz_convert(None).to_numpy()
+            else:
+                return pd.to_datetime(ts, utc=True).tz_convert(target_tz).to_numpy()
+    except Exception:
+        # If all else fails, just return the original
+        return ts
