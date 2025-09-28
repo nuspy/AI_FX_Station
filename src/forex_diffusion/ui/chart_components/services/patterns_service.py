@@ -450,15 +450,26 @@ class PatternsService(ChartServiceBase):
             return
         self._busy = True
         try:
-            self._run_detection(df)
-        finally:
+            # Use non-blocking detection for large datasets
+            if df is not None and len(df) > 500:
+                self._run_detection_nonblocking(df)
+                # For non-blocking, we release busy immediately
+                self._busy = False
+            else:
+                self._run_detection(df)
+                self._busy = False
+        except Exception as e:
             self._busy = False
-            if self._pending_df is not None:
-                nxt = self._pending_df
-                self._pending_df = None
-                self.detect_async(nxt)
+            logger.error(f"Error in detect_async: {e}")
+
+        # Process pending requests
+        if self._pending_df is not None:
+            nxt = self._pending_df
+            self._pending_df = None
+            self.detect_async(nxt)
 
     def _run_detection(self, df: pd.DataFrame):
+        """Run pattern detection with batching for large datasets"""
         try:
             kinds: list[str] = []
             if self._enabled_chart:
@@ -522,12 +533,51 @@ class PatternsService(ChartServiceBase):
                 dets = list(dets_list)
             logger.info(f"Patterns: normalized df rows={len(dfN)}; detectors={len(dets)}")
 
+            # Use async detection with resource monitoring
             evs: List[PatternEvent] = []
-            for det in dets:
-                try:
-                    evs.extend(det.detect(dfN))
-                except Exception as e:
-                    logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
+
+            # Check if we should use async detection for large datasets
+            use_async = len(dfN) > 1000 or len(dets) > 10
+
+            if use_async:
+                logger.info(f"Using async detection for {len(dfN)} rows with {len(dets)} detectors")
+
+                # Process in smaller batches to avoid blocking
+                batch_size = max(1, len(dets) // 4)  # Process in 4 batches
+
+                for i in range(0, len(dets), batch_size):
+                    batch_dets = dets[i:i + batch_size]
+                    logger.debug(f"Processing detector batch {i//batch_size + 1}/4 ({len(batch_dets)} detectors)")
+
+                    # Check resource limits before each batch
+                    if not self._check_resource_limits():
+                        logger.warning("Resource limits exceeded, skipping remaining detectors")
+                        break
+
+                    # Process batch
+                    for det in batch_dets:
+                        try:
+                            # Quick check if we should continue
+                            if not self._check_resource_limits():
+                                logger.debug(f"Skipping detector {getattr(det, 'key', '?')} due to resource limits")
+                                continue
+
+                            batch_events = det.detect(dfN)
+                            if batch_events:
+                                evs.extend(batch_events)
+                        except Exception as e:
+                            logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
+
+                    # Small delay between batches to allow UI updates
+                    import time
+                    time.sleep(0.01)
+            else:
+                # Use original synchronous detection for small datasets
+                for det in dets:
+                    try:
+                        evs.extend(det.detect(dfN))
+                    except Exception as e:
+                        logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
 
             logger.info(
                 f"Patterns detected: total={len(evs)} "
@@ -584,6 +634,230 @@ class PatternsService(ChartServiceBase):
         from .patterns_hook import call_patterns_detection
         call_patterns_detection(self.controller, self.view, df)
         self.detect_async(df)
+
+    def _run_detection_nonblocking(self, df: pd.DataFrame):
+        """Run pattern detection in non-blocking batches using QTimer"""
+        try:
+            # Initialize state for non-blocking detection
+            if not hasattr(self, '_detection_state'):
+                self._detection_state = {
+                    'active': False,
+                    'df': None,
+                    'detectors': [],
+                    'current_batch': 0,
+                    'events': [],
+                    'batch_size': 8,
+                    'timer': QTimer()
+                }
+                self._detection_state['timer'].timeout.connect(self._process_detection_batch)
+
+            # If already running, queue this request
+            if self._detection_state['active']:
+                self._detection_state['df'] = df  # Update with latest data
+                return
+
+            # Start new detection process
+            kinds: list[str] = []
+            if self._enabled_chart:
+                kinds.append("chart")
+            if self._enabled_candle:
+                kinds.append("candle")
+            if not kinds:
+                logger.info("Patterns: toggles OFF → skipping detection")
+                self._events.clear()
+                self.renderer.clear()
+                return
+
+            dfN = self._normalize_df(df)
+            if dfN is None or dfN.empty:
+                logger.warning("Patterns: normalization failed or empty → no detection")
+                self._events.clear()
+                self.renderer.clear()
+                return
+
+            dets_list = self.registry.detectors(kinds=kinds)
+            if dets_list is None:
+                logger.error(f"No detectors found for kinds: {kinds}")
+                return
+
+            dets = list(dets_list)
+            logger.info(f"Starting non-blocking detection: {len(dfN)} rows, {len(dets)} detectors")
+
+            # Update status to show scan starting
+            try:
+                if hasattr(self.view, 'update_status'):
+                    self.view.update_status(f"Starting pattern scan: {len(dets)} detectors, {len(dfN)} bars")
+                elif hasattr(self.controller, 'update_status'):
+                    self.controller.update_status("Starting pattern scan...")
+            except Exception:
+                pass
+
+            # Initialize detection state
+            self._detection_state.update({
+                'active': True,
+                'df': dfN,
+                'detectors': dets,
+                'current_batch': 0,
+                'events': [],
+                'kinds': kinds
+            })
+
+            # Start processing
+            self._detection_state['timer'].start(10)  # Process every 10ms
+
+        except Exception as e:
+            logger.exception("Failed to start non-blocking detection: {}", e)
+
+    def _process_detection_batch(self):
+        """Process one batch of detectors"""
+        try:
+            state = self._detection_state
+            if not state['active']:
+                return
+
+            batch_size = state['batch_size']
+            current_batch = state['current_batch']
+            detectors = state['detectors']
+            dfN = state['df']
+
+            start_idx = current_batch * batch_size
+            end_idx = min(start_idx + batch_size, len(detectors))
+
+            if start_idx >= len(detectors):
+                # Detection complete
+                self._finish_detection()
+                return
+
+            # Check resource limits
+            if not self._check_resource_limits():
+                logger.warning("Resource limits exceeded, finishing detection early")
+                self._finish_detection()
+                return
+
+            # Process current batch
+            batch_detectors = detectors[start_idx:end_idx]
+            total_batches = (len(detectors) + batch_size - 1) // batch_size
+            progress_percent = int((current_batch / total_batches) * 100)
+
+            logger.debug(f"Processing detector batch {current_batch + 1}/{total_batches} ({len(batch_detectors)} detectors) - {progress_percent}%")
+
+            # Update progress indicator
+            try:
+                if hasattr(self.view, 'update_status'):
+                    self.view.update_status(f"Scanning patterns... {progress_percent}% ({current_batch + 1}/{total_batches})")
+                elif hasattr(self.controller, 'update_status'):
+                    self.controller.update_status(f"Scanning patterns... {progress_percent}%")
+            except Exception:
+                pass
+
+            for det in batch_detectors:
+                try:
+                    batch_events = det.detect(dfN)
+                    if batch_events:
+                        state['events'].extend(batch_events)
+                except Exception as e:
+                    logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
+
+            # Move to next batch
+            state['current_batch'] += 1
+
+            # Continue processing
+            if end_idx < len(detectors):
+                # Schedule next batch
+                pass  # Timer will call us again
+            else:
+                # All batches processed
+                self._finish_detection()
+
+        except Exception as e:
+            logger.error(f"Error in detection batch processing: {e}")
+            self._finish_detection()
+
+    def _finish_detection(self):
+        """Finish non-blocking detection and update UI"""
+        try:
+            state = self._detection_state
+            if not state['active']:
+                return
+
+            # Stop timer
+            state['timer'].stop()
+            state['active'] = False
+
+            evs = state['events']
+            dfN = state['df']
+
+            logger.info(
+                f"Patterns detected: total={len(evs)} "
+                f"(chart={sum(1 for x in evs if getattr(x, 'kind', '') == 'chart')}, "
+                f"candle={sum(1 for x in evs if getattr(x, 'kind', '') == 'candle')})"
+            )
+
+            # Continue with existing enrichment logic
+            if evs:
+                from .patterns_adapter import enrich_events
+                enriched = enrich_events(dfN, evs)
+                tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
+
+                for e in enriched:
+                    # Attach info from pattern_info.json
+                    try:
+                        if hasattr(e, 'pattern_key') and self.info:
+                            info_dict = self.info.get_pattern_info(e.pattern_key)
+                            if info_dict:
+                                for k, v in info_dict.items():
+                                    try:
+                                        setattr(e, f"info_{k}", v)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+
+                    # Attach timeframe hint
+                    if tf_hint:
+                        try:
+                            setattr(e, "tf_hint", tf_hint)
+                        except Exception:
+                            pass
+
+                # Update events and refresh display
+                self._events = enriched
+                self._repaint()
+
+                # Update status with completion
+                try:
+                    pattern_count = len(enriched)
+                    if hasattr(self.view, 'update_status'):
+                        self.view.update_status(f"Pattern scan complete: {pattern_count} patterns found")
+                    elif hasattr(self.controller, 'update_status'):
+                        self.controller.update_status(f"Patterns: {pattern_count} found")
+                except Exception:
+                    pass
+            else:
+                self._events = []
+                self.renderer.clear()
+
+                # Update status for no patterns
+                try:
+                    if hasattr(self.view, 'update_status'):
+                        self.view.update_status("Pattern scan complete: No patterns found")
+                    elif hasattr(self.controller, 'update_status'):
+                        self.controller.update_status("No patterns found")
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.error(f"Error finishing detection: {e}")
+            self._detection_state['active'] = False
+
+            # Update status on error
+            try:
+                if hasattr(self.view, 'update_status'):
+                    self.view.update_status("Pattern scan failed")
+                elif hasattr(self.controller, 'update_status'):
+                    self.controller.update_status("Pattern scan error")
+            except Exception:
+                pass
 
     def _default_info_path(self):
         from pathlib import Path
