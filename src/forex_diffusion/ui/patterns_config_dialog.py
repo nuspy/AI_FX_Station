@@ -7,18 +7,22 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QWidget, QHBoxL
 from PySide6.QtCore import Qt
 import yaml, os
 import inspect
-from ...patterns.registry import PatternRegistry
+from ..patterns.registry import PatternRegistry
 
 class PatternsConfigDialog(QDialog):
     def __init__(self, parent=None, yaml_path:str="configs/patterns.yaml", patterns_service=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configura Patterns")
 
-        # Resize to 80% of monitor height
-        screen = QApplication.primaryScreen().geometry()
-        dialog_height = int(screen.height() * 0.8)
-        dialog_width = min(1200, int(screen.width() * 0.7))
-        self.resize(dialog_width, dialog_height)
+        # Resize to 80% of monitor height (with safety check)
+        try:
+            screen = QApplication.primaryScreen().geometry()
+            dialog_height = int(screen.height() * 0.8)
+            dialog_width = min(1200, int(screen.width() * 0.7))
+            self.resize(dialog_width, dialog_height)
+        except Exception:
+            # Fallback to default size if screen detection fails
+            self.resize(1200, 800)
 
         self.yaml_path = yaml_path
         self.patterns_service = patterns_service
@@ -77,11 +81,26 @@ class PatternsConfigDialog(QDialog):
 
                 # Get current value from detector instance
                 current_value = getattr(detector, param_name, param.default)
+                default_value = param.default if param.default != inspect.Parameter.empty else 0
+
+                # Determine type from annotation, default, or current value
+                param_type = 'int'  # Default type
+                if param.annotation != inspect.Parameter.empty:
+                    if param.annotation == int:
+                        param_type = 'int'
+                    elif param.annotation == float:
+                        param_type = 'float'
+                    elif param.annotation == str:
+                        param_type = 'str'
+                elif current_value is not None:
+                    param_type = type(current_value).__name__
+                elif default_value is not None:
+                    param_type = type(default_value).__name__
 
                 param_info = {
                     'name': param_name,
-                    'type': type(current_value).__name__ if current_value != param.default else 'int',
-                    'default': param.default if param.default != inspect.Parameter.empty else 0,
+                    'type': param_type,
+                    'default': default_value,
                     'current': current_value,
                     'annotation': param.annotation if param.annotation != inspect.Parameter.empty else None
                 }
@@ -116,6 +135,22 @@ class PatternsConfigDialog(QDialog):
         self.btn_save.clicked.connect(self._save)
         self.btn_cancel.clicked.connect(self.reject)
 
+        # Now trigger initial pattern selection for both tabs
+        self._trigger_initial_pattern_selection()
+
+    def _trigger_initial_pattern_selection(self):
+        """Trigger initial pattern selection for both tabs to show parameters"""
+        try:
+            for kind, tab in [('chart_patterns', self.chart_tab), ('candle_patterns', self.candle_tab)]:
+                pattern_list = getattr(tab, f'pattern_list_{kind}', None)
+                if pattern_list and pattern_list.count() > 0:
+                    first_item = pattern_list.item(0)
+                    if first_item:
+                        self._on_pattern_selected(first_item, kind)
+        except AttributeError:
+            # Tabs not yet fully initialized, skip initial selection
+            pass
+
     def _make_pattern_tab(self, kind: str) -> QWidget:
         """Create new pattern tab with list on left and parameters on right"""
         container = QWidget()
@@ -148,11 +183,12 @@ class PatternsConfigDialog(QDialog):
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-        self.parameters_widget = QWidget()
-        self.parameters_layout = QFormLayout(self.parameters_widget)
-        self.parameters_layout.addRow(QLabel("Select a pattern to configure its parameters"))
+        # Create tab-specific parameters widget
+        parameters_widget = QWidget()
+        parameters_layout = QFormLayout(parameters_widget)
+        parameters_layout.addRow(QLabel("Select a pattern to configure its parameters"))
 
-        right_scroll.setWidget(self.parameters_widget)
+        right_scroll.setWidget(parameters_widget)
 
         # Add to splitter
         splitter.addWidget(left_frame)
@@ -161,14 +197,35 @@ class PatternsConfigDialog(QDialog):
 
         layout.addWidget(splitter)
 
+        # Store references for later use - including layout for this specific tab
+        setattr(container, f'pattern_list_{kind}', pattern_list)
+        setattr(container, f'parameters_scroll_{kind}', right_scroll)
+        setattr(container, f'parameters_widget_{kind}', parameters_widget)
+        setattr(container, f'parameters_layout_{kind}', parameters_layout)
+
         # Connect pattern selection to parameter display
         pattern_list.currentItemChanged.connect(
             lambda current, previous: self._on_pattern_selected(current, kind)
         )
 
-        # Store references for later use
-        setattr(container, f'pattern_list_{kind}', pattern_list)
-        setattr(container, f'parameters_scroll_{kind}', right_scroll)
+        # Auto-select first pattern but don't trigger yet (will be triggered after full initialization)
+        if patterns and pattern_list.count() > 0:
+            pattern_list.setCurrentRow(0)
+
+        # Initialize dictionaries for this tab if they don't exist
+        if not hasattr(self, '_parameter_widgets'):
+            self._parameter_widgets = {}
+        if not hasattr(self, '_enable_widgets'):
+            self._enable_widgets = {}
+        if not hasattr(self, '_pattern_states'):
+            self._pattern_states = {}  # For storing temporary states
+
+        if kind not in self._parameter_widgets:
+            self._parameter_widgets[kind] = {}
+        if kind not in self._enable_widgets:
+            self._enable_widgets[kind] = {}
+        if kind not in self._pattern_states:
+            self._pattern_states[kind] = {}
 
         return container
 
@@ -181,24 +238,52 @@ class PatternsConfigDialog(QDialog):
         if not pattern:
             return
 
+        # Get the correct layout for this tab
+        try:
+            current_tab = self.chart_tab if kind == 'chart_patterns' else self.candle_tab
+            parameters_layout = getattr(current_tab, f'parameters_layout_{kind}')
+            parameters_widget = getattr(current_tab, f'parameters_widget_{kind}')
+        except AttributeError as e:
+            print(f"Error: Could not find layout for {kind}: {e}")
+            return
+
+        # Save current pattern state before switching (if any)
+        self._save_current_pattern_state(kind)
+
+        # Save the state of currently visible widgets before deleting them
+        if hasattr(self, '_current_pattern') and kind in self._current_pattern:
+            current_key = self._current_pattern[kind]
+            if current_key in self._enable_widgets.get(kind, {}):
+                current_enable_widget = self._enable_widgets[kind][current_key]
+                try:
+                    if current_enable_widget and hasattr(current_enable_widget, 'isChecked'):
+                        current_state = current_enable_widget.isChecked()
+                        if kind not in self._pattern_states:
+                            self._pattern_states[kind] = {}
+                        self._pattern_states[kind][current_key] = {
+                            'enabled': current_state,
+                            'parameters': self._pattern_states[kind].get(current_key, {}).get('parameters', {})
+                        }
+                except:
+                    pass
+
         # Clear current parameters widget
-        while self.parameters_layout.count():
-            item = self.parameters_layout.takeAt(0)
+        while parameters_layout.count():
+            item = parameters_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         # Add pattern name header
-        self.parameters_layout.addRow(QLabel(f"Parameters for: {pattern['name']}"))
+        parameters_layout.addRow(QLabel(f"Parameters for: {pattern['name']}"))
 
         # Add enable checkbox for the pattern
         enable_cb = QCheckBox("Enable Pattern")
-        enable_cb.setChecked(True)  # Default enabled
-        self.parameters_layout.addRow("Status:", enable_cb)
+        parameters_layout.addRow("Status:", enable_cb)
 
         # Add separator
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
-        self.parameters_layout.addRow(separator)
+        parameters_layout.addRow(separator)
 
         # Add parameters with override checkboxes
         for param_name, param_info in pattern['parameters'].items():
@@ -207,25 +292,34 @@ class PatternsConfigDialog(QDialog):
 
             # Override checkbox
             override_cb = QCheckBox("Override")
-            override_cb.setChecked(False)  # Default no override
 
             # Parameter widget (spinbox for numbers, lineedit for strings)
+            # Use default value if current is None
+            current_value = param_info['current'] if param_info['current'] is not None else param_info['default']
+
             if param_info['type'] in ['int', 'float']:
                 if param_info['type'] == 'int':
                     param_widget = QSpinBox()
                     param_widget.setRange(0, 10000)
-                    param_widget.setValue(int(param_info['current']))
+                    try:
+                        param_widget.setValue(int(current_value) if current_value is not None else 0)
+                    except (ValueError, TypeError):
+                        param_widget.setValue(0)
                 else:
                     param_widget = QDoubleSpinBox()
                     param_widget.setRange(0.0, 1000.0)
                     param_widget.setDecimals(3)
-                    param_widget.setValue(float(param_info['current']))
+                    try:
+                        param_widget.setValue(float(current_value) if current_value is not None else 0.0)
+                    except (ValueError, TypeError):
+                        param_widget.setValue(0.0)
             else:
                 param_widget = QLineEdit()
-                param_widget.setText(str(param_info['current']))
+                param_widget.setText(str(current_value) if current_value is not None else "")
 
             # Initially disable parameter widget (no override)
             param_widget.setEnabled(False)
+            override_cb.setChecked(False)
 
             # Connect override checkbox to enable/disable parameter widget
             override_cb.toggled.connect(param_widget.setEnabled)
@@ -238,13 +332,9 @@ class PatternsConfigDialog(QDialog):
 
             # Add to form
             param_label = param_name.replace('_', ' ').title()
-            self.parameters_layout.addRow(f"{param_label}:", param_row)
+            parameters_layout.addRow(f"{param_label}:", param_row)
 
-            # Store widgets for saving later
-            if not hasattr(self, '_parameter_widgets'):
-                self._parameter_widgets = {}
-            if kind not in self._parameter_widgets:
-                self._parameter_widgets[kind] = {}
+            # Store widgets for this tab/pattern
             if pattern['key'] not in self._parameter_widgets[kind]:
                 self._parameter_widgets[kind][pattern['key']] = {}
 
@@ -255,20 +345,114 @@ class PatternsConfigDialog(QDialog):
             }
 
         # Store enable checkbox
-        if not hasattr(self, '_enable_widgets'):
-            self._enable_widgets = {}
-        if kind not in self._enable_widgets:
-            self._enable_widgets[kind] = {}
         self._enable_widgets[kind][pattern['key']] = enable_cb
 
         # Load saved settings for this pattern
         self._load_pattern_settings(pattern, kind, enable_cb)
+
+        # Set current pattern for this tab
+        if not hasattr(self, '_current_pattern'):
+            self._current_pattern = {}
+        self._current_pattern[kind] = pattern['key']
+
+    def _save_current_pattern_state(self, kind: str):
+        """Save current pattern state before switching to another pattern"""
+        if not hasattr(self, '_current_pattern') or kind not in self._current_pattern:
+            return
+
+        current_pattern_key = self._current_pattern[kind]
+
+        # Always save enable state if it exists (even if no parameter widgets)
+        if current_pattern_key in self._enable_widgets.get(kind, {}):
+            enable_widget = self._enable_widgets[kind][current_pattern_key]
+            try:
+                if enable_widget and enable_widget.isVisible():
+                    state = enable_widget.isChecked()
+                    self._pattern_states[kind][current_pattern_key] = {
+                        'enabled': state,
+                        'parameters': {}
+                    }
+            except RuntimeError:
+                # Widget was deleted, skip
+                pass
+
+        # Save parameter states only if parameter widgets exist
+        if current_pattern_key not in self._parameter_widgets.get(kind, {}):
+            return  # No parameter widgets, but enable state was already saved above
+
+        param_widgets = self._parameter_widgets[kind][current_pattern_key]
+        for param_name, widgets in param_widgets.items():
+            override_cb = widgets['override']
+            param_widget = widgets['widget']
+
+            try:
+                if override_cb and param_widget and override_cb.isVisible() and param_widget.isVisible():
+                    param_state = {
+                        'override': override_cb.isChecked(),
+                        'value': None
+                    }
+
+                    if override_cb.isChecked():  # Only save value if override is enabled
+                        if isinstance(param_widget, QSpinBox):
+                            param_state['value'] = param_widget.value()
+                        elif isinstance(param_widget, QDoubleSpinBox):
+                            param_state['value'] = param_widget.value()
+                        elif isinstance(param_widget, QLineEdit):
+                            param_state['value'] = param_widget.text()
+
+                    if current_pattern_key not in self._pattern_states[kind]:
+                        self._pattern_states[kind][current_pattern_key] = {'enabled': True, 'parameters': {}}
+                    self._pattern_states[kind][current_pattern_key]['parameters'][param_name] = param_state
+            except RuntimeError:
+                # Widget was deleted, skip
+                continue
 
     def _load_pattern_settings(self, pattern, kind, enable_cb):
         """Load saved settings for a pattern"""
         try:
             pattern_key = pattern['key']
 
+            # First check if we have temporary states from navigation
+            if (hasattr(self, '_pattern_states') and
+                kind in self._pattern_states and
+                pattern_key in self._pattern_states[kind]):
+
+                temp_state = self._pattern_states[kind][pattern_key]
+
+                # Load temporary enabled status
+                enable_cb.setChecked(temp_state.get('enabled', True))
+
+                # Load temporary parameter states
+                if pattern_key in self._parameter_widgets.get(kind, {}):
+                    param_widgets = self._parameter_widgets[kind][pattern_key]
+                    temp_params = temp_state.get('parameters', {})
+
+                    for param_name, widgets in param_widgets.items():
+                        override_cb = widgets['override']
+                        param_widget = widgets['widget']
+
+                        if param_name in temp_params:
+                            temp_param = temp_params[param_name]
+
+                            # Set override state
+                            override_cb.setChecked(temp_param.get('override', False))
+                            param_widget.setEnabled(temp_param.get('override', False))
+
+                            # Set parameter value if override is enabled
+                            if temp_param.get('override', False) and temp_param.get('value') is not None:
+                                try:
+                                    if isinstance(param_widget, QSpinBox):
+                                        param_widget.setValue(int(temp_param['value']))
+                                    elif isinstance(param_widget, QDoubleSpinBox):
+                                        param_widget.setValue(float(temp_param['value']))
+                                    elif isinstance(param_widget, QLineEdit):
+                                        param_widget.setText(str(temp_param['value']))
+                                except (ValueError, TypeError):
+                                    print(f"Warning: Could not set temporary value for {param_name}")
+
+                return  # Don't load from config if we have temporary state
+
+            # Load from configuration if no temporary state exists
             # Load enabled status
             enabled_patterns = self.patterns.get(kind, {}).get('keys_enabled', [])
             enable_cb.setChecked(pattern_key in enabled_patterns)
@@ -289,17 +473,24 @@ class PatternsConfigDialog(QDialog):
                         param_widget.setEnabled(True)
 
                         override_value = overrides[param_name]
-                        if isinstance(param_widget, QSpinBox):
-                            param_widget.setValue(int(override_value))
-                        elif isinstance(param_widget, QDoubleSpinBox):
-                            param_widget.setValue(float(override_value))
-                        elif isinstance(param_widget, QLineEdit):
-                            param_widget.setText(str(override_value))
+                        try:
+                            if isinstance(param_widget, QSpinBox):
+                                param_widget.setValue(int(override_value))
+                            elif isinstance(param_widget, QDoubleSpinBox):
+                                param_widget.setValue(float(override_value))
+                            elif isinstance(param_widget, QLineEdit):
+                                param_widget.setText(str(override_value))
+                        except (ValueError, TypeError):
+                            print(f"Warning: Could not set override value for {param_name}")
 
         except Exception as e:
             print(f"Error loading pattern settings for {pattern.get('key', 'unknown')}: {e}")
 
     def _save(self):
+        # Save current pattern state before saving to config
+        for kind in ('chart_patterns', 'candle_patterns'):
+            self._save_current_pattern_state(kind)
+
         # Save enabled patterns and their override parameters
         if hasattr(self, '_enable_widgets') and hasattr(self, '_parameter_widgets'):
             for kind in ('chart_patterns', 'candle_patterns'):
@@ -312,25 +503,57 @@ class PatternsConfigDialog(QDialog):
                 enable_widgets = self._enable_widgets.get(kind, {})
                 param_widgets = self._parameter_widgets.get(kind, {})
 
-                for pattern_key, enable_widget in enable_widgets.items():
-                    if enable_widget.isChecked():
-                        enabled_patterns.append(pattern_key)
+                # Use temporary states if available, otherwise use current widget values
+                for pattern_key in enable_widgets.keys():
+                    # Check if we have temporary state for this pattern
+                    if (hasattr(self, '_pattern_states') and
+                        kind in self._pattern_states and
+                        pattern_key in self._pattern_states[kind]):
 
-                    # Save parameter overrides
-                    if pattern_key in param_widgets:
+                        temp_state = self._pattern_states[kind][pattern_key]
+
+                        # Use temporary enabled state
+                        if temp_state.get('enabled', False):
+                            enabled_patterns.append(pattern_key)
+
+                        # Use temporary parameter overrides
                         pattern_overrides[pattern_key] = {}
-                        for param_name, widgets in param_widgets[pattern_key].items():
-                            override_cb = widgets['override']
-                            param_widget = widgets['widget']
+                        temp_params = temp_state.get('parameters', {})
+                        for param_name, param_state in temp_params.items():
+                            if param_state.get('override', False) and param_state.get('value') is not None:
+                                pattern_overrides[pattern_key][param_name] = param_state['value']
 
-                            if override_cb.isChecked():
-                                # Save override value
-                                if isinstance(param_widget, QSpinBox):
-                                    pattern_overrides[pattern_key][param_name] = param_widget.value()
-                                elif isinstance(param_widget, QDoubleSpinBox):
-                                    pattern_overrides[pattern_key][param_name] = param_widget.value()
-                                elif isinstance(param_widget, QLineEdit):
-                                    pattern_overrides[pattern_key][param_name] = param_widget.text()
+                    else:
+                        # Use current widget values
+                        enable_widget = enable_widgets[pattern_key]
+                        try:
+                            if enable_widget and enable_widget.isVisible() and enable_widget.isChecked():
+                                enabled_patterns.append(pattern_key)
+                        except RuntimeError:
+                            # Widget was deleted, skip
+                            pass
+
+                        # Save parameter overrides from current widgets
+                        if pattern_key in param_widgets:
+                            pattern_overrides[pattern_key] = {}
+                            for param_name, widgets in param_widgets[pattern_key].items():
+                                override_cb = widgets['override']
+                                param_widget = widgets['widget']
+
+                                try:
+                                    if (override_cb and param_widget and
+                                        override_cb.isVisible() and param_widget.isVisible() and
+                                        override_cb.isChecked()):
+                                        # Save override value
+                                        if isinstance(param_widget, QSpinBox):
+                                            pattern_overrides[pattern_key][param_name] = param_widget.value()
+                                        elif isinstance(param_widget, QDoubleSpinBox):
+                                            pattern_overrides[pattern_key][param_name] = param_widget.value()
+                                        elif isinstance(param_widget, QLineEdit):
+                                            pattern_overrides[pattern_key][param_name] = param_widget.text()
+                                except RuntimeError:
+                                    # Widget was deleted, skip
+                                    continue
 
                 self.patterns[kind]['keys_enabled'] = enabled_patterns
                 self.patterns[kind]['parameter_overrides'] = pattern_overrides

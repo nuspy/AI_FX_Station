@@ -234,3 +234,8 @@ patterns:
   current_scan:
     lookback_hours: 6
     interval_minutes: 5
+dataset_strategy: profittabilità
+historical_patterns:
+  enabled: true
+  start_time: 15d
+  end_time: 2d

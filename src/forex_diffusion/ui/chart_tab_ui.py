@@ -1118,13 +1118,10 @@ class ChartTabUI(QWidget):
         self.candle_patterns_checkbox = QCheckBox("Candlestick patterns"); row2_layout.addWidget(self.candle_patterns_checkbox)
         self.history_patterns_checkbox = QCheckBox("Patterns storici"); row2_layout.addWidget(self.history_patterns_checkbox)
 
-        self.btn_scan_patterns = QToolButton()
         self.btn_scan_historical = QToolButton()
         self.btn_scan_historical.setText("Scan Historical")
         self.btn_config_patterns = QToolButton()
         self.btn_config_patterns.setText("Configura Patterns")
-        self.btn_scan_patterns.setText("Scansiona patterns")
-        row2_layout.addWidget(self.btn_scan_patterns)
         row2_layout.addWidget(self.btn_scan_historical)
         row2_layout.addWidget(self.btn_config_patterns)
 
@@ -1152,31 +1149,6 @@ class ChartTabUI(QWidget):
                 from loguru import logger
                 logger.exception("Historical scan failed: {}", e)
 
-        def _scan_patterns_now():
-            try:
-                ps = self.chart_controller.patterns_service
-                if ps is None:
-                    return
-                symbol = getattr(self, "symbol", None) or (self.symbol_combo.currentText() if hasattr(self, "symbol_combo") else None)
-                if not symbol:
-                    logger.info("Scan patterns: simbolo non impostato")
-                    return
-                # scan across multiple timeframes and merge into cache
-                tfs_to_scan = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
-                for tf in tfs_to_scan:
-                    try:
-                        df_tf = self._load_candles_from_db(symbol, tf, limit=10000)
-                        if df_tf is None or df_tf.empty:
-                            continue
-                        # tag hint so callback can attach tf to incoming results
-                        self._patterns_scan_tf_hint = tf
-                        ps.on_update_plot(df_tf)
-                    except Exception:
-                        continue
-            except Exception as e:
-                logger.exception("Scan patterns failed: {}", e)
-
-        self.btn_scan_patterns.clicked.connect(_scan_patterns_now)
         self.btn_scan_historical.clicked.connect(_scan_historical)
         self.btn_config_patterns.clicked.connect(self._open_patterns_config)
 

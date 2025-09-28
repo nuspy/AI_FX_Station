@@ -3,7 +3,8 @@
     "allow": [
       "Bash(find:*)",
       "Bash(alembic:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []
