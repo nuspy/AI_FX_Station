@@ -4,7 +4,8 @@
       "Bash(find:*)",
       "Bash(alembic:*)",
       "Bash(python:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(del test_parallel_detection.py)"
     ],
     "deny": [],
     "ask": []

@@ -358,8 +358,41 @@ class PatternsService(ChartServiceBase):
         self._detection_worker.batch_completed.connect(self._on_detection_batch_completed)
         self._detection_worker.detection_finished.connect(self._on_detection_finished)
 
-        # Start detection thread
+        # Create multithread detection workers
+        self._multithread_detection_thread = QThread(self.view)
+        from .multithread_detector import MultithreadDetectionWorker, HistoricalDetectionWorker
+
+        # Load performance settings
+        performance_config = self._config.get('performance', {})
+
+        # Auto-detect optimal thread count
+        import os
+        cpu_count = os.cpu_count() or 8
+        optimal_threads = max(1, min(32, int(cpu_count * 0.75)))
+
+        max_threads = performance_config.get('detection_threads', optimal_threads)
+        self.parallel_realtime = performance_config.get('parallel_realtime', True)
+        self.parallel_historical = performance_config.get('parallel_historical', True)
+
+        self._multithread_worker = MultithreadDetectionWorker(max_threads)
+        self._historical_worker = HistoricalDetectionWorker(max_threads)
+
+        # Move workers to thread
+        self._multithread_worker.moveToThread(self._multithread_detection_thread)
+        self._historical_worker.moveToThread(self._multithread_detection_thread)
+
+        # Connect multithread worker signals
+        self._multithread_worker.progress_updated.connect(self._on_detection_progress)
+        self._multithread_worker.batch_completed.connect(self._on_multithread_batch_completed)
+        self._multithread_worker.detection_finished.connect(self._on_multithread_detection_finished)
+
+        self._historical_worker.progress_updated.connect(self._on_detection_progress)
+        self._historical_worker.batch_completed.connect(self._on_multithread_batch_completed)
+        self._historical_worker.detection_finished.connect(self._on_multithread_detection_finished)
+
+        # Start detection threads
         self._detection_thread.start()
+        self._multithread_detection_thread.start()
 
         self._threads_started = False
 
@@ -381,8 +414,8 @@ class PatternsService(ChartServiceBase):
             # Add events to the service's event list
             if events:
                 self._events.extend(events)
-                # Update the chart with new events
-                self.renderer.add_events(events)
+                # Note: We don't update chart on each batch to avoid flickering
+                # Final update happens in _on_detection_finished
         except Exception as e:
             logger.debug(f"Batch completion error: {e}")
 
@@ -427,7 +460,23 @@ class PatternsService(ChartServiceBase):
 
                     # Update events and refresh display
                     self._events = enriched
+
+                    # Debug renderer state
+                    logger.debug(f"Patterns found: {len(enriched)}, calling _repaint()")
+                    renderer_ax = getattr(self.renderer, 'ax', None)
+                    logger.debug(f"Renderer ax: {renderer_ax}")
+
+                    # Use _repaint() which calls renderer.draw() and handles errors
                     self._repaint()
+
+                    # Force chart redraw
+                    try:
+                        if hasattr(self.view, 'canvas') and hasattr(self.view.canvas, 'draw_idle'):
+                            self.view.canvas.draw_idle()
+                        elif hasattr(self.view, 'draw_idle'):
+                            self.view.draw_idle()
+                    except Exception as e:
+                        logger.debug(f"Chart redraw failed: {e}")
 
                     # Update status with completion
                     pattern_count = len(enriched)
@@ -467,6 +516,46 @@ class PatternsService(ChartServiceBase):
                     self.view.update_status("Pattern scan failed")
                 elif hasattr(self.controller, 'update_status'):
                     self.controller.update_status("Pattern scan error")
+            except Exception:
+                pass
+
+    @Slot(int, list, float)
+    def _on_multithread_batch_completed(self, batch_id, events, execution_time):
+        """Handle batch completion from multithread detection worker"""
+        try:
+            if events:
+                self._events.extend(events)
+                logger.debug(f"Multithread batch {batch_id} completed: {len(events)} events, {execution_time:.2f}s")
+        except Exception as e:
+            logger.debug(f"Multithread batch completion error: {e}")
+
+    @Slot(list, dict)
+    def _on_multithread_detection_finished(self, all_events, performance_stats):
+        """Handle detection completion from multithread worker"""
+        try:
+            # Log performance statistics
+            stats = performance_stats or {}
+            total_time = stats.get('total_execution_time', 0)
+            successful = stats.get('successful_detectors', 0)
+            failed = stats.get('failed_detectors', 0)
+            threads_used = stats.get('threads_used', 1)
+            parallel_efficiency = stats.get('parallel_efficiency', 0)
+
+            logger.info(
+                f"Multithread detection completed: {len(all_events)} events, "
+                f"{successful}/{successful+failed} detectors successful, "
+                f"{threads_used} threads, {total_time:.2f}s, "
+                f"{parallel_efficiency:.1f}x efficiency"
+            )
+
+            # Use the same completion logic as regular detection
+            self._on_detection_finished(all_events)
+
+        except Exception as e:
+            logger.error(f"Multithread detection finished error: {e}")
+            # Fallback to regular completion handler
+            try:
+                self._on_detection_finished(all_events or [])
             except Exception:
                 pass
 
@@ -943,7 +1032,50 @@ class PatternsService(ChartServiceBase):
                 logger.info("No pattern types enabled for historical scan")
                 return
 
-            # Run detection for each enabled kind
+            # Check if parallel historical detection is enabled
+            use_parallel_historical = (self.parallel_historical and hasattr(self, '_historical_worker'))
+
+            if use_parallel_historical:
+                logger.info(f"Using parallel historical detection for {len(df)} rows")
+
+                # Get all detectors for enabled kinds
+                dets_list = self.registry.detectors(kinds=kinds)
+                if dets_list is None:
+                    logger.warning(f"No detectors found for historical scan kinds: {kinds}")
+                    return
+
+                dets = list(dets_list)
+
+                # Normalize dataframe
+                dfN = self._normalize_df(df)
+                if dfN is None or dfN.empty:
+                    logger.warning("Historical scan: normalization failed or empty dataframe")
+                    return
+
+                # Prepare detection tasks for historical worker
+                from ...patterns.boundary_config import get_boundary_config
+                boundary_config = get_boundary_config()
+                timeframe = self._detect_timeframe_from_df(dfN)
+
+                detection_tasks = []
+                for det in dets:
+                    detector_key = getattr(det, 'key', 'unknown')
+                    detector_df = self._apply_boundary_to_df(dfN, detector_key, timeframe, boundary_config)
+                    detection_tasks.append({
+                        'detector': det,
+                        'dataframe': detector_df,
+                        'detector_key': detector_key,
+                        'historical': True  # Mark as historical
+                    })
+
+                # Start parallel historical detection
+                if hasattr(self._historical_worker, 'start_detection'):
+                    self._historical_worker.start_detection(detection_tasks)
+                    return  # Results handled by callbacks
+                else:
+                    logger.warning("Historical worker not properly initialized, falling back to sequential")
+
+            # Fallback to sequential historical detection
             historical_events = []
             for kind in kinds:
                 events = self._scan_once(kind=kind, df=df) or []
@@ -1070,11 +1202,43 @@ class PatternsService(ChartServiceBase):
                 dets = list(dets_list)
             logger.info(f"Patterns: normalized df rows={len(dfN)}; detectors={len(dets)}")
 
-            # Use async detection with resource monitoring
-            evs: List[PatternEvent] = []
+            # Check if parallel detection is enabled
+            use_parallel = (self.parallel_realtime and hasattr(self, '_multithread_worker'))
 
-            # Check if we should use async detection for large datasets
-            use_async = len(dfN) > 1000 or len(dets) > 10
+            if use_parallel:
+                logger.info(f"Using parallel multithread detection for {len(dfN)} rows with {len(dets)} detectors")
+
+                # Use multithread detection worker
+                from ...patterns.boundary_config import get_boundary_config
+                boundary_config = get_boundary_config()
+                timeframe = self._detect_timeframe_from_df(dfN)
+
+                # Prepare detection tasks for multithread worker
+                detection_tasks = []
+                for det in dets:
+                    detector_key = getattr(det, 'key', 'unknown')
+                    detector_df = self._apply_boundary_to_df(dfN, detector_key, timeframe, boundary_config)
+                    detection_tasks.append({
+                        'detector': det,
+                        'dataframe': detector_df,
+                        'detector_key': detector_key
+                    })
+
+                # Start multithread detection
+                if hasattr(self._multithread_worker, 'start_detection'):
+                    self._multithread_worker.start_detection(detection_tasks)
+                    # Return early - results will be handled by multithread callbacks
+                    return
+                else:
+                    logger.warning("Multithread worker not properly initialized, falling back to sequential")
+                    use_parallel = False
+
+            if not use_parallel:
+                # Use async detection with resource monitoring
+                evs: List[PatternEvent] = []
+
+                # Check if we should use async detection for large datasets
+                use_async = len(dfN) > 1000 or len(dets) > 10
 
             if use_async:
                 logger.info(f"Using async detection for {len(dfN)} rows with {len(dets)} detectors")

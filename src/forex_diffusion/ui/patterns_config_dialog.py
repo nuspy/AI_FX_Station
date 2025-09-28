@@ -672,6 +672,9 @@ class PatternsConfigDialog(QDialog):
         # Save boundary configurations
         self._save_boundary_configurations()
 
+        # Save performance settings
+        self._save_performance_settings()
+
         self.cfg['patterns'] = self.patterns
         with open(self.yaml_path, 'w', encoding='utf-8') as fh:
             yaml.safe_dump(self.cfg, fh, allow_unicode=True, sort_keys=False)
@@ -700,6 +703,32 @@ class PatternsConfigDialog(QDialog):
 
         except Exception as e:
             print(f"Error saving boundary configurations: {e}")
+
+    def _save_performance_settings(self):
+        """Save performance settings to config"""
+        try:
+            if not hasattr(self, 'thread_count_spinbox'):
+                return
+
+            # Extract performance mode
+            mode_text = self.performance_mode_combo.currentText()
+            mode_key = mode_text.split(' - ')[0]  # Extract key (balanced, max_speed, low_cpu)
+
+            performance_settings = {
+                'detection_threads': self.thread_count_spinbox.value(),
+                'detection_mode': mode_key,
+                'parallel_historical': self.parallel_historical_cb.isChecked(),
+                'parallel_realtime': self.parallel_realtime_cb.isChecked()
+            }
+
+            # Save to config
+            if 'performance' not in self.cfg:
+                self.cfg['performance'] = {}
+
+            self.cfg['performance'].update(performance_settings)
+
+        except Exception as e:
+            print(f"Error saving performance settings: {e}")
 
     def _make_common_settings_tab(self) -> QWidget:
         box = QWidget()
@@ -770,6 +799,66 @@ class PatternsConfigDialog(QDialog):
         self.historical_settings_group.setVisible(enabled)
 
         layout.addWidget(self.historical_settings_group)
+
+        # === MULTITHREAD PERFORMANCE SETTINGS ===
+        performance_group = QGroupBox("Performance Settings")
+        performance_layout = QFormLayout(performance_group)
+
+        # Thread count setting
+        self.thread_count_spinbox = QSpinBox()
+        self.thread_count_spinbox.setRange(1, 64)  # Support up to 64 threads
+
+        # Auto-detect optimal thread count (use 75% of available cores)
+        import os
+        cpu_count = os.cpu_count() or 8
+        optimal_threads = max(1, min(32, int(cpu_count * 0.75)))
+
+        # Load saved thread count or use optimal
+        saved_threads = self.cfg.get('performance', {}).get('detection_threads', optimal_threads)
+        self.thread_count_spinbox.setValue(saved_threads)
+
+        self.thread_count_spinbox.setToolTip(f"Number of parallel threads for pattern detection. System has {cpu_count} logical cores. Recommended: {optimal_threads}")
+
+        thread_label = QLabel(f"Detection Threads (Recommended: {optimal_threads}):")
+        performance_layout.addRow(thread_label, self.thread_count_spinbox)
+
+        # Performance mode selection
+        self.performance_mode_combo = QComboBox()
+        self.performance_mode_combo.addItems([
+            "balanced - Balance speed and CPU usage",
+            "max_speed - Maximum speed, high CPU usage",
+            "low_cpu - Lower CPU usage, slower detection"
+        ])
+
+        # Load saved mode
+        saved_mode = self.cfg.get('performance', {}).get('detection_mode', 'balanced')
+        mode_items = {
+            'balanced': "balanced - Balance speed and CPU usage",
+            'max_speed': "max_speed - Maximum speed, high CPU usage",
+            'low_cpu': "low_cpu - Lower CPU usage, slower detection"
+        }
+        if saved_mode in mode_items:
+            self.performance_mode_combo.setCurrentText(mode_items[saved_mode])
+
+        performance_layout.addRow(QLabel("Performance Mode:"), self.performance_mode_combo)
+
+        # System info display
+        info_label = QLabel(f"System: {cpu_count} logical cores detected")
+        info_label.setStyleSheet("color: #666; font-size: 10px;")
+        performance_layout.addRow(info_label)
+
+        # Parallel scanning options
+        self.parallel_historical_cb = QCheckBox("Enable parallel historical scanning")
+        self.parallel_historical_cb.setChecked(self.cfg.get('performance', {}).get('parallel_historical', True))
+        self.parallel_historical_cb.setToolTip("Use multithread detection for historical pattern scanning")
+        performance_layout.addRow(self.parallel_historical_cb)
+
+        self.parallel_realtime_cb = QCheckBox("Enable parallel real-time scanning")
+        self.parallel_realtime_cb.setChecked(self.cfg.get('performance', {}).get('parallel_realtime', True))
+        self.parallel_realtime_cb.setToolTip("Use multithread detection for real-time pattern scanning")
+        performance_layout.addRow(self.parallel_realtime_cb)
+
+        layout.addWidget(performance_group)
         layout.addStretch()
 
         # Set content widget to scroll area
