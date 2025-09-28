@@ -10,7 +10,9 @@ import matplotlib.dates as mdates
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
-    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog, QGroupBox
+    QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog, QGroupBox,
+    QTabWidget, QSpinBox, QDoubleSpinBox, QTextEdit, QFormLayout, QGridLayout,
+    QSlider, QFrame, QButtonGroup, QRadioButton
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker
 from matplotlib.figure import Figure
@@ -151,7 +153,7 @@ class ChartTabUI(QWidget):
         self._patterns_scan_tf_hint = None  # tf hint when scanning sequentially
 
     def _build_ui(self) -> None:
-        """Programmatically builds the entire UI with a two-row topbar."""
+        """Programmatically builds the entire UI with a two-row topbar and tab structure."""
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
@@ -164,7 +166,24 @@ class ChartTabUI(QWidget):
         self._populate_topbar(topbar)
         self.layout().addWidget(topbar)
 
-        # Create main content area with splitters
+        # Create main tab widget
+        self.main_tabs = QTabWidget()
+        self.layout().addWidget(self.main_tabs)
+
+        # Chart tab (original functionality)
+        self._create_chart_tab()
+
+        # Training/Backtest tab (new functionality)
+        self._create_training_tab()
+
+        # Set stretch factors
+        self.layout().setStretch(1, 1)
+
+    def _create_chart_tab(self) -> None:
+        """Create the original chart tab with existing functionality"""
+        chart_tab = QWidget()
+
+        # Create main content area with splitters (original structure)
         main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter = main_splitter
 
@@ -202,13 +221,456 @@ class ChartTabUI(QWidget):
         right_splitter.addWidget(self.orders_table)
 
         main_splitter.addWidget(right_splitter)
-        self.layout().addWidget(main_splitter)
+
+        # Set up chart tab layout
+        chart_layout = QVBoxLayout(chart_tab)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.addWidget(main_splitter)
 
         # Set stretch factors to make the chart area expand
-        self.layout().setStretch(1, 1)
         main_splitter.setStretchFactor(1, 8)
         right_splitter.setStretchFactor(0, 6)
         chart_area_splitter.setStretchFactor(1, 1)
+
+        self.main_tabs.addTab(chart_tab, "Chart")
+
+    def _create_training_tab(self) -> None:
+        """Create the new Training/Backtest tab"""
+        training_tab = QWidget()
+        training_layout = QVBoxLayout(training_tab)
+        training_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Create scrollable area for all the controls
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(15)
+
+        # === Study Setup Section ===
+        self._create_study_setup_section(scroll_layout)
+
+        # === Dataset Configuration Section ===
+        self._create_dataset_config_section(scroll_layout)
+
+        # === Parameter Space Section ===
+        self._create_parameter_space_section(scroll_layout)
+
+        # === Optimization Configuration Section ===
+        self._create_optimization_config_section(scroll_layout)
+
+        # === Execution Control Section ===
+        self._create_execution_control_section(scroll_layout)
+
+        # === Results and Status Section ===
+        self._create_results_section(scroll_layout)
+
+        scroll.setWidget(scroll_content)
+        training_layout.addWidget(scroll)
+
+        self.main_tabs.addTab(training_tab, "Training/Backtest")
+
+    def _create_study_setup_section(self, layout: QVBoxLayout) -> None:
+        """Create study setup section"""
+        group = QGroupBox("Study Setup")
+        group_layout = QFormLayout(group)
+
+        # Pattern selection
+        self.pattern_combo = QComboBox()
+        self.pattern_combo.addItems([
+            "head_and_shoulders", "inverse_head_and_shoulders", "triangle_ascending",
+            "triangle_descending", "triangle_symmetrical", "wedge_rising", "wedge_falling",
+            "double_top", "double_bottom", "triple_top", "triple_bottom",
+            "rectangle", "flag_bull", "flag_bear", "pennant", "diamond",
+            "cup_and_handle", "rounding_bottom", "broadening_top"
+        ])
+        group_layout.addRow("Pattern:", self.pattern_combo)
+
+        # Direction selection
+        self.direction_combo = QComboBox()
+        self.direction_combo.addItems(["bull", "bear"])
+        group_layout.addRow("Direction:", self.direction_combo)
+
+        # Asset selection (multiple)
+        self.assets_edit = QTextEdit()
+        self.assets_edit.setMaximumHeight(60)
+        self.assets_edit.setPlainText("EUR/USD, GBP/USD, USD/JPY")
+        group_layout.addRow("Assets (comma separated):", self.assets_edit)
+
+        # Timeframe selection (multiple)
+        self.timeframes_edit = QTextEdit()
+        self.timeframes_edit.setMaximumHeight(60)
+        self.timeframes_edit.setPlainText("1h, 4h, 1d")
+        group_layout.addRow("Timeframes (comma separated):", self.timeframes_edit)
+
+        # Regime selection
+        self.regime_combo = QComboBox()
+        self.regime_combo.addItems([
+            "None", "nber_recession", "nber_expansion", "vix_low", "vix_medium", "vix_high",
+            "pmi_above_50", "pmi_below_50", "epu_low", "epu_medium", "epu_high"
+        ])
+        group_layout.addRow("Regime Filter:", self.regime_combo)
+
+        layout.addWidget(group)
+
+    def _create_dataset_config_section(self, layout: QVBoxLayout) -> None:
+        """Create dataset configuration section"""
+        group = QGroupBox("Dataset Configuration")
+        group_layout = QVBoxLayout(group)
+
+        # Multi-objective toggle
+        self.multi_objective_checkbox = QCheckBox("Enable Multi-Objective Optimization")
+        self.multi_objective_checkbox.setChecked(True)
+        group_layout.addWidget(self.multi_objective_checkbox)
+
+        # Dataset 1 configuration
+        d1_frame = QFrame()
+        d1_frame.setFrameStyle(QFrame.StyledPanel)
+        d1_layout = QFormLayout(d1_frame)
+
+        self.d1_start_date = QTextEdit()
+        self.d1_start_date.setMaximumHeight(30)
+        self.d1_start_date.setPlainText("2020-01-01")
+        d1_layout.addRow("D1 Start Date:", self.d1_start_date)
+
+        self.d1_end_date = QTextEdit()
+        self.d1_end_date.setMaximumHeight(30)
+        self.d1_end_date.setPlainText("2022-12-31")
+        d1_layout.addRow("D1 End Date:", self.d1_end_date)
+
+        group_layout.addWidget(QLabel("Dataset 1 (Primary):"))
+        group_layout.addWidget(d1_frame)
+
+        # Dataset 2 configuration
+        d2_frame = QFrame()
+        d2_frame.setFrameStyle(QFrame.StyledPanel)
+        d2_layout = QFormLayout(d2_frame)
+
+        self.d2_start_date = QTextEdit()
+        self.d2_start_date.setMaximumHeight(30)
+        self.d2_start_date.setPlainText("2023-01-01")
+        d2_layout.addRow("D2 Start Date:", self.d2_start_date)
+
+        self.d2_end_date = QTextEdit()
+        self.d2_end_date.setMaximumHeight(30)
+        self.d2_end_date.setPlainText("2024-12-31")
+        d2_layout.addRow("D2 End Date:", self.d2_end_date)
+
+        group_layout.addWidget(QLabel("Dataset 2 (Secondary):"))
+        group_layout.addWidget(d2_frame)
+
+        # Objective weights (when not using pure multi-objective)
+        weights_frame = QFrame()
+        weights_layout = QFormLayout(weights_frame)
+
+        self.d1_weight_slider = QSlider(Qt.Horizontal)
+        self.d1_weight_slider.setMinimum(10)
+        self.d1_weight_slider.setMaximum(90)
+        self.d1_weight_slider.setValue(70)
+        self.d1_weight_label = QLabel("70%")
+        self.d1_weight_slider.valueChanged.connect(lambda v: self.d1_weight_label.setText(f"{v}%"))
+
+        d1_weight_layout = QHBoxLayout()
+        d1_weight_layout.addWidget(self.d1_weight_slider)
+        d1_weight_layout.addWidget(self.d1_weight_label)
+        weights_layout.addRow("D1 Weight:", d1_weight_layout)
+
+        group_layout.addWidget(QLabel("Objective Weights (for single-objective mode):"))
+        group_layout.addWidget(weights_frame)
+
+        layout.addWidget(group)
+
+    def _create_parameter_space_section(self, layout: QVBoxLayout) -> None:
+        """Create parameter space configuration section"""
+        group = QGroupBox("Parameter Space Configuration")
+        group_layout = QVBoxLayout(group)
+
+        # Form parameters
+        form_group = QGroupBox("Form Parameters (Pattern Detection)")
+        form_layout = QGridLayout(form_group)
+
+        # Min touches
+        form_layout.addWidget(QLabel("Min Touches:"), 0, 0)
+        self.min_touches_min = QSpinBox()
+        self.min_touches_min.setMinimum(2)
+        self.min_touches_min.setMaximum(10)
+        self.min_touches_min.setValue(3)
+        form_layout.addWidget(self.min_touches_min, 0, 1)
+        form_layout.addWidget(QLabel("to"), 0, 2)
+        self.min_touches_max = QSpinBox()
+        self.min_touches_max.setMinimum(2)
+        self.min_touches_max.setMaximum(10)
+        self.min_touches_max.setValue(6)
+        form_layout.addWidget(self.min_touches_max, 0, 3)
+
+        # Span range
+        form_layout.addWidget(QLabel("Min Span (bars):"), 1, 0)
+        self.min_span_min = QSpinBox()
+        self.min_span_min.setMinimum(5)
+        self.min_span_min.setMaximum(200)
+        self.min_span_min.setValue(10)
+        form_layout.addWidget(self.min_span_min, 1, 1)
+        form_layout.addWidget(QLabel("to"), 1, 2)
+        self.min_span_max = QSpinBox()
+        self.min_span_max.setMinimum(5)
+        self.min_span_max.setMaximum(200)
+        self.min_span_max.setValue(50)
+        form_layout.addWidget(self.min_span_max, 1, 3)
+
+        form_layout.addWidget(QLabel("Max Span (bars):"), 2, 0)
+        self.max_span_min = QSpinBox()
+        self.max_span_min.setMinimum(20)
+        self.max_span_min.setMaximum(500)
+        self.max_span_min.setValue(50)
+        form_layout.addWidget(self.max_span_min, 2, 1)
+        form_layout.addWidget(QLabel("to"), 2, 2)
+        self.max_span_max = QSpinBox()
+        self.max_span_max.setMinimum(20)
+        self.max_span_max.setMaximum(500)
+        self.max_span_max.setValue(150)
+        form_layout.addWidget(self.max_span_max, 2, 3)
+
+        # Tolerance
+        form_layout.addWidget(QLabel("Tolerance:"), 3, 0)
+        self.tolerance_min = QDoubleSpinBox()
+        self.tolerance_min.setMinimum(0.001)
+        self.tolerance_min.setMaximum(0.1)
+        self.tolerance_min.setValue(0.005)
+        self.tolerance_min.setSingleStep(0.001)
+        self.tolerance_min.setDecimals(4)
+        form_layout.addWidget(self.tolerance_min, 3, 1)
+        form_layout.addWidget(QLabel("to"), 3, 2)
+        self.tolerance_max = QDoubleSpinBox()
+        self.tolerance_max.setMinimum(0.001)
+        self.tolerance_max.setMaximum(0.1)
+        self.tolerance_max.setValue(0.05)
+        self.tolerance_max.setSingleStep(0.001)
+        self.tolerance_max.setDecimals(4)
+        form_layout.addWidget(self.tolerance_max, 3, 3)
+
+        group_layout.addWidget(form_group)
+
+        # Action parameters
+        action_group = QGroupBox("Action Parameters (Execution)")
+        action_layout = QGridLayout(action_group)
+
+        # Target mode
+        action_layout.addWidget(QLabel("Target Modes:"), 0, 0)
+        self.target_modes_edit = QTextEdit()
+        self.target_modes_edit.setMaximumHeight(60)
+        self.target_modes_edit.setPlainText("Altezza figura, Flag pole, Ampiezza canale")
+        action_layout.addWidget(self.target_modes_edit, 0, 1, 1, 3)
+
+        # Risk-reward ratio
+        action_layout.addWidget(QLabel("Risk/Reward Ratio:"), 1, 0)
+        self.rr_min = QDoubleSpinBox()
+        self.rr_min.setMinimum(0.5)
+        self.rr_min.setMaximum(10.0)
+        self.rr_min.setValue(1.0)
+        self.rr_min.setSingleStep(0.1)
+        action_layout.addWidget(self.rr_min, 1, 1)
+        action_layout.addWidget(QLabel("to"), 1, 2)
+        self.rr_max = QDoubleSpinBox()
+        self.rr_max.setMinimum(0.5)
+        self.rr_max.setMaximum(10.0)
+        self.rr_max.setValue(3.0)
+        self.rr_max.setSingleStep(0.1)
+        action_layout.addWidget(self.rr_max, 1, 3)
+
+        # ATR buffer
+        action_layout.addWidget(QLabel("ATR Buffer:"), 2, 0)
+        self.atr_buffer_min = QDoubleSpinBox()
+        self.atr_buffer_min.setMinimum(0.0)
+        self.atr_buffer_min.setMaximum(5.0)
+        self.atr_buffer_min.setValue(0.5)
+        self.atr_buffer_min.setSingleStep(0.1)
+        action_layout.addWidget(self.atr_buffer_min, 2, 1)
+        action_layout.addWidget(QLabel("to"), 2, 2)
+        self.atr_buffer_max = QDoubleSpinBox()
+        self.atr_buffer_max.setMinimum(0.0)
+        self.atr_buffer_max.setMaximum(5.0)
+        self.atr_buffer_max.setValue(2.0)
+        self.atr_buffer_max.setSingleStep(0.1)
+        action_layout.addWidget(self.atr_buffer_max, 2, 3)
+
+        group_layout.addWidget(action_group)
+
+        # Suggested ranges button
+        self.suggested_ranges_btn = QPushButton("Show Suggested Ranges for Selected Pattern")
+        self.suggested_ranges_btn.clicked.connect(self._show_suggested_ranges)
+        group_layout.addWidget(self.suggested_ranges_btn)
+
+        layout.addWidget(group)
+
+    def _create_optimization_config_section(self, layout: QVBoxLayout) -> None:
+        """Create optimization configuration section"""
+        group = QGroupBox("Optimization Configuration")
+        group_layout = QFormLayout(group)
+
+        # Max trials
+        self.max_trials_spin = QSpinBox()
+        self.max_trials_spin.setMinimum(10)
+        self.max_trials_spin.setMaximum(10000)
+        self.max_trials_spin.setValue(1000)
+        group_layout.addRow("Max Trials:", self.max_trials_spin)
+
+        # Max duration
+        self.max_duration_spin = QDoubleSpinBox()
+        self.max_duration_spin.setMinimum(0.1)
+        self.max_duration_spin.setMaximum(168.0)  # 1 week
+        self.max_duration_spin.setValue(24.0)
+        self.max_duration_spin.setSuffix(" hours")
+        group_layout.addRow("Max Duration:", self.max_duration_spin)
+
+        # Parallel workers
+        self.parallel_workers_spin = QSpinBox()
+        self.parallel_workers_spin.setMinimum(1)
+        self.parallel_workers_spin.setMaximum(64)
+        self.parallel_workers_spin.setValue(32)
+        group_layout.addRow("Parallel Workers:", self.parallel_workers_spin)
+
+        # Early stopping alpha
+        self.early_stopping_alpha_spin = QDoubleSpinBox()
+        self.early_stopping_alpha_spin.setMinimum(0.1)
+        self.early_stopping_alpha_spin.setMaximum(1.0)
+        self.early_stopping_alpha_spin.setValue(0.8)
+        self.early_stopping_alpha_spin.setSingleStep(0.05)
+        group_layout.addRow("Early Stopping Alpha:", self.early_stopping_alpha_spin)
+
+        # Invalidation rule parameters
+        group_layout.addRow(QLabel(""), QLabel(""))  # Separator
+        group_layout.addRow(QLabel("Invalidation Rules:"), QLabel(""))
+
+        self.k_time_spin = QDoubleSpinBox()
+        self.k_time_spin.setMinimum(1.0)
+        self.k_time_spin.setMaximum(10.0)
+        self.k_time_spin.setValue(4.0)
+        self.k_time_spin.setSingleStep(0.5)
+        group_layout.addRow("Time Multiplier (k_time):", self.k_time_spin)
+
+        self.k_loss_spin = QDoubleSpinBox()
+        self.k_loss_spin.setMinimum(1.0)
+        self.k_loss_spin.setMaximum(10.0)
+        self.k_loss_spin.setValue(4.0)
+        self.k_loss_spin.setSingleStep(0.5)
+        group_layout.addRow("Loss Multiplier (k_loss):", self.k_loss_spin)
+
+        self.quantile_spin = QDoubleSpinBox()
+        self.quantile_spin.setMinimum(0.5)
+        self.quantile_spin.setMaximum(0.95)
+        self.quantile_spin.setValue(0.75)
+        self.quantile_spin.setSingleStep(0.05)
+        group_layout.addRow("Quantile Threshold:", self.quantile_spin)
+
+        layout.addWidget(group)
+
+    def _create_execution_control_section(self, layout: QVBoxLayout) -> None:
+        """Create execution control section"""
+        group = QGroupBox("Execution Control")
+        group_layout = QVBoxLayout(group)
+
+        # Control buttons
+        buttons_layout = QHBoxLayout()
+
+        self.start_optimization_btn = QPushButton("Start Optimization")
+        self.start_optimization_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
+        self.start_optimization_btn.clicked.connect(self._start_optimization)
+        buttons_layout.addWidget(self.start_optimization_btn)
+
+        self.pause_optimization_btn = QPushButton("Pause")
+        self.pause_optimization_btn.clicked.connect(self._pause_optimization)
+        self.pause_optimization_btn.setEnabled(False)
+        buttons_layout.addWidget(self.pause_optimization_btn)
+
+        self.resume_optimization_btn = QPushButton("Resume")
+        self.resume_optimization_btn.clicked.connect(self._resume_optimization)
+        self.resume_optimization_btn.setEnabled(False)
+        buttons_layout.addWidget(self.resume_optimization_btn)
+
+        self.stop_optimization_btn = QPushButton("Stop")
+        self.stop_optimization_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
+        self.stop_optimization_btn.clicked.connect(self._stop_optimization)
+        self.stop_optimization_btn.setEnabled(False)
+        buttons_layout.addWidget(self.stop_optimization_btn)
+
+        group_layout.addLayout(buttons_layout)
+
+        # Status display
+        self.optimization_status_label = QLabel("Status: Ready")
+        self.optimization_status_label.setStyleSheet("QLabel { font-weight: bold; }")
+        group_layout.addWidget(self.optimization_status_label)
+
+        # Progress bar
+        self.optimization_progress = QProgressBar()
+        self.optimization_progress.setVisible(False)
+        group_layout.addWidget(self.optimization_progress)
+
+        layout.addWidget(group)
+
+    def _create_results_section(self, layout: QVBoxLayout) -> None:
+        """Create results and status section"""
+        group = QGroupBox("Results and Analysis")
+        group_layout = QVBoxLayout(group)
+
+        # Results tabs
+        self.results_tabs = QTabWidget()
+
+        # Study status tab
+        status_tab = QWidget()
+        status_layout = QVBoxLayout(status_tab)
+
+        self.study_status_text = QTextEdit()
+        self.study_status_text.setMaximumHeight(150)
+        self.study_status_text.setReadOnly(True)
+        self.study_status_text.setPlainText("No optimization running...")
+        status_layout.addWidget(self.study_status_text)
+
+        self.refresh_status_btn = QPushButton("Refresh Status")
+        self.refresh_status_btn.clicked.connect(self._refresh_status)
+        status_layout.addWidget(self.refresh_status_btn)
+
+        self.results_tabs.addTab(status_tab, "Status")
+
+        # Best parameters tab
+        params_tab = QWidget()
+        params_layout = QVBoxLayout(params_tab)
+
+        self.best_params_text = QTextEdit()
+        self.best_params_text.setReadOnly(True)
+        self.best_params_text.setPlainText("No results yet...")
+        params_layout.addWidget(self.best_params_text)
+
+        promote_layout = QHBoxLayout()
+        self.promote_params_btn = QPushButton("Promote Parameters")
+        self.promote_params_btn.clicked.connect(self._promote_parameters)
+        self.promote_params_btn.setEnabled(False)
+        promote_layout.addWidget(self.promote_params_btn)
+
+        self.rollback_params_btn = QPushButton("Rollback Parameters")
+        self.rollback_params_btn.clicked.connect(self._rollback_parameters)
+        promote_layout.addWidget(self.rollback_params_btn)
+
+        promote_layout.addStretch()
+        params_layout.addLayout(promote_layout)
+
+        self.results_tabs.addTab(params_tab, "Best Parameters")
+
+        # Performance breakdown tab
+        perf_tab = QWidget()
+        perf_layout = QVBoxLayout(perf_tab)
+
+        self.performance_text = QTextEdit()
+        self.performance_text.setReadOnly(True)
+        perf_layout.addWidget(self.performance_text)
+
+        self.results_tabs.addTab(perf_tab, "Performance")
+
+        group_layout.addWidget(self.results_tabs)
+
+        layout.addWidget(group)
 
     def _populate_topbar(self, topbar: QWidget):
         """Creates and adds all widgets to the given topbar widget in two rows."""
@@ -1334,6 +1796,270 @@ class ChartTabUI(QWidget):
         self._collect_and_save("chart", self.chart_tab)
         self._collect_and_save("candle", self.candle_tab)
         self.accept()
+
+    # Training/Backtest tab handler methods
+    def _show_suggested_ranges(self):
+        """Show suggested parameter ranges based on historical data"""
+        try:
+            from ..training.optimization.parameter_space import ParameterSpace
+            param_space = ParameterSpace()
+
+            # Get current pattern type
+            pattern_type = self.pattern_combo.currentText()
+            if not pattern_type:
+                self._show_message("Please select a pattern type first")
+                return
+
+            suggested = param_space.get_suggested_ranges(pattern_type)
+
+            # Display in a dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Suggested Ranges for {pattern_type}")
+            dialog.setModal(True)
+            dialog.resize(400, 300)
+
+            layout = QVBoxLayout(dialog)
+            scroll = QScrollArea()
+            scroll_widget = QWidget()
+            scroll_layout = QVBoxLayout(scroll_widget)
+
+            for param, ranges in suggested.items():
+                group = QGroupBox(param)
+                group_layout = QFormLayout()
+                group_layout.addRow("Min:", QLabel(str(ranges.get('min', 'N/A'))))
+                group_layout.addRow("Max:", QLabel(str(ranges.get('max', 'N/A'))))
+                group_layout.addRow("Default:", QLabel(str(ranges.get('default', 'N/A'))))
+                group.setLayout(group_layout)
+                scroll_layout.addWidget(group)
+
+            scroll.setWidget(scroll_widget)
+            layout.addWidget(scroll)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+            buttons.accepted.connect(dialog.accept)
+            layout.addWidget(buttons)
+
+            dialog.exec()
+
+        except Exception as e:
+            self._show_message(f"Error showing suggested ranges: {str(e)}")
+
+    def _start_optimization(self):
+        """Start optimization process"""
+        try:
+            config = self._collect_optimization_config()
+            if not self._validate_config(config):
+                return
+
+            from ..training.optimization.engine import OptimizationEngine
+
+            # Create and start optimization
+            self.optimization_engine = OptimizationEngine()
+
+            # Update UI state
+            self._update_optimization_ui_state(running=True)
+
+            # Start optimization in background
+            def run_optimization():
+                try:
+                    self.optimization_engine.run_study(config)
+                    self._update_optimization_ui_state(running=False)
+                    self._show_message("Optimization completed successfully")
+                except Exception as e:
+                    self._update_optimization_ui_state(running=False)
+                    self._show_message(f"Optimization failed: {str(e)}")
+
+            from threading import Thread
+            self.optimization_thread = Thread(target=run_optimization)
+            self.optimization_thread.start()
+
+        except Exception as e:
+            self._show_message(f"Error starting optimization: {str(e)}")
+
+    def _pause_optimization(self):
+        """Pause optimization process"""
+        try:
+            if hasattr(self, 'optimization_engine') and self.optimization_engine:
+                self.optimization_engine.pause_study()
+                self._update_optimization_ui_state(paused=True)
+                self._show_message("Optimization paused")
+        except Exception as e:
+            self._show_message(f"Error pausing optimization: {str(e)}")
+
+    def _resume_optimization(self):
+        """Resume optimization process"""
+        try:
+            if hasattr(self, 'optimization_engine') and self.optimization_engine:
+                self.optimization_engine.resume_study()
+                self._update_optimization_ui_state(paused=False)
+                self._show_message("Optimization resumed")
+        except Exception as e:
+            self._show_message(f"Error resuming optimization: {str(e)}")
+
+    def _stop_optimization(self):
+        """Stop optimization process"""
+        try:
+            if hasattr(self, 'optimization_engine') and self.optimization_engine:
+                self.optimization_engine.stop_study()
+                self._update_optimization_ui_state(running=False)
+                self._show_message("Optimization stopped")
+        except Exception as e:
+            self._show_message(f"Error stopping optimization: {str(e)}")
+
+    def _refresh_status(self):
+        """Refresh optimization status display"""
+        try:
+            if hasattr(self, 'optimization_engine') and self.optimization_engine:
+                status = self.optimization_engine.get_study_status()
+
+                # Update progress display
+                if 'progress' in status:
+                    progress = status['progress']
+                    self.progress_bar.setValue(int(progress * 100))
+
+                # Update status text
+                status_text = f"Status: {status.get('status', 'Unknown')}\n"
+                status_text += f"Trials: {status.get('completed_trials', 0)}/{status.get('total_trials', 0)}\n"
+                status_text += f"Best Score: {status.get('best_score', 'N/A')}\n"
+                status_text += f"Runtime: {status.get('runtime', 'N/A')}"
+
+                # Find and update status label
+                for child in self.training_tab.findChildren(QLabel):
+                    if hasattr(child, 'objectName') and child.objectName() == 'status_label':
+                        child.setText(status_text)
+                        break
+
+        except Exception as e:
+            self._show_message(f"Error refreshing status: {str(e)}")
+
+    def _promote_parameters(self):
+        """Promote best parameters to production"""
+        try:
+            from ..training.optimization.task_manager import TaskManager
+
+            task_manager = TaskManager()
+            result = task_manager.promote_best_parameters()
+
+            if result['success']:
+                self._show_message(f"Parameters promoted successfully. Version: {result['version']}")
+            else:
+                self._show_message(f"Failed to promote parameters: {result['error']}")
+
+        except Exception as e:
+            self._show_message(f"Error promoting parameters: {str(e)}")
+
+    def _rollback_parameters(self):
+        """Rollback to previous parameter version"""
+        try:
+            from ..training.optimization.task_manager import TaskManager
+
+            task_manager = TaskManager()
+            result = task_manager.rollback_parameters()
+
+            if result['success']:
+                self._show_message(f"Parameters rolled back to version: {result['version']}")
+            else:
+                self._show_message(f"Failed to rollback parameters: {result['error']}")
+
+        except Exception as e:
+            self._show_message(f"Error rolling back parameters: {str(e)}")
+
+    def _collect_optimization_config(self) -> dict:
+        """Collect optimization configuration from UI"""
+        config = {
+            'study_name': '',
+            'pattern_type': '',
+            'datasets': [],
+            'parameter_space': {},
+            'optimization_config': {},
+            'execution_config': {}
+        }
+
+        try:
+            # Find widgets and collect values
+            for child in self.training_tab.findChildren((QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox)):
+                if hasattr(child, 'objectName') and child.objectName():
+                    name = child.objectName()
+
+                    if isinstance(child, QLineEdit):
+                        value = child.text()
+                    elif isinstance(child, (QSpinBox, QDoubleSpinBox)):
+                        value = child.value()
+                    elif isinstance(child, QComboBox):
+                        value = child.currentText()
+                    elif isinstance(child, QCheckBox):
+                        value = child.isChecked()
+                    else:
+                        continue
+
+                    # Organize by section
+                    if name.startswith('study_'):
+                        config['study_name'] = value if name == 'study_name' else config['study_name']
+                        config['pattern_type'] = value if name == 'study_pattern_type' else config['pattern_type']
+                    elif name.startswith('dataset_'):
+                        # Handle dataset configuration
+                        pass
+                    elif name.startswith('param_'):
+                        # Handle parameter space
+                        pass
+                    elif name.startswith('opt_'):
+                        # Handle optimization config
+                        pass
+                    elif name.startswith('exec_'):
+                        # Handle execution config
+                        pass
+
+        except Exception as e:
+            logger.warning(f"Error collecting optimization config: {e}")
+
+        return config
+
+    def _validate_config(self, config: dict) -> bool:
+        """Validate optimization configuration"""
+        try:
+            # Basic validation
+            if not config.get('study_name'):
+                self._show_message("Please enter a study name")
+                return False
+
+            if not config.get('pattern_type'):
+                self._show_message("Please select a pattern type")
+                return False
+
+            # Add more validation as needed
+            return True
+
+        except Exception as e:
+            self._show_message(f"Configuration validation error: {str(e)}")
+            return False
+
+    def _update_optimization_ui_state(self, running=False, paused=False):
+        """Update UI state based on optimization status"""
+        try:
+            # Find control buttons and update their state
+            for child in self.training_tab.findChildren(QPushButton):
+                if hasattr(child, 'objectName') and child.objectName():
+                    name = child.objectName()
+
+                    if name == 'start_btn':
+                        child.setEnabled(not running)
+                    elif name == 'pause_btn':
+                        child.setEnabled(running and not paused)
+                    elif name == 'resume_btn':
+                        child.setEnabled(running and paused)
+                    elif name == 'stop_btn':
+                        child.setEnabled(running)
+
+        except Exception as e:
+            logger.warning(f"Error updating UI state: {e}")
+
+    def _show_message(self, message: str):
+        """Show message to user"""
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Information", message)
+        except Exception as e:
+            logger.error(f"Error showing message: {e}")
 
 
     def _open_patterns_config(self):

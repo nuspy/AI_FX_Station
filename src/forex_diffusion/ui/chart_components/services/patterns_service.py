@@ -63,6 +63,11 @@ from ....patterns.info_provider import PatternInfoProvider
 from ...pattern_overlay import PatternOverlayRenderer
 from .patterns_adapter import enrich_events
 
+# Training/Optimization system imports
+from ....training.optimization.engine import OptimizationEngine
+from ....training.optimization.task_manager import TaskManager
+from ....training.optimization.parameter_space import ParameterSpace
+
 OHLC_SYNONYMS: Dict[str, str] = {
         'o':'open','op':'open','open':'open','bidopen':'open','askopen':'open',
         'h':'high','hi':'high','high':'high','bidhigh':'high','askhigh':'high',
@@ -621,6 +626,321 @@ class PatternsService(ChartServiceBase):
                 self._scanning_multi = False
         except Exception:
             self._scanning_multi = False
+
+    # ---- Training/Optimization Orchestration Methods ----
+
+    def start_optimization_study(self, config: dict) -> dict:
+        """Start an optimization study using the patterns service data"""
+        try:
+            # Initialize optimization engine
+            engine = OptimizationEngine()
+
+            # Prepare pattern-specific configuration
+            pattern_config = self._prepare_pattern_config(config)
+
+            # Start the optimization study
+            study_id = engine.run_study(pattern_config)
+
+            logger.info(f"Started optimization study: {study_id}")
+            return {
+                'success': True,
+                'study_id': study_id,
+                'message': f'Optimization study {study_id} started successfully'
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to start optimization study: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'message': 'Failed to start optimization study'
+            }
+
+    def get_optimization_status(self, study_id: str) -> dict:
+        """Get the status of an ongoing optimization study"""
+        try:
+            task_manager = TaskManager()
+            status = task_manager.get_study_status(study_id)
+            return {
+                'success': True,
+                'status': status
+            }
+        except Exception as e:
+            logger.error(f"Failed to get optimization status: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def stop_optimization_study(self, study_id: str) -> dict:
+        """Stop an ongoing optimization study"""
+        try:
+            task_manager = TaskManager()
+            task_manager.stop_study(study_id)
+
+            logger.info(f"Stopped optimization study: {study_id}")
+            return {
+                'success': True,
+                'message': f'Study {study_id} stopped successfully'
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to stop optimization study: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def get_best_parameters(self, pattern_type: str = None) -> dict:
+        """Get the best parameters for a pattern type or all patterns"""
+        try:
+            task_manager = TaskManager()
+
+            if pattern_type:
+                params = task_manager.get_best_parameters_for_pattern(pattern_type)
+            else:
+                params = task_manager.get_all_best_parameters()
+
+            return {
+                'success': True,
+                'parameters': params
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get best parameters: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def apply_optimized_parameters(self, parameters: dict) -> dict:
+        """Apply optimized parameters to the pattern detection system"""
+        try:
+            # Update registry with new parameters
+            for pattern_key, params in parameters.items():
+                detectors = self.registry.detectors(pattern_keys=[pattern_key])
+                if detectors:
+                    for detector in detectors:
+                        self._update_detector_parameters(detector, params)
+
+            # Trigger re-detection with new parameters
+            self._trigger_redetection()
+
+            logger.info(f"Applied optimized parameters for {len(parameters)} patterns")
+            return {
+                'success': True,
+                'message': f'Applied parameters for {len(parameters)} patterns'
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to apply optimized parameters: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def prepare_training_data(self, timeframes: list = None, limit: int = 10000) -> dict:
+        """Prepare historical data for training/optimization"""
+        try:
+            if timeframes is None:
+                timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+
+            training_data = {}
+            symbol = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+
+            if not symbol:
+                raise ValueError("No symbol available for training data preparation")
+
+            for tf in timeframes:
+                try:
+                    df = self.controller.load_candles_from_db(symbol, tf, limit=limit)
+                    if df is not None and not df.empty:
+                        normalized_df = self._normalize_df(df)
+                        if normalized_df is not None:
+                            training_data[tf] = {
+                                'data': normalized_df,
+                                'symbol': symbol,
+                                'timeframe': tf,
+                                'rows': len(normalized_df)
+                            }
+                except Exception as e:
+                    logger.warning(f"Failed to load data for {tf}: {e}")
+                    continue
+
+            logger.info(f"Prepared training data for {len(training_data)} timeframes")
+            return {
+                'success': True,
+                'training_data': training_data,
+                'timeframes': list(training_data.keys()),
+                'total_rows': sum(data['rows'] for data in training_data.values())
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to prepare training data: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def validate_pattern_performance(self, pattern_type: str, parameters: dict,
+                                   test_data: pd.DataFrame = None) -> dict:
+        """Validate pattern performance with given parameters"""
+        try:
+            if test_data is None:
+                # Use current data if no test data provided
+                test_data = getattr(self.controller.plot_service, "_last_df", None)
+                if test_data is None:
+                    raise ValueError("No test data available")
+                test_data = self._normalize_df(test_data)
+
+            # Get detector for pattern type
+            detectors = self.registry.detectors(pattern_keys=[pattern_type])
+            if not detectors:
+                raise ValueError(f"No detector found for pattern type: {pattern_type}")
+
+            detector = list(detectors)[0]
+
+            # Create a copy and apply parameters
+            temp_detector = self._create_detector_copy(detector, parameters)
+
+            # Run detection
+            events = temp_detector.detect(test_data)
+
+            # Calculate performance metrics
+            metrics = self._calculate_pattern_metrics(events, test_data)
+
+            return {
+                'success': True,
+                'pattern_type': pattern_type,
+                'parameters': parameters,
+                'events_count': len(events),
+                'metrics': metrics
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to validate pattern performance: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def get_pattern_suggestions(self, symbol: str = None) -> dict:
+        """Get parameter suggestions based on historical pattern performance"""
+        try:
+            param_space = ParameterSpace()
+
+            if symbol is None:
+                symbol = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+
+            suggestions = {}
+
+            # Get available pattern types from registry
+            all_detectors = self.registry.detectors()
+            pattern_types = {getattr(d, 'key', getattr(d, 'name', str(d))) for d in all_detectors}
+
+            for pattern_type in pattern_types:
+                try:
+                    suggested_ranges = param_space.get_suggested_ranges(pattern_type)
+                    suggestions[pattern_type] = suggested_ranges
+                except Exception as e:
+                    logger.debug(f"No suggestions available for {pattern_type}: {e}")
+                    continue
+
+            return {
+                'success': True,
+                'symbol': symbol,
+                'suggestions': suggestions,
+                'pattern_count': len(suggestions)
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get pattern suggestions: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    # ---- Private Helper Methods for Training ----
+
+    def _prepare_pattern_config(self, config: dict) -> dict:
+        """Prepare configuration for pattern optimization"""
+        pattern_config = config.copy()
+
+        # Add current symbol if not specified
+        if 'symbol' not in pattern_config:
+            symbol = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+            pattern_config['symbol'] = symbol
+
+        # Add pattern registry information
+        pattern_config['available_patterns'] = [
+            getattr(d, 'key', getattr(d, 'name', str(d)))
+            for d in self.registry.detectors()
+        ]
+
+        # Add data access callback
+        pattern_config['data_loader'] = self._create_data_loader()
+
+        return pattern_config
+
+    def _create_data_loader(self):
+        """Create a data loader function for optimization"""
+        def load_data(symbol: str, timeframe: str, limit: int = 10000):
+            try:
+                df = self.controller.load_candles_from_db(symbol, timeframe, limit=limit)
+                return self._normalize_df(df) if df is not None else None
+            except Exception as e:
+                logger.error(f"Data loader failed for {symbol} {timeframe}: {e}")
+                return None
+
+        return load_data
+
+    def _update_detector_parameters(self, detector, parameters: dict):
+        """Update detector parameters"""
+        for param_name, param_value in parameters.items():
+            try:
+                if hasattr(detector, param_name):
+                    setattr(detector, param_name, param_value)
+            except Exception as e:
+                logger.warning(f"Failed to set parameter {param_name}: {e}")
+
+    def _create_detector_copy(self, detector, parameters: dict):
+        """Create a copy of detector with new parameters"""
+        import copy
+        temp_detector = copy.deepcopy(detector)
+        self._update_detector_parameters(temp_detector, parameters)
+        return temp_detector
+
+    def _calculate_pattern_metrics(self, events: list, test_data: pd.DataFrame) -> dict:
+        """Calculate performance metrics for pattern events"""
+        if not events:
+            return {
+                'success_rate': 0.0,
+                'average_confidence': 0.0,
+                'event_density': 0.0
+            }
+
+        # Basic metrics
+        total_events = len(events)
+        successful_events = sum(1 for e in events if getattr(e, 'confidence', 0) > 0.5)
+
+        metrics = {
+            'success_rate': successful_events / total_events if total_events > 0 else 0,
+            'average_confidence': sum(getattr(e, 'confidence', 0) for e in events) / total_events,
+            'event_density': total_events / len(test_data) if len(test_data) > 0 else 0,
+            'total_events': total_events,
+            'data_rows': len(test_data)
+        }
+
+        return metrics
+
+    def _trigger_redetection(self):
+        """Trigger pattern re-detection with current data"""
+        try:
+            current_df = getattr(self.controller.plot_service, "_last_df", None)
+            if current_df is not None:
+                self.detect_async(current_df)
+        except Exception as e:
+            logger.warning(f"Failed to trigger redetection: {e}")
 
 
 
