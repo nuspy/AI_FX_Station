@@ -1,25 +1,32 @@
 """
 Caching system for ForexGPT pattern detection and analysis.
 
-Provides Redis-lite based caching with LRU eviction, performance monitoring,
+Provides simple in-memory caching with LRU eviction, performance monitoring,
 and specialized interfaces for pattern detection optimization.
 """
 
-from .redis_cache import (
-    RedisLiteCache,
-    PatternCache,
-    CacheStats,
-    initialize_cache,
-    get_cache,
-    get_pattern_cache,
-    cache_decorator
-)
+try:
+    # Try to use redis cache first (if available)
+    from .redis_cache import (
+        PatternCache,
+        CacheStats,
+        get_cache,
+        get_pattern_cache,
+        cache_decorator
+    )
+except ImportError:
+    # Fallback to simple cache for Windows compatibility
+    from .simple_cache import (
+        PatternCache,
+        CacheStats,
+        get_cache,
+        get_pattern_cache,
+        cache_decorator
+    )
 
 __all__ = [
-    'RedisLiteCache',
     'PatternCache',
     'CacheStats',
-    'initialize_cache',
     'get_cache',
     'get_pattern_cache',
     'cache_decorator'

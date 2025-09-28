@@ -1,7 +1,7 @@
 """
-Redis-lite based caching system for pattern detection and analysis.
+Disk-based caching system for pattern detection and analysis.
 
-Provides embedded Redis caching without external Redis server dependency.
+Provides embedded caching without external dependencies.
 Supports LRU eviction, configurable memory limits, and performance monitoring.
 """
 
@@ -12,17 +12,17 @@ import pickle
 import hashlib
 import psutil
 import threading
+import tempfile
+import os
 from typing import Any, Dict, List, Optional, Union, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from loguru import logger
 
 try:
-    import redislite
-    import redis
+    import diskcache as dc
 except ImportError:
-    redislite = None
-    redis = None
+    dc = None
 
 
 @dataclass

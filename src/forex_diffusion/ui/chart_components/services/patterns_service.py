@@ -144,6 +144,9 @@ class PatternsService(ChartServiceBase):
         self._config = self._load_config()
         self._strength_calculator = PatternStrengthCalculator(self._config)
 
+        # Load historical pattern configuration
+        self._historical_config = self._load_historical_config()
+
         # Resource monitoring
         self._cpu_limit_percent = self._config.get('resources', {}).get('pattern_detection', {}).get('max_cpu_percent', 30)
         self._memory_threshold = self._config.get('resources', {}).get('memory', {}).get('max_usage_percent', 80)
@@ -230,6 +233,54 @@ class PatternsService(ChartServiceBase):
                     'memory': {'max_usage_percent': 80}
                 }
             }
+
+    def _load_historical_config(self) -> dict:
+        """Load historical pattern configuration from patterns.yaml"""
+        try:
+            import yaml, os
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                '..', '..', '..', 'configs', 'patterns.yaml'
+            )
+
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+
+            historical_config = config.get('historical_patterns', {
+                'enabled': False,
+                'start_time': '30d',
+                'end_time': '7d'
+            })
+
+            return historical_config
+
+        except Exception as e:
+            logger.warning(f"Could not load historical config, using defaults: {e}")
+            return {
+                'enabled': False,
+                'start_time': '30d',
+                'end_time': '7d'
+            }
+
+    @staticmethod
+    def parse_time_string(time_str: str) -> int:
+        """Convert time string format 'xm', 'xh', 'xd' to minutes"""
+        if not time_str:
+            return 0
+
+        time_str = time_str.strip().lower()
+        try:
+            if time_str.endswith('m'):
+                return int(time_str[:-1])
+            elif time_str.endswith('h'):
+                return int(time_str[:-1]) * 60
+            elif time_str.endswith('d'):
+                return int(time_str[:-1]) * 60 * 24
+            else:
+                # Assume minutes if not specified
+                return int(time_str)
+        except ValueError:
+            return 0
 
     def _check_resource_limits(self) -> bool:
         """Check if current resource usage is within limits"""
@@ -387,7 +438,16 @@ class PatternsService(ChartServiceBase):
         self._enabled_chart = bool(on)
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
 
-        # Start/stop background thread properly
+        # Check if historical patterns are enabled - disable continuous scanning
+        if self._historical_config.get('enabled', False):
+            logger.info("Historical patterns enabled - continuous scanning disabled for chart patterns")
+            if self._chart_thread.isRunning():
+                self._chart_worker.stop()
+                self._chart_thread.quit()
+                self._chart_thread.wait()
+            return
+
+        # Start/stop background thread properly for continuous scanning only
         try:
             if self._enabled_chart:
                 if not self._chart_thread.isRunning():
@@ -407,7 +467,16 @@ class PatternsService(ChartServiceBase):
         self._enabled_candle = bool(on)
         logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
 
-        # Start/stop background thread properly
+        # Check if historical patterns are enabled - disable continuous scanning
+        if self._historical_config.get('enabled', False):
+            logger.info("Historical patterns enabled - continuous scanning disabled for candle patterns")
+            if self._candle_thread.isRunning():
+                self._candle_worker.stop()
+                self._candle_thread.quit()
+                self._candle_thread.wait()
+            return
+
+        # Start/stop background thread properly for continuous scanning only
         try:
             if self._enabled_candle:
                 if not self._candle_thread.isRunning():
@@ -428,11 +497,127 @@ class PatternsService(ChartServiceBase):
         logger.info(f"Patterns: HISTORY toggle → {self._enabled_history}")
         self._repaint()
 
+    def start_historical_scan_with_range(self, df: pd.DataFrame = None):
+        """Start one-time historical pattern scan with configured time range"""
+        try:
+            # Reload historical config in case it was updated
+            self._historical_config = self._load_historical_config()
+
+            if not self._historical_config.get('enabled', False):
+                logger.info("Historical patterns not enabled")
+                return
+
+            # Get time range in minutes
+            start_minutes = self.parse_time_string(self._historical_config.get('start_time', '30d'))
+            end_minutes = self.parse_time_string(self._historical_config.get('end_time', '7d'))
+
+            logger.info(f"Starting historical scan: {start_minutes}m to {end_minutes}m ago")
+
+            # Use the provided dataframe or get current one
+            if df is None:
+                df = getattr(self, '_current_df', None)
+
+            if df is None:
+                logger.error("No dataframe available for historical scan")
+                return
+
+            # Filter dataframe to historical range
+            historical_df = self._filter_df_for_historical_range(df, start_minutes, end_minutes)
+
+            if historical_df is None or len(historical_df) == 0:
+                logger.warning("No data available in specified historical range")
+                return
+
+            logger.info(f"Historical scan: analyzing {len(historical_df)} rows from {start_minutes}m to {end_minutes}m ago")
+
+            # Run detection on historical data
+            self._run_historical_detection(historical_df)
+
+        except Exception as e:
+            logger.error(f"Error in historical scan: {e}")
+
+    def _filter_df_for_historical_range(self, df: pd.DataFrame, start_minutes: int, end_minutes: int) -> pd.DataFrame:
+        """Filter dataframe to specified historical time range"""
+        try:
+            import pandas as pd
+            from datetime import datetime, timedelta
+
+            # Find timestamp column
+            ts_col = None
+            for col in df.columns:
+                if col.lower() in TS_SYNONYMS:
+                    ts_col = col
+                    break
+
+            if ts_col is None:
+                # Try to use index if it's datetime
+                if hasattr(df.index, 'normalize'):
+                    ts_col = df.index.name or 'timestamp'
+                    df = df.reset_index()
+                else:
+                    logger.error("No timestamp column found for historical filtering")
+                    return None
+
+            # Convert to datetime if needed
+            if not pd.api.types.is_datetime64_any_dtype(df[ts_col]):
+                df[ts_col] = pd.to_datetime(df[ts_col])
+
+            # Calculate time range
+            now = datetime.now()
+            start_time = now - timedelta(minutes=start_minutes)
+            end_time = now - timedelta(minutes=end_minutes)
+
+            # Filter dataframe
+            mask = (df[ts_col] >= start_time) & (df[ts_col] <= end_time)
+            filtered_df = df[mask].copy()
+
+            return filtered_df
+
+        except Exception as e:
+            logger.error(f"Error filtering dataframe for historical range: {e}")
+            return None
+
+    def _run_historical_detection(self, df: pd.DataFrame):
+        """Run pattern detection on historical data"""
+        try:
+            # Determine which pattern types to scan based on enabled settings
+            kinds = []
+            if self._enabled_chart:
+                kinds.append("chart")
+            if self._enabled_candle:
+                kinds.append("candle")
+
+            if not kinds:
+                logger.info("No pattern types enabled for historical scan")
+                return
+
+            # Run detection for each enabled kind
+            historical_events = []
+            for kind in kinds:
+                events = self._scan_once(kind=kind, df=df) or []
+                # Mark events as historical
+                for event in events:
+                    event.historical = True
+                historical_events.extend(events)
+
+            # Clear current events and replace with historical events
+            self._events.clear()
+            self._events.extend(historical_events)
+
+            logger.info(f"Historical scan completed: found {len(historical_events)} patterns")
+            self._repaint()
+
+        except Exception as e:
+            logger.error(f"Error running historical detection: {e}")
+
     def detect_async(self, df: Optional[pd.DataFrame]):
         logger.debug(f"Patterns.detect_async: shape={getattr(df, 'shape', None)} "
                      f"cols={list(df.columns)[:8] if hasattr(df, 'columns') else None}")
         logger.debug(f"Patterns.detect_async: received df={type(df).__name__ if df is not None else None}")
         self._pending_df = df
+        # Store current dataframe for historical scanning
+        if df is not None:
+            self._current_df = df
         if self._debounce_timer is None:
             self._debounce_timer = QTimer()
             self._debounce_timer.setSingleShot(True)
