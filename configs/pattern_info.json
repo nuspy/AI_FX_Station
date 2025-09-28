@@ -22,7 +22,7 @@
     "image": null,
     "links": []
   },
-  "head_shoulders": {
+  "head_and_shoulders": {
     "name": "Head and Shoulders",
     "effect": "Reversal",
     "description": "Classic reversal pattern with left shoulder, head (highest peak), and right shoulder.",
@@ -41,6 +41,29 @@
     },
     "bear": {
       "Notes": "Classic H&S - reversal from uptrend to downtrend"
+    },
+    "image": null,
+    "links": []
+  },
+  "inverse_head_and_shoulders": {
+    "name": "Inverse Head and Shoulders",
+    "effect": "Reversal",
+    "description": "Bullish reversal pattern with left shoulder, head (lowest trough), and right shoulder.",
+    "benchmarks": {
+      "Performance Rank": "A",
+      "Breakeven Failure Rate": "7%",
+      "Average Rise": "21%",
+      "Change After Trend Ends": "16%",
+      "Volume Trend": "Upward",
+      "Throwbacks": "38%",
+      "% Meeting Price Target": "84%",
+      "Surprising Findings": "Higher volume on right shoulder signals stronger performance"
+    },
+    "bull": {
+      "Notes": "Inverse H&S - reversal from downtrend to uptrend"
+    },
+    "bear": {
+      "Notes": "Pattern invalid"
     },
     "image": null,
     "links": []

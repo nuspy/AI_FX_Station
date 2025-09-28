@@ -61,6 +61,11 @@ class PlotService(ChartServiceBase):
                 pass
             y_vals = df2[y_col].astype(float).to_numpy()
 
+            # Compress time axis by removing weekend periods
+            x_dt_compressed, y_vals_compressed, weekend_markers = self._compress_weekend_periods(x_dt, y_vals)
+            x_dt = x_dt_compressed
+            y_vals = y_vals_compressed
+
             # --- patterns: pass robusto del DataFrame corrente ---
             try:
                 from .patterns_hook import call_patterns_detection
@@ -193,6 +198,9 @@ class PlotService(ChartServiceBase):
             pass
 
         self._plot_indicators(df2, x_dt)
+
+        # Draw weekend markers (yellow dashed lines)
+        self._draw_weekend_markers()
 
         if quantiles:
             self._plot_forecast_overlay(quantiles)
@@ -1029,6 +1037,100 @@ class PlotService(ChartServiceBase):
             return float(x_r) - float(segs[-1][2])
         except Exception:
             return float(x_r)
+
+    def _compress_weekend_periods(self, x_dt: pd.Series, y_vals: np.ndarray) -> tuple:
+        """
+        Compress time axis by removing weekend periods (Friday 22:00 - Sunday 22:00).
+        Returns compressed time series, values, and weekend boundary markers.
+        """
+        try:
+            from forex_diffusion.utils.time_utils import is_in_weekend_range, WEEKEND_START_HOUR, WEEKEND_END_HOUR
+
+            # Convert to timezone-aware UTC if not already
+            if x_dt.dt.tz is None:
+                x_dt_utc = x_dt.dt.tz_localize('UTC')
+            else:
+                x_dt_utc = x_dt.dt.tz_convert('UTC')
+
+            # Find indices where weekend periods start and end
+            weekend_starts = []
+            weekend_ends = []
+            compressed_indices = []
+
+            prev_was_weekend = False
+
+            for i, dt in enumerate(x_dt_utc):
+                is_weekend = is_in_weekend_range(dt.to_pydatetime())
+
+                if not prev_was_weekend and is_weekend:
+                    # Entering weekend - mark end of trading week
+                    weekend_starts.append(i)
+                elif prev_was_weekend and not is_weekend:
+                    # Exiting weekend - mark start of new trading week
+                    weekend_ends.append(i)
+
+                if not is_weekend:
+                    compressed_indices.append(i)
+
+                prev_was_weekend = is_weekend
+
+            # Create compressed arrays
+            if compressed_indices:
+                x_compressed = x_dt.iloc[compressed_indices].reset_index(drop=True)
+                y_compressed = y_vals[compressed_indices]
+
+                # Calculate weekend markers in compressed coordinates
+                weekend_markers = []
+                compressed_pos = 0
+
+                for orig_idx in compressed_indices:
+                    # Check if this is the first point after a weekend
+                    if orig_idx in weekend_ends:
+                        weekend_markers.append(compressed_pos)
+                    compressed_pos += 1
+
+                # Store weekend markers for drawing yellow lines
+                self._weekend_markers = weekend_markers
+                self._compressed_x_dt = x_compressed
+
+                return x_compressed, y_compressed, weekend_markers
+            else:
+                return x_dt, y_vals, []
+
+        except Exception as e:
+            logger.debug(f"Error compressing weekend periods: {e}")
+            return x_dt, y_vals, []
+
+    def _draw_weekend_markers(self):
+        """Draw yellow dashed lines at weekend boundaries"""
+        try:
+            if not hasattr(self, '_weekend_markers') or not hasattr(self, '_compressed_x_dt'):
+                return
+
+            if not hasattr(self, '_weekend_lines'):
+                self._weekend_lines = []
+
+            # Clear existing weekend lines
+            for line in self._weekend_lines:
+                try:
+                    line.remove()
+                except Exception:
+                    pass
+            self._weekend_lines = []
+
+            # Draw new weekend markers
+            for marker_pos in self._weekend_markers:
+                if marker_pos < len(self._compressed_x_dt):
+                    x_pos = self._compressed_x_dt.iloc[marker_pos]
+                    try:
+                        line = self.ax.axvline(x=x_pos, color='gold', linestyle='--',
+                                             linewidth=1.0, alpha=0.7, zorder=5)
+                        self._weekend_lines.append(line)
+                    except Exception as e:
+                        logger.debug(f"Error drawing weekend marker: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in _draw_weekend_markers: {e}")
 
 # TODO: Inserire manualmente:
 # from .patterns_hook import call_patterns_detection

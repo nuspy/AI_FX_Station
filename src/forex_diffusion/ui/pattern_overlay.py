@@ -105,7 +105,7 @@ class PatternDetailsDialog(QtWidgets.QDialog):
                     return info
 
             # Fallback: load directly from config file
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', 'configs', 'pattern_info.json')
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), 'configs', 'pattern_info.json')
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     pattern_data = json.load(f)
@@ -203,6 +203,7 @@ class PatternOverlayRenderer:
                 self._draw_badge(x, y, label, direction, e)  # davanti
                 self._draw_target_arrow(x, y, direction, e)  # davanti
                 self._draw_invalidation_arrow(x, y, direction, e)  # freccia invalidazione
+                self._draw_invalidation_timeline(x, y, direction, e)  # linea grigia 50% tempo max invalidazione
             except Exception as ex:
                 logger.debug(f"overlay draw_event failed: {ex}")
 
@@ -470,6 +471,63 @@ class PatternOverlayRenderer:
                        zorder=120)
 
         self._arrows.extend([arrow, label])
+
+    def _draw_invalidation_timeline(self, x: float, y: float, direction: str, e: object) -> None:
+        """Draw gray 50% opacity line indicating maximum invalidation time"""
+        horizon_bars = getattr(e, "horizon_bars", None)
+        if horizon_bars is None:
+            return
+
+        try:
+            ax = self.ax
+            if not ax:
+                return
+
+            # Calculate the end time for invalidation (50% of horizon_bars from confirmation)
+            confirm_ts = getattr(e, "confirm_ts", None)
+            if confirm_ts is None:
+                return
+
+            # Get the time array to calculate the invalidation end time
+            xlim = ax.get_xlim()
+
+            # Convert horizon_bars to time units (approximate)
+            # Assuming each bar represents a time unit based on the current timeframe
+            invalidation_time_offset = horizon_bars * 0.5  # 50% of the horizon
+
+            # Calculate end x position for the timeline
+            start_x = x
+            end_x = start_x + invalidation_time_offset
+
+            # Make sure end_x is within plot bounds
+            if end_x > xlim[1]:
+                end_x = xlim[1]
+
+            # Draw horizontal gray line at current price level
+            failure_price = getattr(e, "failure_price", None)
+            if failure_price:
+                try:
+                    fp = float(failure_price)
+
+                    # Draw horizontal line from confirmation time to 50% invalidation time
+                    line = ax.plot([start_x, end_x], [fp, fp],
+                                 color='gray', linewidth=1.5, alpha=0.5,
+                                 linestyle='--', zorder=110)
+
+                    # Add small label at the end
+                    label = ax.text(end_x, fp, "50%", fontsize=6, color='gray',
+                                  va="bottom", ha="left", alpha=0.7,
+                                  bbox=dict(boxstyle="round,pad=0.1", fc="white",
+                                          ec="gray", lw=0.5, alpha=0.5),
+                                  zorder=110)
+
+                    self._arrows.extend(line + [label])
+
+                except (ValueError, TypeError):
+                    pass
+
+        except Exception as e:
+            logger.debug(f"Error drawing invalidation timeline: {e}")
 
     def _event_window(self, e: object):
         ax = self.ax

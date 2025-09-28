@@ -55,7 +55,37 @@ class TriangleDetector(DetectorBase):
                     touch_l = int(np.sum(np.abs(lo[start:end+1]-lower) <= tol))
                     if (touch_u + touch_l) >= self.min_touches and converge:
                         direction = "bull" if self.mode=="ascending" else ("bear" if self.mode=="descending" else "neutral")
-                        events.append(PatternEvent(self.key,"chart",direction, ts[start], ts[end], "confirmed", 0.55, float(a[end]), touch_u+touch_l, span, None, span//2, {"upper_line":(start,end,float(s_hi),float(b_hi)),"lower_line":(start,end,float(s_lo),float(b_lo))}))
+
+                        # Calculate target and failure prices
+                        current_price = c[end]
+                        current_upper = s_hi * end + b_hi
+                        current_lower = s_lo * end + b_lo
+
+                        if direction == "bull":  # Ascending triangle - breakout upward
+                            target_price = current_upper + (current_upper - current_lower)
+                            failure_price = current_lower * 0.995  # Failure below support
+                        elif direction == "bear":  # Descending triangle - breakout downward
+                            target_price = current_lower - (current_upper - current_lower)
+                            failure_price = current_upper * 1.005  # Failure above resistance
+                        else:  # Symmetrical triangle
+                            triangle_height = current_upper - current_lower
+                            if current_price > (current_upper + current_lower) / 2:
+                                # Price in upper half - expect upward breakout
+                                target_price = current_upper + triangle_height
+                                failure_price = current_lower * 0.995
+                            else:
+                                # Price in lower half - expect downward breakout
+                                target_price = current_lower - triangle_height
+                                failure_price = current_upper * 1.005
+
+                        events.append(PatternEvent(
+                            self.key, "chart", direction,
+                            ts[start], ts[end], "confirmed",
+                            0.55, float(a[end]), touch_u+touch_l, span,
+                            target_price, failure_price, span//2,
+                            {"upper_line":(start,end,float(s_hi),float(b_hi)),
+                             "lower_line":(start,end,float(s_lo),float(b_lo))}
+                        ))
                         if len(events)>=self.max_events: return events
         return events
 
