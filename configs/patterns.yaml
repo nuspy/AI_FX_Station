@@ -94,7 +94,7 @@ historical_patterns:
   enabled: true
   start_time: 8d
 performance:
-  detection_threads: 24
+  detection_threads: 32
   detection_mode: balanced
   parallel_historical: true
   parallel_realtime: true

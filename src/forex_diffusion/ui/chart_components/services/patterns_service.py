@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Iterable
+from typing import List, Optional, Dict, Iterable, Any
 import pandas as pd
 import numpy as np
 import asyncio
@@ -218,18 +218,6 @@ class _DetectionWorker(QObject):
 
 from .base import ChartServiceBase
 # Assicurati che hns.py sia correttamente importato e contenga i detector per "chart"
-
-from ....patterns.candles import make_candle_detectors
-from ....patterns.broadening import make_broadening_detectors
-from ....patterns.wedges import make_wedge_detectors
-from ....patterns.triangles import make_triangle_detectors
-from ....patterns.rectangle import make_rectangle_detectors
-from ....patterns.diamond import make_diamond_detectors
-from ....patterns.double_triple import make_double_triple_detectors
-from ....patterns.channels import make_channel_detectors
-from ....patterns.flags import make_flag_detectors
-#Pluto from .variants import make_param_variants
-from  ....patterns.hns import make_hns_detectors
 from ....patterns.registry import PatternRegistry
 
 #from ..services.hns import make_broadening_detectors, make_wedge_detectors, make_triangle_detectors
@@ -1053,7 +1041,7 @@ class PatternsService(ChartServiceBase):
                     return
 
                 # Prepare detection tasks for historical worker
-                from ...patterns.boundary_config import get_boundary_config
+                from ....patterns.boundary_config import get_boundary_config
                 boundary_config = get_boundary_config()
                 timeframe = self._detect_timeframe_from_df(dfN)
 
@@ -1209,7 +1197,7 @@ class PatternsService(ChartServiceBase):
                 logger.info(f"Using parallel multithread detection for {len(dfN)} rows with {len(dets)} detectors")
 
                 # Use multithread detection worker
-                from ...patterns.boundary_config import get_boundary_config
+                from ....patterns.boundary_config import get_boundary_config
                 boundary_config = get_boundary_config()
                 timeframe = self._detect_timeframe_from_df(dfN)
 
@@ -1275,7 +1263,7 @@ class PatternsService(ChartServiceBase):
             else:
                 # Use original synchronous detection for small datasets
                 # Import boundary config for synchronous detection too
-                from ...patterns.boundary_config import get_boundary_config
+                from ....patterns.boundary_config import get_boundary_config
                 boundary_config = get_boundary_config()
 
                 # Detect timeframe from dataframe
