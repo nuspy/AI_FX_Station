@@ -30,6 +30,7 @@ from .regime_classifier import RegimeClassifier
 from .task_manager import TaskManager, TaskStatus
 from .invalidation_rules import InvalidationRuleEngine
 from .early_stopping import EarlyStoppingManager
+from .logging_reporter import LoggingReporter
 
 # Database models
 from ...services.db_service import DBService

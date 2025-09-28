@@ -11,6 +11,7 @@ from .parameter_space import ParameterSpace, ParameterDefinition
 from .backtest_runner import BacktestRunner, BacktestResult
 from .regime_classifier import RegimeClassifier
 from .task_manager import TaskManager, TaskStatus
+from .logging_reporter import LoggingReporter
 
 __all__ = [
     'OptimizationEngine',
@@ -22,5 +23,6 @@ __all__ = [
     'BacktestResult',
     'RegimeClassifier',
     'TaskManager',
-    'TaskStatus'
+    'TaskStatus',
+    'LoggingReporter'
 ]
