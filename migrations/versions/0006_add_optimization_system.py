@@ -200,6 +200,9 @@ def upgrade():
         # Override context (NULL for global best, specific regime for overrides)
         sa.Column('regime_tag', sa.String(64), nullable=True, index=True),
 
+        # Strategy selection ("high_return", "low_risk", "balanced")
+        sa.Column('strategy_tag', sa.String(32), nullable=True, index=True),
+
         # Best parameters
         sa.Column('form_parameters', sa.JSON, nullable=False),
         sa.Column('action_parameters', sa.JSON, nullable=False),

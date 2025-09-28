@@ -592,8 +592,69 @@ class TaskManager:
                 logger.exception(f"Failed to rollback parameters: {e}")
                 return {'success': False, 'error': str(e)}
 
+    def store_strategy_parameters(self, study_id: int, pareto_solutions: List[Dict[str, Any]]):
+        """Store multiple parameter sets for different trading strategies"""
+
+        with self.session_factory() as session:
+            try:
+                for solution in pareto_solutions:
+                    strategy_tag = self._determine_strategy_tag(solution["scores"])
+
+                    # Combine all parameters
+                    all_params = {
+                        **solution.get("form_parameters", {}),
+                        **solution.get("action_parameters", {})
+                    }
+
+                    # Create best parameters record for this strategy
+                    best_params = BestParameters(
+                        study_id=study_id,
+                        regime_tag=None,  # Global strategy
+                        strategy_tag=strategy_tag,
+                        form_parameters=solution.get("form_parameters", {}),
+                        action_parameters=solution.get("action_parameters", {}),
+                        best_trial_id=solution["trial_id"],
+                        combined_score=solution["scores"].get("combined_score", 0.0),
+                        d1_success_rate=solution["scores"].get("d1_success_rate"),
+                        d2_success_rate=solution["scores"].get("d2_success_rate"),
+                        d1_expectancy=solution["scores"].get("d1_expectancy"),
+                        d2_expectancy=solution["scores"].get("d2_expectancy"),
+                        params_hash=self._calculate_params_hash(all_params)
+                    )
+
+                    session.add(best_params)
+
+                session.commit()
+                logger.info(f"Stored {len(pareto_solutions)} strategy parameter sets for study {study_id}")
+
+            except Exception as e:
+                session.rollback()
+                logger.exception(f"Failed to store strategy parameters: {e}")
+
+    def _determine_strategy_tag(self, scores: Dict[str, float]) -> str:
+        """Determine strategy tag based on performance characteristics"""
+
+        success_rate = scores.get("d1_success_rate", 0) + scores.get("d2_success_rate", 0)
+        expectancy = scores.get("d1_expectancy", 0) + scores.get("d2_expectancy", 0)
+        max_drawdown = scores.get("max_drawdown", 1.0)
+        sharpe_ratio = scores.get("sharpe_ratio", 0)
+        profit_factor = scores.get("profit_factor", 0)
+
+        # High return strategy: Focus on expectancy, total return, profit factor
+        if expectancy > 0.4 and profit_factor > 1.8 and scores.get("total_return", 0) > 0.3:
+            return "high_return"
+
+        # Low risk strategy: Focus on success rate, low drawdown, high Sharpe
+        elif success_rate > 0.65 and max_drawdown < 0.2 and sharpe_ratio > 1.0:
+            return "low_risk"
+
+        # Balanced strategy: Moderate on all metrics
+        else:
+            return "balanced"
+
     def get_production_parameters(self, asset: str, timeframe: str,
-                                 regime_tag: Optional[str] = None) -> Dict[str, Any]:
+                                 regime_tag: Optional[str] = None,
+                                 strategy_tag: Optional[str] = None) -> Dict[str, Any]:
         """Get promoted parameters for production use"""
 
         with self.session_factory() as session:
@@ -611,6 +672,13 @@ class TaskManager:
                 else:
                     # Get global parameters (no specific regime)
                     query = query.filter(BestParameters.regime_tag.is_(None))
+
+                # Add strategy filter if specified
+                if strategy_tag:
+                    query = query.filter(BestParameters.strategy_tag == strategy_tag)
+                else:
+                    # Default to balanced strategy if no preference
+                    query = query.filter(BestParameters.strategy_tag == "balanced")
 
                 # Get all promoted parameters
                 promoted_params = query.all()

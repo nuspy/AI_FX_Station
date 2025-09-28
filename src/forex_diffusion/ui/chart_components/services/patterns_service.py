@@ -87,6 +87,26 @@ class PatternsService(ChartServiceBase):
         self.info = PatternInfoProvider(self._default_info_path())
         self.renderer = PatternOverlayRenderer(controller, self.info)
 
+        # Strategy selection for real-time scanning
+        self._current_strategy = "balanced"  # Default: balanced strategy
+        self._available_strategies = {
+            "high_return": {
+                "name": "High Return",
+                "description": "Maximize profits, accept higher risk",
+                "focus": "Expectancy, Total Return, Profit Factor"
+            },
+            "low_risk": {
+                "name": "Low Risk",
+                "description": "Minimize losses, conservative approach",
+                "focus": "Success Rate, Low Drawdown, High Sharpe Ratio"
+            },
+            "balanced": {
+                "name": "Balanced",
+                "description": "Balanced risk/reward profile",
+                "focus": "Overall performance balance"
+            }
+        }
+
         self._busy = False
         self._pending_df: Optional[pd.DataFrame] = None
         self._debounce_timer: Optional[QTimer] = None
@@ -942,6 +962,104 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.warning(f"Failed to trigger redetection: {e}")
 
+    # ---- Strategy Selection Methods ----
+
+    def set_trading_strategy(self, strategy_tag: str) -> bool:
+        """
+        Set the trading strategy for real-time pattern detection.
+
+        Args:
+            strategy_tag: "high_return", "low_risk", or "balanced"
+
+        Returns:
+            True if strategy was changed successfully
+        """
+        if strategy_tag not in self._available_strategies:
+            logger.error(f"Invalid strategy: {strategy_tag}. Available: {list(self._available_strategies.keys())}")
+            return False
+
+        old_strategy = self._current_strategy
+        self._current_strategy = strategy_tag
+
+        logger.info(f"Trading strategy changed: {old_strategy} → {strategy_tag}")
+
+        # Apply new strategy parameters
+        self.apply_production_parameters()
+
+        # Trigger re-detection with new parameters
+        self._trigger_redetection()
+
+        return True
+
+    def get_current_strategy(self) -> Dict[str, Any]:
+        """Get current trading strategy info"""
+        return {
+            "current": self._current_strategy,
+            "info": self._available_strategies[self._current_strategy],
+            "available": self._available_strategies
+        }
+
+    def get_strategy_comparison(self) -> Dict[str, Any]:
+        """Get performance comparison between available strategies"""
+        try:
+            from ....training.optimization.task_manager import TaskManager
+
+            task_manager = TaskManager()
+            symbol = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+            timeframe = getattr(self.controller, "timeframe", None)
+
+            if not symbol or not timeframe:
+                return {"error": "No symbol/timeframe available"}
+
+            comparison = {}
+
+            # Get parameters for each strategy
+            for strategy_tag in self._available_strategies.keys():
+                try:
+                    params = task_manager.get_production_parameters(
+                        asset=symbol,
+                        timeframe=str(timeframe),
+                        strategy_tag=strategy_tag
+                    )
+
+                    if params:
+                        # Extract performance metrics
+                        strategy_performance = {}
+                        for pattern_key, pattern_params in params.items():
+                            perf = pattern_params.get('performance', {})
+                            strategy_performance[pattern_key] = {
+                                'success_rate': (perf.get('d1_success_rate', 0) + perf.get('d2_success_rate', 0)),
+                                'combined_score': perf.get('combined_score', 0),
+                                'total_signals': perf.get('total_signals', 0),
+                                'robustness': perf.get('robustness_score', 0)
+                            }
+
+                        comparison[strategy_tag] = {
+                            'info': self._available_strategies[strategy_tag],
+                            'patterns_count': len(params),
+                            'performance': strategy_performance,
+                            'available': True
+                        }
+                    else:
+                        comparison[strategy_tag] = {
+                            'info': self._available_strategies[strategy_tag],
+                            'available': False,
+                            'reason': 'No optimized parameters available'
+                        }
+
+                except Exception as e:
+                    comparison[strategy_tag] = {
+                        'info': self._available_strategies[strategy_tag],
+                        'available': False,
+                        'error': str(e)
+                    }
+
+            return comparison
+
+        except Exception as e:
+            logger.error(f"Failed to get strategy comparison: {e}")
+            return {"error": str(e)}
+
     def load_production_parameters(self) -> dict:
         """Load promoted parameters from database for production use"""
         try:
@@ -957,10 +1075,11 @@ class PatternsService(ChartServiceBase):
                 logger.warning("No symbol/timeframe available for loading production parameters")
                 return {}
 
-            # Get all promoted parameters for this context
+            # Get promoted parameters for current strategy
             production_params = task_manager.get_production_parameters(
                 asset=symbol,
-                timeframe=str(timeframe)
+                timeframe=str(timeframe),
+                strategy_tag=self._current_strategy
             )
 
             logger.info(f"Loaded {len(production_params)} production parameter sets for {symbol} {timeframe}")

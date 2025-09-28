@@ -132,6 +132,14 @@ class OptimizationEngine:
         self.regime_classifier = RegimeClassifier()
         self.task_manager = TaskManager(db_service)
         self.pareto_optimizer = ParetoOptimizer()
+
+        # Resource management
+        from .resource_manager import ResourceManager, Priority
+        self.resource_manager = ResourceManager()
+        self.is_running = False
+        self.is_paused = False
+        self.pause_reason = None
+        self.current_allocation = None
         self.evaluator = MultiObjectiveEvaluator()
         self.invalidation_engine = InvalidationRuleEngine()
         self.early_stopping = EarlyStoppingManager()
