@@ -942,6 +942,129 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.warning(f"Failed to trigger redetection: {e}")
 
+    def load_production_parameters(self) -> dict:
+        """Load promoted parameters from database for production use"""
+        try:
+            from ....training.optimization.task_manager import TaskManager
+
+            task_manager = TaskManager()
+
+            # Get current symbol and timeframe
+            symbol = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
+            timeframe = getattr(self.controller, "timeframe", None)
+
+            if not symbol or not timeframe:
+                logger.warning("No symbol/timeframe available for loading production parameters")
+                return {}
+
+            # Get all promoted parameters for this context
+            production_params = task_manager.get_production_parameters(
+                asset=symbol,
+                timeframe=str(timeframe)
+            )
+
+            logger.info(f"Loaded {len(production_params)} production parameter sets for {symbol} {timeframe}")
+            return production_params
+
+        except Exception as e:
+            logger.error(f"Failed to load production parameters: {e}")
+            return {}
+
+    def apply_production_parameters(self, production_params: dict = None):
+        """Apply production parameters to pattern detectors"""
+        try:
+            if production_params is None:
+                production_params = self.load_production_parameters()
+
+            if not production_params:
+                logger.info("No production parameters to apply")
+                return
+
+            applied_count = 0
+
+            # Apply parameters to each pattern detector
+            for pattern_key, params in production_params.items():
+                try:
+                    # Get detectors for this pattern
+                    detectors = self.registry.detectors(pattern_keys=[pattern_key])
+
+                    if detectors:
+                        for detector in detectors:
+                            # Apply form parameters (detector configuration)
+                            form_params = params.get('form_parameters', {})
+                            for param_name, param_value in form_params.items():
+                                if hasattr(detector, param_name):
+                                    setattr(detector, param_name, param_value)
+                                    logger.debug(f"Applied {param_name}={param_value} to {pattern_key}")
+
+                            # Store action parameters for trade execution
+                            action_params = params.get('action_parameters', {})
+                            if hasattr(detector, '_action_parameters'):
+                                detector._action_parameters = action_params
+                            else:
+                                setattr(detector, '_action_parameters', action_params)
+
+                        applied_count += 1
+                        logger.info(f"Applied production parameters to {pattern_key}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to apply parameters to {pattern_key}: {e}")
+                    continue
+
+            logger.info(f"Successfully applied production parameters to {applied_count} patterns")
+
+            # Trigger re-detection with new parameters
+            self._trigger_redetection()
+
+        except Exception as e:
+            logger.error(f"Failed to apply production parameters: {e}")
+
+    def auto_update_parameters(self, check_interval_hours: int = 24):
+        """
+        Check for newly promoted parameters and apply them.
+
+        NOTE: This does NOT start new optimizations! It only checks if any
+        completed optimization studies have promoted new parameters that
+        should be applied to production.
+
+        Optimizations themselves run separately and can take days/weeks.
+        """
+        try:
+            logger.info("Checking for newly promoted parameters (not running new optimizations)...")
+
+            # Get current parameters hash to detect changes
+            current_params = self.load_production_parameters()
+            current_hash = self._calculate_params_hash(current_params)
+
+            # Compare with last known hash
+            if hasattr(self, '_last_params_hash') and self._last_params_hash == current_hash:
+                logger.info("No new promoted parameters found")
+                return
+
+            # New parameters detected - apply them
+            if current_params:
+                logger.info(f"Found {len(current_params)} newly promoted parameter sets")
+                self.apply_production_parameters(current_params)
+                self._last_params_hash = current_hash
+            else:
+                logger.info("No promoted parameters available")
+
+            logger.info(f"Parameter check completed. Next check in {check_interval_hours}h")
+
+        except Exception as e:
+            logger.error(f"Auto parameter update failed: {e}")
+
+    def _calculate_params_hash(self, params: dict) -> str:
+        """Calculate hash of parameter set for change detection"""
+        import hashlib
+        import json
+
+        try:
+            params_str = json.dumps(params, sort_keys=True)
+            return hashlib.md5(params_str.encode()).hexdigest()
+        except Exception:
+            return ""
+
 
 
 def _scan_once(self, kind: str):

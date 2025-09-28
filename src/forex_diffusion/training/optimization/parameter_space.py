@@ -49,6 +49,7 @@ class ParameterDefinition:
     description: str = ""
     suggested_range: Optional[str] = None
     pattern_specific: bool = False
+    timeframe_specific: bool = False
 
 @dataclass
 class ParameterSpace:
@@ -63,9 +64,11 @@ class ParameterSpace:
         self.form_parameters: Dict[str, ParameterDefinition] = {}
         self.action_parameters: Dict[str, ParameterDefinition] = {}
         self.pattern_overrides: Dict[str, Dict[str, ParameterDefinition]] = {}
+        self.timeframe_overrides: Dict[str, Dict[str, ParameterDefinition]] = {}
 
         # Initialize default parameter spaces
         self._initialize_default_parameters()
+        self._initialize_timeframe_overrides()
 
     def _initialize_default_parameters(self):
         """Initialize default parameter definitions"""
@@ -277,6 +280,264 @@ class ParameterSpace:
         # Pattern-specific overrides
         self._initialize_pattern_overrides()
 
+    def _initialize_timeframe_overrides(self):
+        """Initialize timeframe-specific parameter overrides"""
+
+        # 1-minute timeframe: High frequency, noise-sensitive
+        self.timeframe_overrides["1m"] = {
+            "min_span": ParameterDefinition(
+                name="min_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=3,
+                max_value=15,
+                description="1m: Very short patterns, high noise",
+                timeframe_specific=True
+            ),
+            "max_span": ParameterDefinition(
+                name="max_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=10,
+                max_value=60,
+                description="1m: Patterns don't last long",
+                timeframe_specific=True
+            ),
+            "tolerance": ParameterDefinition(
+                name="tolerance",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.LOG_UNIFORM,
+                min_value=0.0005,
+                max_value=0.005,
+                description="1m: Tight tolerance for noise filtering",
+                timeframe_specific=True
+            ),
+            "volume_required": ParameterDefinition(
+                name="volume_required",
+                param_type=ParameterType.BOOLEAN,
+                distribution=DistributionType.CHOICE,
+                choices=[True],  # Always require volume on 1m
+                description="1m: Volume confirmation essential",
+                timeframe_specific=True
+            ),
+            "atr_period": ParameterDefinition(
+                name="atr_period",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=5,
+                max_value=20,
+                description="1m: Shorter ATR for volatility",
+                timeframe_specific=True
+            )
+        }
+
+        # 5-minute timeframe: Scalping, reduced noise
+        self.timeframe_overrides["5m"] = {
+            "min_span": ParameterDefinition(
+                name="min_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=5,
+                max_value=25,
+                description="5m: Short-term patterns",
+                timeframe_specific=True
+            ),
+            "max_span": ParameterDefinition(
+                name="max_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=20,
+                max_value=100,
+                description="5m: Medium duration patterns",
+                timeframe_specific=True
+            ),
+            "tolerance": ParameterDefinition(
+                name="tolerance",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.LOG_UNIFORM,
+                min_value=0.001,
+                max_value=0.01,
+                description="5m: Moderate tolerance",
+                timeframe_specific=True
+            )
+        }
+
+        # 15-minute timeframe: Intraday trading
+        self.timeframe_overrides["15m"] = {
+            "min_span": ParameterDefinition(
+                name="min_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=8,
+                max_value=40,
+                description="15m: Intraday patterns",
+                timeframe_specific=True
+            ),
+            "max_span": ParameterDefinition(
+                name="max_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=30,
+                max_value=150,
+                description="15m: Longer intraday patterns",
+                timeframe_specific=True
+            ),
+            "risk_reward_ratio": ParameterDefinition(
+                name="risk_reward_ratio",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.UNIFORM,
+                min_value=1.0,
+                max_value=3.0,
+                description="15m: Conservative R:R for intraday",
+                timeframe_specific=True
+            )
+        }
+
+        # 1-hour timeframe: Swing trading
+        self.timeframe_overrides["1h"] = {
+            "min_span": ParameterDefinition(
+                name="min_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=12,
+                max_value=60,
+                description="1h: Swing patterns need time",
+                timeframe_specific=True
+            ),
+            "max_span": ParameterDefinition(
+                name="max_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=50,
+                max_value=300,
+                description="1h: Long swing patterns",
+                timeframe_specific=True
+            ),
+            "tolerance": ParameterDefinition(
+                name="tolerance",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.LOG_UNIFORM,
+                min_value=0.005,
+                max_value=0.05,
+                description="1h: Higher tolerance for larger moves",
+                timeframe_specific=True
+            ),
+            "tightness": ParameterDefinition(
+                name="tightness",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.UNIFORM,
+                min_value=0.2,
+                max_value=0.7,
+                description="1h: More flexible patterns",
+                timeframe_specific=True
+            ),
+            "confluence_mtf": ParameterDefinition(
+                name="confluence_mtf",
+                param_type=ParameterType.BOOLEAN,
+                distribution=DistributionType.CHOICE,
+                choices=[True],  # Always require MTF on 1h+
+                description="1h: Multi-timeframe confirmation important",
+                timeframe_specific=True
+            )
+        }
+
+        # 4-hour timeframe: Position trading
+        self.timeframe_overrides["4h"] = {
+            "min_span": ParameterDefinition(
+                name="min_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=20,
+                max_value=80,
+                description="4h: Position patterns develop slowly",
+                timeframe_specific=True
+            ),
+            "max_span": ParameterDefinition(
+                name="max_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=80,
+                max_value=500,
+                description="4h: Very long patterns possible",
+                timeframe_specific=True
+            ),
+            "min_touches": ParameterDefinition(
+                name="min_touches",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=3,
+                max_value=8,
+                description="4h: More touches for reliability",
+                timeframe_specific=True
+            ),
+            "risk_reward_ratio": ParameterDefinition(
+                name="risk_reward_ratio",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.UNIFORM,
+                min_value=1.5,
+                max_value=5.0,
+                description="4h: Higher R:R for position trades",
+                timeframe_specific=True
+            )
+        }
+
+        # Daily timeframe: Long-term analysis
+        self.timeframe_overrides["1d"] = {
+            "min_span": ParameterDefinition(
+                name="min_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=30,
+                max_value=120,
+                description="1d: Long-term patterns, weeks/months",
+                timeframe_specific=True
+            ),
+            "max_span": ParameterDefinition(
+                name="max_span",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=100,
+                max_value=1000,
+                description="1d: Multi-year patterns possible",
+                timeframe_specific=True
+            ),
+            "tolerance": ParameterDefinition(
+                name="tolerance",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.LOG_UNIFORM,
+                min_value=0.01,
+                max_value=0.15,
+                description="1d: Very high tolerance for major moves",
+                timeframe_specific=True
+            ),
+            "tightness": ParameterDefinition(
+                name="tightness",
+                param_type=ParameterType.FLOAT,
+                distribution=DistributionType.UNIFORM,
+                min_value=0.1,
+                max_value=0.5,
+                description="1d: Very flexible, broad patterns",
+                timeframe_specific=True
+            ),
+            "atr_period": ParameterDefinition(
+                name="atr_period",
+                param_type=ParameterType.INTEGER,
+                distribution=DistributionType.UNIFORM,
+                min_value=14,
+                max_value=50,
+                description="1d: Longer ATR for trend analysis",
+                timeframe_specific=True
+            ),
+            "volume_required": ParameterDefinition(
+                name="volume_required",
+                param_type=ParameterType.BOOLEAN,
+                distribution=DistributionType.CHOICE,
+                choices=[False],  # Less critical on daily
+                description="1d: Volume less critical on long-term",
+                timeframe_specific=True
+            )
+        }
+
     def _initialize_pattern_overrides(self):
         """Initialize pattern-specific parameter overrides"""
 
@@ -392,25 +653,50 @@ class ParameterSpace:
                 )
             }
 
-    def initialize_ranges(self, pattern_key: str, custom_ranges: Optional[Dict[str, Any]] = None):
+    def initialize_ranges(self, pattern_key: str, timeframe: str = None,
+                         custom_ranges: Optional[Dict[str, Any]] = None):
         """
-        Initialize parameter ranges for a specific pattern.
+        Initialize parameter ranges for a specific pattern and timeframe.
 
         Args:
             pattern_key: Pattern identifier
+            timeframe: Timeframe (e.g., '1m', '5m', '1h', '4h', '1d')
             custom_ranges: Custom parameter range overrides
         """
-        logger.info(f"Initializing parameter ranges for pattern: {pattern_key}")
+        logger.info(f"Initializing parameter ranges for pattern: {pattern_key}, timeframe: {timeframe}")
 
-        # Apply pattern-specific overrides
+        # Apply timeframe-specific overrides first (lower priority)
+        if timeframe and timeframe in self.timeframe_overrides:
+            tf_overrides = self.timeframe_overrides[timeframe]
+            self._apply_timeframe_overrides(tf_overrides)
+            logger.info(f"Applied {len(tf_overrides)} timeframe-specific overrides for {timeframe}")
+
+        # Apply pattern-specific overrides (higher priority, can override timeframe)
         if pattern_key in self.pattern_overrides:
             overrides = self.pattern_overrides[pattern_key]
+            self._apply_pattern_overrides(pattern_key, overrides)
             logger.info(f"Applied {len(overrides)} pattern-specific overrides for {pattern_key}")
 
-        # Apply custom ranges if provided
+        # Apply custom ranges if provided (highest priority)
         if custom_ranges:
             self._apply_custom_ranges(custom_ranges)
             logger.info(f"Applied {len(custom_ranges)} custom range overrides")
+
+    def _apply_timeframe_overrides(self, tf_overrides: Dict[str, ParameterDefinition]):
+        """Apply timeframe-specific parameter overrides"""
+        for param_name, param_def in tf_overrides.items():
+            if param_name in self.form_parameters:
+                self.form_parameters[param_name] = param_def
+            elif param_name in self.action_parameters:
+                self.action_parameters[param_name] = param_def
+
+    def _apply_pattern_overrides(self, pattern_key: str, overrides: Dict[str, ParameterDefinition]):
+        """Apply pattern-specific parameter overrides"""
+        for param_name, param_def in overrides.items():
+            if param_name in self.form_parameters:
+                self.form_parameters[param_name] = param_def
+            elif param_name in self.action_parameters:
+                self.action_parameters[param_name] = param_def
 
     def _apply_custom_ranges(self, custom_ranges: Dict[str, Any]):
         """Apply custom parameter range overrides"""

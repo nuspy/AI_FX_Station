@@ -166,6 +166,7 @@ class OptimizationEngine:
         # Initialize parameter space for this study
         self.parameter_space.initialize_ranges(
             pattern_key=config.pattern_key,
+            timeframe=config.timeframe,
             custom_ranges=config.parameter_ranges
         )
 

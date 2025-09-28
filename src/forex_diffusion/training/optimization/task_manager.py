@@ -539,12 +539,117 @@ class TaskManager:
                 session.rollback()
                 logger.exception(f"Failed to promote parameters: {e}")
 
-    def rollback_parameters(self, study_id: int, version: int,
-                          reason: str = "Manual rollback") -> None:
+    def rollback_parameters(self, study_id: int, version: int = None,
+                          reason: str = "Manual rollback") -> Dict[str, Any]:
         """Rollback parameters to previous version"""
-        # Implementation would restore previous parameter version
-        # This is a placeholder for the full rollback logic
-        logger.info(f"Rollback requested for study {study_id} to version {version}")
+
+        with self.session_factory() as session:
+            try:
+                # Get current promoted parameters
+                current_params = session.query(BestParameters).filter(
+                    BestParameters.study_id == study_id,
+                    BestParameters.is_promoted == True
+                ).first()
+
+                if not current_params:
+                    return {'success': False, 'error': 'No current promoted parameters found'}
+
+                # Get target version (previous if not specified)
+                if version is None:
+                    version = max(1, current_params.version - 1)
+
+                # Find target parameters
+                target_params = session.query(BestParameters).filter(
+                    BestParameters.study_id == study_id,
+                    BestParameters.version == version
+                ).first()
+
+                if not target_params:
+                    return {'success': False, 'error': f'Version {version} not found'}
+
+                # Demote current parameters
+                current_params.is_promoted = False
+
+                # Promote target parameters
+                target_params.is_promoted = True
+                target_params.promoted_at = datetime.utcnow()
+                target_params.promoted_by = "system_rollback"
+
+                session.commit()
+
+                logger.info(f"Rolled back parameters for study {study_id} to version {version}")
+                return {
+                    'success': True,
+                    'version': version,
+                    'parameters': {
+                        **target_params.form_parameters,
+                        **target_params.action_parameters
+                    }
+                }
+
+            except Exception as e:
+                session.rollback()
+                logger.exception(f"Failed to rollback parameters: {e}")
+                return {'success': False, 'error': str(e)}
+
+    def get_production_parameters(self, asset: str, timeframe: str,
+                                 regime_tag: Optional[str] = None) -> Dict[str, Any]:
+        """Get promoted parameters for production use"""
+
+        with self.session_factory() as session:
+            try:
+                # Build query for promoted parameters
+                query = session.query(BestParameters).join(OptimizationStudy).filter(
+                    BestParameters.is_promoted == True,
+                    OptimizationStudy.asset == asset,
+                    OptimizationStudy.timeframe == timeframe
+                )
+
+                # Add regime filter if specified
+                if regime_tag:
+                    query = query.filter(BestParameters.regime_tag == regime_tag)
+                else:
+                    # Get global parameters (no specific regime)
+                    query = query.filter(BestParameters.regime_tag.is_(None))
+
+                # Get all promoted parameters
+                promoted_params = query.all()
+
+                if not promoted_params:
+                    logger.info(f"No production parameters found for {asset} {timeframe} {regime_tag or 'global'}")
+                    return {}
+
+                # Organize by pattern
+                production_config = {}
+
+                for params in promoted_params:
+                    study = params.optimization_study
+                    pattern_key = study.pattern_key
+
+                    production_config[pattern_key] = {
+                        'form_parameters': params.form_parameters,
+                        'action_parameters': params.action_parameters,
+                        'performance': {
+                            'combined_score': params.combined_score,
+                            'd1_success_rate': params.d1_success_rate,
+                            'd2_success_rate': params.d2_success_rate,
+                            'total_signals': params.total_signals,
+                            'robustness_score': params.robustness_score
+                        },
+                        'metadata': {
+                            'promoted_at': params.promoted_at,
+                            'version': params.version,
+                            'params_hash': params.params_hash,
+                            'best_trial_id': params.best_trial_id
+                        }
+                    }
+
+                logger.info(f"Retrieved {len(production_config)} production parameter sets for {asset} {timeframe}")
+                return production_config
+
+            except Exception as e:
+                logger.exception(f"Failed to get production parameters: {e}")
+                return {}
 
     def _generate_task_id(self, pattern_key: str, direction: str, asset: str,
                          timeframe: str, regime_tag: Optional[str],
