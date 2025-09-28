@@ -299,3 +299,225 @@ debug:
   # developer switches
   simulate_provider_errors: false
   force_small_dataset: false
+
+# =============================================================================
+# ADVANCED PATTERN DETECTION & CACHING CONFIGURATION
+# =============================================================================
+
+# Cache e Performance
+cache:
+  redis:
+    enabled: true
+    path: "data/redis.db"  # Redis-lite embedded database
+    max_memory_percent: 70  # % di RAM disponibile per cache (64GB * 70% = ~45GB)
+    memory_policy: "allkeys-lru"  # LRU eviction policy
+    key_ttl: 3600  # TTL default per chiavi cache (secondi)
+
+  pattern_cache:
+    max_entries: 100000  # Numero massimo pattern in cache
+    ttl_minutes: 30  # TTL per pattern cached
+
+  lru_cache:
+    detection_cache_size: 50000  # Cache size per detection results
+    parameter_cache_size: 10000  # Cache size per parameter combinations
+
+# Resource Management
+resources:
+  pattern_detection:
+    max_cpu_percent: 30  # Massimo 30% CPU per pattern detection
+    max_workers: 8  # Numero worker threads/processes
+    worker_type: "async"  # "async", "thread", "process"
+
+  memory:
+    max_usage_percent: 80  # Massimo utilizzo memoria
+    gc_threshold: 85  # Soglia per garbage collection forzato
+
+# Pattern Detection & Analysis
+patterns:
+  # Pattern Strength Calculation (senza volume)
+  strength:
+    weights:
+      confidence: 0.35      # Confidence del detector
+      volatility: 0.25      # Volatilità durante formazione
+      historical_success: 0.25  # Success rate storico del pattern
+      price_action: 0.15    # Qualità price action (range, momentum)
+
+    # Scaling factors
+    min_confidence: 0.3     # Confidence minima per considerare pattern
+    volatility_window: 20   # Finestra per calcolo volatilità
+
+  # Progressive Pattern Formation
+  progressive:
+    enabled: true
+    confidence_threshold: 60  # % confidence per mostrare pattern in formazione
+    update_frequency: "1min"  # Update ogni candela di 1 minuto
+    visual:
+      line_style: "dashed"   # Stile linee per pattern in formazione
+      alpha: 0.6            # Trasparenza per pattern in formazione
+
+  # Multi-timeframe Detection
+  multi_timeframe:
+    enabled: true
+    combinations:
+      # Combinazioni ottimali per performance
+      - name: "scalping"
+        timeframes: ["1m", "5m", "15m"]
+        weights: [0.2, 0.3, 0.5]
+      - name: "intraday"
+        timeframes: ["15m", "1h", "4h"]
+        weights: [0.2, 0.4, 0.4]
+      - name: "swing"
+        timeframes: ["1h", "4h", "1d"]
+        weights: [0.3, 0.4, 0.3]
+
+    # Composite Patterns
+    composite:
+      enabled: true
+      types:
+        - "head_shoulders_in_triangle"
+        - "flag_in_wedge"
+        - "double_top_with_divergence"
+        - "elliott_wave_with_harmonics"
+
+# Regime Detection (Machine Learning)
+regime_detection:
+  enabled: true
+  method: "unsupervised_clustering"  # Unsupervised clustering
+
+  # Gruppi logici di indicatori
+  indicator_groups:
+    trend_momentum:
+      title: "Trend & Momentum Regime"
+      indicators:
+        - "sma_20_50_cross"      # Trend direction
+        - "rsi_14"               # Momentum
+        - "macd_signal"          # Momentum convergence
+        - "adx_14"               # Trend strength
+      weight: 0.3
+
+    volatility_regime:
+      title: "Volatility Regime"
+      indicators:
+        - "atr_14"               # Average True Range
+        - "bollinger_bandwidth"   # Bollinger band width
+        - "price_range_ratio"     # High-Low / Close ratio
+        - "garch_volatility"      # GARCH volatility estimate
+      weight: 0.25
+
+    market_structure:
+      title: "Market Structure Regime"
+      indicators:
+        - "support_resistance_strength"  # S/R level quality
+        - "fractal_dimension"            # Market efficiency
+        - "hurst_exponent"               # Trend persistence
+        - "market_efficiency_ratio"      # Efficiency measure
+      weight: 0.25
+
+    sentiment_flow:
+      title: "Market Sentiment Regime"
+      indicators:
+        - "price_momentum_divergence"    # Price vs momentum
+        - "breakout_failure_rate"        # False breakout frequency
+        - "gap_analysis"                 # Gap frequency/size
+        - "reversal_pattern_frequency"   # Reversal vs continuation
+      weight: 0.2
+
+  # Clustering parameters
+  clustering:
+    n_clusters: 5          # Numero regimi da identificare
+    algorithm: "kmeans"    # "kmeans", "dbscan", "gaussian_mixture"
+    lookback_periods: 100  # Periodi storici per training
+    update_frequency: "daily"  # Frequenza aggiornamento regimi
+
+  # Per timeframe
+  timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+
+# Database & Parameters
+database:
+  # Parameter Selection Strategy
+  parameters:
+    selection_strategy: "historical_performance"  # Come scegliere parametri ottimali
+    fallback_strategy: "skip_pattern"             # Cosa fare se parametri mancanti
+
+    # Priorità selezione parametri
+    priority_order:
+      - "asset_timeframe_regime"    # Specifico per asset/timeframe/regime
+      - "asset_timeframe"           # Specifico per asset/timeframe
+      - "timeframe_regime"          # Specifico per timeframe/regime
+      - "asset_regime"              # Specifico per asset/regime
+      - "timeframe"                 # Solo timeframe
+      - "default"                   # Parametri default
+
+  # Optimization History
+  optimization:
+    min_trials: 100        # Minimo trial per considerare parametri validi
+    min_success_rate: 0.4  # Success rate minimo per utilizzare parametri
+    performance_window: 90 # Giorni di storia per valutare performance
+
+# Advanced UI Configuration
+advanced_ui:
+  # Pattern strength display
+  pattern_strength:
+    display_type: "stars"  # "stars", "percentage", "numeric"
+    max_stars: 5
+    show_in_badge: true
+    show_in_tooltip: true
+
+  # Cache control GUI
+  cache_control:
+    show_usage_bar: true
+    show_hit_rate: true
+    allow_manual_clear: true
+
+  # Progressive formation
+  progressive_patterns:
+    show_by_default: true
+    confidence_display: true
+    formation_percentage: true
+
+  # Log tabs per GUI
+  log_tabs:
+    - name: "General"
+      level: "INFO"
+      sources: ["app", "ui", "data"]
+    - name: "Patterns"
+      level: "DEBUG"
+      sources: ["patterns", "detection", "formation"]
+    - name: "Optimization"
+      level: "INFO"
+      sources: ["optimization", "genetic", "trials"]
+    - name: "Parameters"
+      level: "WARNING"
+      sources: ["parameters", "missing", "fallback"]
+    - name: "Performance"
+      level: "INFO"
+      sources: ["performance", "resources", "cache"]
+
+# Advanced Timeframe Configuration
+advanced_timeframes:
+  # Timeframe-specific settings
+  settings:
+    "1m":
+      detection_sensitivity: "high"
+      min_pattern_duration: 5      # minuti
+      max_lookback: 100           # candele
+    "5m":
+      detection_sensitivity: "medium-high"
+      min_pattern_duration: 15
+      max_lookback: 200
+    "15m":
+      detection_sensitivity: "medium"
+      min_pattern_duration: 45
+      max_lookback: 300
+    "1h":
+      detection_sensitivity: "medium"
+      min_pattern_duration: 180   # 3 ore
+      max_lookback: 500
+    "4h":
+      detection_sensitivity: "medium-low"
+      min_pattern_duration: 720   # 12 ore
+      max_lookback: 1000
+    "1d":
+      detection_sensitivity: "low"
+      min_pattern_duration: 2880  # 2 giorni
+      max_lookback: 2000

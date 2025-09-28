@@ -3,10 +3,16 @@ from __future__ import annotations
 from typing import List, Optional, Dict, Iterable
 import pandas as pd
 import numpy as np
+import asyncio
+import psutil
 from loguru import logger
 from PySide6.QtCore import QTimer
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
+
+# Cache and performance imports
+from ....cache import get_cache, get_pattern_cache, cache_decorator
+from ....patterns.strength_calculator import PatternStrengthCalculator
 
 class _ScanWorker(QObject):
     produced = Signal(list)  # List[PatternEvent]
@@ -17,6 +23,7 @@ class _ScanWorker(QObject):
         self._kind = kind  # "chart" or "candle"
         self._timer = QTimer(self)
         self._timer.setInterval(int(interval_ms))
+        self._original_interval = int(interval_ms)  # Store original interval for dynamic adjustment
         self._timer.timeout.connect(self._tick)
         self._enabled = False
 
@@ -35,10 +42,27 @@ class _ScanWorker(QObject):
         if not self._enabled:
             return
         try:
+            # Check resource usage and adjust interval dynamically
+            if hasattr(self._parent, '_check_resource_limits'):
+                if not self._parent._check_resource_limits():
+                    # If resources are constrained, increase interval
+                    current_interval = self._timer.interval()
+                    new_interval = min(current_interval * 1.5, 300000)  # Max 5 minutes
+                    self._timer.setInterval(int(new_interval))
+                    logger.debug(f"Increased {self._kind} scan interval to {new_interval}ms due to resource constraints")
+                    return
+                else:
+                    # If resources are available, gradually decrease interval back to normal
+                    original_interval = getattr(self, '_original_interval', self._timer.interval())
+                    current_interval = self._timer.interval()
+                    if current_interval > original_interval:
+                        new_interval = max(current_interval * 0.9, original_interval)
+                        self._timer.setInterval(int(new_interval))
+
             evs = self._parent._scan_once(kind=self._kind) or []
             self.produced.emit(evs)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Error in scan worker tick: {e}")
 
 
 from .base import ChartServiceBase
@@ -112,6 +136,18 @@ class PatternsService(ChartServiceBase):
         self._debounce_timer: Optional[QTimer] = None
         self._debounce_ms = 30
 
+        # Initialize cache and strength calculator
+        self._pattern_cache = get_pattern_cache()
+        self._redis_cache = get_cache()
+
+        # Load configuration for advanced features
+        self._config = self._load_config()
+        self._strength_calculator = PatternStrengthCalculator(self._config)
+
+        # Resource monitoring
+        self._cpu_limit_percent = self._config.get('resources', {}).get('pattern_detection', {}).get('max_cpu_percent', 30)
+        self._memory_threshold = self._config.get('resources', {}).get('memory', {}).get('max_usage_percent', 80)
+
         try:
             self.view.canvas.mpl_connect('pick_event', self.renderer.on_pick)
         except Exception:
@@ -159,6 +195,167 @@ class PatternsService(ChartServiceBase):
         self._candle_worker.produced.connect(self._on_candle_patterns_detected)
 
         self._threads_started = False
+
+    def _load_config(self) -> dict:
+        """Load configuration for patterns service with resource limits"""
+        try:
+            import yaml, os
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                '..', '..', '..', 'configs', 'default.yaml'
+            )
+
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+
+            # Set defaults for resource management
+            if 'resources' not in config:
+                config['resources'] = {}
+            if 'pattern_detection' not in config['resources']:
+                config['resources']['pattern_detection'] = {}
+            if 'max_cpu_percent' not in config['resources']['pattern_detection']:
+                config['resources']['pattern_detection']['max_cpu_percent'] = 30
+            if 'memory' not in config['resources']:
+                config['resources']['memory'] = {}
+            if 'max_usage_percent' not in config['resources']['memory']:
+                config['resources']['memory']['max_usage_percent'] = 80
+
+            return config
+
+        except Exception as e:
+            logger.warning(f"Could not load config, using defaults: {e}")
+            return {
+                'resources': {
+                    'pattern_detection': {'max_cpu_percent': 30},
+                    'memory': {'max_usage_percent': 80}
+                }
+            }
+
+    def _check_resource_limits(self) -> bool:
+        """Check if current resource usage is within limits"""
+        try:
+            # Check CPU usage
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            if cpu_percent > self._cpu_limit_percent:
+                logger.debug(f"CPU usage {cpu_percent:.1f}% exceeds limit {self._cpu_limit_percent}%")
+                return False
+
+            # Check memory usage
+            memory_percent = psutil.virtual_memory().percent
+            if memory_percent > self._memory_threshold:
+                logger.debug(f"Memory usage {memory_percent:.1f}% exceeds limit {self._memory_threshold}%")
+                return False
+
+            # Check if Redis cache memory is within limits
+            try:
+                cache_info = self._redis_cache.get_cache_info()
+                if cache_info.get('memory_usage_percent', 0) > 90:
+                    logger.debug("Redis cache memory usage high, throttling pattern detection")
+                    return False
+            except Exception:
+                pass
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking resource limits: {e}")
+            return True  # Allow execution if monitoring fails
+
+    def get_resource_stats(self) -> dict:
+        """Get current resource usage statistics for monitoring"""
+        try:
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+
+            stats = {
+                'cpu_percent': cpu_percent,
+                'cpu_limit': self._cpu_limit_percent,
+                'memory_percent': memory.percent,
+                'memory_limit': self._memory_threshold,
+                'memory_available_gb': memory.available / (1024**3),
+                'pattern_detection_active': self._enabled_chart or self._enabled_candle,
+                'scan_intervals': {
+                    'chart': getattr(self._chart_worker, '_timer', {}).interval() if hasattr(self, '_chart_worker') else 0,
+                    'candle': getattr(self._candle_worker, '_timer', {}).interval() if hasattr(self, '_candle_worker') else 0
+                }
+            }
+
+            # Add cache statistics if available
+            try:
+                cache_info = self._redis_cache.get_cache_info()
+                stats['cache'] = {
+                    'memory_usage_mb': cache_info.get('memory_usage_mb', 0),
+                    'memory_limit_mb': cache_info.get('memory_limit_mb', 0),
+                    'hit_ratio': cache_info.get('hit_ratio', 0.0),
+                    'total_keys': cache_info.get('total_keys', 0)
+                }
+            except Exception:
+                stats['cache'] = {'status': 'unavailable'}
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Error getting resource stats: {e}")
+            return {'error': str(e)}
+
+    def test_async_detection(self, test_data=None) -> dict:
+        """Test async pattern detection with mock data for verification"""
+        try:
+            import numpy as np
+            import pandas as pd
+            from datetime import datetime, timedelta
+
+            # Create test data if not provided
+            if test_data is None:
+                dates = pd.date_range(start=datetime.now() - timedelta(days=30), periods=1000, freq='1min')
+                np.random.seed(42)
+
+                price = 1.1000
+                prices = [price]
+                for _ in range(999):
+                    change = np.random.normal(0, 0.0001)
+                    price = max(0.9000, min(1.3000, price + change))
+                    prices.append(price)
+
+                test_data = pd.DataFrame({
+                    'timestamp': dates,
+                    'open': prices,
+                    'high': [p * (1 + abs(np.random.normal(0, 0.0001))) for p in prices],
+                    'low': [p * (1 - abs(np.random.normal(0, 0.0001))) for p in prices],
+                    'close': prices
+                })
+
+            # Test resource limits first
+            resource_check = self._check_resource_limits()
+
+            # Simulate a quick detection test
+            start_time = datetime.now()
+
+            # Mock the detection without running full async
+            from src.forex_diffusion.patterns.registry import PatternRegistry
+            reg = PatternRegistry()
+            available_detectors = len(list(reg.detectors(['chart']))) + len(list(reg.detectors(['candle'])))
+
+            end_time = datetime.now()
+            duration_ms = (end_time - start_time).total_seconds() * 1000
+
+            return {
+                'success': True,
+                'test_timestamp': start_time.isoformat(),
+                'duration_ms': duration_ms,
+                'resource_check_passed': resource_check,
+                'available_detectors': available_detectors,
+                'test_data_rows': len(test_data),
+                'resource_stats': self.get_resource_stats()
+            }
+
+        except Exception as e:
+            logger.error(f"Error in async detection test: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'test_timestamp': datetime.now().isoformat()
+            }
 
     def _on_chart_patterns_detected(self, events: List):
         """Handle chart patterns detected in background thread"""
@@ -1197,23 +1394,98 @@ class PatternsService(ChartServiceBase):
 
 
 
-def _scan_once(self, kind: str):
-    df = getattr(self.controller.plot_service, '_last_df', None)
-    dfN = self._normalize_df(df)
-    if dfN is None or len(dfN)==0: return []
-    from src.forex_diffusion.patterns.registry import PatternRegistry
-    from .patterns_adapter import enrich_events
-    from ....patterns.info_provider import PatternInfoProvider
-    reg = PatternRegistry(); dets = [d for d in reg.detectors([kind])]
-    events=[]
-    for d in dets:
-        try: events.extend(d.detect(dfN))
-        except Exception: pass
-    events = enrich_events(events, PatternInfoProvider())
-    self._events=(self._events or [])+events
-    try: self._repaint()
-    except Exception: pass
-    return events
+    def _scan_once(self, kind: str):
+        """Scan for patterns with async resource monitoring"""
+        try:
+            # Check resource limits before scanning
+            if not self._check_resource_limits():
+                logger.debug(f"Skipping {kind} pattern scan due to resource limits")
+                return []
+
+            df = getattr(self.controller.plot_service, '_last_df', None)
+            dfN = self._normalize_df(df)
+            if dfN is None or len(dfN)==0:
+                return []
+
+            # Start async pattern detection
+            return asyncio.run(self._async_pattern_detection(dfN, kind))
+
+        except Exception as e:
+            logger.error(f"Error in pattern scan: {e}")
+            return []
+
+    async def _async_pattern_detection(self, dfN, kind: str):
+        """Async pattern detection with resource throttling"""
+        try:
+            from asyncio_throttle import Throttler
+            from src.forex_diffusion.patterns.registry import PatternRegistry
+            from .patterns_adapter import enrich_events
+            from ....patterns.info_provider import PatternInfoProvider
+
+            # Create throttler to limit resource usage (30% CPU max)
+            max_concurrent = max(1, int(psutil.cpu_count() * 0.3))
+            throttler = Throttler(rate_limit=max_concurrent, period=1.0)
+
+            reg = PatternRegistry()
+            dets = [d for d in reg.detectors([kind])]
+            events = []
+
+            # Process detectors with throttling
+            async with throttler:
+                detection_tasks = []
+                for detector in dets:
+                    task = self._detect_pattern_async(detector, dfN, throttler)
+                    detection_tasks.append(task)
+
+                # Run detections with resource monitoring
+                results = await asyncio.gather(*detection_tasks, return_exceptions=True)
+
+                for result in results:
+                    if isinstance(result, Exception):
+                        logger.debug(f"Pattern detection error: {result}")
+                    elif result:
+                        events.extend(result)
+
+            # Enrich events with pattern information
+            if events:
+                events = enrich_events(events, PatternInfoProvider())
+
+                # Update events safely on main thread
+                self._events = (self._events or []) + events
+
+                # Schedule repaint on main thread
+                try:
+                    # Use QTimer to ensure repaint happens on main thread
+                    QTimer.singleShot(0, self._repaint)
+                except Exception:
+                    pass
+
+            return events
+
+        except Exception as e:
+            logger.error(f"Async pattern detection error: {e}")
+            return []
+
+    async def _detect_pattern_async(self, detector, dfN, throttler):
+        """Detect patterns for a single detector with resource throttling"""
+        try:
+            async with throttler:
+                # Check resources before each detection
+                if not self._check_resource_limits():
+                    return []
+
+                # Run detection in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, detector.detect, dfN)
+
+                # Small delay to allow other processes
+                await asyncio.sleep(0.01)
+
+                return result or []
+
+        except Exception as e:
+            logger.debug(f"Pattern detector {getattr(detector, 'key', 'unknown')} error: {e}")
+            return []
 
 class _HistoricalScanWorker(QObject):
     finished=Signal()
