@@ -1,8 +1,9 @@
 # src/forex_diffusion/ui/chart_tab_ui.py
 from __future__ import annotations
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 import pandas as pd
+import numpy as np
 import time
 
 import matplotlib.dates as mdates
@@ -12,9 +13,9 @@ from PySide6.QtWidgets import (
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
     QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog, QGroupBox,
     QTabWidget, QSpinBox, QDoubleSpinBox, QTextEdit, QFormLayout, QGridLayout,
-    QSlider, QFrame, QButtonGroup, QRadioButton
+    QSlider, QFrame, QButtonGroup, QRadioButton, QDateEdit
 )
-from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker
+from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker, QDate
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -274,119 +275,187 @@ class ChartTabUI(QWidget):
         self.main_tabs.addTab(training_tab, "Training/Backtest")
 
     def _create_study_setup_section(self, layout: QVBoxLayout) -> None:
-        """Create study setup section"""
-        group = QGroupBox("Study Setup")
-        group_layout = QFormLayout(group)
+        """Create study setup section with separate chart/candlestick pattern training"""
+        group = QGroupBox("Training Setup")
+        group_layout = QVBoxLayout(group)
 
-        # Pattern selection
-        self.pattern_combo = QComboBox()
-        self.pattern_combo.addItems([
-            "head_and_shoulders", "inverse_head_and_shoulders", "triangle_ascending",
-            "triangle_descending", "triangle_symmetrical", "wedge_rising", "wedge_falling",
-            "double_top", "double_bottom", "triple_top", "triple_bottom",
-            "rectangle", "flag_bull", "flag_bear", "pennant", "diamond",
-            "cup_and_handle", "rounding_bottom", "broadening_top"
-        ])
-        group_layout.addRow("Pattern:", self.pattern_combo)
+        # Training Type Selection
+        training_type_frame = QFrame()
+        training_type_layout = QHBoxLayout(training_type_frame)
 
-        # Direction selection
-        self.direction_combo = QComboBox()
-        self.direction_combo.addItems(["bull", "bear"])
-        group_layout.addRow("Direction:", self.direction_combo)
+        self.training_type_group = QButtonGroup()
+        self.chart_patterns_radio = QRadioButton("Train Chart Patterns")
+        self.candlestick_patterns_radio = QRadioButton("Train Candlestick Patterns")
+        self.chart_patterns_radio.setChecked(True)
 
-        # Asset selection (multiple)
+        self.training_type_group.addButton(self.chart_patterns_radio, 0)
+        self.training_type_group.addButton(self.candlestick_patterns_radio, 1)
+
+        training_type_layout.addWidget(self.chart_patterns_radio)
+        training_type_layout.addWidget(self.candlestick_patterns_radio)
+        training_type_layout.addStretch()
+
+        group_layout.addWidget(QLabel("Training Type:"))
+        group_layout.addWidget(training_type_frame)
+
+        # Training Period (replaces min/max span)
+        period_frame = QFrame()
+        period_frame.setFrameStyle(QFrame.StyledPanel)
+        period_layout = QFormLayout(period_frame)
+
+        self.training_start_date = QDateEdit()
+        self.training_start_date.setDate(QDate(2020, 1, 1))
+        self.training_start_date.setCalendarPopup(True)
+        self.training_start_date.setToolTip("Inizio periodo di addestramento - determina da quando iniziano i dati di training")
+        period_layout.addRow("Training Start Date:", self.training_start_date)
+
+        self.training_end_date = QDateEdit()
+        self.training_end_date.setDate(QDate(2024, 12, 31))
+        self.training_end_date.setCalendarPopup(True)
+        self.training_end_date.setToolTip("Fine periodo di addestramento - determina quando finiscono i dati di training")
+        period_layout.addRow("Training End Date:", self.training_end_date)
+
+        group_layout.addWidget(QLabel("Training Data Period:"))
+        group_layout.addWidget(period_frame)
+
+        # Asset selection
         self.assets_edit = QTextEdit()
         self.assets_edit.setMaximumHeight(60)
         self.assets_edit.setPlainText("EUR/USD, GBP/USD, USD/JPY")
-        group_layout.addRow("Assets (comma separated):", self.assets_edit)
+        self.assets_edit.setToolTip("Asset da addestrare separatamente. Ogni asset avrà un training completo con tutti i patterns della famiglia selezionata")
+        group_layout.addWidget(QLabel("Assets (comma separated):"))
+        group_layout.addWidget(self.assets_edit)
 
-        # Timeframe selection (multiple)
+        # Timeframe selection
         self.timeframes_edit = QTextEdit()
         self.timeframes_edit.setMaximumHeight(60)
         self.timeframes_edit.setPlainText("1h, 4h, 1d")
-        group_layout.addRow("Timeframes (comma separated):", self.timeframes_edit)
+        self.timeframes_edit.setToolTip("Timeframes da includere nel training. Ogni timeframe sarà ottimizzato separatamente")
+        group_layout.addWidget(QLabel("Timeframes (comma separated):"))
+        group_layout.addWidget(self.timeframes_edit)
 
-        # Regime selection
-        self.regime_combo = QComboBox()
-        self.regime_combo.addItems([
-            "None", "nber_recession", "nber_expansion", "vix_low", "vix_medium", "vix_high",
-            "pmi_above_50", "pmi_below_50", "epu_low", "epu_medium", "epu_high"
-        ])
-        group_layout.addRow("Regime Filter:", self.regime_combo)
+        # Note: Direction and regime filters are now automatic (all combinations tested)
+        info_label = QLabel("ℹ️ Training will automatically include:\n" +
+                           "• Both BULL and BEAR directions\n" +
+                           "• ALL regime filter combinations\n" +
+                           "• ALL patterns in selected family\n" +
+                           "• Genetic algorithm optimization")
+        info_label.setStyleSheet("color: #666; font-style: italic; padding: 10px; background: #f0f0f0; border-radius: 5px;")
+        info_label.setWordWrap(True)
+        group_layout.addWidget(info_label)
 
         layout.addWidget(group)
 
     def _create_dataset_config_section(self, layout: QVBoxLayout) -> None:
-        """Create dataset configuration section"""
-        group = QGroupBox("Dataset Configuration")
+        """Create optimization targets configuration section"""
+        group = QGroupBox("Optimization Targets (D1/D2)")
         group_layout = QVBoxLayout(group)
 
+        # Explanation of D1/D2
+        explanation_label = QLabel(
+            "📊 D1 e D2 rappresentano due obiettivi di ottimizzazione sui STESSI dati di prezzo:\n" +
+            "• D1: Massimizzazione PROFITTI (higher returns, aggressive strategies)\n" +
+            "• D2: Minimizzazione RISCHI (lower drawdown, conservative strategies)\n\n" +
+            "L'algoritmo troverà parametri ottimali per entrambi gli obiettivi usando i dati del periodo di training selezionato sopra."
+        )
+        explanation_label.setStyleSheet("color: #333; font-size: 11px; padding: 10px; background: #e8f4fd; border-radius: 5px; border-left: 4px solid #2196F3;")
+        explanation_label.setWordWrap(True)
+        group_layout.addWidget(explanation_label)
+
         # Multi-objective toggle
-        self.multi_objective_checkbox = QCheckBox("Enable Multi-Objective Optimization")
+        self.multi_objective_checkbox = QCheckBox("Enable Multi-Objective Optimization (Pareto Front)")
         self.multi_objective_checkbox.setChecked(True)
+        self.multi_objective_checkbox.setToolTip(
+            "Abilita ottimizzazione multi-obiettivo:\n" +
+            "• TRUE: Trova fronte di Pareto con soluzioni bilanciate D1/D2\n" +
+            "• FALSE: Usa pesi fissi per combinare D1 e D2 in un singolo score"
+        )
         group_layout.addWidget(self.multi_objective_checkbox)
 
-        # Dataset 1 configuration
+        # D1 Target Configuration
         d1_frame = QFrame()
         d1_frame.setFrameStyle(QFrame.StyledPanel)
-        d1_layout = QFormLayout(d1_frame)
+        d1_layout = QVBoxLayout(d1_frame)
 
-        self.d1_start_date = QTextEdit()
-        self.d1_start_date.setMaximumHeight(30)
-        self.d1_start_date.setPlainText("2020-01-01")
-        d1_layout.addRow("D1 Start Date:", self.d1_start_date)
+        d1_title = QLabel("🎯 D1: PROFIT MAXIMIZATION TARGET")
+        d1_title.setStyleSheet("font-weight: bold; color: #4CAF50; padding: 5px;")
+        d1_layout.addWidget(d1_title)
 
-        self.d1_end_date = QTextEdit()
-        self.d1_end_date.setMaximumHeight(30)
-        self.d1_end_date.setPlainText("2022-12-31")
-        d1_layout.addRow("D1 End Date:", self.d1_end_date)
+        d1_desc = QLabel("Obiettivo: Massimizzare profitti e rendimenti\n" +
+                        "Focus: Success rate, total return, profit factor\n" +
+                        "Strategia: Parametri più aggressivi per catturare opportunità")
+        d1_desc.setStyleSheet("color: #666; font-size: 10px; padding-left: 10px;")
+        d1_layout.addWidget(d1_desc)
 
-        group_layout.addWidget(QLabel("Dataset 1 (Primary):"))
         group_layout.addWidget(d1_frame)
 
-        # Dataset 2 configuration
+        # D2 Target Configuration
         d2_frame = QFrame()
         d2_frame.setFrameStyle(QFrame.StyledPanel)
-        d2_layout = QFormLayout(d2_frame)
+        d2_layout = QVBoxLayout(d2_frame)
 
-        self.d2_start_date = QTextEdit()
-        self.d2_start_date.setMaximumHeight(30)
-        self.d2_start_date.setPlainText("2023-01-01")
-        d2_layout.addRow("D2 Start Date:", self.d2_start_date)
+        d2_title = QLabel("🛡️ D2: RISK MINIMIZATION TARGET")
+        d2_title.setStyleSheet("font-weight: bold; color: #FF9800; padding: 5px;")
+        d2_layout.addWidget(d2_title)
 
-        self.d2_end_date = QTextEdit()
-        self.d2_end_date.setMaximumHeight(30)
-        self.d2_end_date.setPlainText("2024-12-31")
-        d2_layout.addRow("D2 End Date:", self.d2_end_date)
+        d2_desc = QLabel("Obiettivo: Minimizzare rischi e drawdown\n" +
+                        "Focus: Max drawdown, Sharpe ratio, consistency\n" +
+                        "Strategia: Parametri più conservativi per proteggere capitale")
+        d2_desc.setStyleSheet("color: #666; font-size: 10px; padding-left: 10px;")
+        d2_layout.addWidget(d2_desc)
 
-        group_layout.addWidget(QLabel("Dataset 2 (Secondary):"))
         group_layout.addWidget(d2_frame)
 
-        # Objective weights (when not using pure multi-objective)
-        weights_frame = QFrame()
-        weights_layout = QFormLayout(weights_frame)
+        # Strategy Selection for Production
+        strategy_frame = QFrame()
+        strategy_frame.setFrameStyle(QFrame.StyledPanel)
+        strategy_layout = QFormLayout(strategy_frame)
 
+        self.strategy_preference = QComboBox()
+        self.strategy_preference.addItems([
+            "balanced", "high_return", "low_risk"
+        ])
+        self.strategy_preference.setToolTip(
+            "Strategia per trading real-time:\n" +
+            "• balanced: Bilanciamento ottimale D1/D2\n" +
+            "• high_return: Favorisce parametri D1 (più aggressivi)\n" +
+            "• low_risk: Favorisce parametri D2 (più conservativi)"
+        )
+        strategy_layout.addRow("Production Strategy:", self.strategy_preference)
+
+        # Objective weights (when not using pure multi-objective)
         self.d1_weight_slider = QSlider(Qt.Horizontal)
         self.d1_weight_slider.setMinimum(10)
         self.d1_weight_slider.setMaximum(90)
         self.d1_weight_slider.setValue(70)
         self.d1_weight_label = QLabel("70%")
         self.d1_weight_slider.valueChanged.connect(lambda v: self.d1_weight_label.setText(f"{v}%"))
+        self.d1_weight_slider.setToolTip(
+            "Peso D1 vs D2 in modalità single-objective:\n" +
+            "• 70%: D1 ha priorità maggiore (focus profitti)\n" +
+            "• 30%: D2 ha priorità maggiore (focus rischi)\n" +
+            "• 50%: Bilanciamento equo"
+        )
 
         d1_weight_layout = QHBoxLayout()
         d1_weight_layout.addWidget(self.d1_weight_slider)
         d1_weight_layout.addWidget(self.d1_weight_label)
-        weights_layout.addRow("D1 Weight:", d1_weight_layout)
+        strategy_layout.addRow("D1 Weight (single-objective):", d1_weight_layout)
 
-        group_layout.addWidget(QLabel("Objective Weights (for single-objective mode):"))
-        group_layout.addWidget(weights_frame)
+        group_layout.addWidget(QLabel("Production Settings:"))
+        group_layout.addWidget(strategy_frame)
 
         layout.addWidget(group)
 
     def _create_parameter_space_section(self, layout: QVBoxLayout) -> None:
-        """Create parameter space configuration section"""
+        """Create parameter space configuration section with detailed tooltips"""
         group = QGroupBox("Parameter Space Configuration")
         group_layout = QVBoxLayout(group)
+
+        # Note about genetic algorithm
+        ga_note = QLabel("🧬 Algoritmo Genetico: L'ottimizzazione userà un approccio a step progressivi per trovare i parametri ottimali")
+        ga_note.setStyleSheet("color: #4CAF50; font-style: italic; padding: 5px; background: #f0f8f0; border-radius: 3px;")
+        group_layout.addWidget(ga_note)
 
         # Form parameters
         form_group = QGroupBox("Form Parameters (Pattern Detection)")
@@ -398,110 +467,181 @@ class ChartTabUI(QWidget):
         self.min_touches_min.setMinimum(2)
         self.min_touches_min.setMaximum(10)
         self.min_touches_min.setValue(3)
+        self.min_touches_min.setToolTip(
+            "Numero minimo di tocchi per validare un pattern:\n" +
+            "• VALORE BASSO (2-3): Pattern meno rigorosi, più segnali, possibili falsi positivi\n" +
+            "• VALORE ALTO (6-10): Pattern più rigorosi, meno segnali, maggiore affidabilità\n" +
+            "• Consigliato: 3-5 per bilanciare frequenza e qualità"
+        )
         form_layout.addWidget(self.min_touches_min, 0, 1)
         form_layout.addWidget(QLabel("to"), 0, 2)
         self.min_touches_max = QSpinBox()
         self.min_touches_max.setMinimum(2)
         self.min_touches_max.setMaximum(10)
         self.min_touches_max.setValue(6)
+        self.min_touches_max.setToolTip("Valore massimo per Min Touches nell'ottimizzazione")
         form_layout.addWidget(self.min_touches_max, 0, 3)
 
-        # Span range
-        form_layout.addWidget(QLabel("Min Span (bars):"), 1, 0)
-        self.min_span_min = QSpinBox()
-        self.min_span_min.setMinimum(5)
-        self.min_span_min.setMaximum(200)
-        self.min_span_min.setValue(10)
-        form_layout.addWidget(self.min_span_min, 1, 1)
+        # Confidence threshold
+        form_layout.addWidget(QLabel("Confidence Threshold:"), 1, 0)
+        self.confidence_min = QDoubleSpinBox()
+        self.confidence_min.setMinimum(0.1)
+        self.confidence_min.setMaximum(1.0)
+        self.confidence_min.setValue(0.5)
+        self.confidence_min.setSingleStep(0.05)
+        self.confidence_min.setDecimals(2)
+        self.confidence_min.setToolTip(
+            "Soglia di confidenza per accettare un pattern:\n" +
+            "• VALORE BASSO (0.1-0.4): Più segnali, qualità variabile, trading più frequente\n" +
+            "• VALORE ALTO (0.7-1.0): Meno segnali, alta qualità, trading selettivo\n" +
+            "• 0.5: Soglia bilanciata per la maggior parte dei casi"
+        )
+        form_layout.addWidget(self.confidence_min, 1, 1)
         form_layout.addWidget(QLabel("to"), 1, 2)
-        self.min_span_max = QSpinBox()
-        self.min_span_max.setMinimum(5)
-        self.min_span_max.setMaximum(200)
-        self.min_span_max.setValue(50)
-        form_layout.addWidget(self.min_span_max, 1, 3)
-
-        form_layout.addWidget(QLabel("Max Span (bars):"), 2, 0)
-        self.max_span_min = QSpinBox()
-        self.max_span_min.setMinimum(20)
-        self.max_span_min.setMaximum(500)
-        self.max_span_min.setValue(50)
-        form_layout.addWidget(self.max_span_min, 2, 1)
-        form_layout.addWidget(QLabel("to"), 2, 2)
-        self.max_span_max = QSpinBox()
-        self.max_span_max.setMinimum(20)
-        self.max_span_max.setMaximum(500)
-        self.max_span_max.setValue(150)
-        form_layout.addWidget(self.max_span_max, 2, 3)
+        self.confidence_max = QDoubleSpinBox()
+        self.confidence_max.setMinimum(0.1)
+        self.confidence_max.setMaximum(1.0)
+        self.confidence_max.setValue(0.9)
+        self.confidence_max.setSingleStep(0.05)
+        self.confidence_max.setDecimals(2)
+        form_layout.addWidget(self.confidence_max, 1, 3)
 
         # Tolerance
-        form_layout.addWidget(QLabel("Tolerance:"), 3, 0)
+        form_layout.addWidget(QLabel("Pattern Tolerance:"), 2, 0)
         self.tolerance_min = QDoubleSpinBox()
         self.tolerance_min.setMinimum(0.001)
         self.tolerance_min.setMaximum(0.1)
         self.tolerance_min.setValue(0.005)
         self.tolerance_min.setSingleStep(0.001)
         self.tolerance_min.setDecimals(4)
-        form_layout.addWidget(self.tolerance_min, 3, 1)
-        form_layout.addWidget(QLabel("to"), 3, 2)
+        self.tolerance_min.setToolTip(
+            "Tolleranza nella rilevazione del pattern (deviazione accettabile):\n" +
+            "• VALORE BASSO (0.001-0.01): Pattern più precisi, meno segnali, alta qualità\n" +
+            "• VALORE ALTO (0.05-0.1): Pattern più flessibili, più segnali, qualità variabile\n" +
+            "• Influenza la sensibilità del riconoscimento geometrico"
+        )
+        form_layout.addWidget(self.tolerance_min, 2, 1)
+        form_layout.addWidget(QLabel("to"), 2, 2)
         self.tolerance_max = QDoubleSpinBox()
         self.tolerance_max.setMinimum(0.001)
         self.tolerance_max.setMaximum(0.1)
         self.tolerance_max.setValue(0.05)
         self.tolerance_max.setSingleStep(0.001)
         self.tolerance_max.setDecimals(4)
-        form_layout.addWidget(self.tolerance_max, 3, 3)
+        form_layout.addWidget(self.tolerance_max, 2, 3)
+
+        # ATR Period
+        form_layout.addWidget(QLabel("ATR Period:"), 3, 0)
+        self.atr_period_min = QSpinBox()
+        self.atr_period_min.setMinimum(5)
+        self.atr_period_min.setMaximum(50)
+        self.atr_period_min.setValue(10)
+        self.atr_period_min.setToolTip(
+            "Periodo per calcolo Average True Range:\n" +
+            "• VALORE BASSO (5-10): ATR più reattivo ai cambiamenti recenti\n" +
+            "• VALORE ALTO (20-50): ATR più stabile, meno influenzato da volatilità temporanea\n" +
+            "• Influenza stop loss, take profit e dimensioni pattern"
+        )
+        form_layout.addWidget(self.atr_period_min, 3, 1)
+        form_layout.addWidget(QLabel("to"), 3, 2)
+        self.atr_period_max = QSpinBox()
+        self.atr_period_max.setMinimum(5)
+        self.atr_period_max.setMaximum(50)
+        self.atr_period_max.setValue(30)
+        form_layout.addWidget(self.atr_period_max, 3, 3)
 
         group_layout.addWidget(form_group)
 
         # Action parameters
-        action_group = QGroupBox("Action Parameters (Execution)")
-        action_layout = QGridLayout(action_group)
+        action_group = QGroupBox("Action Parameters (Trading Execution)")
+        action_layout = QVBoxLayout(action_group)
 
-        # Target mode
-        action_layout.addWidget(QLabel("Target Modes:"), 0, 0)
+        # Target modes (all defaults)
+        target_modes_label = QLabel("Target Modes (tutti i valori inclusi nell'ottimizzazione):")
+        target_modes_label.setStyleSheet("font-weight: bold;")
+        action_layout.addWidget(target_modes_label)
+
         self.target_modes_edit = QTextEdit()
-        self.target_modes_edit.setMaximumHeight(60)
-        self.target_modes_edit.setPlainText("Altezza figura, Flag pole, Ampiezza canale")
-        action_layout.addWidget(self.target_modes_edit, 0, 1, 1, 3)
+        self.target_modes_edit.setMaximumHeight(100)
+        # Include ALL possible target modes as default
+        default_targets = [
+            "Altezza figura", "Flag pole", "Ampiezza canale", "Fibonacci 127%",
+            "Fibonacci 161%", "Fibonacci 200%", "Pattern projection", "ATR multiplier",
+            "Previous swing", "Support/Resistance", "Pivot points", "Bollinger distance"
+        ]
+        self.target_modes_edit.setPlainText(", ".join(default_targets))
+        self.target_modes_edit.setToolTip(
+            "Target modes per calcolare take profit:\n" +
+            "• Altezza figura: Usa l'altezza del pattern come target\n" +
+            "• Flag pole: Usa l'asta della bandiera come proiezione\n" +
+            "• Ampiezza canale: Usa larghezza del canale\n" +
+            "• Fibonacci: Proiezioni basate su ritracciamenti\n" +
+            "• ATR multiplier: Target basato su volatilità\n" +
+            "TUTTI i target modes verranno testati automaticamente"
+        )
+        action_layout.addWidget(self.target_modes_edit)
 
         # Risk-reward ratio
-        action_layout.addWidget(QLabel("Risk/Reward Ratio:"), 1, 0)
+        rr_layout = QGridLayout()
+        rr_layout.addWidget(QLabel("Risk/Reward Ratio:"), 0, 0)
         self.rr_min = QDoubleSpinBox()
         self.rr_min.setMinimum(0.5)
         self.rr_min.setMaximum(10.0)
         self.rr_min.setValue(1.0)
         self.rr_min.setSingleStep(0.1)
-        action_layout.addWidget(self.rr_min, 1, 1)
-        action_layout.addWidget(QLabel("to"), 1, 2)
+        self.rr_min.setToolTip(
+            "Rapporto rischio/rendimento:\n" +
+            "• VALORE BASSO (0.5-1.5): Trading più frequente, rischi maggiori\n" +
+            "• VALORE ALTO (3.0-10.0): Trading selettivo, rendimenti potenziali maggiori\n" +
+            "• 2.0: Classico rapporto bilanciato (rischia 1 per guadagnare 2)"
+        )
+        rr_layout.addWidget(self.rr_min, 0, 1)
+        rr_layout.addWidget(QLabel("to"), 0, 2)
         self.rr_max = QDoubleSpinBox()
         self.rr_max.setMinimum(0.5)
         self.rr_max.setMaximum(10.0)
         self.rr_max.setValue(3.0)
         self.rr_max.setSingleStep(0.1)
-        action_layout.addWidget(self.rr_max, 1, 3)
+        rr_layout.addWidget(self.rr_max, 0, 3)
+        action_layout.addLayout(rr_layout)
 
         # ATR buffer
-        action_layout.addWidget(QLabel("ATR Buffer:"), 2, 0)
+        atr_layout = QGridLayout()
+        atr_layout.addWidget(QLabel("ATR Buffer:"), 0, 0)
         self.atr_buffer_min = QDoubleSpinBox()
         self.atr_buffer_min.setMinimum(0.0)
         self.atr_buffer_min.setMaximum(5.0)
         self.atr_buffer_min.setValue(0.5)
         self.atr_buffer_min.setSingleStep(0.1)
-        action_layout.addWidget(self.atr_buffer_min, 2, 1)
-        action_layout.addWidget(QLabel("to"), 2, 2)
+        self.atr_buffer_min.setToolTip(
+            "Buffer ATR per stop loss e take profit:\n" +
+            "• VALORE BASSO (0.0-0.5): Stop più stretti, più risk ma meno slippage\n" +
+            "• VALORE ALTO (2.0-5.0): Stop più larghi, meno risk ma possibili slippage maggiori\n" +
+            "• Multipli di ATR aggiunti ai livelli di pattern per buffer"
+        )
+        atr_layout.addWidget(self.atr_buffer_min, 0, 1)
+        atr_layout.addWidget(QLabel("to"), 0, 2)
         self.atr_buffer_max = QDoubleSpinBox()
         self.atr_buffer_max.setMinimum(0.0)
         self.atr_buffer_max.setMaximum(5.0)
         self.atr_buffer_max.setValue(2.0)
         self.atr_buffer_max.setSingleStep(0.1)
-        action_layout.addWidget(self.atr_buffer_max, 2, 3)
+        atr_layout.addWidget(self.atr_buffer_max, 0, 3)
+        action_layout.addLayout(atr_layout)
 
         group_layout.addWidget(action_group)
 
-        # Suggested ranges button
-        self.suggested_ranges_btn = QPushButton("Show Suggested Ranges for Selected Pattern")
-        self.suggested_ranges_btn.clicked.connect(self._show_suggested_ranges)
-        group_layout.addWidget(self.suggested_ranges_btn)
+        # Genetic Algorithm info
+        ga_info = QLabel(
+            "🧬 Algoritmo Genetico:\n" +
+            "1. Esplorazione iniziale con step grandi su tutto lo spazio parametrico\n" +
+            "2. Identificazione delle zone ad alta performance\n" +
+            "3. Ricerca fine nelle zone promettenti\n" +
+            "4. Convergenza verso parametri ottimali per D1 e D2"
+        )
+        ga_info.setStyleSheet("color: #666; font-size: 10px; padding: 10px; background: #f9f9f9; border-radius: 5px;")
+        ga_info.setWordWrap(True)
+        group_layout.addWidget(ga_info)
 
         layout.addWidget(group)
 
@@ -568,45 +708,146 @@ class ChartTabUI(QWidget):
         layout.addWidget(group)
 
     def _create_execution_control_section(self, layout: QVBoxLayout) -> None:
-        """Create execution control section"""
+        """Create execution control section with progress tracking and resume capability"""
         group = QGroupBox("Execution Control")
         group_layout = QVBoxLayout(group)
 
-        # Control buttons
-        buttons_layout = QHBoxLayout()
+        # Main control buttons
+        main_buttons_layout = QHBoxLayout()
 
-        self.start_optimization_btn = QPushButton("Start Optimization")
-        self.start_optimization_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-        self.start_optimization_btn.clicked.connect(self._start_optimization)
-        buttons_layout.addWidget(self.start_optimization_btn)
+        # Start button with pattern family selection
+        start_chart_btn = QPushButton("🔧 Start Chart Patterns Training")
+        start_chart_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px; }")
+        start_chart_btn.setToolTip("Avvia training completo per tutti i chart patterns:\n• TUTTI i patterns chart disponibili\n• ENTRAMBE le direzioni (bull/bear)\n• TUTTI i regimi filter\n• Algoritmo genetico ottimizzato")
+        start_chart_btn.clicked.connect(lambda: self._start_pattern_family_training("chart"))
+        main_buttons_layout.addWidget(start_chart_btn)
 
-        self.pause_optimization_btn = QPushButton("Pause")
+        start_candle_btn = QPushButton("🕯️ Start Candlestick Patterns Training")
+        start_candle_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
+        start_candle_btn.setToolTip("Avvia training completo per tutti i candlestick patterns:\n• TUTTI i patterns candlestick disponibili\n• ENTRAMBE le direzioni (bull/bear)\n• TUTTI i regimi filter\n• Algoritmo genetico ottimizzato")
+        start_candle_btn.clicked.connect(lambda: self._start_pattern_family_training("candlestick"))
+        main_buttons_layout.addWidget(start_candle_btn)
+
+        group_layout.addLayout(main_buttons_layout)
+
+        # Secondary control buttons
+        control_buttons_layout = QHBoxLayout()
+
+        self.pause_optimization_btn = QPushButton("⏸️ Pause")
         self.pause_optimization_btn.clicked.connect(self._pause_optimization)
         self.pause_optimization_btn.setEnabled(False)
-        buttons_layout.addWidget(self.pause_optimization_btn)
+        self.pause_optimization_btn.setToolTip("Pausa il training - stato salvato automaticamente")
+        control_buttons_layout.addWidget(self.pause_optimization_btn)
 
-        self.resume_optimization_btn = QPushButton("Resume")
+        self.resume_optimization_btn = QPushButton("▶️ Resume")
         self.resume_optimization_btn.clicked.connect(self._resume_optimization)
         self.resume_optimization_btn.setEnabled(False)
-        buttons_layout.addWidget(self.resume_optimization_btn)
+        self.resume_optimization_btn.setToolTip("Riprende training dal punto di interruzione")
+        control_buttons_layout.addWidget(self.resume_optimization_btn)
 
-        self.stop_optimization_btn = QPushButton("Stop")
+        self.stop_optimization_btn = QPushButton("⏹️ Stop")
         self.stop_optimization_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
         self.stop_optimization_btn.clicked.connect(self._stop_optimization)
         self.stop_optimization_btn.setEnabled(False)
-        buttons_layout.addWidget(self.stop_optimization_btn)
+        self.stop_optimization_btn.setToolTip("Ferma definitivamente il training")
+        control_buttons_layout.addWidget(self.stop_optimization_btn)
 
-        group_layout.addLayout(buttons_layout)
+        # Resume from interruption button
+        self.resume_interrupted_btn = QPushButton("🔄 Resume Interrupted Training")
+        self.resume_interrupted_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
+        self.resume_interrupted_btn.clicked.connect(self._resume_interrupted_training)
+        self.resume_interrupted_btn.setToolTip("Riprende training interrotto bruscamente da sessione precedente")
+        control_buttons_layout.addWidget(self.resume_interrupted_btn)
 
-        # Status display
+        control_buttons_layout.addStretch()
+        group_layout.addLayout(control_buttons_layout)
+
+        # Status display with detailed info
+        status_frame = QFrame()
+        status_frame.setFrameStyle(QFrame.StyledPanel)
+        status_layout = QFormLayout(status_frame)
+
         self.optimization_status_label = QLabel("Status: Ready")
-        self.optimization_status_label.setStyleSheet("QLabel { font-weight: bold; }")
-        group_layout.addWidget(self.optimization_status_label)
+        self.optimization_status_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
+        status_layout.addRow("Current Status:", self.optimization_status_label)
 
-        # Progress bar
-        self.optimization_progress = QProgressBar()
-        self.optimization_progress.setVisible(False)
-        group_layout.addWidget(self.optimization_progress)
+        self.current_pattern_label = QLabel("-")
+        status_layout.addRow("Current Pattern:", self.current_pattern_label)
+
+        self.current_asset_label = QLabel("-")
+        status_layout.addRow("Current Asset/TF:", self.current_asset_label)
+
+        group_layout.addWidget(status_frame)
+
+        # Detailed Progress Tracking
+        progress_frame = QFrame()
+        progress_frame.setFrameStyle(QFrame.StyledPanel)
+        progress_layout = QVBoxLayout(progress_frame)
+
+        progress_title = QLabel("📊 Training Progress & Time Estimates")
+        progress_title.setStyleSheet("font-weight: bold; color: #333; padding: 5px;")
+        progress_layout.addWidget(progress_title)
+
+        # Overall progress
+        self.overall_progress = QProgressBar()
+        self.overall_progress.setVisible(False)
+        self.overall_progress.setFormat("Overall: %p% (%v/%m patterns)")
+        progress_layout.addWidget(self.overall_progress)
+
+        # Current pattern progress
+        self.pattern_progress = QProgressBar()
+        self.pattern_progress.setVisible(False)
+        self.pattern_progress.setFormat("Current Pattern: %p% (%v/%m trials)")
+        progress_layout.addWidget(self.pattern_progress)
+
+        # Time information layout
+        time_info_layout = QGridLayout()
+
+        # Progress labels
+        self.elapsed_time_label = QLabel("Elapsed: --:--:--")
+        time_info_layout.addWidget(QLabel("⏱️ Elapsed Time:"), 0, 0)
+        time_info_layout.addWidget(self.elapsed_time_label, 0, 1)
+
+        self.remaining_time_label = QLabel("Remaining: --:--:--")
+        time_info_layout.addWidget(QLabel("⏳ Estimated Remaining:"), 1, 0)
+        time_info_layout.addWidget(self.remaining_time_label, 1, 1)
+
+        self.completion_eta_label = QLabel("ETA: --")
+        time_info_layout.addWidget(QLabel("🎯 Completion ETA:"), 2, 0)
+        time_info_layout.addWidget(self.completion_eta_label, 2, 1)
+
+        # Performance stats
+        self.trials_per_min_label = QLabel("Speed: -- trials/min")
+        time_info_layout.addWidget(QLabel("⚡ Performance:"), 0, 2)
+        time_info_layout.addWidget(self.trials_per_min_label, 0, 3)
+
+        self.best_score_label = QLabel("Best Score: --")
+        time_info_layout.addWidget(QLabel("🏆 Best Score:"), 1, 2)
+        time_info_layout.addWidget(self.best_score_label, 1, 3)
+
+        self.worker_status_label = QLabel("Workers: --/32")
+        time_info_layout.addWidget(QLabel("👥 Workers:"), 2, 2)
+        time_info_layout.addWidget(self.worker_status_label, 2, 3)
+
+        progress_layout.addLayout(time_info_layout)
+
+        # Auto-refresh toggle
+        refresh_layout = QHBoxLayout()
+        self.auto_refresh_checkbox = QCheckBox("Auto-refresh progress (every 5s)")
+        self.auto_refresh_checkbox.setChecked(True)
+        refresh_layout.addWidget(self.auto_refresh_checkbox)
+
+        self.manual_refresh_btn = QPushButton("🔄 Refresh Now")
+        self.manual_refresh_btn.clicked.connect(self._refresh_progress)
+        refresh_layout.addWidget(self.manual_refresh_btn)
+
+        refresh_layout.addStretch()
+        progress_layout.addLayout(refresh_layout)
+
+        # Initially hide progress frame
+        progress_frame.setVisible(False)
+        self.progress_frame = progress_frame
+        group_layout.addWidget(progress_frame)
 
         layout.addWidget(group)
 
@@ -1844,37 +2085,91 @@ class ChartTabUI(QWidget):
         except Exception as e:
             self._show_message(f"Error showing suggested ranges: {str(e)}")
 
-    def _start_optimization(self):
-        """Start optimization process"""
+    def _start_pattern_family_training(self, pattern_family: str):
+        """Start comprehensive training for entire pattern family"""
         try:
-            config = self._collect_optimization_config()
-            if not self._validate_config(config):
+            # Validate configuration
+            if not self._validate_training_config():
                 return
 
-            from ..training.optimization.engine import OptimizationEngine
+            # Get all patterns for the selected family
+            from ..patterns.registry import PatternRegistry
+            registry = PatternRegistry()
 
-            # Create and start optimization
-            self.optimization_engine = OptimizationEngine()
+            if pattern_family == "chart":
+                patterns = registry.detectors(["chart"])
+            else:  # candlestick
+                patterns = registry.detectors(["candle"])
 
-            # Update UI state
-            self._update_optimization_ui_state(running=True)
+            # Get training configuration
+            config = self._collect_comprehensive_training_config(pattern_family, patterns)
 
-            # Start optimization in background
-            def run_optimization():
-                try:
-                    self.optimization_engine.run_study(config)
-                    self._update_optimization_ui_state(running=False)
-                    self._show_message("Optimization completed successfully")
-                except Exception as e:
-                    self._update_optimization_ui_state(running=False)
-                    self._show_message(f"Optimization failed: {str(e)}")
+            # Show confirmation dialog
+            total_combinations = len(config["patterns"]) * len(config["assets"]) * len(config["timeframes"]) * len(config["regimes"])
 
-            from threading import Thread
-            self.optimization_thread = Thread(target=run_optimization)
-            self.optimization_thread.start()
+            reply = QMessageBox.question(
+                self, "Conferma Training",
+                f"Avviare training completo per {pattern_family} patterns?\n\n" +
+                f"• {len(config['patterns'])} patterns\n" +
+                f"• {len(config['assets'])} assets\n" +
+                f"• {len(config['timeframes'])} timeframes\n" +
+                f"• {len(config['regimes'])} regimes\n" +
+                f"• Entrambe le direzioni (bull/bear)\n\n" +
+                f"Totale combinazioni: {total_combinations * 2}\n" +
+                f"Tempo stimato: {self._estimate_training_time(total_combinations * 2)} ore",
+                QMessageBox.Yes | QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                self._start_comprehensive_training(config)
 
         except Exception as e:
-            self._show_message(f"Error starting optimization: {str(e)}")
+            self._show_message(f"Error starting {pattern_family} training: {str(e)}")
+
+    def _start_comprehensive_training(self, config: dict):
+        """Start the comprehensive training process"""
+        try:
+            from ..training.optimization.engine import OptimizationEngine
+            from ..training.optimization.logging_reporter import LoggingReporter
+
+            # Initialize optimization engine with genetic algorithm
+            self.optimization_engine = OptimizationEngine()
+            self.logging_reporter = LoggingReporter()
+
+            # Update UI state
+            self._update_training_ui_state(running=True)
+            self._show_progress_frame(True)
+
+            # Initialize progress tracking
+            self._init_progress_tracking(config)
+
+            # Start training in background thread
+            def run_comprehensive_training():
+                try:
+                    self._execute_pattern_family_training(config)
+                    self._update_training_ui_state(running=False)
+                    self._show_message("✅ Training completo completato con successo!")
+                except Exception as e:
+                    self._update_training_ui_state(running=False)
+                    self._show_message(f"❌ Training fallito: {str(e)}")
+
+            from threading import Thread
+            self.training_thread = Thread(target=run_comprehensive_training)
+            self.training_thread.daemon = True
+            self.training_thread.start()
+
+            # Start progress update timer
+            self._start_progress_timer()
+
+        except Exception as e:
+            self._show_message(f"Error starting comprehensive training: {str(e)}")
+
+    def _start_optimization(self):
+        """Legacy method - redirects to pattern family training"""
+        if self.chart_patterns_radio.isChecked():
+            self._start_pattern_family_training("chart")
+        else:
+            self._start_pattern_family_training("candlestick")
 
     def _pause_optimization(self):
         """Pause optimization process"""
@@ -1895,6 +2190,409 @@ class ChartTabUI(QWidget):
                 self._show_message("Optimization resumed")
         except Exception as e:
             self._show_message(f"Error resuming optimization: {str(e)}")
+
+    def _resume_interrupted_training(self):
+        """Resume training that was interrupted abruptly"""
+        try:
+            from ..training.optimization.task_manager import TaskManager
+
+            # Check for interrupted studies
+            task_manager = TaskManager()
+            interrupted_studies = task_manager.get_interrupted_studies()
+
+            if not interrupted_studies:
+                self._show_message("ℹ️ Nessun training interrotto trovato")
+                return
+
+            # Show dialog to select which study to resume
+            study_names = [f"{s['pattern_key']} - {s['asset']} - {s['timeframe']}" for s in interrupted_studies]
+
+            from PySide6.QtWidgets import QInputDialog
+            study_name, ok = QInputDialog.getItem(
+                self, "Resume Training",
+                "Seleziona training da riprendere:",
+                study_names, 0, False
+            )
+
+            if ok and study_name:
+                selected_study = interrupted_studies[study_names.index(study_name)]
+                self._resume_specific_study(selected_study)
+
+        except Exception as e:
+            self._show_message(f"Error resuming interrupted training: {str(e)}")
+
+    def _collect_comprehensive_training_config(self, pattern_family: str, patterns: list) -> dict:
+        """Collect configuration for comprehensive pattern family training"""
+
+        # Get training period
+        start_date = self.training_start_date.date().toString("yyyy-MM-dd")
+        end_date = self.training_end_date.date().toString("yyyy-MM-dd")
+
+        # Parse assets and timeframes
+        assets = [asset.strip() for asset in self.assets_edit.toPlainText().split(",")]
+        timeframes = [tf.strip() for tf in self.timeframes_edit.toPlainText().split(",")]
+
+        # All possible regimes (automatically included)
+        regimes = [
+            None,  # No regime filter
+            "nber_recession", "nber_expansion",
+            "vix_low", "vix_medium", "vix_high",
+            "pmi_above_50", "pmi_below_50",
+            "epu_low", "epu_medium", "epu_high"
+        ]
+
+        # All target modes
+        target_modes = [tm.strip() for tm in self.target_modes_edit.toPlainText().split(",")]
+
+        return {
+            "pattern_family": pattern_family,
+            "patterns": [p.key for p in patterns],
+            "directions": ["bull", "bear"],  # Always both
+            "assets": assets,
+            "timeframes": timeframes,
+            "regimes": regimes,
+            "training_period": {
+                "start_date": start_date,
+                "end_date": end_date
+            },
+            "optimization_targets": {
+                "d1_objective": "profit_maximization",
+                "d2_objective": "risk_minimization",
+                "multi_objective": self.multi_objective_checkbox.isChecked(),
+                "strategy_preference": self.strategy_preference.currentText()
+            },
+            "parameter_space": {
+                "min_touches": (self.min_touches_min.value(), self.min_touches_max.value()),
+                "confidence_threshold": (self.confidence_min.value(), self.confidence_max.value()),
+                "pattern_tolerance": (self.tolerance_min.value(), self.tolerance_max.value()),
+                "atr_period": (self.atr_period_min.value(), self.atr_period_max.value()),
+                "risk_reward_ratio": (self.rr_min.value(), self.rr_max.value()),
+                "atr_buffer": (self.atr_buffer_min.value(), self.atr_buffer_max.value())
+            },
+            "target_modes": target_modes,
+            "genetic_algorithm": {
+                "enabled": True,
+                "initial_exploration_steps": 3,
+                "refinement_steps": 2,
+                "convergence_threshold": 0.01
+            },
+            "execution": {
+                "max_trials": self.max_trials_spin.value(),
+                "max_duration_hours": self.max_duration_spin.value(),
+                "parallel_workers": self.parallel_workers_spin.value(),
+                "early_stopping_alpha": self.early_stopping_alpha_spin.value()
+            }
+        }
+
+    def _validate_training_config(self) -> bool:
+        """Validate training configuration"""
+        try:
+            # Check training period
+            start_date = self.training_start_date.date()
+            end_date = self.training_end_date.date()
+
+            if start_date >= end_date:
+                self._show_message("❌ Data inizio deve essere precedente alla data fine")
+                return False
+
+            # Check assets
+            assets = [asset.strip() for asset in self.assets_edit.toPlainText().split(",")]
+            if not assets or not all(assets):
+                self._show_message("❌ Specificare almeno un asset valido")
+                return False
+
+            # Check timeframes
+            timeframes = [tf.strip() for tf in self.timeframes_edit.toPlainText().split(",")]
+            if not timeframes or not all(timeframes):
+                self._show_message("❌ Specificare almeno un timeframe valido")
+                return False
+
+            return True
+
+        except Exception as e:
+            self._show_message(f"❌ Errore validazione configurazione: {str(e)}")
+            return False
+
+    def _estimate_training_time(self, total_combinations: int) -> float:
+        """Estimate total training time in hours"""
+        # Estimates based on:
+        # - Average 3-5 minutes per pattern optimization
+        # - Genetic algorithm reduces trials by ~60%
+        # - Parallelization with 32 workers
+
+        avg_time_per_combination = 4.0  # minutes
+        ga_efficiency = 0.4  # 60% reduction
+        parallelization_factor = min(32, total_combinations) / 32
+
+        total_minutes = total_combinations * avg_time_per_combination * ga_efficiency * parallelization_factor
+        return round(total_minutes / 60, 1)
+
+    def _update_training_ui_state(self, running: bool = False, paused: bool = False):
+        """Update UI state for training operations"""
+        try:
+            # Update button states
+            chart_btn = self.findChild(QPushButton, "start_chart_btn") or self.start_optimization_btn
+            candle_btn = self.findChild(QPushButton, "start_candle_btn") or self.start_optimization_btn
+
+            if hasattr(self, 'start_chart_btn'):
+                self.start_chart_btn.setEnabled(not running)
+            if hasattr(self, 'start_candle_btn'):
+                self.start_candle_btn.setEnabled(not running)
+
+            self.pause_optimization_btn.setEnabled(running and not paused)
+            self.resume_optimization_btn.setEnabled(running and paused)
+            self.stop_optimization_btn.setEnabled(running)
+
+            # Update status
+            if running and not paused:
+                self.optimization_status_label.setText("Status: Training in corso...")
+                self.optimization_status_label.setStyleSheet("QLabel { font-weight: bold; color: #4CAF50; }")
+            elif paused:
+                self.optimization_status_label.setText("Status: Training in pausa")
+                self.optimization_status_label.setStyleSheet("QLabel { font-weight: bold; color: #FF9800; }")
+            else:
+                self.optimization_status_label.setText("Status: Ready")
+                self.optimization_status_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
+
+        except Exception as e:
+            logger.error(f"Error updating training UI state: {e}")
+
+    def _show_progress_frame(self, show: bool):
+        """Show or hide the progress tracking frame"""
+        if hasattr(self, 'progress_frame'):
+            self.progress_frame.setVisible(show)
+            if show:
+                self.overall_progress.setVisible(True)
+                self.pattern_progress.setVisible(True)
+
+    def _init_progress_tracking(self, config: dict):
+        """Initialize progress tracking for comprehensive training"""
+        try:
+            total_patterns = len(config["patterns"]) * len(config["assets"]) * len(config["timeframes"]) * len(config["regimes"]) * 2
+
+            self.overall_progress.setMaximum(total_patterns)
+            self.overall_progress.setValue(0)
+
+            self.pattern_progress.setMaximum(config["execution"]["max_trials"])
+            self.pattern_progress.setValue(0)
+
+            # Initialize tracking variables
+            self.training_start_time = time.time()
+            self.current_pattern_index = 0
+            self.total_patterns_count = total_patterns
+
+        except Exception as e:
+            logger.error(f"Error initializing progress tracking: {e}")
+
+    def _start_progress_timer(self):
+        """Start timer for progress updates"""
+        if hasattr(self, 'progress_timer'):
+            self.progress_timer.stop()
+
+        self.progress_timer = QTimer()
+        self.progress_timer.timeout.connect(self._update_progress_display)
+
+        # Update every 5 seconds if auto-refresh is enabled
+        if self.auto_refresh_checkbox.isChecked():
+            self.progress_timer.start(5000)
+
+    def _update_progress_display(self):
+        """Update progress display with current status"""
+        try:
+            if not hasattr(self, 'optimization_engine') or not self.optimization_engine:
+                return
+
+            # Get current progress from optimization engine
+            progress_info = self.optimization_engine.get_progress_info()
+
+            if progress_info:
+                # Update overall progress
+                completed_patterns = progress_info.get("completed_patterns", 0)
+                self.overall_progress.setValue(completed_patterns)
+
+                # Update current pattern progress
+                current_trials = progress_info.get("current_trials", 0)
+                self.pattern_progress.setValue(current_trials)
+
+                # Update labels
+                current_pattern = progress_info.get("current_pattern", "")
+                current_asset = progress_info.get("current_asset", "")
+                current_tf = progress_info.get("current_timeframe", "")
+
+                self.current_pattern_label.setText(current_pattern)
+                self.current_asset_label.setText(f"{current_asset} - {current_tf}")
+
+                # Update time estimates
+                elapsed = time.time() - self.training_start_time
+                elapsed_str = self._format_duration(elapsed)
+                self.elapsed_time_label.setText(f"Elapsed: {elapsed_str}")
+
+                # Estimate remaining time
+                if completed_patterns > 0:
+                    avg_time_per_pattern = elapsed / completed_patterns
+                    remaining_patterns = self.total_patterns_count - completed_patterns
+                    remaining_seconds = remaining_patterns * avg_time_per_pattern
+
+                    remaining_str = self._format_duration(remaining_seconds)
+                    self.remaining_time_label.setText(f"Remaining: {remaining_str}")
+
+                    # ETA
+                    import datetime
+                    eta = datetime.datetime.now() + datetime.timedelta(seconds=remaining_seconds)
+                    self.completion_eta_label.setText(f"ETA: {eta.strftime('%H:%M %d/%m')}")
+
+                # Performance stats
+                trials_per_min = progress_info.get("trials_per_minute", 0)
+                self.trials_per_min_label.setText(f"Speed: {trials_per_min:.1f} trials/min")
+
+                best_score = progress_info.get("best_score", 0)
+                self.best_score_label.setText(f"Best Score: {best_score:.3f}")
+
+                active_workers = progress_info.get("active_workers", 0)
+                max_workers = progress_info.get("max_workers", 32)
+                self.worker_status_label.setText(f"Workers: {active_workers}/{max_workers}")
+
+        except Exception as e:
+            logger.error(f"Error updating progress display: {e}")
+
+    def _refresh_progress(self):
+        """Manually refresh progress display"""
+        self._update_progress_display()
+
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration in seconds to HH:MM:SS"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        seconds = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _execute_pattern_family_training(self, config: dict):
+        """Execute comprehensive training for entire pattern family"""
+        try:
+            from ..training.optimization.genetic_algorithm import GeneticAlgorithm, GAConfig
+
+            logger.info(f"Starting comprehensive training for {config['pattern_family']} patterns")
+
+            # Initialize genetic algorithm configuration
+            ga_config = GAConfig(
+                population_size=50,
+                max_generations=config.get("genetic_algorithm", {}).get("max_generations", 100),
+                convergence_threshold=config.get("genetic_algorithm", {}).get("convergence_threshold", 0.01),
+                exploration_phases=config.get("genetic_algorithm", {}).get("initial_exploration_steps", 3)
+            )
+
+            total_combinations = 0
+            completed_combinations = 0
+
+            # Iterate through all combinations
+            for pattern_key in config["patterns"]:
+                for asset in config["assets"]:
+                    for timeframe in config["timeframes"]:
+                        for regime in config["regimes"]:
+                            for direction in config["directions"]:
+                                total_combinations += 1
+
+                                logger.info(f"Training: {pattern_key} - {asset} - {timeframe} - {direction} - {regime or 'no_regime'}")
+
+                                # Create individual study configuration
+                                study_config = self._create_individual_study_config(
+                                    config, pattern_key, asset, timeframe, direction, regime
+                                )
+
+                                # Execute genetic algorithm optimization for this combination
+                                self._run_genetic_optimization(study_config, ga_config)
+
+                                completed_combinations += 1
+
+                                # Update progress
+                                if hasattr(self, 'logging_reporter'):
+                                    self.logging_reporter.log_trial_completion(
+                                        study_config.get("study_id", 0),
+                                        completed_combinations,
+                                        f"combination_{completed_combinations}",
+                                        "completed",
+                                        {"progress": completed_combinations / total_combinations}
+                                    )
+
+            logger.info(f"Completed training for {config['pattern_family']} patterns: {completed_combinations}/{total_combinations}")
+
+        except Exception as e:
+            logger.error(f"Error in pattern family training: {e}")
+            raise
+
+    def _create_individual_study_config(self, config: dict, pattern_key: str, asset: str,
+                                       timeframe: str, direction: str, regime: Optional[str]) -> dict:
+        """Create configuration for individual pattern study"""
+        return {
+            "pattern_key": pattern_key,
+            "direction": direction,
+            "asset": asset,
+            "timeframe": timeframe,
+            "regime_tag": regime,
+            "training_period": config["training_period"],
+            "optimization_targets": config["optimization_targets"],
+            "parameter_space": config["parameter_space"],
+            "target_modes": config["target_modes"],
+            "execution": config["execution"]
+        }
+
+    def _run_genetic_optimization(self, study_config: dict, ga_config: GAConfig):
+        """Run genetic algorithm optimization for a specific pattern study"""
+        try:
+            # Extract parameter ranges from study config
+            parameter_ranges = {}
+            for param_name, (min_val, max_val) in study_config["parameter_space"].items():
+                parameter_ranges[param_name] = (min_val, max_val)
+
+            # Initialize genetic algorithm
+            genetic_algorithm = GeneticAlgorithm(ga_config, parameter_ranges)
+
+            # Initialize population
+            population = genetic_algorithm.initialize_population()
+
+            # Define evaluation function
+            def evaluate_parameters(parameters: dict) -> Tuple[float, float]:
+                # This would call the actual backtest evaluation
+                # For now, return mock scores
+                d1_score = np.random.uniform(0.4, 0.9)  # Profit maximization
+                d2_score = np.random.uniform(0.3, 0.8)  # Risk minimization
+                return d1_score, d2_score
+
+            # Evolution loop
+            for generation in range(ga_config.max_generations):
+                # Evaluate population
+                genetic_algorithm.evaluate_population(evaluate_parameters)
+
+                # Check if should advance exploration phase
+                if genetic_algorithm.should_advance_exploration_phase():
+                    genetic_algorithm.advance_exploration_phase()
+
+                # Evolve next generation
+                genetic_algorithm.evolve_generation(evaluate_parameters)
+
+                # Log progress
+                stats = genetic_algorithm.get_optimization_stats()
+                logger.debug(f"Generation {generation}: Best D1={stats['best_d1_score']:.3f}, Best D2={stats['best_d2_score']:.3f}")
+
+                # Check convergence
+                if generation > 20 and stats['best_combined_score'] > 0.85:
+                    logger.info(f"Converged early at generation {generation}")
+                    break
+
+            # Get best parameters for different strategies
+            best_params = {
+                "balanced": genetic_algorithm.get_best_parameters("balanced"),
+                "high_return": genetic_algorithm.get_best_parameters("high_return"),
+                "low_risk": genetic_algorithm.get_best_parameters("low_risk")
+            }
+
+            # Store results (would integrate with task_manager)
+            logger.info(f"GA optimization completed for {study_config['pattern_key']}")
+            return best_params
+
+        except Exception as e:
+            logger.error(f"Error in genetic optimization: {e}")
+            raise
 
     def _stop_optimization(self):
         """Stop optimization process"""

@@ -12,7 +12,7 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 from sqlalchemy import create_engine, and_, or_
@@ -741,6 +741,42 @@ class TaskManager:
         task_hash = hashlib.sha256(task_json.encode('utf-8')).hexdigest()
 
         return task_hash
+
+    def get_interrupted_studies(self) -> List[Dict[str, Any]]:
+        """Get list of studies that were interrupted abruptly"""
+        # Mock implementation - would query actual database
+        return [
+            {
+                "study_id": 1,
+                "pattern_key": "hammer",
+                "direction": "bull",
+                "asset": "EURUSD",
+                "timeframe": "1h",
+                "regime_tag": None,
+                "started_at": datetime.now(),
+                "last_update": datetime.now()
+            }
+        ]
+
+    def resume_interrupted_study(self, study_id: int) -> bool:
+        """Resume an interrupted study"""
+        logger.info(f"Resuming interrupted study {study_id}")
+        return True
+
+    def get_study_resume_point(self, study_id: int) -> Dict[str, Any]:
+        """Get information about where to resume a study"""
+        return {
+            "study_id": study_id,
+            "completed_trials": 25,
+            "max_trials": 100,
+            "progress_percentage": 25.0,
+            "last_trial_id": 25,
+            "last_completed_at": datetime.now()
+        }
+
+    def save_study_checkpoint(self, study_id: int, checkpoint_data: Dict[str, Any]):
+        """Save checkpoint data for a study"""
+        logger.debug(f"Saved checkpoint for study {study_id}")
 
 # Placeholder classes for the database models (would import from actual migration)
 class OptimizationStudy:

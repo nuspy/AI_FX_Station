@@ -31,6 +31,7 @@ from .task_manager import TaskManager, TaskStatus
 from .invalidation_rules import InvalidationRuleEngine
 from .early_stopping import EarlyStoppingManager
 from .logging_reporter import LoggingReporter
+from .genetic_algorithm import GeneticAlgorithm, GAConfig
 
 # Database models
 from ...services.db_service import DBService
