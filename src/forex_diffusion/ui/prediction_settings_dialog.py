@@ -213,6 +213,57 @@ class PredictionSettingsDialog(QDialog):
         self.keltner_k_spin.setToolTip("Moltiplicatore per le Keltner Channels (ampiezza del canale rispetto all'ATR).")
         self.form_layout.addRow("Keltner multiplier (k):", self.keltner_k_spin)
 
+        # ========== MULTI-TIMEFRAME HIERARCHICAL STRATEGY ==========
+        mtf_box = QGroupBox("Multi-Timeframe Hierarchical Strategy")
+        mtf_box.setToolTip("Sistema gerarchico dove ogni candela ha riferimento alla candela madre.\nImplementa la strategia multi-timeframe con selezione automatica del gruppo di candele.")
+        mtf_lay = QVBoxLayout(mtf_box)
+
+        # Enable hierarchical multi-timeframe
+        self.hierarchical_cb = QCheckBox("Enable Hierarchical Multi-Timeframe")
+        self.hierarchical_cb.setToolTip("Attiva il sistema gerarchico multi-timeframe dove ogni candela ha riferimento alla candela madre.")
+        mtf_lay.addWidget(self.hierarchical_cb)
+
+        # Query timeframe selection
+        query_h = QHBoxLayout()
+        query_h.addWidget(QLabel("Query Timeframe:"))
+        self.query_timeframe_combo = QComboBox()
+        self.query_timeframe_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h", "1d"])
+        self.query_timeframe_combo.setCurrentText("5m")
+        self.query_timeframe_combo.setToolTip("Timeframe di interrogazione per il modello.\nDefinisce il livello gerarchico su cui fare le predizioni.")
+        query_h.addWidget(self.query_timeframe_combo)
+        mtf_lay.addLayout(query_h)
+
+        # Hierarchical timeframes
+        htf_h = QHBoxLayout()
+        htf_h.addWidget(QLabel("Hierarchical Timeframes:"))
+        self.hierarchical_timeframes_edit = QLineEdit("1m, 5m, 15m, 1h")
+        self.hierarchical_timeframes_edit.setToolTip("Timeframes da includere nella gerarchia (comma-separated).\nVengono utilizzati per costruire le relazioni parent-child.")
+        htf_h.addWidget(self.hierarchical_timeframes_edit)
+        mtf_lay.addLayout(htf_h)
+
+        # Exclude children option
+        self.exclude_children_cb = QCheckBox("Exclude Children from Modeling")
+        self.exclude_children_cb.setChecked(True)
+        self.exclude_children_cb.setToolTip("Esclude le candele child dal modeling, mantenendo solo quelle del query timeframe.\nRiduce il rumore e focalizza il modello sui pattern del timeframe selezionato.")
+        mtf_lay.addWidget(self.exclude_children_cb)
+
+        # Parallel inference options
+        parallel_h = QHBoxLayout()
+        self.parallel_inference_cb = QCheckBox("Use Parallel Model Inference")
+        self.parallel_inference_cb.setChecked(True)
+        self.parallel_inference_cb.setToolTip("Abilita l'esecuzione parallela di modelli multipli per ensemble predictions.")
+        parallel_h.addWidget(self.parallel_inference_cb)
+
+        parallel_h.addWidget(QLabel("Max Workers:"))
+        self.max_workers_spin = QSpinBox()
+        self.max_workers_spin.setRange(1, 16)
+        self.max_workers_spin.setValue(4)
+        self.max_workers_spin.setToolTip("Numero massimo di thread per l'esecuzione parallela dei modelli.")
+        parallel_h.addWidget(self.max_workers_spin)
+        mtf_lay.addLayout(parallel_h)
+
+        self.layout.addWidget(mtf_box)
+
         # max forecasts
         self.max_forecasts_spin = QSpinBox()
         self.max_forecasts_spin.setRange(1, 100)
@@ -509,6 +560,14 @@ class PredictionSettingsDialog(QDialog):
             "test_history_bars": int(self.test_history_spin.value()),
             "auto_predict": bool(self.auto_checkbox.isChecked()),
             "auto_interval_seconds": int(self.auto_interval_spin.value()),
+
+            # Multi-timeframe hierarchical strategy
+            "use_hierarchical_multitf": bool(self.hierarchical_cb.isChecked()),
+            "query_timeframe": str(self.query_timeframe_combo.currentText()),
+            "hierarchical_timeframes": [h.strip() for h in self.hierarchical_timeframes_edit.text().split(",") if h.strip()],
+            "exclude_children": bool(self.exclude_children_cb.isChecked()),
+            "use_parallel_inference": bool(self.parallel_inference_cb.isChecked()),
+            "max_parallel_workers": int(self.max_workers_spin.value()),
         }
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)

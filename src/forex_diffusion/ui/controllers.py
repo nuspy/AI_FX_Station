@@ -135,6 +135,24 @@ class ForecastWorker(QRunnable):
         return out
 
     def _resolve_model_path(self, raw_path: str) -> Path:
+        """Resolve model path using standardized path resolver with legacy fallback."""
+        from ..models.model_path_resolver import ModelPathResolver
+
+        try:
+            # Use standardized resolver first
+            resolver = ModelPathResolver()
+            settings = {"model_path": raw_path}
+            resolved_paths = resolver.resolve_model_paths(settings)
+
+            if resolved_paths:
+                resolved_path = Path(resolved_paths[0])
+                logger.info("Model path resolved (standardized): {} -> {}", raw_path, str(resolved_path))
+                return resolved_path
+
+        except Exception as e:
+            logger.debug(f"Standardized resolution failed, using legacy: {e}")
+
+        # Legacy fallback resolution
         raw = (raw_path or "").strip().strip('"').strip("'")
         def canon(s: str) -> Path:
             try:
@@ -231,15 +249,24 @@ class ForecastWorker(QRunnable):
         Fallback locale (basic). Flusso:
         candele -> pipeline (NO standardization fit) -> ensure -> z-score con μ/σ del modello -> predict -> prezzi/ts -> quantili
         """
+        # Check if this is a parallel inference request
+        if self.payload.get("parallel_inference", False):
+            return self._parallel_infer()
+
         import numpy as np
         import pickle
         import hashlib
 
+        from ..utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
+
         sym = self.payload.get("symbol")
         tf = (self.payload.get("timeframe") or "1m")
-        horizons = self.payload.get("horizons", ["5m"])
+        horizons_raw = self.payload.get("horizons", ["5m"])
         limit = int(self.payload.get("limit_candles", 512))
         ftype = str(self.payload.get("forecast_type", "basic")).lower()
+
+        # Converti horizons al formato corretto
+        horizons_time_labels, horizons_bars = convert_horizons_for_inference(horizons_raw, tf)
 
         # 1) dati (ancorati all'eventuale timestamp del click)
         anchor_ts = None
@@ -277,7 +304,7 @@ class ForecastWorker(QRunnable):
         if df_candles.empty:
             raise RuntimeError("No candles available at anchor timestamp")
 
-        # 2) carica modello (se non RW)
+        # 2) carica modello usando standardized loader (se non RW)
         used_model_path_str = ""
         model_sha16 = None
         payload_obj = {}
@@ -286,45 +313,273 @@ class ForecastWorker(QRunnable):
         std_mu: Dict[str, float] = {}
         std_sigma: Dict[str, float] = {}
         if ftype != "rw":
+            from ..models.standardized_loader import get_model_loader
+
             mp = self.payload.get("model_path") or self.payload.get("model")
             p = self._resolve_model_path(str(mp))
             if not p.exists():
                 raise FileNotFoundError(f"Model file not found: {p}")
             used_model_path_str = str(p)
+
+            # Use standardized loader
             try:
-                model_sha16 = hashlib.sha256(open(p, "rb").read()).hexdigest()[:16]
-            except Exception:
-                model_sha16 = None
-            # payload pickle
-            with open(p, "rb") as f:
-                payload_obj = pickle.load(f)
-            model = payload_obj.get("model")
-            features_list = payload_obj.get("features") or []
-            # supporto artifact legacy: 'std' senza 'std_sigma'
-            std_mu = payload_obj.get("std_mu") or payload_obj.get("std") or {}
-            std_sigma = payload_obj.get("std_sigma") or ({c: 1.0 for c in features_list} if "std" in payload_obj else {})
-            if model is None or not features_list:
-                raise RuntimeError("Model payload missing 'model' or 'features'")
+                loader = get_model_loader()
+                model_data = loader.load_single_model(str(p))
+
+                # Extract standardized data
+                model = model_data['model']
+                features_list = model_data.get('features', [])
+
+                # Handle standardizer/scaler with legacy compatibility
+                scaler = model_data.get('scaler') or model_data.get('standardizer')
+                if scaler:
+                    std_mu = scaler.get('mu') if isinstance(scaler, dict) else {}
+                    std_sigma = scaler.get('sigma') if isinstance(scaler, dict) else {}
+                else:
+                    # Legacy support
+                    payload_obj = model_data.get('raw_data', {})
+                    std_mu = payload_obj.get("std_mu") or payload_obj.get("std") or {}
+                    std_sigma = payload_obj.get("std_sigma") or ({c: 1.0 for c in features_list} if "std" in payload_obj else {})
+
+                # Calculate model hash
+                try:
+                    model_sha16 = hashlib.sha256(open(p, "rb").read()).hexdigest()[:16]
+                except Exception:
+                    model_sha16 = None
+
+                # Validation
+                validation = model_data.get('validation', {})
+                if not validation.get('valid', True):
+                    logger.warning(f"Model validation issues: {validation.get('errors', [])}")
+
+                if model is None or not features_list:
+                    raise RuntimeError("Model payload missing 'model' or 'features'")
+
+                logger.debug(f"Loaded model: {model_data.get('model_type', 'unknown')} from {Path(p).name}")
+
+            except Exception as e:
+                logger.error(f"Standardized loader failed, falling back to legacy loader: {e}")
+                # Fallback to legacy loading
+                with open(p, "rb") as f:
+                    payload_obj = pickle.load(f)
+                model = payload_obj.get("model")
+                features_list = payload_obj.get("features") or []
+                std_mu = payload_obj.get("std_mu") or payload_obj.get("std") or {}
+                std_sigma = payload_obj.get("std_sigma") or ({c: 1.0 for c in features_list} if "std" in payload_obj else {})
+
+                # Calculate model hash
+                try:
+                    model_sha16 = hashlib.sha256(open(p, "rb").read()).hexdigest()[:16]
+                except Exception:
+                    model_sha16 = None
+
+                if model is None or not features_list:
+                    raise RuntimeError("Model payload missing 'model' or 'features'")
         else:
             # RW baseline
             std_mu, std_sigma = {}, {}
 
-        # 3) features via pipeline **senza** rifit dello standardizer
-        no_std = Standardizer(cols=[], mu={}, sigma={})
-        feats_cfg = {
-            "warmup_bars": int(self.payload.get("warmup_bars", 16)),
-            "indicators": {
-                "atr": {"n": int(self.payload.get("atr_n", 14))},
-                "rsi": {"n": int(self.payload.get("rsi_n", 14))},
-                "bollinger": {"n": int(self.payload.get("bb_n", 20))},
-                "hurst": {"window": int(self.payload.get("hurst_window", 64))},
-            },
-            # IMPORTANT: mai None; passa un dict
-            "standardization": {"enabled": False},  # disattiva lo standardizer interno del pipeline
+        # 3) features usando STESSO sistema del training (train_sklearn.py) CON CACHING
+        from ..training.train_sklearn import _relative_ohlc, _temporal_feats, _realized_vol_feature, _indicators, _coerce_indicator_tfs
+        from ..features.feature_cache import get_feature_cache
+        from ..features.unified_pipeline import FeatureConfig, hierarchical_multi_timeframe_pipeline
+
+        # Configura la cache delle features
+        feature_cache = get_feature_cache()
+
+        # Crea configurazione per il caching
+        cache_config = {
+            "use_relative_ohlc": self.payload.get("use_relative_ohlc", True),
+            "use_temporal_features": self.payload.get("use_temporal_features", True),
+            "rv_window": int(self.payload.get("rv_window", 60)),
+            "indicator_tfs": self.payload.get("indicator_tfs", {}),
+            "advanced": self.payload.get("advanced", False),
+            "use_advanced_features": self.payload.get("use_advanced_features", False),
+            "enable_ema_features": self.payload.get("enable_ema_features", False),
+            "enable_donchian": self.payload.get("enable_donchian", False),
+            "enable_keltner": self.payload.get("enable_keltner", False),
+            "enable_hurst_advanced": self.payload.get("enable_hurst_advanced", False),
+            "atr_n": int(self.payload.get("atr_n", 14)),
+            "rsi_n": int(self.payload.get("rsi_n", 14)),
+            "bb_n": int(self.payload.get("bb_n", 20)),
+            "don_n": int(self.payload.get("don_n", 20)),
+            "keltner_ema": int(self.payload.get("keltner_ema", 20)),
+            "keltner_atr": int(self.payload.get("keltner_atr", 10)),
+            "keltner_k": float(self.payload.get("keltner_k", 1.5)),
+            "hurst_window": int(self.payload.get("hurst_window", 64)),
+            "ema_fast": int(self.payload.get("ema_fast", 12)),
+            "ema_slow": int(self.payload.get("ema_slow", 26))
         }
-        feats_df, _ = pipeline_process(df_candles.copy(), timeframe=tf, features_config=feats_cfg, standardizer=no_std)
-        if feats_df is None or feats_df.empty:
-            raise RuntimeError("No features computed for local inference")
+
+        # Controlla se usare il sistema multi-timeframe hierarchical
+        use_hierarchical = self.payload.get("use_hierarchical_multitf", False)
+        query_timeframe = self.payload.get("query_timeframe", tf)
+
+        # Controlla cache prima di calcolare features
+        cached_result = feature_cache.get_cached_features(df_candles, cache_config, tf)
+
+        if cached_result is not None:
+            feats_df, feature_metadata = cached_result
+            logger.debug(f"Features loaded from cache for {symbol} {tf}")
+        else:
+            # Calcola features (cache miss)
+            logger.debug(f"Computing features for {symbol} {tf} (cache miss)")
+
+            if use_hierarchical:
+                # USA SISTEMA HIERARCHICAL MULTI-TIMEFRAME
+                logger.info(f"Using hierarchical multi-timeframe system: query_tf={query_timeframe}")
+
+                # Configura FeatureConfig per hierarchical
+                feature_config = FeatureConfig({
+                    "base_features": {
+                        "relative_ohlc": cache_config["use_relative_ohlc"],
+                        "log_returns": True,
+                        "time_features": cache_config["use_temporal_features"],
+                        "session_features": True
+                    },
+                    "indicators": {
+                        "atr": {"enabled": True, "n": cache_config["atr_n"]},
+                        "rsi": {"enabled": True, "n": cache_config["rsi_n"]},
+                        "bollinger": {"enabled": True, "n": cache_config["bb_n"], "k": 2.0},
+                        "macd": {"enabled": True, "fast": 12, "slow": 26, "signal": 9},
+                        "donchian": {"enabled": cache_config.get("enable_donchian", False), "n": cache_config["don_n"]},
+                        "keltner": {"enabled": cache_config.get("enable_keltner", False),
+                                  "ema": cache_config["keltner_ema"], "atr": cache_config["keltner_atr"], "mult": cache_config["keltner_k"]},
+                        "hurst": {"enabled": cache_config.get("enable_hurst_advanced", False), "window": cache_config["hurst_window"]},
+                        "ema": {"enabled": cache_config.get("enable_ema_features", False),
+                               "fast": cache_config["ema_fast"], "slow": cache_config["ema_slow"]}
+                    },
+                    "multi_timeframe": {
+                        "enabled": True,
+                        "timeframes": self.payload.get("hierarchical_timeframes", ["1m", "5m", "15m", "1h"]),
+                        "base_timeframe": tf,
+                        "query_timeframe": query_timeframe,
+                        "indicators": list(cache_config.get("indicator_tfs", {}).keys()),
+                        "hierarchical_mode": True,
+                        "exclude_children": self.payload.get("exclude_children", True),
+                        "auto_group_selection": True
+                    },
+                    "rv_window": cache_config["rv_window"],
+                    "standardization": {"enabled": True}
+                })
+
+                # Applica il pipeline hierarchical
+                feats_df, standardizer, feature_names, hierarchy = hierarchical_multi_timeframe_pipeline(
+                    df_candles, feature_config, tf, standardizer=None, fit_standardizer=False
+                )
+
+                logger.info(f"Hierarchical pipeline completed: {len(feature_names)} features, {len(feats_df)} samples")
+
+            else:
+                # USA SISTEMA TRADIZIONALE (come prima)
+                # Usa gli stessi metodi del training per garantire coerenza
+                feats_list = []
+
+                # Relative OHLC (come in training)
+                if cache_config["use_relative_ohlc"]:
+                    feats_list.append(_relative_ohlc(df_candles))
+
+                # Temporal features (come in training)
+                if cache_config["use_temporal_features"]:
+                    feats_list.append(_temporal_feats(df_candles))
+
+                # Realized volatility (come in training)
+                if cache_config["rv_window"] > 1:
+                    feats_list.append(_realized_vol_feature(df_candles, cache_config["rv_window"]))
+
+                # Multi-timeframe indicators (come in training)
+                indicator_tfs_raw = cache_config["indicator_tfs"]
+                indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
+
+                # Advanced mode: aggiungi indicators extra se abilitato
+                is_advanced = cache_config["advanced"] or cache_config["use_advanced_features"]
+
+                if is_advanced:
+                    # In advanced mode, aggiungi indicators anche se non in indicator_tfs
+                    if not indicator_tfs:
+                        indicator_tfs = {}
+
+                    # Abilita features avanzate se richieste
+                    if cache_config["enable_ema_features"]:
+                        indicator_tfs.setdefault("ema", [tf])
+
+                    if cache_config["enable_donchian"]:
+                        indicator_tfs.setdefault("donchian", [tf])
+
+                    if cache_config["enable_keltner"]:
+                        indicator_tfs.setdefault("keltner", [tf])
+
+                    if cache_config["enable_hurst_advanced"]:
+                        indicator_tfs.setdefault("hurst", [tf])
+
+                if indicator_tfs:
+                    # Crea la stessa configurazione del training
+                    ind_cfg = {}
+                    if "atr" in indicator_tfs:
+                        ind_cfg["atr"] = {"n": cache_config["atr_n"]}
+                    if "rsi" in indicator_tfs:
+                        ind_cfg["rsi"] = {"n": cache_config["rsi_n"]}
+                    if "bollinger" in indicator_tfs:
+                        ind_cfg["bollinger"] = {"n": cache_config["bb_n"], "dev": 2.0}
+                    if "macd" in indicator_tfs:
+                        ind_cfg["macd"] = {"fast": 12, "slow": 26, "signal": 9}
+                    if "donchian" in indicator_tfs:
+                        ind_cfg["donchian"] = {"n": cache_config["don_n"]}
+                    if "keltner" in indicator_tfs:
+                        ind_cfg["keltner"] = {
+                            "ema": cache_config["keltner_ema"],
+                            "atr": cache_config["keltner_atr"],
+                            "mult": cache_config["keltner_k"]
+                        }
+                    if "hurst" in indicator_tfs:
+                        ind_cfg["hurst"] = {"window": cache_config["hurst_window"]}
+                    if "ema" in indicator_tfs:
+                        ind_cfg["ema"] = {
+                            "fast": cache_config["ema_fast"],
+                            "slow": cache_config["ema_slow"]
+                        }
+
+                    if ind_cfg:
+                        feats_list.append(_indicators(df_candles, ind_cfg, indicator_tfs, tf))
+
+                if not feats_list:
+                    raise RuntimeError("No features configured for inference")
+
+                # Combina tutte le features (come in training)
+                feats_df = pd.concat(feats_list, axis=1)
+                feats_df = feats_df.replace([np.inf, -np.inf], np.nan)
+
+                # Salva in cache per riuso futuro (solo per sistema tradizionale)
+                feature_metadata = {
+                    "config": cache_config,
+                    "timestamp": df_candles["ts_utc"].iat[-1] if len(df_candles) > 0 else 0,
+                    "symbol": symbol,
+                    "timeframe": tf
+                }
+
+                try:
+                    feature_cache.cache_features(df_candles, feats_df, feature_metadata, cache_config, tf)
+                    logger.debug(f"Features cached for {symbol} {tf}")
+                except Exception as e:
+                    logger.warning(f"Failed to cache features: {e}")
+
+        # Applica coverage filtering (come in training)
+        coverage = feats_df.notna().mean()
+        min_cov = float(self.payload.get("min_feature_coverage", 0.15))
+        if min_cov > 0.0:
+            low_cov = coverage[coverage < min_cov]
+            if not low_cov.empty:
+                feats_df = feats_df.drop(columns=list(low_cov.index), errors="ignore")
+
+        feats_df = feats_df.dropna()
+
+        # Applica warmup (come in training)
+        warmup_bars = int(self.payload.get("warmup_bars", 16))
+        if warmup_bars > 0 and len(feats_df) > warmup_bars:
+            feats_df = feats_df.iloc[warmup_bars:]
+
+        if feats_df.empty:
+            raise RuntimeError("No features computed after preprocessing")
 
         # 4) ensure schema and feature order (only if helper is available)
         if callable(_ensure_features_for_prediction) and features_list:
@@ -362,27 +617,46 @@ class ForecastWorker(QRunnable):
         import numpy as np
         preds = None
         if model is not None:
+            # Usa l'ultimo sample per la predizione
+            X_last = X_arr[-1:, :]  # Shape: (1, n_features)
+
             # torch?
             try:
                 import torch
                 if hasattr(model, "eval"):
                     model.eval()
                 with torch.no_grad():
-                    t_in = torch.tensor(X_arr[-max(1, len(horizons)):, :], dtype=torch.float32)
+                    t_in = torch.tensor(X_last, dtype=torch.float32)
                     out = model(t_in)
                     preds = np.ravel(out.detach().cpu().numpy())
             except Exception:
                 # sklearn?
                 if hasattr(model, "predict"):
-                    preds = np.ravel(model.predict(X_arr[-max(1, len(horizons)):, :]))
+                    preds = np.ravel(model.predict(X_last))
+
         if preds is None:
             # fallback: zero-returns
-            preds = np.zeros((max(1, len(horizons)),), dtype=float)
+            preds = np.zeros((1,), dtype=float)
 
-        # 7) prezzi e quantili semplici (vol-based)
+        # Replica predizione per tutti gli horizons (assumendo single-step model)
+        if len(preds) == 1 and len(horizons_bars) > 1:
+            # Single-step model: scala la predizione per horizons diversi
+            base_pred = preds[0]
+            scaled_preds = []
+            for i, bars in enumerate(horizons_bars):
+                # Scala linearmente con il numero di bars (semplificazione)
+                scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
+                scaled_preds.append(base_pred * scale_factor)
+            preds = np.array(scaled_preds)
+        elif len(preds) < len(horizons_bars):
+            # Estendi la predizione per coprire tutti gli horizons
+            preds = np.pad(preds, (0, len(horizons_bars) - len(preds)), mode='edge')
+
+        # 7) prezzi e quantili usando conversione horizon corretta
         last_close = float(df_candles["close"].iat[-1])
-        seq = preds[-len(horizons):] if preds.size >= len(horizons) else \
-              (np.pad(preds, (0, len(horizons) - preds.size), mode="edge") if preds.size > 0 else np.zeros(len(horizons)))
+
+        # Usa le predizioni convertite
+        seq = preds[:len(horizons_bars)]
         prices = []
         p = last_close
         for r in seq:
@@ -390,23 +664,25 @@ class ForecastWorker(QRunnable):
             prices.append(p)
         q50 = np.asarray(prices, dtype=float)
 
-        # volatilità realizzata per bande
+        # Volatilità realizzata per bande
         logret = pd.Series(df_candles["close"], dtype=float).pipe(lambda s: np.log(s).diff()).dropna()
         sigma_base = float(logret.tail(512).std() if len(logret) else 0.0)
         z = 1.645 if bool(self.payload.get("apply_conformal", True)) else 1.0
-        k = np.arange(1, len(q50) + 1, dtype=float)
-        band_rel = np.clip(z * sigma_base * np.sqrt(k), 1e-6, 0.2)
+
+        # Scala volatilità per horizon bars (volatilità aumenta con √time)
+        band_rel = []
+        for i, bars in enumerate(horizons_bars):
+            vol_scale = np.sqrt(bars) if bars > 0 else 1.0
+            band = np.clip(z * sigma_base * vol_scale, 1e-6, 0.2)
+            band_rel.append(band)
+
+        band_rel = np.array(band_rel)
         q05 = np.maximum(1e-12, q50 * (1.0 - band_rel))
         q95 = np.maximum(1e-12, q50 * (1.0 + band_rel))
 
-        # 8) future_ts ancorati a last_ts + Δ(tf/horizon-label)
-        base = pd.to_datetime(int(df_candles["ts_utc"].iat[-1]), unit="ms", utc=True)
-        future_ts = []
-        for h in horizons:
-            try:
-                future_ts.append(int((base + pd.to_timedelta(str(h))).value // 1_000_000))
-            except Exception:
-                future_ts.append(int((base + pd.to_timedelta("1m")).value // 1_000_000))
+        # 8) future_ts usando converter
+        last_ts_ms = int(df_candles["ts_utc"].iat[-1])
+        future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
 
         display_name = str(self.payload.get("name") or self.payload.get("source_label") or "forecast")
         quantiles = {
@@ -420,6 +696,366 @@ class ForecastWorker(QRunnable):
             "model_sha16": model_sha16,
         }
         return df_candles, quantiles
+
+    def _parallel_infer(self) -> Tuple[pd.DataFrame, Dict]:
+        """
+        Parallel inference using multiple models for ensemble predictions.
+        """
+        try:
+            from ..inference.parallel_inference import get_parallel_engine
+            from ..utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
+
+            symbol = str(self.payload.get("symbol", "EUR/USD"))
+            tf = str(self.payload.get("timeframe", "1m"))
+            horizons_raw = self.payload.get("horizons", ["5m"])
+            limit = int(self.payload.get("limit_candles", 512))
+
+            logger.info(f"Starting parallel inference for {symbol} {tf}")
+
+            # Converti horizons al formato corretto
+            horizons_time_labels, horizons_bars = convert_horizons_for_inference(horizons_raw, tf)
+
+            # Get candles (reuse existing logic)
+            anchor_ts = None
+            try:
+                a = self.payload.get("testing_point_ts", None)
+                if a is None:
+                    a = self.payload.get("requested_at_ms", None)
+                if a is not None:
+                    anchor_ts = int(a)
+            except Exception:
+                anchor_ts = None
+
+            # Get data
+            if isinstance(self.payload.get("candles_override"), (list, tuple)):
+                df_candles = self._dict_to_candles(self.payload["candles_override"])
+            else:
+                df_candles = self._fetch_recent_candles(
+                    self.engine, symbol, tf, limit, anchor_ts
+                ).copy()
+
+            if df_candles.empty:
+                raise RuntimeError("No candles available for parallel inference")
+
+            # Prepare features using the same system as single model inference
+            # (reuse the feature computation logic from _local_infer)
+            from ..training.train_sklearn import _relative_ohlc, _temporal_feats, _realized_vol_feature, _indicators, _coerce_indicator_tfs
+            from ..features.feature_cache import get_feature_cache
+            from ..features.unified_pipeline import FeatureConfig, hierarchical_multi_timeframe_pipeline
+
+            # Configure feature cache
+            feature_cache = get_feature_cache()
+
+            # Create configuration for caching
+            cache_config = {
+                "use_relative_ohlc": self.payload.get("use_relative_ohlc", True),
+                "use_temporal_features": self.payload.get("use_temporal_features", True),
+                "rv_window": int(self.payload.get("rv_window", 60)),
+                "indicator_tfs": self.payload.get("indicator_tfs", {}),
+                "advanced": self.payload.get("advanced", False),
+                "use_advanced_features": self.payload.get("use_advanced_features", False),
+                "enable_ema_features": self.payload.get("enable_ema_features", False),
+                "enable_donchian": self.payload.get("enable_donchian", False),
+                "enable_keltner": self.payload.get("enable_keltner", False),
+                "enable_hurst_advanced": self.payload.get("enable_hurst_advanced", False),
+                "atr_n": int(self.payload.get("atr_n", 14)),
+                "rsi_n": int(self.payload.get("rsi_n", 14)),
+                "bb_n": int(self.payload.get("bb_n", 20)),
+                "don_n": int(self.payload.get("don_n", 20)),
+                "keltner_ema": int(self.payload.get("keltner_ema", 20)),
+                "keltner_atr": int(self.payload.get("keltner_atr", 10)),
+                "keltner_k": float(self.payload.get("keltner_k", 1.5)),
+                "hurst_window": int(self.payload.get("hurst_window", 64)),
+                "ema_fast": int(self.payload.get("ema_fast", 12)),
+                "ema_slow": int(self.payload.get("ema_slow", 26))
+            }
+
+            # Check if using hierarchical multi-timeframe
+            use_hierarchical = self.payload.get("use_hierarchical_multitf", False)
+            query_timeframe = self.payload.get("query_timeframe", tf)
+
+            # Check cache first
+            cached_result = feature_cache.get_cached_features(df_candles, cache_config, tf)
+
+            if cached_result is not None:
+                feats_df, feature_metadata = cached_result
+                logger.debug(f"Features loaded from cache for parallel inference {symbol} {tf}")
+            else:
+                # Compute features (same as single model)
+
+                if use_hierarchical:
+                    # USA SISTEMA HIERARCHICAL MULTI-TIMEFRAME nel parallel inference
+                    logger.info(f"Using hierarchical multi-timeframe in parallel inference: query_tf={query_timeframe}")
+
+                    # Configura FeatureConfig per hierarchical
+                    feature_config = FeatureConfig({
+                        "base_features": {
+                            "relative_ohlc": cache_config["use_relative_ohlc"],
+                            "log_returns": True,
+                            "time_features": cache_config["use_temporal_features"],
+                            "session_features": True
+                        },
+                        "indicators": {
+                            "atr": {"enabled": True, "n": cache_config["atr_n"]},
+                            "rsi": {"enabled": True, "n": cache_config["rsi_n"]},
+                            "bollinger": {"enabled": True, "n": cache_config["bb_n"], "k": 2.0},
+                            "macd": {"enabled": True, "fast": 12, "slow": 26, "signal": 9},
+                            "donchian": {"enabled": cache_config.get("enable_donchian", False), "n": cache_config["don_n"]},
+                            "keltner": {"enabled": cache_config.get("enable_keltner", False),
+                                      "ema": cache_config["keltner_ema"], "atr": cache_config["keltner_atr"], "mult": cache_config["keltner_k"]},
+                            "hurst": {"enabled": cache_config.get("enable_hurst_advanced", False), "window": cache_config["hurst_window"]},
+                            "ema": {"enabled": cache_config.get("enable_ema_features", False),
+                                   "fast": cache_config["ema_fast"], "slow": cache_config["ema_slow"]}
+                        },
+                        "multi_timeframe": {
+                            "enabled": True,
+                            "timeframes": self.payload.get("hierarchical_timeframes", ["1m", "5m", "15m", "1h"]),
+                            "base_timeframe": tf,
+                            "query_timeframe": query_timeframe,
+                            "indicators": list(cache_config.get("indicator_tfs", {}).keys()),
+                            "hierarchical_mode": True,
+                            "exclude_children": self.payload.get("exclude_children", True),
+                            "auto_group_selection": True
+                        },
+                        "rv_window": cache_config["rv_window"],
+                        "standardization": {"enabled": True}
+                    })
+
+                    # Applica il pipeline hierarchical
+                    feats_df, standardizer, feature_names, hierarchy = hierarchical_multi_timeframe_pipeline(
+                        df_candles, feature_config, tf, standardizer=None, fit_standardizer=False
+                    )
+
+                    logger.info(f"Hierarchical pipeline in parallel inference completed: {len(feature_names)} features, {len(feats_df)} samples")
+
+                else:
+                    # Sistema tradizionale per parallel inference
+                    feats_list = []
+
+                    if cache_config["use_relative_ohlc"]:
+                        feats_list.append(_relative_ohlc(df_candles))
+
+                    if cache_config["use_temporal_features"]:
+                        feats_list.append(_temporal_feats(df_candles))
+
+                    if cache_config["rv_window"] > 1:
+                        feats_list.append(_realized_vol_feature(df_candles, cache_config["rv_window"]))
+
+                    # Indicators
+                    indicator_tfs_raw = cache_config["indicator_tfs"]
+                    indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
+
+                    is_advanced = cache_config["advanced"] or cache_config["use_advanced_features"]
+
+                    if is_advanced:
+                        if not indicator_tfs:
+                            indicator_tfs = {}
+
+                        if cache_config["enable_ema_features"]:
+                            indicator_tfs.setdefault("ema", [tf])
+                        if cache_config["enable_donchian"]:
+                            indicator_tfs.setdefault("donchian", [tf])
+                        if cache_config["enable_keltner"]:
+                            indicator_tfs.setdefault("keltner", [tf])
+                        if cache_config["enable_hurst_advanced"]:
+                            indicator_tfs.setdefault("hurst", [tf])
+
+                    if indicator_tfs:
+                        # Same indicator config as single model
+                        ind_cfg = {}
+                        if "atr" in indicator_tfs:
+                            ind_cfg["atr"] = {"n": cache_config["atr_n"]}
+                        if "rsi" in indicator_tfs:
+                            ind_cfg["rsi"] = {"n": cache_config["rsi_n"]}
+                        if "bollinger" in indicator_tfs:
+                            ind_cfg["bollinger"] = {"n": cache_config["bb_n"], "dev": 2.0}
+                        if "macd" in indicator_tfs:
+                            ind_cfg["macd"] = {"fast": 12, "slow": 26, "signal": 9}
+                        if "donchian" in indicator_tfs:
+                            ind_cfg["donchian"] = {"n": cache_config["don_n"]}
+                        if "keltner" in indicator_tfs:
+                            ind_cfg["keltner"] = {
+                                "ema": cache_config["keltner_ema"],
+                                "atr": cache_config["keltner_atr"],
+                                "mult": cache_config["keltner_k"]
+                            }
+                        if "hurst" in indicator_tfs:
+                            ind_cfg["hurst"] = {"window": cache_config["hurst_window"]}
+                        if "ema" in indicator_tfs:
+                            ind_cfg["ema"] = {
+                                "fast": cache_config["ema_fast"],
+                                "slow": cache_config["ema_slow"]
+                            }
+
+                        if ind_cfg:
+                            feats_list.append(_indicators(df_candles, ind_cfg, indicator_tfs, tf))
+
+                    if not feats_list:
+                        raise RuntimeError("No features configured for parallel inference")
+
+                    feats_df = pd.concat(feats_list, axis=1)
+                    feats_df = feats_df.replace([np.inf, -np.inf], np.nan)
+
+                    # Cache the features (solo per sistema tradizionale)
+                    feature_metadata = {
+                        "config": cache_config,
+                        "timestamp": df_candles["ts_utc"].iat[-1] if len(df_candles) > 0 else 0,
+                        "symbol": symbol,
+                        "timeframe": tf
+                    }
+
+                    try:
+                        feature_cache.cache_features(df_candles, feats_df, feature_metadata, cache_config, tf)
+                    except Exception as e:
+                        logger.warning(f"Failed to cache features for parallel inference: {e}")
+
+            # Coverage filtering
+            coverage = feats_df.notna().mean()
+            min_cov = float(self.payload.get("min_feature_coverage", 0.15))
+            keep_feats = coverage[coverage >= min_cov].index.tolist()
+            if not keep_feats:
+                logger.warning("No features meet coverage requirement, using all features")
+                keep_feats = feats_df.columns.tolist()
+
+            feats_df = feats_df[keep_feats]
+
+            # Initialize parallel engine
+            max_workers = self.payload.get("max_parallel_workers", None)
+            parallel_engine = get_parallel_engine(max_workers)
+
+            # Create settings for parallel inference
+            parallel_settings = {
+                "model_paths": self.payload.get("model_paths", [])
+            }
+
+            # Run parallel inference
+            parallel_results = parallel_engine.run_parallel_inference(
+                parallel_settings,
+                feats_df,
+                symbol,
+                tf,
+                horizons_raw
+            )
+
+            # Extract ensemble predictions
+            ensemble_preds = parallel_results.get("ensemble_predictions")
+            if ensemble_preds is None:
+                raise RuntimeError("Parallel inference failed to produce ensemble predictions")
+
+            # Convert ensemble predictions to price forecasts
+            last_close = float(df_candles["close"].iat[-1])
+            mean_returns = np.array(ensemble_preds["mean"])
+            std_returns = np.array(ensemble_preds["std"])
+
+            # Convert returns to prices
+            prices = []
+            p = last_close
+            for r in mean_returns:
+                p *= (1.0 + float(r))
+                prices.append(p)
+            q50 = np.array(prices)
+
+            # Create confidence bands using ensemble uncertainty
+            confidence_level = 1.645 if self.payload.get("apply_conformal", True) else 1.0
+
+            # Calculate price bands based on return volatility
+            price_bands_lower = []
+            price_bands_upper = []
+            p = last_close
+
+            for i, (r_mean, r_std) in enumerate(zip(mean_returns, std_returns)):
+                r_lower = r_mean - confidence_level * r_std
+                r_upper = r_mean + confidence_level * r_std
+
+                p_mean = p * (1.0 + r_mean)
+                p_lower = p * (1.0 + r_lower)
+                p_upper = p * (1.0 + r_upper)
+
+                price_bands_lower.append(max(1e-12, p_lower))
+                price_bands_upper.append(max(1e-12, p_upper))
+
+                p = p_mean  # Update base price for next horizon
+
+            q05 = np.array(price_bands_lower)
+            q95 = np.array(price_bands_upper)
+
+            # Create future timestamps
+            last_ts_ms = int(df_candles["ts_utc"].iat[-1])
+            future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
+
+            # Create quantiles result with ensemble information
+            display_name = str(self.payload.get("name") or "Parallel Ensemble")
+            quantiles = {
+                "q50": q50.tolist(),
+                "q05": q05.tolist(),
+                "q95": q95.tolist(),
+                "future_ts": future_ts,
+                "source": display_name,
+                "label": display_name,
+                "ensemble_info": {
+                    "model_count": parallel_results.get("total_models", 0),
+                    "successful_models": parallel_results.get("successful_models", 0),
+                    "model_weights": parallel_results.get("model_weights", []),
+                    "execution_summary": parallel_results.get("execution_summary", {}),
+                    "individual_predictions": ensemble_preds.get("individual", [])
+                },
+                "parallel_inference": True
+            }
+
+            logger.info(f"Parallel inference completed for {symbol} {tf}: "
+                       f"{parallel_results.get('successful_models', 0)}/{parallel_results.get('total_models', 0)} models succeeded")
+
+            return df_candles, quantiles
+
+        except Exception as e:
+            logger.error(f"Parallel inference failed: {e}")
+            # Fallback to RW prediction
+            import numpy as np
+            from ..utils.horizon_converter import create_future_timestamps
+
+            symbol = str(self.payload.get("symbol", "EUR/USD"))
+            tf = str(self.payload.get("timeframe", "1m"))
+            horizons_raw = self.payload.get("horizons", ["5m"])
+
+            # Get basic candle data for fallback
+            try:
+                df_candles = self._fetch_recent_candles(self.engine, symbol, tf, 100, None).copy()
+                if df_candles.empty:
+                    raise RuntimeError("No candles available")
+
+                last_close = float(df_candles["close"].iat[-1])
+                logret = pd.Series(df_candles["close"], dtype=float).pipe(lambda s: np.log(s).diff()).dropna()
+                sigma = float(logret.tail(100).std() if len(logret) else 0.01)
+
+                # Simple random walk forecasts
+                n_horizons = len(horizons_raw)
+                random_walks = np.random.randn(n_horizons) * sigma * 0.1
+                prices = [last_close * (1 + rw) for rw in random_walks]
+
+                # Convert horizons for timestamps
+                from ..utils.horizon_converter import convert_horizons_for_inference
+                horizons_time_labels, _ = convert_horizons_for_inference(horizons_raw, tf)
+
+                last_ts_ms = int(df_candles["ts_utc"].iat[-1])
+                future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
+
+                quantiles = {
+                    "q50": prices,
+                    "q05": [p * 0.95 for p in prices],
+                    "q95": [p * 1.05 for p in prices],
+                    "future_ts": future_ts,
+                    "source": "Parallel Ensemble (Fallback)",
+                    "label": "Parallel Ensemble (Fallback)",
+                    "error": str(e),
+                    "parallel_inference": True,
+                    "fallback": True
+                }
+
+                return df_candles, quantiles
+
+            except Exception as fallback_error:
+                logger.error(f"Parallel inference fallback also failed: {fallback_error}")
+                raise RuntimeError(f"Parallel inference failed: {e}. Fallback also failed: {fallback_error}")
 
 
 # ----------------------------- UI Controller ------------------------------ #
@@ -613,46 +1249,11 @@ class UIController:
     def handle_forecast_requested(self):
         settings = PredictionSettingsDialog.get_settings() or {}
 
-        # raccogli TUTTE le sorgenti (unione)
-        def _norm_paths(src) -> List[str]:
-            try:
-                if not src: return []
-                if isinstance(src, (list, tuple, set)):
-                    return [str(s).strip() for s in src if str(s).strip()]
-                s = str(src).strip()
-                import re
-                if any(sep in s for sep in [",",";","\n"]):
-                    return [t.strip() for t in re.split(r"[,\n;]+", s) if t.strip()]
-                return [s] if s else []
-            except Exception:
-                return []
+        # Usa ModelPathResolver unificato
+        from ..models.model_path_resolver import ModelPathResolver
 
-        models: List[str] = []
-        models += _norm_paths(settings.get("model_paths"))
-        models += _norm_paths(settings.get("models"))
-        try:
-            models += [p for p in (PredictionSettingsDialog.get_model_paths() or []) if p]
-        except Exception:
-            pass
-        models += _norm_paths(settings.get("model_path") or settings.get("model"))
-
-        # normalizza + dedup (casefold su Windows)
-        def _canon(p: str) -> str:
-            try:
-                s = str(p).strip().strip('"').strip("'")
-                s = os.path.expandvars(os.path.expanduser(s))
-                if not os.path.isabs(s):
-                    s = os.path.abspath(s)
-                return os.path.realpath(s)
-            except Exception:
-                return str(p)
-        canon = [_canon(m) for m in models if m]
-        seen, models = set(), []
-        for rp in canon:
-            key = rp.lower() if sys.platform.startswith("win") else rp
-            if key not in seen:
-                seen.add(key)
-                models.append(rp)
+        resolver = ModelPathResolver()
+        models = resolver.resolve_model_paths(settings)
 
         if not models:
             self.signals.error.emit("Prediction settings not configured or model path(s) missing.")
@@ -677,22 +1278,38 @@ class UIController:
         self.signals.status.emit(f"Forecast requested for {symbol} {timeframe} (models={len(models)})")
         logger.info("Forecast (menu) models: {}", {m: label_map[m] for m in models})
 
-        # forza basic se multi-modello (evita advanced concorrenti)
+        # Determina forecast types basato sui settings del dialog
+        forecast_types = settings.get("forecast_types", ["basic"])
+
         for mp in models:
-            payload = {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "horizons": settings.get("horizons", ["1m","5m","15m"]),
-                "N_samples": settings.get("N_samples", 200),
-                "apply_conformal": settings.get("apply_conformal", True),
-                "limit_candles": settings.get("limit_candles", 512),
-                "model_path": mp,
-                "source_label": label_map[mp],
-                "name": label_map[mp],
-                "forecast_type": "basic",
-                "advanced": False,
-                "allowed_models": list(models),
-            }
+            for forecast_type in forecast_types:
+                # Determina se usare advanced features
+                is_advanced = forecast_type == "advanced"
+
+                payload = {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "horizons": settings.get("horizons", ["1m","5m","15m"]),
+                    "N_samples": settings.get("N_samples", 200),
+                    "apply_conformal": settings.get("apply_conformal", True),
+                    "limit_candles": settings.get("limit_candles", 512),
+                    "model_path": mp,
+                    "source_label": f"{label_map[mp]}_{forecast_type}",
+                    "name": f"{label_map[mp]}_{forecast_type}",
+                    "forecast_type": forecast_type,
+                    "advanced": is_advanced,
+                    "allowed_models": list(models),
+
+                    # Advanced features configuration
+                    "use_advanced_features": is_advanced,
+                    "enable_ema_features": is_advanced,
+                    "enable_donchian": is_advanced,
+                    "enable_keltner": is_advanced,
+                    "enable_hurst_advanced": is_advanced,
+
+                    # Passa tutti i parametri dal dialog
+                    **{k: v for k, v in settings.items() if k.startswith(('ema_', 'don_', 'keltner_', 'hurst_'))}
+                }
             logger.info("Forecast (menu) launching: file='{}' label='{}'", mp, label_map[mp])
             fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
             self._forecast_active += 1
@@ -812,24 +1429,57 @@ class UIController:
             logger.info("Forecast launching: models={}, type={}, symbol={}, tf={}", len(models), forecast_type, payload.get("symbol"), payload.get("timeframe"))
             self.signals.status.emit(f"Forecast: launching {len(models)} model(s)")
 
-            for mp in models:
+            # Decide whether to use parallel inference based on model count and settings
+            use_parallel = len(models) > 1 and payload.get("use_parallel_inference", True)
+
+            if use_parallel:
+                # Use parallel inference for multiple models
+                logger.info("Using parallel inference for {} models", len(models))
+                self.signals.status.emit(f"Forecast: parallel inference with {len(models)} models")
+
+                # Create a single parallel worker with all models
                 pl = dict(payload)
-                pl["model_path"] = mp
+                pl["model_paths"] = models  # Pass all models to parallel worker
                 pl["forecast_type"] = forecast_type
                 pl["advanced"] = (forecast_type == "advanced")
                 pl["allowed_models"] = list(models)
-                base_label = label_map.get(mp, os.path.splitext(os.path.basename(str(mp)))[0])
-                pl["source_label"] = base_label
-                pl["name"] = base_label
-                if pl.get("advanced") and self._forecast_active >= 1:
-                    self.signals.status.emit(f"Forecast: advanced already running, skipping {base_label}.")
-                    logger.info("Skipping advanced forecast for {}: another advanced job is active", base_label)
-                    continue
-                self.signals.status.emit(f"Forecast starting for {pl.get('symbol')} {pl.get('timeframe')} [{base_label}]")
-                logger.info("Starting local forecast for file='{}' label='{}' symbol={} tf={} type={}", mp, base_label, pl.get("symbol"), pl.get("timeframe"), pl.get("forecast_type"))
-                fw = ForecastWorker(engine_url=self.engine_url, payload=pl, market_service=self.market_service, signals=self.signals)
+                pl["source_label"] = f"parallel_{len(models)}_models"
+                pl["name"] = f"Parallel Ensemble ({len(models)} models)"
+                pl["parallel_inference"] = True
+
+                logger.info("Starting parallel forecast for symbol={} tf={} models={}",
+                           pl.get("symbol"), pl.get("timeframe"), len(models))
+
+                fw = ForecastWorker(
+                    engine_url=self.engine_url,
+                    payload=pl,
+                    market_service=self.market_service,
+                    signals=self.signals
+                )
                 self._forecast_active += 1
                 self.pool.start(fw)
+
+            else:
+                # Use sequential inference for single model or when parallel is disabled
+                for mp in models:
+                    pl = dict(payload)
+                    pl["model_path"] = mp
+                    pl["forecast_type"] = forecast_type
+                    pl["advanced"] = (forecast_type == "advanced")
+                    pl["allowed_models"] = list(models)
+                    pl["parallel_inference"] = False
+                    base_label = label_map.get(mp, os.path.splitext(os.path.basename(str(mp)))[0])
+                    pl["source_label"] = base_label
+                    pl["name"] = base_label
+                    if pl.get("advanced") and self._forecast_active >= 1:
+                        self.signals.status.emit(f"Forecast: advanced already running, skipping {base_label}.")
+                        logger.info("Skipping advanced forecast for {}: another advanced job is active", base_label)
+                        continue
+                    self.signals.status.emit(f"Forecast starting for {pl.get('symbol')} {pl.get('timeframe')} [{base_label}]")
+                    logger.info("Starting local forecast for file='{}' label='{}' symbol={} tf={} type={}", mp, base_label, pl.get("symbol"), pl.get("timeframe"), pl.get("forecast_type"))
+                    fw = ForecastWorker(engine_url=self.engine_url, payload=pl, market_service=self.market_service, signals=self.signals)
+                    self._forecast_active += 1
+                    self.pool.start(fw)
         except Exception as e:
             logger.exception("handle_forecast_payload failed: {}", e)
             self.signals.error.emit(str(e))

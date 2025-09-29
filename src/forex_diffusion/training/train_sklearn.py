@@ -272,6 +272,14 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                         S = vals.std() + 1e-12
                         return math.log((R / S) + 1e-12) / math.log(len(vals) + 1e-12)
                     cols[f"hurst_{tf}_{w}"] = roll.apply(_h, raw=False)
+                elif key == "ema":
+                    fast = int(params.get("fast", 12))
+                    slow = int(params.get("slow", 26))
+                    ema_fast = tmp["close"].ewm(span=fast, adjust=False).mean()
+                    ema_slow = tmp["close"].ewm(span=slow, adjust=False).mean()
+                    cols[f"ema_fast_{tf}_{fast}"] = ema_fast
+                    cols[f"ema_slow_{tf}_{slow}"] = ema_slow
+                    cols[f"ema_slope_{tf}_{fast}"] = ema_fast.diff().fillna(0.0)
             if not cols:
                 continue
             feat = pd.DataFrame(cols)

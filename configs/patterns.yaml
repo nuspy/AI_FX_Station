@@ -7,11 +7,9 @@ patterns:
     past_extra_bars: 2000
   chart_patterns:
     enabled_default: true
-    keys_enabled:
-    - broadening_bottom
+    keys_enabled: []
     parameter_overrides:
       broadening_bottom: {}
-      wedge_ascending: {}
   candle_patterns:
     enabled_default: true
     keys_enabled: []
@@ -92,7 +90,7 @@ patterns:
 dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
-  start_time: 8d
+  start_time: 30d
 performance:
   detection_threads: 32
   detection_mode: balanced
