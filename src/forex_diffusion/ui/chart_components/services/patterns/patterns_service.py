@@ -11,17 +11,17 @@ import time
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict, Iterable, Any
+from typing import List, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
 import psutil
 import pytz
 from loguru import logger
-from PySide6.QtCore import QTimer, QObject, QThread, Signal, Slot
+from PySide6.QtCore import QTimer, QThread, Slot
 
 # Cache and performance imports
-from .....cache import get_cache, get_pattern_cache, cache_decorator
+from .....cache import get_cache, get_pattern_cache
 from .....patterns.strength_calculator import PatternStrengthCalculator
 from .....patterns.boundary_config import get_boundary_config
 
@@ -254,13 +254,17 @@ class PatternsService(ChartServiceBase):
                         # Attach info from pattern_info.json
                         try:
                             if hasattr(e, 'pattern_key') and self.info:
-                                info_dict = self.info.get_pattern_info(e.pattern_key)
-                                if info_dict:
-                                    for k, v in info_dict.items():
-                                        try:
-                                            setattr(e, f"info_{k}", v)
-                                        except Exception:
-                                            pass
+                                pattern_info = self.info.describe(e.pattern_key)
+                                if pattern_info:
+                                    # PatternInfo is a dataclass, so we can access its attributes
+                                    setattr(e, "info_name", pattern_info.name)
+                                    setattr(e, "info_effect", pattern_info.effect)
+                                    setattr(e, "info_description", pattern_info.description)
+                                    setattr(e, "info_benchmarks", pattern_info.benchmarks)
+                                    setattr(e, "info_bull", pattern_info.bull)
+                                    setattr(e, "info_bear", pattern_info.bear)
+                                    setattr(e, "info_image_resource", pattern_info.image_resource)
+                                    setattr(e, "info_links", pattern_info.links)
                         except Exception:
                             pass
 

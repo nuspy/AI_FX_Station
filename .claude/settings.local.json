@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\":*)"
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"\nimport sys\nsys.path.append(''src'')\ntry:\n    from forex_diffusion.ui.chart_components.services.patterns.patterns_service import PatternsService\n    print(''SUCCESS: PatternsService imports with corrected PatternInfoProvider.describe() method'')\n    \n    # Test PatternInfoProvider\n    from forex_diffusion.patterns.info_provider import PatternInfoProvider\n    from pathlib import Path\n    \n    # Create a dummy info provider\n    test_path = Path(''dummy_path.json'')\n    provider = PatternInfoProvider(test_path)\n    print(f''PatternInfoProvider has describe method: {hasattr(provider, \"\"describe\"\")}'')\n    print(f''PatternInfoProvider has get_pattern_info method: {hasattr(provider, \"\"get_pattern_info\"\")}'')\n    \n    print()\n    print(''Pattern info method reference corrected successfully'')\n    \nexcept Exception as e:\n    print(f''Error: {e}'')\n    import traceback\n    traceback.print_exc()\n\")"
     ],
     "deny": [],
     "ask": []

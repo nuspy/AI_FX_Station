@@ -3,19 +3,24 @@
 Displays interactive 3D visualization reports with file management and descriptions
 """
 
+from __future__ import annotations
+
+import os
+import sys
 from pathlib import Path
-from datetime import datetime
-from typing import Dict
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+import json
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QPushButton, QLabel,
-    QTextEdit, QGroupBox, QComboBox,
+    QTextEdit, QGroupBox, QComboBox, QSpinBox,
     QCheckBox, QProgressBar, QMessageBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, Slot, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtGui import  QFont
+from PySide6.QtGui import QIcon, QFont
 
 import pandas as pd
 import numpy as np
