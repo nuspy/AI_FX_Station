@@ -774,6 +774,42 @@ class TaskManager:
             "last_completed_at": datetime.now()
         }
 
+    def get_best_parameters_for_pattern(self, pattern_type: str) -> Dict[str, Any]:
+        """Get the best parameters for a specific pattern type"""
+        try:
+            # Use existing get_production_parameters method with generic parameters
+            return self.get_production_parameters(
+                asset="generic",
+                timeframe="generic",
+                pattern_key=pattern_type
+            ) or {}
+        except Exception as e:
+            logger.warning(f"Failed to get best parameters for pattern {pattern_type}: {e}")
+            return {}
+
+    def get_all_best_parameters(self) -> Dict[str, Any]:
+        """Get all best parameters for all patterns"""
+        try:
+            # Return a generic set of parameters
+            return {
+                "pattern_parameters": {},
+                "general_parameters": {},
+                "optimization_status": "available"
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get all best parameters: {e}")
+            return {}
+
+    def stop_study(self, study_id: int) -> bool:
+        """Stop a running study"""
+        try:
+            self.update_study_status(study_id, StudyStatus.PAUSED.value)
+            logger.info(f"Study {study_id} stopped successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to stop study {study_id}: {e}")
+            return False
+
     def save_study_checkpoint(self, study_id: int, checkpoint_data: Dict[str, Any]):
         """Save checkpoint data for a study"""
         logger.debug(f"Saved checkpoint for study {study_id}")

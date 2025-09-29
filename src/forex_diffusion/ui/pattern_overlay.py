@@ -771,3 +771,18 @@ class PatternOverlayRenderer:
         dlg.setText(html)
         dlg.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
         dlg.exec()
+
+    def on_pick(self, event):
+        """Handle pick events from matplotlib"""
+        try:
+            if hasattr(event, 'artist') and hasattr(event.artist, '_pattern_info'):
+                pattern_info = event.artist._pattern_info
+                # Open pattern details dialog
+                dialog = PatternDetailsDialog(
+                    parent=getattr(self.controller, 'view', None),
+                    event=pattern_info,
+                    info_provider=self.info
+                )
+                dialog.exec()
+        except Exception as e:
+            logger.debug(f"Error handling pick event: {e}")

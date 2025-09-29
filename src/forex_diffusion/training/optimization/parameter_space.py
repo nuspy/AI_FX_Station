@@ -1018,3 +1018,39 @@ class ParameterSpace:
             suggestions.append(f"{param.name}: {range_text}")
 
         return "\n".join(suggestions)
+
+    def get_suggested_ranges(self, pattern_type: str = None) -> Dict[str, Any]:
+        """Get suggested parameter ranges for optimization"""
+        try:
+            form_params = self.get_form_parameters(pattern_type or "generic")
+            action_params = self.get_action_parameters(pattern_type or "generic")
+
+            ranges = {
+                "form_parameters": {},
+                "action_parameters": {}
+            }
+
+            # Convert form parameters to ranges
+            for param in form_params:
+                ranges["form_parameters"][param.name] = {
+                    "type": param.param_type.value,
+                    "min": param.min_value,
+                    "max": param.max_value,
+                    "default": param.default_value,
+                    "suggested_range": param.suggested_range
+                }
+
+            # Convert action parameters to ranges
+            for param in action_params:
+                ranges["action_parameters"][param.name] = {
+                    "type": param.param_type.value,
+                    "min": param.min_value,
+                    "max": param.max_value,
+                    "default": param.default_value,
+                    "suggested_range": param.suggested_range
+                }
+
+            return ranges
+        except Exception as e:
+            logger.warning(f"Failed to get suggested ranges: {e}")
+            return {"form_parameters": {}, "action_parameters": {}}
