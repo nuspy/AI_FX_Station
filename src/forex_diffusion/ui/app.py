@@ -68,15 +68,21 @@ def setup_ui(
     signals_tab = SignalsTab(main_window, db_service=db_service)
     backtesting_tab = BacktestingTab(main_window)
 
+    # Add 3D Reports Tab
+    from .reports_3d_tab import Reports3DTab
+    reports_3d_tab = Reports3DTab(data_manager=market_service, parent=main_window)
+
     tab_widget.addTab(chart_tab, "Chart")
     tab_widget.addTab(training_tab, "Training")
     tab_widget.addTab(signals_tab, "Signals")
     tab_widget.addTab(backtesting_tab, "Backtesting")
+    tab_widget.addTab(reports_3d_tab, "3D Reports")
     layout.addWidget(tab_widget)
 
     result["chart_tab"] = chart_tab
     result["training_tab"] = training_tab
     result["backtesting_tab"] = backtesting_tab
+    result["reports_3d_tab"] = reports_3d_tab
     result["tab_widget"] = tab_widget
 
     # --- Connect controller and signals to the new chart_tab ---
