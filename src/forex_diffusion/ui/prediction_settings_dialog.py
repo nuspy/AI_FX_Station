@@ -37,181 +37,203 @@ class PredictionSettingsDialog(QDialog):
         self.layout = QVBoxLayout(content)
         self.form_layout = QFormLayout()
 
-        # Model Path (singolo, per compatibilità)
-        self.model_path_edit = QLineEdit()
-        self.model_path_edit.setToolTip("Percorso del file modello da usare per l'inferenza.\nSupporto tipico: PyTorch (.pt/.pth) o pickle di modelli sklearn.\nSe è valorizzato 'Modelli multipli', questo campo è ignorato.")
-        self.browse_button = QPushButton("Browse...")
-        self.browse_button.setToolTip("Sfoglia e seleziona un file modello da disco.")
-        self.browse_button.clicked.connect(self._browse_model_path)
-        self.info_button = QPushButton("Model Info")
-        self.info_button.setToolTip("Mostra i metadati salvati nel file modello o nel sidecar .meta.json")
-        self.info_button.clicked.connect(self._show_model_info)
-        self.loadmeta_button = QPushButton("Carica parametri")
-        self.loadmeta_button.setToolTip("Carica i parametri base (horizons, indicatori, finestre) dai metadati del modello")
-        self.loadmeta_button.clicked.connect(self._load_model_defaults)
-        # nuovo: selezione multipla
-        self.browse_multi_button = QPushButton("Browse Models…")
-        self.browse_multi_button.setToolTip("Seleziona più file modello per il forecast")
-        self.browse_multi_button.clicked.connect(self._browse_model_paths_multi)
+        # Streamlined Model Selection
+        from PySide6.QtWidgets import QTextEdit, QGroupBox, QVBoxLayout as QV
+        models_box = QGroupBox("Model Selection")
+        box_lay = QV(models_box)
 
+        # Primary method: text area for multiple models
+        self.models_edit = QTextEdit()
+        self.models_edit.setPlaceholderText("Model paths (one per line)")
+        self.models_edit.setMinimumHeight(80)
+        box_lay.addWidget(self.models_edit)
+
+        # Secondary method: file browser
         model_h = QHBoxLayout()
-        model_h.addWidget(self.model_path_edit)
-        model_h.addWidget(self.browse_button)
+        self.browse_multi_button = QPushButton("Browse Models")
+        self.browse_multi_button.clicked.connect(self._browse_model_paths_multi)
+        self.info_button = QPushButton("Model Info")
+        self.info_button.clicked.connect(self._show_model_info)
+        self.loadmeta_button = QPushButton("Load Defaults")
+        self.loadmeta_button.clicked.connect(self._load_model_defaults)
+        model_h.addWidget(self.browse_multi_button)
         model_h.addWidget(self.info_button)
         model_h.addWidget(self.loadmeta_button)
-        model_h.addWidget(self.browse_multi_button)
-        self.form_layout.addRow("Model Path:", model_h)
+        box_lay.addLayout(model_h)
 
-        # lista file selezionati (multi)
-        from PySide6.QtWidgets import QListWidget, QAbstractItemView
-        self.model_list = QListWidget()
-        self.model_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.model_list.setMinimumHeight(80)
-        self.form_layout.addRow("Selected Models:", self.model_list)
+        self.layout.addWidget(models_box)
 
-        # stato interno: multi path
+        # Legacy single model path (hidden, maintained for compatibility)
+        self.model_path_edit = QLineEdit()
+        self.model_path_edit.setVisible(False)
+
+        # Internal state for multi-selection
         try:
-            # ripristina ultima selezione se presente
             if not hasattr(self.__class__, "_last_model_paths"):
                 self.__class__._last_model_paths = []
             self._model_paths = list(self.__class__._last_model_paths)
-            for p in self._model_paths:
-                self.model_list.addItem(str(p))
         except Exception:
             self._model_paths = []
 
-        # Modelli multipli: uno per riga (opzionale, ha precedenza su Model Path)
-        from PySide6.QtWidgets import QTextEdit, QGroupBox, QVBoxLayout as QV
-        models_box = QGroupBox("Modelli multipli (uno per riga)")
-        models_box.setToolTip("Inserisci uno o più percorsi di modelli (uno per riga). Verrà lanciata una previsione per ciascun modello selezionato.\nSe compilato, ha precedenza su 'Model Path'.")
-        box_lay = QV(models_box)
-        self.models_edit = QTextEdit()
-        self.models_edit.setPlaceholderText("Percorso modello per riga (opzionale). Se valorizzato, verranno eseguite previsioni per ciascun modello.")
-        self.models_edit.setToolTip("Ogni riga deve contenere un percorso file valido a un modello. I modelli verranno eseguiti in parallelo.")
-        box_lay.addWidget(self.models_edit)
-        self.layout.addWidget(models_box)
-
-        # Tipi di previsione (selezione multipla)
+        # Simplified Forecast Types
         from PySide6.QtWidgets import QCheckBox
-        types_box = QGroupBox("Tipi di previsione")
-        types_box.setToolTip("Seleziona il tipo di previsione:\n- Basic: pipeline standard con indicatori e standardizzazione.\n- Advanced: come Basic, ma abilita opzioni/feature aggiuntive.\n- Baseline RW: baseline Random Walk/zero-drift (nessun modello richiesto).")
+        types_box = QGroupBox("Forecast Types")
         types_lay = QV(types_box)
-        self.type_basic_cb = QCheckBox("Basic"); self.type_basic_cb.setChecked(True); self.type_basic_cb.setToolTip("Basic: usa la pipeline standard e il modello selezionato.")
-        self.type_advanced_cb = QCheckBox("Advanced"); self.type_advanced_cb.setToolTip("Advanced: come Basic con opzioni extra (EMA, Hurst, Donchian, Keltner, ecc.).")
-        self.type_rw_cb = QCheckBox("Baseline RW"); self.type_rw_cb.setToolTip("Baseline RW: previsione di riferimento a drift nullo. Non richiede un modello.")
+        self.type_basic_cb = QCheckBox("Basic")
+        self.type_basic_cb.setChecked(True)
+        self.type_advanced_cb = QCheckBox("Advanced")
+        self.type_rw_cb = QCheckBox("Baseline RW")
         types_lay.addWidget(self.type_basic_cb)
         types_lay.addWidget(self.type_advanced_cb)
         types_lay.addWidget(self.type_rw_cb)
         self.layout.addWidget(types_box)
 
-        # Horizons
-        self.horizons_edit = QLineEdit("1m, 5m, 15m")
-        self.horizons_edit.setToolTip("Orizzonti temporali di previsione, separati da virgola (es.: 1m, 5m, 15m).\nVengono convertiti in passi rispetto al timeframe corrente.")
-        self.form_layout.addRow("Horizons (comma-separated):", self.horizons_edit)
+        # Core Prediction Settings
+        core_box = QGroupBox("Core Settings")
+        core_lay = QFormLayout(core_box)
 
-        # N_samples
+        self.horizons_edit = QLineEdit("1m, 5m, 15m")
+        core_lay.addRow("Horizons:", self.horizons_edit)
+
         self.n_samples_spinbox = QSpinBox()
         self.n_samples_spinbox.setRange(1, 10000)
         self.n_samples_spinbox.setValue(200)
-        self.n_samples_spinbox.setToolTip("Numero di campioni/forward-pass per stimare i quantili.\nValori più alti aumentano stabilità ma richiedono più tempo.")
-        self.form_layout.addRow("Number of Samples (N_samples):", self.n_samples_spinbox)
+        core_lay.addRow("N Samples:", self.n_samples_spinbox)
 
-        # Conformal Calibration
         self.conformal_checkbox = QCheckBox("Apply Conformal Calibration")
         self.conformal_checkbox.setChecked(True)
-        self.conformal_checkbox.setToolTip("Applica calibrazione conformale per intervalli predittivi affidabili.\nSe attiva, i quantili (q05, q95) vengono corretti in base a una stima di errore fuori campione.")
-        self.form_layout.addRow(self.conformal_checkbox)
+        core_lay.addRow(self.conformal_checkbox)
 
-        # Model weight (inference scaling)
         from PySide6.QtWidgets import QComboBox
         self.model_weight_combo = QComboBox()
-        for p in range(0, 101, 5):
-            self.model_weight_combo.addItem(f"{p} %", p)
-        self.model_weight_combo.setCurrentIndex(20)  # default 100%
-        self.model_weight_combo.setToolTip("Peso con cui fondere la previsione col prezzo attuale:\n0% = ignora modello (resta ultimo close); 100% = usa la previsione al 100%.")
-        self.form_layout.addRow("Model weight (%):", self.model_weight_combo)
+        for p in range(0, 101, 25):  # Simplified: 0%, 25%, 50%, 75%, 100%
+            self.model_weight_combo.addItem(f"{p}%", p)
+        self.model_weight_combo.setCurrentIndex(4)  # default 100%
+        core_lay.addRow("Model Weight:", self.model_weight_combo)
 
-        # Indicators × Timeframes selection
-        from PySide6.QtWidgets import QGroupBox, QGridLayout, QCheckBox
+        self.layout.addWidget(core_box)
+
+        # Simplified Indicators
+        indicators_box = QGroupBox("Indicators")
+        indicators_lay = QVBoxLayout(indicators_box)
+
+        # Common timeframes for quick selection
+        tf_row = QHBoxLayout()
+        tf_row.addWidget(QLabel("Primary Timeframes:"))
+        self.tf_1m_cb = QCheckBox("1m")
+        self.tf_5m_cb = QCheckBox("5m")
+        self.tf_15m_cb = QCheckBox("15m")
+        self.tf_1h_cb = QCheckBox("1h")
+        self.tf_1h_cb.setChecked(True)  # Default
+        tf_row.addWidget(self.tf_1m_cb)
+        tf_row.addWidget(self.tf_5m_cb)
+        tf_row.addWidget(self.tf_15m_cb)
+        tf_row.addWidget(self.tf_1h_cb)
+        indicators_lay.addLayout(tf_row)
+
+        # Standard indicators (enabled by default)
+        std_row = QHBoxLayout()
+        std_row.addWidget(QLabel("Standard:"))
+        self.atr_cb = QCheckBox("ATR")
+        self.atr_cb.setChecked(True)
+        self.rsi_cb = QCheckBox("RSI")
+        self.rsi_cb.setChecked(True)
+        self.bb_cb = QCheckBox("Bollinger")
+        self.bb_cb.setChecked(True)
+        self.macd_cb = QCheckBox("MACD")
+        std_row.addWidget(self.atr_cb)
+        std_row.addWidget(self.rsi_cb)
+        std_row.addWidget(self.bb_cb)
+        std_row.addWidget(self.macd_cb)
+        indicators_lay.addLayout(std_row)
+
+        # Advanced indicators
+        adv_row = QHBoxLayout()
+        adv_row.addWidget(QLabel("Advanced:"))
+        self.don_cb = QCheckBox("Donchian")
+        self.keltner_cb = QCheckBox("Keltner")
+        self.hurst_cb = QCheckBox("Hurst")
+        adv_row.addWidget(self.don_cb)
+        adv_row.addWidget(self.keltner_cb)
+        adv_row.addWidget(self.hurst_cb)
+        indicators_lay.addLayout(adv_row)
+
+        self.layout.addWidget(indicators_box)
+
+        # Legacy indicator_checks for compatibility
         self._indicators = ["ATR","RSI","Bollinger","MACD","Donchian","Keltner","Hurst"]
         self._timeframes = ["1m","5m","15m","30m","1h","4h","1d"]
-        box = QGroupBox("Indicatori per Timeframe (per training/inferenza)")
-        box.setToolTip("Seleziona quali indicatori includere per ciascun timeframe nella pipeline.\nDurante il training/inf. questi flag controllano quali feature vengono calcolate.")
-        grid = QGridLayout(box)
-        grid.addWidget(QLabel(""), 0, 0)
-        for j, tf in enumerate(self._timeframes, start=1):
-            grid.addWidget(QLabel(tf), 0, j)
-        self.indicator_checks = {}
-        for i, ind in enumerate(self._indicators, start=1):
-            grid.addWidget(QLabel(ind), i, 0)
-            self.indicator_checks[ind] = {}
-            for j, tf in enumerate(self._timeframes, start=1):
-                cb = QCheckBox()
-                self.indicator_checks[ind][tf] = cb
-                grid.addWidget(cb, i, j)
-        self.layout.addWidget(box)
+        self.indicator_checks = {ind: {tf: QCheckBox() for tf in self._timeframes} for ind in self._indicators}
 
-        # --- Basic indicators (exposed to basic dialog) ---
+        # Technical Parameters
+        tech_box = QGroupBox("Technical Parameters")
+        tech_lay = QFormLayout(tech_box)
+
+        # Essential parameters
         self.warmup_spin = QSpinBox()
         self.warmup_spin.setRange(1, 500)
         self.warmup_spin.setValue(16)
-        self.warmup_spin.setToolTip("Numero di barre iniziali da scartare/riscaldare per gli indicatori.\nValori maggiori stabilizzano le feature all'inizio della serie.")
-        self.form_layout.addRow("Warmup Bars:", self.warmup_spin)
-
-        self.atr_n_spin = QSpinBox()
-        self.atr_n_spin.setRange(1, 200)
-        self.atr_n_spin.setValue(14)
-        self.atr_n_spin.setToolTip("Lunghezza media per l'Average True Range (misura di volatilità).")
-        self.form_layout.addRow("ATR n:", self.atr_n_spin)
-
-        self.rsi_n_spin = QSpinBox()
-        self.rsi_n_spin.setRange(2, 200)
-        self.rsi_n_spin.setValue(14)
-        self.rsi_n_spin.setToolTip("Numero di periodi per il Relative Strength Index (momento).")
-        self.form_layout.addRow("RSI n:", self.rsi_n_spin)
-
-        self.bb_n_spin = QSpinBox()
-        self.bb_n_spin.setRange(2, 200)
-        self.bb_n_spin.setValue(20)
-        self.bb_n_spin.setToolTip("Finestra per le Bande di Bollinger (deviazioni standard su media mobile).")
-        self.form_layout.addRow("Bollinger window n:", self.bb_n_spin)
+        tech_lay.addRow("Warmup Bars:", self.warmup_spin)
 
         self.rv_window_spin = QSpinBox()
         self.rv_window_spin.setRange(1, 1000)
         self.rv_window_spin.setValue(60)
-        self.rv_window_spin.setToolTip("Finestra per stimare la Realized Volatility/standardizzazione.\nControlla la scala delle feature in pipeline.")
-        self.form_layout.addRow("RV window:", self.rv_window_spin)
+        tech_lay.addRow("RV Window:", self.rv_window_spin)
 
-        # --- Advanced indicators ---
+        # Standard indicator periods (in compact grid)
+        periods_h = QHBoxLayout()
+        periods_h.addWidget(QLabel("Periods - ATR:"))
+        self.atr_n_spin = QSpinBox()
+        self.atr_n_spin.setRange(1, 200)
+        self.atr_n_spin.setValue(14)
+        periods_h.addWidget(self.atr_n_spin)
+
+        periods_h.addWidget(QLabel("RSI:"))
+        self.rsi_n_spin = QSpinBox()
+        self.rsi_n_spin.setRange(2, 200)
+        self.rsi_n_spin.setValue(14)
+        periods_h.addWidget(self.rsi_n_spin)
+
+        periods_h.addWidget(QLabel("BB:"))
+        self.bb_n_spin = QSpinBox()
+        self.bb_n_spin.setRange(2, 200)
+        self.bb_n_spin.setValue(20)
+        periods_h.addWidget(self.bb_n_spin)
+        tech_lay.addRow(periods_h)
+
+        # Advanced parameters (compact)
+        adv_h = QHBoxLayout()
+        adv_h.addWidget(QLabel("EMA:"))
         self.ema_fast_spin = QSpinBox()
         self.ema_fast_spin.setRange(1, 200)
         self.ema_fast_spin.setValue(12)
-        self.ema_fast_spin.setToolTip("Span della EMA veloce per trend/momentum.")
-        self.form_layout.addRow("EMA fast span:", self.ema_fast_spin)
-
+        adv_h.addWidget(self.ema_fast_spin)
+        adv_h.addWidget(QLabel("/"))
         self.ema_slow_spin = QSpinBox()
         self.ema_slow_spin.setRange(1, 400)
         self.ema_slow_spin.setValue(26)
-        self.ema_slow_spin.setToolTip("Span della EMA lenta per trend/momentum.")
-        self.form_layout.addRow("EMA slow span:", self.ema_slow_spin)
+        adv_h.addWidget(self.ema_slow_spin)
 
+        adv_h.addWidget(QLabel(" Don:"))
         self.don_n_spin = QSpinBox()
         self.don_n_spin.setRange(1, 400)
         self.don_n_spin.setValue(20)
-        self.don_n_spin.setToolTip("Finestra per il canale di Donchian (massimi/minimi su n barre).")
-        self.form_layout.addRow("Donchian n:", self.don_n_spin)
+        adv_h.addWidget(self.don_n_spin)
 
+        adv_h.addWidget(QLabel(" Hurst:"))
         self.hurst_window_spin = QSpinBox()
         self.hurst_window_spin.setRange(1, 1024)
         self.hurst_window_spin.setValue(64)
-        self.hurst_window_spin.setToolTip("Window per la stima dell'esponente di Hurst (mean-reversion vs. trending).")
-        self.form_layout.addRow("Hurst window:", self.hurst_window_spin)
+        adv_h.addWidget(self.hurst_window_spin)
 
+        adv_h.addWidget(QLabel(" Kelt:"))
         self.keltner_k_spin = QSpinBox()
         self.keltner_k_spin.setRange(1, 10)
         self.keltner_k_spin.setValue(1)
-        self.keltner_k_spin.setToolTip("Moltiplicatore per le Keltner Channels (ampiezza del canale rispetto all'ATR).")
-        self.form_layout.addRow("Keltner multiplier (k):", self.keltner_k_spin)
+        adv_h.addWidget(self.keltner_k_spin)
+        tech_lay.addRow(adv_h)
+
+        self.layout.addWidget(tech_box)
 
         # ========== MULTI-TIMEFRAME HIERARCHICAL STRATEGY ==========
         mtf_box = QGroupBox("Multi-Timeframe Hierarchical Strategy")
@@ -264,30 +286,31 @@ class PredictionSettingsDialog(QDialog):
 
         self.layout.addWidget(mtf_box)
 
-        # max forecasts
+        # Control Settings
+        control_box = QGroupBox("Control Settings")
+        control_lay = QFormLayout(control_box)
+
         self.max_forecasts_spin = QSpinBox()
         self.max_forecasts_spin.setRange(1, 100)
         self.max_forecasts_spin.setValue(5)
-        self.form_layout.addRow("Max forecasts to display:", self.max_forecasts_spin)
+        control_lay.addRow("Max Forecasts:", self.max_forecasts_spin)
 
-        # Test history bars (for TestingPoint forecasts)
         self.test_history_spin = QSpinBox()
         self.test_history_spin.setRange(1, 10000)
         self.test_history_spin.setValue(128)
-        self.form_layout.addRow("Test history bars (N):", self.test_history_spin)
+        control_lay.addRow("Test History:", self.test_history_spin)
 
-        # auto predict options
         auto_h = QHBoxLayout()
-        self.auto_checkbox = QCheckBox("Auto predict")
+        self.auto_checkbox = QCheckBox("Auto Predict")
         self.auto_interval_spin = QSpinBox()
         self.auto_interval_spin.setRange(1, 86400)
         self.auto_interval_spin.setValue(60)
         auto_h.addWidget(self.auto_checkbox)
         auto_h.addWidget(QLabel("Interval (s):"))
         auto_h.addWidget(self.auto_interval_spin)
-        self.form_layout.addRow(auto_h)
+        control_lay.addRow(auto_h)
 
-        self.layout.addLayout(self.form_layout)
+        self.layout.addWidget(control_box)
 
         # Dialog Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -309,6 +332,74 @@ class PredictionSettingsDialog(QDialog):
 
         self.load_settings()
 
+    def _sync_indicators_to_legacy(self):
+        """Sync simplified indicators to legacy indicator_checks structure."""
+        # Get active timeframes
+        active_tfs = []
+        if self.tf_1m_cb.isChecked(): active_tfs.append("1m")
+        if self.tf_5m_cb.isChecked(): active_tfs.append("5m")
+        if self.tf_15m_cb.isChecked(): active_tfs.append("15m")
+        if self.tf_1h_cb.isChecked(): active_tfs.append("1h")
+
+        # Reset all
+        for ind in self._indicators:
+            for tf in self._timeframes:
+                self.indicator_checks[ind][tf].setChecked(False)
+
+        # Set active combinations
+        if self.atr_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["ATR"][tf].setChecked(True)
+        if self.rsi_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["RSI"][tf].setChecked(True)
+        if self.bb_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["Bollinger"][tf].setChecked(True)
+        if self.macd_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["MACD"][tf].setChecked(True)
+        if self.don_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["Donchian"][tf].setChecked(True)
+        if self.keltner_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["Keltner"][tf].setChecked(True)
+        if self.hurst_cb.isChecked():
+            for tf in active_tfs:
+                if tf in self._timeframes:
+                    self.indicator_checks["Hurst"][tf].setChecked(True)
+
+    def _sync_legacy_to_indicators(self):
+        """Sync legacy indicator_checks to simplified indicators."""
+        # Find which timeframes have any active indicators
+        active_tfs = set()
+        for ind in self._indicators:
+            for tf in self._timeframes:
+                if self.indicator_checks[ind][tf].isChecked():
+                    active_tfs.add(tf)
+
+        # Set timeframe checkboxes
+        self.tf_1m_cb.setChecked("1m" in active_tfs)
+        self.tf_5m_cb.setChecked("5m" in active_tfs)
+        self.tf_15m_cb.setChecked("15m" in active_tfs)
+        self.tf_1h_cb.setChecked("1h" in active_tfs)
+
+        # Set indicator checkboxes based on whether they're active in any timeframe
+        self.atr_cb.setChecked(any(self.indicator_checks["ATR"][tf].isChecked() for tf in self._timeframes))
+        self.rsi_cb.setChecked(any(self.indicator_checks["RSI"][tf].isChecked() for tf in self._timeframes))
+        self.bb_cb.setChecked(any(self.indicator_checks["Bollinger"][tf].isChecked() for tf in self._timeframes))
+        self.macd_cb.setChecked(any(self.indicator_checks["MACD"][tf].isChecked() for tf in self._timeframes))
+        self.don_cb.setChecked(any(self.indicator_checks["Donchian"][tf].isChecked() for tf in self._timeframes))
+        self.keltner_cb.setChecked(any(self.indicator_checks["Keltner"][tf].isChecked() for tf in self._timeframes))
+        self.hurst_cb.setChecked(any(self.indicator_checks["Hurst"][tf].isChecked() for tf in self._timeframes))
+
     def _browse_model_path(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Model File", "", "Model Files (*.pt *.pth *.pkl *.pickle);;All Files (*)"
@@ -322,19 +413,18 @@ class PredictionSettingsDialog(QDialog):
         )
         if not paths:
             return
-        # dedup e aggiorna lista
-        new_set = {str(p) for p in (self._model_paths or [])}
-        for p in paths:
-            new_set.add(str(p))
-        self._model_paths = sorted(new_set)
-        # aggiorna UI e stato statico
-        try:
-            self.model_list.clear()
-            for p in self._model_paths:
-                self.model_list.addItem(p)
-            self.__class__._last_model_paths = list(self._model_paths)
-        except Exception:
-            pass
+
+        # Update text area with new paths
+        current_text = self.models_edit.toPlainText().strip()
+        existing_paths = [line.strip() for line in current_text.splitlines() if line.strip()] if current_text else []
+
+        # Add new paths to existing ones
+        all_paths = list(set(existing_paths + [str(p) for p in paths]))
+        self.models_edit.setPlainText('\n'.join(sorted(all_paths)))
+
+        # Update internal state for compatibility
+        self._model_paths = all_paths
+        self.__class__._last_model_paths = list(all_paths)
 
     @staticmethod
     def get_model_paths():
@@ -509,12 +599,35 @@ class PredictionSettingsDialog(QDialog):
             self.auto_checkbox.setChecked(bool(settings.get("auto_predict", False)))
             self.auto_interval_spin.setValue(int(settings.get("auto_interval_seconds", 60)))
 
+            # Multi-timeframe hierarchical strategy
+            self.hierarchical_cb.setChecked(bool(settings.get("use_hierarchical_multitf", False)))
+            query_tf = settings.get("query_timeframe", "1h")
+            idx = self.query_timeframe_combo.findText(query_tf)
+            if idx >= 0:
+                self.query_timeframe_combo.setCurrentIndex(idx)
+
+            hierarchical_tfs = settings.get("hierarchical_timeframes", ["1m", "5m", "15m", "1h"])
+            if isinstance(hierarchical_tfs, list):
+                self.hierarchical_timeframes_edit.setText(", ".join(hierarchical_tfs))
+            else:
+                self.hierarchical_timeframes_edit.setText("1m, 5m, 15m, 1h")
+
+            self.exclude_children_cb.setChecked(bool(settings.get("exclude_children", True)))
+            self.parallel_inference_cb.setChecked(bool(settings.get("use_parallel_inference", True)))
+            self.max_workers_spin.setValue(int(settings.get("max_parallel_workers", 4)))
+
+            # Sync legacy indicator structure to simplified indicators
+            self._sync_legacy_to_indicators()
+
             logger.info(f"Loaded prediction settings from {CONFIG_FILE}")
         except Exception as e:
             logger.exception(f"Failed to load prediction settings: {e}")
 
     def save_settings(self):
         """Saves the current settings to the JSON config file."""
+        # Sync simplified indicators to legacy structure before saving
+        self._sync_indicators_to_legacy()
+
         # parse multi models (one path per line)
         models_list = []
         try:

@@ -1,10 +1,10 @@
 {
-    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h25_lasso_pca.pkl",
+    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h20_rf_pca.pkl",
     "model_paths": [
         "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
     ],
     "forecast_types": [
-        "basic"
+        "advanced"
     ],
     "horizons": [
         "1m",
@@ -48,15 +48,12 @@
             "1m",
             "5m",
             "15m",
-            "30m",
-            "1h"
+            "30m"
         ],
         "bollinger": [
             "1m",
             "5m",
-            "15m",
-            "30m",
-            "1h"
+            "15m"
         ],
         "macd": [
             "5m",
@@ -79,9 +76,9 @@
             "1h"
         ]
     },
-    "warmup_bars": 20,
-    "atr_n": 17,
-    "rsi_n": 13,
+    "warmup_bars": 16,
+    "atr_n": 14,
+    "rsi_n": 14,
     "bb_n": 20,
     "rv_window": 60,
     "ema_fast": 12,

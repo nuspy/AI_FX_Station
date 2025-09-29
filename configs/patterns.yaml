@@ -7,12 +7,102 @@ patterns:
     past_extra_bars: 2000
   chart_patterns:
     enabled_default: true
-    keys_enabled: []
+    keys_enabled:
+    - broadening_bottom
+    - broadening_top
+    - right_angle_broadening_ascending
+    - right_angle_broadening_descending
+    - broadening_wedge_ascending
+    - broadening_wedge_descending
+    - wedge_ascending
+    - wedge_descending
+    - ascending_triangle
+    - descending_triangle
+    - symmetrical_triangle
+    - rectangle_range
+    - diamond_top
+    - diamond_bottom
+    - double_top
+    - double_bottom
+    - triple_top
+    - triple_bottom
+    - rising_channel
+    - falling_channel
+    - bull_flag
+    - bear_flag
+    - bull_pennant
+    - bear_pennant
+    - head_and_shoulders
     parameter_overrides:
       broadening_bottom: {}
+      broadening_top: {}
+      right_angle_broadening_ascending: {}
+      right_angle_broadening_descending: {}
+      broadening_wedge_ascending: {}
+      broadening_wedge_descending: {}
+      wedge_ascending: {}
+      wedge_descending: {}
+      ascending_triangle: {}
+      descending_triangle: {}
+      symmetrical_triangle: {}
+      rectangle_range: {}
+      diamond_top: {}
+      diamond_bottom: {}
+      double_top: {}
+      double_bottom: {}
+      triple_top: {}
+      triple_bottom: {}
+      rising_channel: {}
+      falling_channel: {}
+      bull_flag: {}
+      bear_flag: {}
+      bull_pennant: {}
+      bear_pennant: {}
+      head_and_shoulders: {}
+      inverse_head_and_shoulders: {}
   candle_patterns:
     enabled_default: true
-    keys_enabled: []
+    keys_enabled:
+    - hammer
+    - shooting_star
+    - bearish_engulfing
+    - bullish_engulfing
+    - harami_bull
+    - harami_bear
+    - three_white_soldiers
+    - three_black_crows
+    - dark_cloud_cover
+    - piercing_line
+    - dragonfly_doji
+    - gravestone_doji
+    - tweezer_top
+    - tweezer_bottom
+    - rising_three_methods
+    - falling_three_methods
+    - harami_cross_bull
+    - harami_cross_bear
+    - belt_hold_bull
+    - belt_hold_bear
+    - mat_hold_bull
+    - mat_hold_bear
+    - kicker_bull
+    - kicker_bear
+    - tasuki_bull
+    - tasuki_bear
+    - morning_star
+    - evening_star
+    - abandoned_baby_bull
+    - abandoned_baby_bear
+    - three_line_strike_bull
+    - three_line_strike_bear
+    - three_inside_up
+    - three_inside_down
+    - three_outside_up
+    - unique_three_river_bottom
+    - three_outside_down
+    - unique_three_river_top
+    - concealing_baby_swallow
+    - identical_three_crows
     params:
       bearish_engulfing:
         confirm_with_volume: false
@@ -78,7 +168,47 @@ patterns:
         confirm_with_volume: false
         rr: 1.5
         target_mode: Altezza figura
-    parameter_overrides: {}
+    parameter_overrides:
+      hammer: {}
+      shooting_star: {}
+      bearish_engulfing: {}
+      bullish_engulfing: {}
+      harami_bull: {}
+      harami_bear: {}
+      three_white_soldiers: {}
+      three_black_crows: {}
+      dark_cloud_cover: {}
+      piercing_line: {}
+      dragonfly_doji: {}
+      gravestone_doji: {}
+      tweezer_top: {}
+      tweezer_bottom: {}
+      rising_three_methods: {}
+      falling_three_methods: {}
+      harami_cross_bull: {}
+      harami_cross_bear: {}
+      belt_hold_bull: {}
+      belt_hold_bear: {}
+      mat_hold_bull: {}
+      mat_hold_bear: {}
+      kicker_bull: {}
+      kicker_bear: {}
+      tasuki_bull: {}
+      tasuki_bear: {}
+      morning_star: {}
+      evening_star: {}
+      abandoned_baby_bull: {}
+      abandoned_baby_bear: {}
+      three_line_strike_bull: {}
+      three_line_strike_bear: {}
+      three_inside_up: {}
+      three_inside_down: {}
+      three_outside_up: {}
+      unique_three_river_bottom: {}
+      three_outside_down: {}
+      unique_three_river_top: {}
+      concealing_baby_swallow: {}
+      identical_three_crows: {}
   view:
     badge_info: true
     badge_font_pt: 8
