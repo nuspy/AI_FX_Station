@@ -286,6 +286,97 @@ class PredictionSettingsDialog(QDialog):
 
         self.layout.addWidget(mtf_box)
 
+        # ========== ENHANCED MULTI-HORIZON SYSTEM ==========
+        enhanced_box = QGroupBox("Enhanced Multi-Horizon Predictions")
+        enhanced_box.setToolTip("Sistema avanzato per predizioni multi-orizzonte con scaling intelligente e scenario trading.")
+        enhanced_lay = QVBoxLayout(enhanced_box)
+
+        # Enable enhanced scaling
+        self.enhanced_scaling_cb = QCheckBox("Enable Enhanced Multi-Horizon Scaling")
+        self.enhanced_scaling_cb.setToolTip("Attiva il sistema di scaling intelligente per predizioni multi-orizzonte da un singolo modello.")
+        self.enhanced_scaling_cb.setChecked(True)
+        enhanced_lay.addWidget(self.enhanced_scaling_cb)
+
+        # Scaling mode selection
+        scaling_h = QHBoxLayout()
+        scaling_h.addWidget(QLabel("Scaling Mode:"))
+        from PySide6.QtWidgets import QComboBox
+        self.scaling_mode_combo = QComboBox()
+        self.scaling_mode_combo.addItems([
+            "smart_adaptive",  # Default
+            "linear",
+            "sqrt",
+            "log",
+            "volatility_adjusted",
+            "regime_aware"
+        ])
+        self.scaling_mode_combo.setToolTip(
+            "Modalità di scaling:\n"
+            "• smart_adaptive: Combina volatilità, regime e fattori temporali\n"
+            "• linear: Scaling lineare tradizionale\n"
+            "• sqrt: Scaling con radice quadrata (decay non-lineare)\n"
+            "• log: Scaling logaritmico\n"
+            "• volatility_adjusted: Basato su volatilità corrente\n"
+            "• regime_aware: Adattivo al regime di mercato"
+        )
+        scaling_h.addWidget(self.scaling_mode_combo)
+        enhanced_lay.addLayout(scaling_h)
+
+        # Trading scenario selection
+        scenario_h = QHBoxLayout()
+        scenario_h.addWidget(QLabel("Trading Scenario:"))
+        self.scenario_combo = QComboBox()
+
+        # Import scenario list from horizon converter
+        try:
+            from ..utils.horizon_converter import get_trading_scenarios
+            scenarios = get_trading_scenarios()
+            self.scenario_combo.addItem("Custom (Use Manual Horizons)", "")
+            for key, name in scenarios.items():
+                self.scenario_combo.addItem(name, key)
+        except Exception:
+            # Fallback scenarios
+            self.scenario_combo.addItems([
+                "Custom (Use Manual Horizons)",
+                "Scalping (High Frequency)",
+                "Intraday 4h",
+                "Intraday 8h",
+                "Intraday 2 Days",
+                "Intraday 3 Days",
+                "Intraday 5 Days",
+                "Intraday 10 Days",
+                "Intraday 15 Days"
+            ])
+
+        self.scenario_combo.setToolTip(
+            "Scenari di trading predefiniti:\n"
+            "• Scalping: 1m-15m, movimenti micro\n"
+            "• Intraday 4h: 5m-4h, trend intraday\n"
+            "• Intraday 8h: 15m-8h, sessione completa\n"
+            "• Intraday 2-15d: Trend a medio-lungo termine\n"
+            "• Custom: Usa orizzonti manuali"
+        )
+        scenario_h.addWidget(self.scenario_combo)
+        enhanced_lay.addLayout(scenario_h)
+
+        # Custom horizons for scenarios
+        custom_h = QHBoxLayout()
+        custom_h.addWidget(QLabel("Custom Horizons:"))
+        self.custom_horizons_edit = QLineEdit("10m, 30m, 1h, 4h")
+        self.custom_horizons_edit.setToolTip("Orizzonti personalizzati (comma-separated) usati quando scenario è 'Custom'.")
+        custom_h.addWidget(self.custom_horizons_edit)
+        enhanced_lay.addLayout(custom_h)
+
+        # Performance monitoring
+        perf_h = QHBoxLayout()
+        self.performance_tracking_cb = QCheckBox("Enable Performance Tracking")
+        self.performance_tracking_cb.setToolTip("Traccia le performance delle predizioni in tempo reale per monitoraggio e alerting.")
+        self.performance_tracking_cb.setChecked(True)
+        perf_h.addWidget(self.performance_tracking_cb)
+        enhanced_lay.addLayout(perf_h)
+
+        self.layout.addWidget(enhanced_box)
+
         # Control Settings
         control_box = QGroupBox("Control Settings")
         control_lay = QFormLayout(control_box)
@@ -616,6 +707,27 @@ class PredictionSettingsDialog(QDialog):
             self.parallel_inference_cb.setChecked(bool(settings.get("use_parallel_inference", True)))
             self.max_workers_spin.setValue(int(settings.get("max_parallel_workers", 4)))
 
+            # Enhanced Multi-Horizon System
+            self.enhanced_scaling_cb.setChecked(bool(settings.get("use_enhanced_scaling", True)))
+
+            scaling_mode = settings.get("scaling_mode", "smart_adaptive")
+            scaling_index = self.scaling_mode_combo.findText(scaling_mode)
+            if scaling_index >= 0:
+                self.scaling_mode_combo.setCurrentIndex(scaling_index)
+
+            scenario = settings.get("trading_scenario", "")
+            scenario_index = self.scenario_combo.findData(scenario)
+            if scenario_index >= 0:
+                self.scenario_combo.setCurrentIndex(scenario_index)
+
+            custom_horizons = settings.get("custom_horizons", ["10m", "30m", "1h", "4h"])
+            if isinstance(custom_horizons, list):
+                self.custom_horizons_edit.setText(", ".join(custom_horizons))
+            else:
+                self.custom_horizons_edit.setText("10m, 30m, 1h, 4h")
+
+            self.performance_tracking_cb.setChecked(bool(settings.get("enable_performance_tracking", True)))
+
             # Sync legacy indicator structure to simplified indicators
             self._sync_legacy_to_indicators()
 
@@ -681,6 +793,13 @@ class PredictionSettingsDialog(QDialog):
             "exclude_children": bool(self.exclude_children_cb.isChecked()),
             "use_parallel_inference": bool(self.parallel_inference_cb.isChecked()),
             "max_parallel_workers": int(self.max_workers_spin.value()),
+
+            # Enhanced Multi-Horizon System
+            "use_enhanced_scaling": bool(self.enhanced_scaling_cb.isChecked()),
+            "scaling_mode": str(self.scaling_mode_combo.currentText()),
+            "trading_scenario": str(self.scenario_combo.currentData() or ""),
+            "custom_horizons": [h.strip() for h in self.custom_horizons_edit.text().split(",") if h.strip()],
+            "enable_performance_tracking": bool(self.performance_tracking_cb.isChecked()),
         }
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)

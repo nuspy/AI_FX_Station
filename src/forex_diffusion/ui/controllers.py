@@ -257,7 +257,13 @@ class ForecastWorker(QRunnable):
         import pickle
         import hashlib
 
-        from ..utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
+        from ..utils.horizon_converter import (
+            convert_horizons_for_inference,
+            create_future_timestamps,
+            convert_single_to_multi_horizon,
+            get_trading_scenarios
+        )
+        from ..services.performance_registry import get_performance_registry
 
         sym = self.payload.get("symbol")
         tf = (self.payload.get("timeframe") or "1m")
@@ -420,7 +426,7 @@ class ForecastWorker(QRunnable):
 
         if cached_result is not None:
             feats_df, feature_metadata = cached_result
-            logger.debug(f"Features loaded from cache for {symbol} {tf}")
+            logger.debug(f"Features loaded from cache for {sym} {tf}")
         else:
             # Calcola features (cache miss)
             logger.debug(f"Computing features for {symbol} {tf} (cache miss)")
@@ -638,13 +644,75 @@ class ForecastWorker(QRunnable):
             # fallback: zero-returns
             preds = np.zeros((1,), dtype=float)
 
-        # Replica predizione per tutti gli horizons (assumendo single-step model)
-        if len(preds) == 1 and len(horizons_bars) > 1:
-            # Single-step model: scala la predizione per horizons diversi
+        # === ENHANCED MULTI-HORIZON PREDICTION SYSTEM ===
+
+        # Check for scenario-based or enhanced multi-horizon prediction
+        scenario = self.payload.get("trading_scenario")
+        use_enhanced_scaling = self.payload.get("use_enhanced_scaling", True)
+        scaling_mode = self.payload.get("scaling_mode", "smart_adaptive")
+
+        if use_enhanced_scaling and len(preds) == 1 and len(horizons_bars) > 1:
+            # Use Enhanced Multi-Horizon System
+            base_pred = preds[0]
+
+            # Get recent market data for regime detection
+            market_data = df_candles.tail(100) if len(df_candles) >= 100 else df_candles
+
+            try:
+                # Convert single prediction to multi-horizon using smart scaling
+                multi_horizon_results = convert_single_to_multi_horizon(
+                    base_prediction=base_pred,
+                    base_timeframe=tf,
+                    target_horizons=horizons_time_labels,
+                    scenario=scenario,
+                    scaling_mode=scaling_mode,
+                    market_data=market_data,
+                    uncertainty_bands=True
+                )
+
+                # Extract predictions and uncertainty info
+                scaled_preds = []
+                uncertainty_data = {}
+
+                for i, horizon in enumerate(horizons_time_labels):
+                    if horizon in multi_horizon_results:
+                        result = multi_horizon_results[horizon]
+                        scaled_preds.append(result["prediction"])
+                        uncertainty_data[horizon] = {
+                            "lower": result["lower"],
+                            "upper": result["upper"],
+                            "confidence": result["confidence"],
+                            "regime": result["regime"],
+                            "scaling_mode": result["scaling_mode"]
+                        }
+                    else:
+                        # Fallback to linear scaling
+                        bars = horizons_bars[i]
+                        scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
+                        scaled_preds.append(base_pred * scale_factor)
+
+                preds = np.array(scaled_preds)
+
+                # Store uncertainty data for later use
+                self.payload["enhanced_uncertainty"] = uncertainty_data
+
+                logger.info(f"Enhanced multi-horizon scaling completed for {len(horizons_time_labels)} horizons using {scaling_mode}")
+
+            except Exception as e:
+                logger.warning(f"Enhanced scaling failed, using linear fallback: {e}")
+                # Fallback to linear scaling
+                base_pred = preds[0]
+                scaled_preds = []
+                for i, bars in enumerate(horizons_bars):
+                    scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
+                    scaled_preds.append(base_pred * scale_factor)
+                preds = np.array(scaled_preds)
+
+        elif len(preds) == 1 and len(horizons_bars) > 1:
+            # Legacy linear scaling
             base_pred = preds[0]
             scaled_preds = []
             for i, bars in enumerate(horizons_bars):
-                # Scala linearmente con il numero di bars (semplificazione)
                 scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
                 scaled_preds.append(base_pred * scale_factor)
             preds = np.array(scaled_preds)
@@ -685,6 +753,43 @@ class ForecastWorker(QRunnable):
         future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
 
         display_name = str(self.payload.get("name") or self.payload.get("source_label") or "forecast")
+
+        # === PERFORMANCE TRACKING INTEGRATION ===
+        try:
+            # Record predictions for performance tracking
+            performance_registry = get_performance_registry()
+
+            # Get regime and volatility info from enhanced uncertainty data
+            enhanced_uncertainty = self.payload.get("enhanced_uncertainty", {})
+
+            # Record each horizon prediction
+            for i, (horizon, prediction) in enumerate(zip(horizons_time_labels, q50)):
+                horizon_data = enhanced_uncertainty.get(horizon, {})
+
+                performance_registry.record_prediction(
+                    model_name=display_name,
+                    symbol=sym,
+                    timeframe=tf,
+                    horizon=horizon,
+                    prediction=float(prediction),
+                    regime=horizon_data.get("regime", "unknown"),
+                    volatility=horizon_data.get("volatility", sigma_base),
+                    confidence=horizon_data.get("confidence", 0.5),
+                    scaling_mode=horizon_data.get("scaling_mode", "linear"),
+                    metadata={
+                        "model_path": used_model_path_str,
+                        "model_sha16": model_sha16,
+                        "anchor_ts": anchor_ts,
+                        "scenario": scenario
+                    }
+                )
+
+            logger.debug(f"Recorded {len(horizons_time_labels)} predictions for performance tracking")
+
+        except Exception as e:
+            logger.warning(f"Failed to record predictions for performance tracking: {e}")
+
+        # Enhanced quantiles with uncertainty data
         quantiles = {
             "q50": q50.tolist(),
             "q05": q05.tolist(),
@@ -694,6 +799,10 @@ class ForecastWorker(QRunnable):
             "label": display_name,
             "model_path_used": used_model_path_str,
             "model_sha16": model_sha16,
+            "enhanced_uncertainty": enhanced_uncertainty,  # Include enhanced uncertainty info
+            "trading_scenario": scenario,
+            "scaling_mode": scaling_mode,
+            "use_enhanced_scaling": use_enhanced_scaling
         }
         return df_candles, quantiles
 
