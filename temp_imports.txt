@@ -1,0 +1,24 @@
+from .base import ChartServiceBase
+# Assicurati che hns.py sia correttamente importato e contenga i detector per "chart"
+from ....patterns.registry import PatternRegistry
+
+#from ..services.hns import make_broadening_detectors, make_wedge_detectors, make_triangle_detectors
+from ....patterns.engine import PatternEvent
+from ....patterns.info_provider import PatternInfoProvider
+from ...pattern_overlay import PatternOverlayRenderer
+from .patterns_adapter import enrich_events
+
+# Training/Optimization system imports
+from ....training.optimization.engine import OptimizationEngine
+from ....training.optimization.task_manager import TaskManager
+from ....training.optimization.parameter_space import ParameterSpace
+
+OHLC_SYNONYMS: Dict[str, str] = {
+        'o':'open','op':'open','open':'open','bidopen':'open','askopen':'open',
+        'h':'high','hi':'high','high':'high','bidhigh':'high','askhigh':'high',
+        'l':'low','lo':'low','low':'low','bidlow':'low','asklow':'low',
+        'c':'close','cl':'close','close':'close','bidclose':'close','askclose':'close','last':'close','price':'close','mid':'close'
+    }
+TS_SYNONYMS = ['ts_utc','timestamp','time','ts','datetime','date','dt','ts_ms','ts_ns']
+
+class PatternsService(ChartServiceBase):
