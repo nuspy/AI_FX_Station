@@ -69,47 +69,47 @@ class UIController:
 
         # === Menu handlers (stub/implementazioni leggere) ====================== #
 
-        @Slot()
-        def handle_ingest_requested(self):
-            """Esegue un backfill rapido in background usando MarketDataService."""
-            from PySide6.QtCore import QRunnable
-            from loguru import logger
+    @Slot()
+    def handle_ingest_requested(self):
+        """Esegue un backfill rapido in background usando MarketDataService."""
+        from PySide6.QtCore import QRunnable
+        from loguru import logger
 
-            class _IngestRunner(QRunnable):
-                def __init__(self, outer):
-                    super().__init__()
-                    self.outer = outer
+        class _IngestRunner(QRunnable):
+            def __init__(self, outer):
+                super().__init__()
+                self.outer = outer
 
-                def run(self):
+            def run(self):
+                try:
+                    self.outer.signals.status.emit("Backfill: running...")
+                    # simboli di default (o prova a leggere da settings)
                     try:
-                        self.outer.signals.status.emit("Backfill: running...")
-                        # simboli di default (o prova a leggere da settings)
+                        from ...utils.user_settings import get_setting
+                        symbols = get_setting("user_symbols", []) or ["EUR/USD"]
+                    except Exception:
+                        symbols = ["EUR/USD"]
+                    for sym in symbols:
                         try:
-                            from ...utils.user_settings import get_setting
-                            symbols = get_setting("user_symbols", []) or ["EUR/USD"]
-                        except Exception:
-                            symbols = ["EUR/USD"]
-                        for sym in symbols:
-                            try:
-                                # abilita REST se il servizio lo supporta
-                                if hasattr(self.outer.market_service, "rest_enabled"):
-                                    setattr(self.outer.market_service, "rest_enabled", True)
-                                # fai almeno il daily per popolare il DB
-                                self.outer.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False)
-                                self.outer.signals.status.emit(f"Backfill {sym}: done")
-                            except Exception as e:
-                                logger.warning("Backfill error for {}: {}", sym, e)
-                        # spegni REST
-                        try:
+                            # abilita REST se il servizio lo supporta
                             if hasattr(self.outer.market_service, "rest_enabled"):
-                                setattr(self.outer.market_service, "rest_enabled", False)
-                        except Exception:
-                            pass
-                        self.outer.signals.status.emit("Backfill: completed")
-                    except Exception as e:
-                        logger.exception("Backfill failed: {}", e)
-                        self.outer.signals.error.emit(str(e))
-                        self.outer.signals.status.emit("Backfill failed")
+                                setattr(self.outer.market_service, "rest_enabled", True)
+                            # fai almeno il daily per popolare il DB
+                            self.outer.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False)
+                            self.outer.signals.status.emit(f"Backfill {sym}: done")
+                        except Exception as e:
+                            logger.warning("Backfill error for {}: {}", sym, e)
+                    # spegni REST
+                    try:
+                        if hasattr(self.outer.market_service, "rest_enabled"):
+                            setattr(self.outer.market_service, "rest_enabled", False)
+                    except Exception:
+                        pass
+                    self.outer.signals.status.emit("Backfill: completed")
+                except Exception as e:
+                    logger.exception("Backfill failed: {}", e)
+                    self.outer.signals.error.emit(str(e))
+                    self.outer.signals.status.emit("Backfill failed")
 
         self.pool.start(_IngestRunner(self))
 
@@ -278,10 +278,10 @@ class UIController:
                     # Passa tutti i parametri dal dialog
                     **{k: v for k, v in settings.items() if k.startswith(('ema_', 'don_', 'keltner_', 'hurst_'))}
                 }
-            logger.info("Forecast (menu) launching: file='{}' label='{}'", mp, label_map[mp])
-            fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
-            self._forecast_active += 1
-            self.pool.start(fw)
+                logger.info("Forecast (menu) launching: file='{}' label='{}'", mp, label_map[mp])
+                fw = ForecastWorker(engine_url=self.engine_url, payload=payload, market_service=self.market_service, signals=self.signals)
+                self._forecast_active += 1
+                self.pool.start(fw)
 
     # ---- Forecast da ChartTab (payload) ----------------------------------- #
     @Slot(dict)
