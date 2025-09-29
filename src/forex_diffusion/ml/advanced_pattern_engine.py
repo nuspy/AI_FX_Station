@@ -17,8 +17,17 @@ try:
     from sklearn.model_selection import train_test_split, cross_val_score
     from sklearn.metrics import classification_report, confusion_matrix
     ML_AVAILABLE = True
+
+    # Import model cache for performance optimization
+    try:
+        from .model_cache import ModelCache, OptimizedPatternPredictor, get_model_cache
+        CACHE_AVAILABLE = True
+    except ImportError:
+        CACHE_AVAILABLE = False
+
 except ImportError:
     ML_AVAILABLE = False
+    CACHE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +46,35 @@ class AdvancedPatternEngine:
         self.pattern_history = []
         self.performance_metrics = {}
 
+        # Initialize model cache for performance optimization
+        if CACHE_AVAILABLE:
+            self.cache = get_model_cache()
+            self.optimized_predictor = OptimizedPatternPredictor()
+            logger.info("Model cache initialized for optimized performance")
+        else:
+            self.cache = None
+            self.optimized_predictor = None
+
         # Initialize models if ML is available
         if ML_AVAILABLE:
             self._initialize_models()
             logger.info("Advanced Pattern Engine initialized with ML capabilities")
-        else:
-            logger.warning("ML libraries not available - using statistical fallbacks")
+
+    def predict_pattern_fast(self, data: pd.DataFrame, pattern_type: str) -> Dict[str, Any]:
+        """
+        Fast pattern prediction using optimized predictor
+        Uses caching for improved performance
+        """
+        if self.optimized_predictor and len(data) > 0:
+            try:
+                # Use optimized predictor with caching
+                price_data = data['close'].values if 'close' in data.columns else data.iloc[:, 0].values
+                return self.optimized_predictor.predict_pattern(price_data, pattern_type)
+            except Exception as e:
+                logger.warning(f"Fast prediction failed, falling back to standard method: {e}")
+
+        # Fallback to standard prediction
+        return self.predict_pattern_evolution(data, pattern_type)
 
     def _initialize_models(self):
         """Initialize ensemble of ML models"""
