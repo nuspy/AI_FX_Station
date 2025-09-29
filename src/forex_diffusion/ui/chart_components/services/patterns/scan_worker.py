@@ -2,16 +2,20 @@
 # Worker for running pattern scans with dynamic interval adjustment
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Optional, List
 from PySide6.QtCore import QObject, Signal, Slot, QTimer
 from loguru import logger
+
+if TYPE_CHECKING:
+    from .patterns_service import PatternsService
 
 
 class ScanWorker(QObject):
     produced = Signal(list)  # List[PatternEvent]
 
-    def __init__(self, parent, kind: str, interval_ms: int) -> None:
+    def __init__(self, parent: 'PatternsService', kind: str, interval_ms: int) -> None:
         super().__init__()
-        self._parent = parent
+        self._parent: PatternsService = parent
         self._kind = kind  # "chart" or "candle"
         self._timer = QTimer(self)
         self._timer.setInterval(int(interval_ms))
