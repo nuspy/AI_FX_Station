@@ -2,21 +2,33 @@
 # Main PatternsService class for chart pattern detection and management
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Iterable, Any
-import pandas as pd
-import numpy as np
 import asyncio
+import copy
+import hashlib
+import json
+import os
+import time
+import yaml
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import List, Optional, Dict, Iterable, Any
+
+import numpy as np
+import pandas as pd
 import psutil
+import pytz
 from loguru import logger
 from PySide6.QtCore import QTimer, QObject, QThread, Signal, Slot
 
 # Cache and performance imports
 from .....cache import get_cache, get_pattern_cache, cache_decorator
 from .....patterns.strength_calculator import PatternStrengthCalculator
+from .....patterns.boundary_config import get_boundary_config
 
 # Import extracted workers
 from .scan_worker import ScanWorker
 from .detection_worker import DetectionWorker
+from ..multithread_detector import MultithreadDetectionWorker, HistoricalDetectionWorker
 
 # Chart service imports
 from ..base import ChartServiceBase
@@ -25,11 +37,19 @@ from .....patterns.engine import PatternEvent
 from .....patterns.info_provider import PatternInfoProvider
 from ....pattern_overlay import PatternOverlayRenderer
 from ..patterns_adapter import enrich_events
+# call_patterns_detection imported locally to avoid circular import
 
 # Training/Optimization system imports
 from .....training.optimization.engine import OptimizationEngine
 from .....training.optimization.task_manager import TaskManager
 from .....training.optimization.parameter_space import ParameterSpace
+
+# Optional imports (try/except handled in code)
+try:
+    from asyncio_throttle import Throttler
+    HAS_THROTTLER = True
+except ImportError:
+    HAS_THROTTLER = False
 
 OHLC_SYNONYMS: Dict[str, str] = {
     'o': 'open', 'op': 'open', 'open': 'open', 'bidopen': 'open', 'askopen': 'open',
@@ -39,6 +59,9 @@ OHLC_SYNONYMS: Dict[str, str] = {
     'last': 'close', 'price': 'close', 'mid': 'close'
 }
 TS_SYNONYMS = ['ts_utc', 'timestamp', 'time', 'ts', 'datetime', 'date', 'dt', 'ts_ms', 'ts_ns']
+
+# Global variable for async detection control
+use_async = False
 
 
 class PatternsService(ChartServiceBase):
@@ -114,7 +137,7 @@ class PatternsService(ChartServiceBase):
         self._candle_thread = QThread(self.view)
 
         # Load intervals from config
-        import yaml, os
+        # imports moved to top
         try:
             config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', '..', 'configs', 'patterns.yaml')
             with open(config_path, 'r', encoding='utf-8') as fh:
@@ -150,13 +173,13 @@ class PatternsService(ChartServiceBase):
 
         # Create multithread detection workers
         self._multithread_detection_thread = QThread(self.view)
-        from ..multithread_detector import MultithreadDetectionWorker, HistoricalDetectionWorker
+        # imports moved to top
 
         # Load performance settings
         performance_config = self._config.get('performance', {})
 
         # Auto-detect optimal thread count
-        import os
+        # imports moved to top
         cpu_count = os.cpu_count() or 8
         optimal_threads = max(1, min(32, int(cpu_count * 0.75)))
 
@@ -187,7 +210,7 @@ class PatternsService(ChartServiceBase):
         self._threads_started = False
 
     @Slot(int, str)
-    def _on_detection_progress(self, percentage, status):
+    def _on_detection_progress(self, percentage: float, status: str) -> None:
         """Handle progress updates from detection worker"""
         try:
             if hasattr(self.view, 'update_status'):
@@ -198,7 +221,7 @@ class PatternsService(ChartServiceBase):
             logger.debug(f"Progress update error: {e}")
 
     @Slot(int, list)
-    def _on_detection_batch_completed(self, batch_number, events):
+    def _on_detection_batch_completed(self, batch_number: int, events: List[PatternEvent]) -> None:
         """Handle batch completion from detection worker"""
         try:
             # Add events to the service's event list
@@ -210,7 +233,7 @@ class PatternsService(ChartServiceBase):
             logger.debug(f"Batch completion error: {e}")
 
     @Slot(list)
-    def _on_detection_finished(self, all_events):
+    def _on_detection_finished(self, all_events: List[PatternEvent]) -> None:
         """Handle detection completion from worker"""
         try:
             logger.info(
@@ -222,7 +245,7 @@ class PatternsService(ChartServiceBase):
             # Enrich events if we have any
             if all_events:
                 try:
-                    from ..patterns_adapter import enrich_events
+                    # imports moved to top
                     # Use a simple dataframe for enrichment if needed
                     enriched = enrich_events(None, all_events)  # None df is handled in enrich_events
                     tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
@@ -310,7 +333,7 @@ class PatternsService(ChartServiceBase):
                 pass
 
     @Slot(int, list, float)
-    def _on_multithread_batch_completed(self, batch_id, events, execution_time):
+    def _on_multithread_batch_completed(self, batch_id: str, events: List[PatternEvent], execution_time: float) -> None:
         """Handle batch completion from multithread detection worker"""
         try:
             if events:
@@ -320,7 +343,7 @@ class PatternsService(ChartServiceBase):
             logger.debug(f"Multithread batch completion error: {e}")
 
     @Slot(list, dict)
-    def _on_multithread_detection_finished(self, all_events, performance_stats):
+    def _on_multithread_detection_finished(self, all_events: List[PatternEvent], performance_stats: Dict[str, Any]) -> None:
         """Handle detection completion from multithread worker"""
         try:
             # Log performance statistics
@@ -352,7 +375,7 @@ class PatternsService(ChartServiceBase):
     def _load_config(self) -> dict:
         """Load configuration for patterns service with resource limits"""
         try:
-            import yaml, os
+            # imports moved to top
             config_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
                 '..', '..', '..', 'configs', 'default.yaml'
@@ -387,7 +410,7 @@ class PatternsService(ChartServiceBase):
     def _load_historical_config(self) -> dict:
         """Load historical pattern configuration from patterns.yaml"""
         try:
-            import yaml, os
+            # imports moved to top
             config_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
                 '..', '..', '..', 'configs', 'patterns.yaml'
@@ -502,9 +525,7 @@ class PatternsService(ChartServiceBase):
     def test_async_detection(self, test_data=None) -> dict:
         """Test async pattern detection with mock data for verification"""
         try:
-            import numpy as np
-            import pandas as pd
-            from datetime import datetime, timedelta
+            # imports moved to top
 
             # Create test data if not provided
             if test_data is None:
@@ -533,7 +554,7 @@ class PatternsService(ChartServiceBase):
             start_time = datetime.now()
 
             # Mock the detection without running full async
-            from src.forex_diffusion.patterns.registry import PatternRegistry
+            # imports moved to top
             reg = PatternRegistry()
             available_detectors = len(list(reg.detectors(['chart']))) + len(list(reg.detectors(['candle'])))
 
@@ -558,7 +579,7 @@ class PatternsService(ChartServiceBase):
                 'test_timestamp': datetime.now().isoformat()
             }
 
-    def _on_chart_patterns_detected(self, events: List):
+    def _on_chart_patterns_detected(self, events: List[PatternEvent]) -> None:
         """Handle chart patterns detected in background thread"""
         try:
             if events and self._enabled_chart:
@@ -571,7 +592,7 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.error(f"Error handling chart patterns: {e}")
 
-    def _on_candle_patterns_detected(self, events: List):
+    def _on_candle_patterns_detected(self, events: List[PatternEvent]) -> None:
         """Handle candlestick patterns detected in background thread"""
         try:
             if events and self._enabled_candle:
@@ -584,7 +605,7 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.error(f"Error handling candle patterns: {e}")
 
-    def set_chart_enabled(self, on: bool):
+    def set_chart_enabled(self, on: bool) -> None:
         self._enabled_chart = bool(on)
         logger.info(f"Patterns: CHART toggle → {self._enabled_chart}")
 
@@ -597,7 +618,7 @@ class PatternsService(ChartServiceBase):
         # Only historical scanning will work for now
         self._repaint()
 
-    def set_candle_enabled(self, on: bool):
+    def set_candle_enabled(self, on: bool) -> None:
         self._enabled_candle = bool(on)
         logger.info(f"Patterns: CANDLE toggle → {self._enabled_candle}")
 
@@ -610,7 +631,7 @@ class PatternsService(ChartServiceBase):
         # Only historical scanning will work for now
         self._repaint()
 
-    def set_history_enabled(self, on: bool):
+    def set_history_enabled(self, on: bool) -> None:
         self._enabled_history = bool(on)
         logger.info(f"Patterns: HISTORY toggle → {self._enabled_history}")
         self._repaint()
@@ -618,8 +639,7 @@ class PatternsService(ChartServiceBase):
     def _is_market_likely_closed(self) -> bool:
         """Check if market is likely closed based on data freshness and time"""
         try:
-            from datetime import datetime, timedelta
-            import pytz
+            # imports moved to top
 
             # Get the last data timestamp
             df = getattr(self.controller.plot_service, '_last_df', None)
@@ -663,7 +683,7 @@ class PatternsService(ChartServiceBase):
             # If check fails, assume market is open to avoid blocking functionality
             return False
 
-    def _timer_scan(self, kind: str):
+    def _timer_scan(self, kind: str) -> None:
         """Timer-based scanning on main thread (no threading issues)"""
         try:
             logger.debug(f"Timer scan triggered for {kind} - GUI should remain responsive")
@@ -711,7 +731,7 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.debug(f"Error in timer scan ({kind}): {e}")
 
-    def _quick_pattern_scan(self, dfN, kind: str):
+    def _quick_pattern_scan(self, dfN: pd.DataFrame, kind: str) -> None:
         """Ultra-lightweight pattern scan - DISABLED to prevent GUI blocking"""
         try:
             # TEMPORARY: Disable pattern detection completely to prevent GUI blocking
@@ -728,7 +748,7 @@ class PatternsService(ChartServiceBase):
             logger.debug(f"Quick pattern scan error: {e}")
             return []
 
-    def start_historical_scan_with_range(self, df: pd.DataFrame = None):
+    def start_historical_scan_with_range(self, df: Optional[pd.DataFrame] = None) -> None:
         """Start one-time historical pattern scan with configured time range"""
         try:
             # Reload historical config in case it was updated
@@ -770,8 +790,7 @@ class PatternsService(ChartServiceBase):
     def _filter_df_for_historical_range(self, df: pd.DataFrame, start_minutes: int, end_minutes: int) -> pd.DataFrame:
         """Filter dataframe to specified historical time range"""
         try:
-            import pandas as pd
-            from datetime import datetime, timedelta
+            # imports moved to top
 
             # Find timestamp column
             ts_col = None
@@ -808,7 +827,7 @@ class PatternsService(ChartServiceBase):
             logger.error(f"Error filtering dataframe for historical range: {e}")
             return None
 
-    def _run_historical_detection(self, df: pd.DataFrame):
+    def _run_historical_detection(self, df: pd.DataFrame) -> None:
         """Run pattern detection on historical data"""
         try:
             # Determine which pattern types to scan based on enabled settings
@@ -843,7 +862,7 @@ class PatternsService(ChartServiceBase):
                     return
 
                 # Prepare detection tasks for historical worker
-                from .....patterns.boundary_config import get_boundary_config
+                # imports moved to top
                 boundary_config = get_boundary_config()
                 timeframe = self._detect_timeframe_from_df(dfN)
 
@@ -884,7 +903,7 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.error(f"Error running historical detection: {e}")
 
-    def detect_async(self, df: Optional[pd.DataFrame]):
+    def detect_async(self, df: Optional[pd.DataFrame]) -> None:
         logger.debug(f"Patterns.detect_async: shape={getattr(df, 'shape', None)} "
                      f"cols={list(df.columns)[:8] if hasattr(df, 'columns') else None}")
         logger.debug(f"Patterns.detect_async: received df={type(df).__name__ if df is not None else None}")
@@ -899,7 +918,7 @@ class PatternsService(ChartServiceBase):
         if not self._debounce_timer.isActive():
             self._debounce_timer.start(self._debounce_ms)
 
-    def _consume_debounce(self):
+    def _consume_debounce(self) -> None:
         df = self._pending_df
         self._pending_df = None
         if df is None:
@@ -927,7 +946,7 @@ class PatternsService(ChartServiceBase):
             self._pending_df = None
             self.detect_async(nxt)
 
-    def _run_detection(self, df: pd.DataFrame):
+    def _run_detection(self, df: pd.DataFrame) -> None:
         """Run pattern detection with batching for large datasets"""
         global use_async
         try:
@@ -1000,7 +1019,7 @@ class PatternsService(ChartServiceBase):
                 logger.info(f"Using parallel multithread detection for {len(dfN)} rows with {len(dets)} detectors")
 
                 # Use multithread detection worker
-                from .....patterns.boundary_config import get_boundary_config
+                # imports moved to top
                 boundary_config = get_boundary_config()
                 timeframe = self._detect_timeframe_from_df(dfN)
 
@@ -1061,12 +1080,12 @@ class PatternsService(ChartServiceBase):
                             logger.debug(f"Detector {getattr(det, 'key', '?')} failed: {e}")
 
                     # Small delay between batches to allow UI updates
-                    import time
+                    # imports moved to top
                     time.sleep(0.01)
             else:
                 # Use original synchronous detection for small datasets
                 # Import boundary config for synchronous detection too
-                from ....patterns.boundary_config import get_boundary_config
+                # imports moved to top
                 boundary_config = get_boundary_config()
 
                 # Detect timeframe from dataframe
@@ -1134,12 +1153,13 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.exception("Patterns _run_detection failed: {}", e)
 
-    def on_update_plot(self, df: pd.DataFrame):
-        from .patterns_hook import call_patterns_detection
+    def on_update_plot(self, df: pd.DataFrame) -> None:
+        # imports moved to top
+        from ..patterns_hook import call_patterns_detection
         call_patterns_detection(self.controller, self.view, df)
         self.detect_async(df)
 
-    def _run_detection_nonblocking(self, df: pd.DataFrame):
+    def _run_detection_nonblocking(self, df: pd.DataFrame) -> None:
         """Run pattern detection in background worker thread to keep GUI responsive"""
         try:
             # Start new detection process
@@ -1186,7 +1206,7 @@ class PatternsService(ChartServiceBase):
             batch_size = 8  # Process 8 detectors at a time
 
             # Emit a signal to the worker to start processing (thread-safe)
-            from PySide6.QtCore import QTimer
+            # imports moved to top
             def start_worker():
                 self._detection_worker.process_detection_batch(dfN, dets, batch_size)
 
@@ -1196,7 +1216,7 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.exception("Failed to start non-blocking detection: {}", e)
 
-    def _finish_detection(self):
+    def _finish_detection(self) -> None:
         """Legacy method - detection finishing is now handled by worker signals"""
         # NOTE: This method is no longer used with the new background worker system.
         # Detection completion is handled by _on_detection_finished signal from worker.
@@ -1256,7 +1276,7 @@ class PatternsService(ChartServiceBase):
             return df  # Return original on error
 
     def _default_info_path(self):
-        from pathlib import Path
+        # imports moved to top
         return Path(getattr(self.view, "_app_root", ".")) / "configs" / "pattern_info.json"
 
     def _normalize_df(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -1308,7 +1328,7 @@ class PatternsService(ChartServiceBase):
         try:
             self.renderer.draw(self._events or [])
         except Exception as e:
-            from loguru import logger
+            # imports moved to top
             logger.debug(f"PatternsService._repaint skipped: {e}")
 
     # ---- Helpers ----
@@ -1358,7 +1378,7 @@ class PatternsService(ChartServiceBase):
                 pass
             img_rel = getattr(pi, "image_resource", None)
             if img_rel:
-                from pathlib import Path
+                # imports moved to top
                 root = Path(getattr(self.view, "_app_root", ".")) if hasattr(self.view, "_app_root") else Path(".")
                 try: setattr(e, "image_path", (root / str(img_rel)).as_posix())
                 except Exception: pass
@@ -1472,7 +1492,7 @@ class PatternsService(ChartServiceBase):
             try:
                 img_rel = getattr(pi, "image_resource", None)
                 if img_rel:
-                    from pathlib import Path
+                    # imports moved to top
                     root = Path(getattr(self.view, "_app_root", ".")) if hasattr(self.view, "_app_root") else Path(".")
                     img_path = (root / str(img_rel)).as_posix()
                     setattr(e, "image_path", img_path)
@@ -1803,7 +1823,7 @@ class PatternsService(ChartServiceBase):
 
     def _create_detector_copy(self, detector, parameters: dict):
         """Create a copy of detector with new parameters"""
-        import copy
+        # imports moved to top
         temp_detector = copy.deepcopy(detector)
         self._update_detector_parameters(temp_detector, parameters)
         return temp_detector
@@ -1880,7 +1900,7 @@ class PatternsService(ChartServiceBase):
     def get_strategy_comparison(self) -> Dict[str, Any]:
         """Get performance comparison between available strategies"""
         try:
-            from ....training.optimization.task_manager import TaskManager
+            # imports moved to top
 
             task_manager = TaskManager()
             symbol = getattr(self.view, "symbol", None) or getattr(self.controller, "symbol", None)
@@ -1941,7 +1961,7 @@ class PatternsService(ChartServiceBase):
     def load_production_parameters(self) -> dict:
         """Load promoted parameters from database for production use"""
         try:
-            from ....training.optimization.task_manager import TaskManager
+            # imports moved to top
 
             task_manager = TaskManager()
 
@@ -2053,8 +2073,7 @@ class PatternsService(ChartServiceBase):
 
     def _calculate_params_hash(self, params: dict) -> str:
         """Calculate hash of parameter set for change detection"""
-        import hashlib
-        import json
+        # imports moved to top
 
         try:
             params_str = json.dumps(params, sort_keys=True)
@@ -2108,14 +2127,14 @@ class PatternsService(ChartServiceBase):
                 logger.debug(f"Skipping {kind} async pattern detection - market closed")
                 return []
 
-            from asyncio_throttle import Throttler
-            from src.forex_diffusion.patterns.registry import PatternRegistry
-            from .patterns_adapter import enrich_events
-            from ....patterns.info_provider import PatternInfoProvider
+            # imports moved to top - use HAS_THROTTLER flag
+            # imports moved to top
+            # imports moved to top
+            # imports moved to top
 
             # Create throttler to limit resource usage (30% CPU max)
             max_concurrent = max(1, int(psutil.cpu_count() * 0.3))
-            throttler = Throttler(rate_limit=max_concurrent, period=1.0)
+            throttler = Throttler(rate_limit=max_concurrent, period=1.0) if HAS_THROTTLER else None
 
             reg = PatternRegistry()
             dets = [d for d in reg.detectors([kind])]
@@ -2165,9 +2184,9 @@ class PatternsService(ChartServiceBase):
                 logger.debug(f"Skipping {kind} sync pattern detection - market closed")
                 return []
 
-            from src.forex_diffusion.patterns.registry import PatternRegistry
-            from .patterns_adapter import enrich_events
-            from ....patterns.info_provider import PatternInfoProvider
+            # imports moved to top
+            # imports moved to top
+            # imports moved to top
 
             reg = PatternRegistry()
             all_dets = [d for d in reg.detectors([kind])]
@@ -2215,7 +2234,7 @@ class PatternsService(ChartServiceBase):
 
                 # Schedule repaint on main thread
                 try:
-                    from PySide6.QtCore import QTimer
+                    # imports moved to top
                     QTimer.singleShot(0, self._repaint)
                 except Exception:
                     pass
