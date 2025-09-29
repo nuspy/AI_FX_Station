@@ -17,7 +17,9 @@
       "Bash(.venv/Scripts/python.exe -m src.forex_diffusion.ui.chart_components.finplot_evaluation:*)",
       "Bash(.venv/Scripts/python.exe finplot_test.py:*)",
       "Bash(.venv/Scripts/python.exe finplot_simple_test.py:*)",
-      "Bash(.venv/Scripts/python.exe finplot_evaluation.py:*)"
+      "Bash(.venv/Scripts/python.exe finplot_evaluation.py:*)",
+      "Bash(.venv/Scripts/python.exe finplot_integration_poc.py:*)",
+      "Bash(.venv/Scripts/python.exe:*)"
     ],
     "deny": [],
     "ask": []
