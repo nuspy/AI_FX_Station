@@ -19,6 +19,7 @@ dependencies = [
   "pyyaml",
   "pytz",
   "bta-lib>=1.0.0",
+  "finplot>=1.9.0",
   "duckdb",
   "diskcache>=5.6.0",
   "asyncio-throttle>=1.0.2",
