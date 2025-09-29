@@ -112,3 +112,5 @@ tmp/
 /ForexGPT.zip
 /.$mindmap.drawio.bkp
 /mindmap.drawio
+
+/.claude/settings.local.json
