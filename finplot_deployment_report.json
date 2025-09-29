@@ -1,0 +1,86 @@
+{
+  "start_time": "2025-09-29T16:01:25.033799",
+  "steps": {
+    "dependencies": {
+      "finplot": "1.9.7",
+      "pyqtgraph": "0.13.7",
+      "PyQt6": "6.9.0",
+      "PySide6": "6.6.3.1",
+      "bta-lib": true,
+      "pandas": "2.2.3",
+      "numpy": "1.26.4"
+    },
+    "production_test": {
+      "success": true,
+      "candles": 500,
+      "render_time": 0.170002,
+      "performance": 2941.1418689191896
+    },
+    "backup": {
+      "timestamp": "2025-09-29T16:01:25.674859",
+      "backed_up_files": [
+        "chart_system_backup\\plot_service_backup_20250929_160125.py",
+        "chart_system_backup\\chart_tab_ui_backup_20250929_160125.py",
+        "chart_system_backup\\chart_controller_backup_20250929_160125.py"
+      ],
+      "backup_location": "chart_system_backup/"
+    },
+    "configuration": {
+      "finplot": {
+        "enabled": true,
+        "theme": "professional",
+        "performance_mode": true,
+        "real_time_updates": true,
+        "memory_optimization": true,
+        "max_candles": 10000,
+        "update_interval_ms": 1000
+      },
+      "fallback": {
+        "use_matplotlib": false,
+        "use_pyqtgraph": true,
+        "auto_fallback": true
+      },
+      "integration": {
+        "pattern_detection": true,
+        "indicators_system": "bta-lib",
+        "export_formats": [
+          "png",
+          "svg",
+          "pdf"
+        ],
+        "chart_types": [
+          "candlestick",
+          "line",
+          "volume"
+        ]
+      },
+      "deployment": {
+        "version": "2.0.0",
+        "date": "2025-09-29T16:01:25.684865",
+        "features": [
+          "finplot_primary_backend",
+          "bta_lib_indicators",
+          "pattern_detection_integration",
+          "real_time_streaming",
+          "professional_styling"
+        ]
+      }
+    },
+    "deployment": {
+      "timestamp": "2025-09-29T16:01:25.686857",
+      "services_deployed": [
+        "src/forex_diffusion/ui/chart_components/services/finplot_chart_service.py",
+        "src/forex_diffusion/ui/chart_components/services/enhanced_finplot_service.py",
+        "src/forex_diffusion/ui/chart_components/services/finplot_chart_adapter.py"
+      ],
+      "integration_points": [
+        "src/forex_diffusion/features/indicators_btalib.py",
+        "src/forex_diffusion/ui/indicators_dialog_new.py",
+        "src/forex_diffusion/training/train_sklearn_btalib.py"
+      ],
+      "status": "success"
+    }
+  },
+  "overall_status": "success",
+  "end_time": "2025-09-29T16:01:25.687857"
+}
