@@ -13,10 +13,9 @@ license = { text = "Proprietary" }
 
 dependencies = [
   # Qt/GUI Dependencies
-  "PyQt6",
   "PySide6>=6.5.0",
-  "qtgui",
-  "qtwidgets",
+  "PySide6-Essentials>=6.5.0",
+  "PySide6-Addons>=6.5.0",
 
   # Core Data Processing
   "numpy>=1.24",

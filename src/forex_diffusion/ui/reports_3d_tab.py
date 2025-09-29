@@ -10,15 +10,15 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import json
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QPushButton, QLabel,
     QTextEdit, QGroupBox, QComboBox, QSpinBox,
     QCheckBox, QProgressBar, QMessageBox, QFileDialog
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot, QUrl
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtGui import QIcon, QFont
+from PySide6.QtCore import Qt, QTimer, Signal, QThread, Slot, QUrl
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtGui import QIcon, QFont
 
 import pandas as pd
 import numpy as np
@@ -35,10 +35,10 @@ logger = logging.getLogger(__name__)
 
 class ReportGeneratorThread(QThread):
     """Thread for generating 3D reports without blocking UI"""
-    progress = pyqtSignal(int)
-    status = pyqtSignal(str)
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
+    progress = Signal(int)
+    status = Signal(str)
+    finished = Signal(dict)
+    error = Signal(str)
 
     def __init__(self, report_type: str, data: Dict[str, pd.DataFrame], params: Dict):
         super().__init__()
@@ -503,7 +503,7 @@ class Reports3DTab(QWidget):
             logger.error(f"Error getting market data: {e}")
             return {}
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def on_report_generated(self, result: Dict):
         """Handle successful report generation"""
         self.progress_bar.setVisible(False)
@@ -520,7 +520,7 @@ class Reports3DTab(QWidget):
         # Show success message
         QMessageBox.information(self, "Success", "3D report generated successfully!")
 
-    @pyqtSlot(str)
+    @Slot(str)
     def on_generation_error(self, error: str):
         """Handle report generation error"""
         self.progress_bar.setVisible(False)
