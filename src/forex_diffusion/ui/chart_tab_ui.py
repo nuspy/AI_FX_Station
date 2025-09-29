@@ -13,13 +13,15 @@ from PySide6.QtWidgets import (
     QSplitter, QListWidget, QListWidgetItem, QTableWidget, QComboBox,
     QToolButton, QCheckBox, QProgressBar, QScrollArea, QDialog, QGroupBox,
     QTabWidget, QSpinBox, QDoubleSpinBox, QTextEdit, QFormLayout, QGridLayout,
-    QSlider, QFrame, QButtonGroup, QRadioButton, QDateEdit
+    QSlider, QFrame, QButtonGroup, QRadioButton, QDateEdit, QDialogButtonBox
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QSignalBlocker, QDate
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from loguru import logger
+
+from ..training.optimization.genetic_algorithm import GeneticAlgorithm, GAConfig
 
 # PATTERNS HOOK (import relativo con fallback assoluto, per evitare unresolved in IDE)
 try:
@@ -1131,7 +1133,7 @@ class ChartTabUI(QWidget):
 
         def _scan_historical():
             try:
-                ps = self.chart_controller.patterns_service
+                ps = get_patterns_service(self.chart_controller, self, create=False)
                 if ps is None: return
                 symbol = getattr(self, "symbol", None) or (self.symbol_combo.currentText() if hasattr(self, "symbol_combo") else None)
                 if not symbol: return
