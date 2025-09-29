@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"\nimport sys\nsys.path.append(''src'')\ntry:\n    # Test imports that were failing\n    from forex_diffusion.ui.chart_components.services.patterns_service import PatternsService\n    print(''SUCCESS: PatternsService imported successfully'')\n    \n    from forex_diffusion.ui.controllers.ui_controller import UIController\n    print(''SUCCESS: UIController imported successfully'')\n    \n    print()\n    print(''=== APPLICATION IMPORT TEST ==='')\n    print(''Pattern Overlay Import: FIXED'')\n    print(''_IngestRunner Definition: FIXED'') \n    print(''UI Controller: WORKING'')\n    print(''Patterns Service: WORKING'')\n    print()\n    print(''STATUS: Application startup errors RESOLVED'')\n    \nexcept Exception as e:\n    print(f''Import test error: {e}'')\n    import traceback\n    traceback.print_exc()\n\")"
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\":*)"
     ],
     "deny": [],
     "ask": []

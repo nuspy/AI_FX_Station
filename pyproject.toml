@@ -12,18 +12,37 @@ authors = [{ name = "ForexMagic", email = "dev@forexmagic.local" }]
 license = { text = "Proprietary" }
 
 dependencies = [
+  # Qt/GUI Dependencies
+  "PyQt6",
+  "PySide6>=6.5.0",
+  "qtgui",
+  "qtwidgets",
+
+  # Core Data Processing
   "numpy>=1.24",
   "pandas>=2.0",
   "scikit-learn>=1.3",
   "joblib>=1.3",
+
+  # Configuration & Utilities
   "pyyaml",
   "pytz",
+  "loguru>=0.7.0",
+  "psutil>=5.9.0",
+
+  # Trading & Analysis Libraries
   "bta-lib>=1.0.0",
   "finplot>=1.9.0",
+  # VectorBT Pro - installed from wheel file in VectorBt_PRO/
+  # pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl
+
+  # Database & Caching
   "duckdb",
   "diskcache>=5.6.0",
+
+  # Async & Performance
   "asyncio-throttle>=1.0.2",
-  "psutil>=5.9.0",
+
   # Phase 3 Advanced Features Dependencies
   "tensorflow>=2.13.0",
   "torch>=2.0.0",
