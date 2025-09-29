@@ -150,7 +150,7 @@ class PatternsService(ChartServiceBase):
 
         # Create multithread detection workers
         self._multithread_detection_thread = QThread(self.view)
-        from .multithread_detector import MultithreadDetectionWorker, HistoricalDetectionWorker
+        from ..multithread_detector import MultithreadDetectionWorker, HistoricalDetectionWorker
 
         # Load performance settings
         performance_config = self._config.get('performance', {})
@@ -222,7 +222,7 @@ class PatternsService(ChartServiceBase):
             # Enrich events if we have any
             if all_events:
                 try:
-                    from .patterns_adapter import enrich_events
+                    from ..patterns_adapter import enrich_events
                     # Use a simple dataframe for enrichment if needed
                     enriched = enrich_events(None, all_events)  # None df is handled in enrich_events
                     tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
@@ -843,7 +843,7 @@ class PatternsService(ChartServiceBase):
                     return
 
                 # Prepare detection tasks for historical worker
-                from ....patterns.boundary_config import get_boundary_config
+                from .....patterns.boundary_config import get_boundary_config
                 boundary_config = get_boundary_config()
                 timeframe = self._detect_timeframe_from_df(dfN)
 
@@ -929,6 +929,7 @@ class PatternsService(ChartServiceBase):
 
     def _run_detection(self, df: pd.DataFrame):
         """Run pattern detection with batching for large datasets"""
+        global use_async
         try:
             kinds: list[str] = []
             if self._enabled_chart:
@@ -999,7 +1000,7 @@ class PatternsService(ChartServiceBase):
                 logger.info(f"Using parallel multithread detection for {len(dfN)} rows with {len(dets)} detectors")
 
                 # Use multithread detection worker
-                from ....patterns.boundary_config import get_boundary_config
+                from .....patterns.boundary_config import get_boundary_config
                 boundary_config = get_boundary_config()
                 timeframe = self._detect_timeframe_from_df(dfN)
 
