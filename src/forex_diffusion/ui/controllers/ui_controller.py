@@ -5,9 +5,8 @@ from __future__ import annotations
 import os
 import sys
 from typing import Dict, List
-from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Slot
+from PySide6.QtCore import QThreadPool, Slot
 from loguru import logger
 
 from ...services.marketdata import MarketDataService
@@ -81,36 +80,36 @@ class UIController:
                     super().__init__()
                     self.outer = outer
 
-            def run(self):
-                try:
-                    self.outer.signals.status.emit("Backfill: running...")
-                    # simboli di default (o prova a leggere da settings)
+                def run(self):
                     try:
-                        from ...utils.user_settings import get_setting
-                        symbols = get_setting("user_symbols", []) or ["EUR/USD"]
-                    except Exception:
-                        symbols = ["EUR/USD"]
-                    for sym in symbols:
+                        self.outer.signals.status.emit("Backfill: running...")
+                        # simboli di default (o prova a leggere da settings)
                         try:
-                            # abilita REST se il servizio lo supporta
+                            from ...utils.user_settings import get_setting
+                            symbols = get_setting("user_symbols", []) or ["EUR/USD"]
+                        except Exception:
+                            symbols = ["EUR/USD"]
+                        for sym in symbols:
+                            try:
+                                # abilita REST se il servizio lo supporta
+                                if hasattr(self.outer.market_service, "rest_enabled"):
+                                    setattr(self.outer.market_service, "rest_enabled", True)
+                                # fai almeno il daily per popolare il DB
+                                self.outer.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False)
+                                self.outer.signals.status.emit(f"Backfill {sym}: done")
+                            except Exception as e:
+                                logger.warning("Backfill error for {}: {}", sym, e)
+                        # spegni REST
+                        try:
                             if hasattr(self.outer.market_service, "rest_enabled"):
-                                setattr(self.outer.market_service, "rest_enabled", True)
-                            # fai almeno il daily per popolare il DB
-                            self.outer.market_service.backfill_symbol_timeframe(sym, "1d", force_full=False)
-                            self.outer.signals.status.emit(f"Backfill {sym}: done")
-                        except Exception as e:
-                            logger.warning("Backfill error for {}: {}", sym, e)
-                    # spegni REST
-                    try:
-                        if hasattr(self.outer.market_service, "rest_enabled"):
-                            setattr(self.outer.market_service, "rest_enabled", False)
-                    except Exception:
-                        pass
-                    self.outer.signals.status.emit("Backfill: completed")
-                except Exception as e:
-                    logger.exception("Backfill failed: {}", e)
-                    self.outer.signals.error.emit(str(e))
-                    self.outer.signals.status.emit("Backfill failed")
+                                setattr(self.outer.market_service, "rest_enabled", False)
+                        except Exception:
+                            pass
+                        self.outer.signals.status.emit("Backfill: completed")
+                    except Exception as e:
+                        logger.exception("Backfill failed: {}", e)
+                        self.outer.signals.error.emit(str(e))
+                        self.outer.signals.status.emit("Backfill failed")
 
         self.pool.start(_IngestRunner(self))
 

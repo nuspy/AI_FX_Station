@@ -23,7 +23,7 @@ from ..base import ChartServiceBase
 from .....patterns.registry import PatternRegistry
 from .....patterns.engine import PatternEvent
 from .....patterns.info_provider import PatternInfoProvider
-from ...pattern_overlay import PatternOverlayRenderer
+from ....pattern_overlay import PatternOverlayRenderer
 from ..patterns_adapter import enrich_events
 
 # Training/Optimization system imports
