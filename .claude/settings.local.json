@@ -5,7 +5,9 @@
       "Bash(alembic:*)",
       "Bash(python:*)",
       "Bash(timeout:*)",
-      "Bash(del test_parallel_detection.py)"
+      "Bash(del test_parallel_detection.py)",
+      "WebFetch(domain:vectorbt.pro)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

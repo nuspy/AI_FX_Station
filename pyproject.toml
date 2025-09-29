@@ -38,3 +38,5 @@ include = ["forex_diffusion*"]
 
 [tool.setuptools.package-data]
 forex_diffusion = ["py.typed", "data/**/*"]
+
+vectorbtpro = "^2025.7.27"
