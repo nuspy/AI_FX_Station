@@ -2,12 +2,20 @@ from __future__ import annotations
 from typing import Iterable, List, Tuple, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-import matplotlib.dates as mdates
-import matplotlib.axes as mpla
+# matplotlib removed - pattern overlay will be reimplemented with finplot
+# import matplotlib.dates as mdates
+# import matplotlib.axes as mpla
 from PySide6.QtCore import Qt
-from matplotlib.backend_bases import MouseEvent
+# from matplotlib.backend_bases import MouseEvent
 from loguru import logger
 from PySide6 import QtWidgets
+
+# Stub types for matplotlib removal
+class mpla:
+    class Axes: pass
+    class Artist: pass
+
+class MouseEvent: pass
 
 # ---------------- UI CONSTANTS ----------------
 MAX_OVERLAYS = 80
@@ -276,7 +284,8 @@ class PatternOverlayRenderer:
         t = self._to_ts(ts)
         if t is None:
             return (np.nan, np.nan)
-        x_date = mdates.date2num(t.tz_convert(None).to_pydatetime())
+        # mdates removed - using timestamp conversion
+        x_date = t.timestamp()  # Unix timestamp in seconds
         x_ms = float(t.value // 1_000_000)  # ms
         return (x_date, x_ms)
 

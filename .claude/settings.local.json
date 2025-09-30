@@ -19,9 +19,12 @@
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; help(fplt.create_plot_widget)\")",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" scripts/run_gui.py)",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; w = fplt.create_plot_widget(None); print(type(w), dir(w)[:10])\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''matplotlib''); print(''Chart system set to matplotlib'')\")"
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''matplotlib''); print(''Chart system set to matplotlib'')\")",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -m pip uninstall matplotlib -y)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''finplot''); print(''Chart system set to finplot'')\")"
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "outputStyle": "default"
 }

@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any, Tuple
 import pandas as pd
 import numpy as np
-import matplotlib.dates as mdates
+# import matplotlib.dates as mdates  # matplotlib removed
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt
 from loguru import logger
@@ -114,7 +114,8 @@ class OverlayManagerMixin:
                 else:
                     x_real = x_data
 
-                dt = mdates.num2date(x_real)
+                # dt = mdates.num2date(x_real)  # matplotlib removed
+                dt = pd.to_datetime(x_real, unit='s')  # Convert from timestamp
                 time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 time_str = f"X: {x_data:.2f}"
@@ -204,7 +205,8 @@ class OverlayManagerMixin:
             x_ser = pd.to_datetime(df['ts_utc'], unit='ms', utc=True)
             # Convert to naive datetimes safely using Series.dt
             x_dt = x_ser.dt.tz_convert('UTC').dt.tz_localize(None)
-            x_mpl = mdates.date2num(x_dt)
+            # x_mpl = mdates.date2num(x_dt)  # matplotlib removed
+            x_mpl = x_dt.astype('int64') // 10**9  # Convert to Unix timestamp
 
             # Apply compression if active
             comp = getattr(getattr(self.chart_controller, "plot_service", None), "_compress_real_x", None)

@@ -12,18 +12,10 @@ from PySide6.QtWidgets import (
     QSlider, QFrame, QButtonGroup, QRadioButton, QDateEdit
 )
 from PySide6.QtCore import QTimer, Qt, QDate
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-
 from ...utils.user_settings import get_setting, set_setting
 
-# Try to import finplot
-try:
-    import finplot as fplt
-    FINPLOT_AVAILABLE = True
-except ImportError:
-    FINPLOT_AVAILABLE = False
-    fplt = None
+# Import finplot (required)
+import finplot as fplt
 
 
 class UIBuilderMixin:
@@ -35,19 +27,13 @@ class UIBuilderMixin:
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
 
-        # Check chart system setting
-        chart_system = get_setting("chart.system", "matplotlib")
-
-        if chart_system in ["finplot", "finplot_enhanced"] and FINPLOT_AVAILABLE:
-            # Use finplot - note: create_plot_widget expects 'master' not 'parent'
-            self.canvas = fplt.create_plot_widget(master=self, init_zoom_periods=100)
-            self.use_finplot = True
-            # Initialize finplot axes (will be created by finplot dynamically)
-            self.finplot_axes = []
-        else:
-            # Use matplotlib (default)
-            self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
-            self.use_finplot = False
+        # Use finplot exclusively - create the window first, then get the widget
+        # finplot.show() creates a Qt window, we need to embed it in our layout
+        # Create a pyqtgraph PlotWidget for finplot
+        from pyqtgraph import PlotWidget
+        self.canvas = PlotWidget(parent=self)
+        self.use_finplot = True
+        self.finplot_axes = []
 
         # Create topbar and populate it with two rows
         topbar = QWidget()

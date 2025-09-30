@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from typing import Optional, Dict
 import pandas as pd
-import matplotlib.dates as mdates
+# import matplotlib.dates as mdates  # matplotlib removed
 from PySide6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QMessageBox
 from PySide6.QtCore import Qt, QSignalBlocker
 from loguru import logger
