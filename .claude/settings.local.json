@@ -15,7 +15,11 @@
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''finplot_enhanced''); print(''Chart system set to finplot_enhanced'')\")",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; print(dir(btalib))\")",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; import pandas as pd; df = pd.DataFrame({''close'': [1,2,3,4,5]*20}); r = btalib.RSI(df); print(''RSI params:'', r.__init__.__code__.co_varnames[:10])\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; help(btalib.RSI)\")"
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; help(btalib.RSI)\")",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; help(fplt.create_plot_widget)\")",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" scripts/run_gui.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; w = fplt.create_plot_widget(None); print(type(w), dir(w)[:10])\")",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''matplotlib''); print(''Chart system set to matplotlib'')\")"
     ],
     "deny": [],
     "ask": []

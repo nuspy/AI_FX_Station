@@ -39,8 +39,8 @@ class UIBuilderMixin:
         chart_system = get_setting("chart.system", "matplotlib")
 
         if chart_system in ["finplot", "finplot_enhanced"] and FINPLOT_AVAILABLE:
-            # Use finplot
-            self.canvas = fplt.create_plot_widget(parent=self, init_zoom_periods=100)
+            # Use finplot - note: create_plot_widget expects 'master' not 'parent'
+            self.canvas = fplt.create_plot_widget(master=self, init_zoom_periods=100)
             self.use_finplot = True
             # Initialize finplot axes (will be created by finplot dynamically)
             self.finplot_axes = []
