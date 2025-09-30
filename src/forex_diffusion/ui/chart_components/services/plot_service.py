@@ -19,7 +19,7 @@ from .pyqtgraph_candlestick import add_candlestick
 
 # Enhanced indicators support
 try:
-    from forex_diffusion.features.indicators_btalib import BTALibIndicators
+    from forex_diffusion.features.indicators_talib import TALibIndicators as BTALibIndicators
     from forex_diffusion.features.indicator_ranges import indicator_range_classifier
     ENHANCED_INDICATORS_AVAILABLE = True
 except ImportError:

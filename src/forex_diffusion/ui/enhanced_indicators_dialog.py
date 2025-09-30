@@ -20,8 +20,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtCore import Qt, QTimer, Signal
 
-from ..features.indicators_btalib import (
-    BTALibIndicators, IndicatorConfig, IndicatorCategories, DataRequirement
+from ..features.indicators_talib import (
+    TALibIndicators as BTALibIndicators, IndicatorConfig, IndicatorCategories, DataRequirement
 )
 from ..features.indicator_ranges import (
     IndicatorRangeClassifier, IndicatorRange, indicator_range_classifier
