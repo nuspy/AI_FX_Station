@@ -70,34 +70,29 @@ def test_indicator_calculation():
 
         # Initialize indicators system
         indicators_system = BTALibIndicators()
-        print(f"[OK] BTALibIndicators initialized with {len(indicators_system.indicators)} indicators")
+        print(f"[OK] BTALibIndicators initialized with {len(indicators_system.enabled_indicators)} indicators")
 
         # Test calculation of a few indicators
-        test_indicators = ['rsi', 'sma', 'ema', 'bbands']
+        test_indicators = ['rsi', 'sma', 'ema', 'bbands', 'macd', 'stoch']
 
         for indicator_name in test_indicators:
             try:
-                config = indicators_system.get_indicator_config(indicator_name)
+                # Get config from enabled_indicators dict
+                config = indicators_system.enabled_indicators.get(indicator_name)
                 if not config:
                     print(f"  [SKIP] {indicator_name}: not found")
                     continue
 
-                result = indicators_system.calculate_indicator(
-                    indicator_name,
-                    open=df['open'],
-                    high=df['high'],
-                    low=df['low'],
-                    close=df['close'],
-                    volume=df['volume']
-                )
+                # Use correct API: calculate_indicator(data, indicator_name, custom_params)
+                result_dict = indicators_system.calculate_indicator(df, indicator_name)
 
-                if result is not None:
-                    if isinstance(result, pd.Series):
-                        print(f"  [OK] {indicator_name}: calculated {len(result)} values")
-                    elif isinstance(result, dict):
-                        print(f"  [OK] {indicator_name}: calculated {len(result)} series")
+                if result_dict:
+                    is_multi = len(result_dict) > 1
+                    series_type = "multi-series" if is_multi else "single-series"
+                    keys = list(result_dict.keys())
+                    print(f"  [OK] {indicator_name}: {series_type}, keys={keys}")
                 else:
-                    print(f"  [FAIL] {indicator_name}: result is None")
+                    print(f"  [FAIL] {indicator_name}: result dict is empty")
 
             except Exception as e:
                 print(f"  [FAIL] {indicator_name}: {e}")

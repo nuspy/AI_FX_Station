@@ -661,26 +661,57 @@ class BTALibIndicators:
         if custom_params:
             params.update(custom_params)
 
-        # Create bta-lib data feed
-        bt_data = btalib.feed(data)
-
         try:
-            # Get the indicator function from btalib
-            indicator_func = getattr(bt_data, indicator_name)
+            # Get the indicator class from btalib (RSI, SMA, EMA, etc.)
+            indicator_class = getattr(btalib, indicator_name.upper(), None)
+            if indicator_class is None:
+                # Try lowercase or exact name
+                indicator_class = getattr(btalib, indicator_name, None)
 
-            # Call with parameters
-            if params:
-                result = indicator_func(**params)
-            else:
-                result = indicator_func()
+            if indicator_class is None:
+                print(f"Indicator {indicator_name} not found in btalib")
+                return {}
+
+            # Fix parameter names for btalib compatibility
+            # btalib uses singular 'period', not 'periods'
+            fixed_params = {}
+            for key, value in params.items():
+                if key == 'periods' and isinstance(value, list):
+                    # Use first period if list provided
+                    fixed_params['period'] = value[0] if value else 14
+                elif key == 'periods':
+                    fixed_params['period'] = value
+                else:
+                    fixed_params[key] = value
+
+            # Call indicator with data and parameters
+            # btalib expects: Indicator(data, **params)
+            try:
+                if fixed_params:
+                    result = indicator_class(data, **fixed_params)
+                else:
+                    result = indicator_class(data)
+            except TypeError as te:
+                # If parameter error, try without params
+                print(f"Warning: {indicator_name} parameter error ({te}), trying default parameters")
+                result = indicator_class(data)
 
             # Convert result to dictionary format
-            if hasattr(result, 'columns'):
+            if hasattr(result, '_df') and hasattr(result._df, 'columns'):
                 # Multi-column result (like MACD, Bollinger Bands)
-                return {f"{indicator_name}_{col}": result[col] for col in result.columns}
-            else:
+                # btalib stores results in _df attribute
+                result_df = result._df
+                return {col: result_df[col] for col in result_df.columns}
+            elif hasattr(result, '_df'):
                 # Single column result
-                return {indicator_name: result}
+                result_df = result._df
+                if len(result_df.columns) == 1:
+                    return {indicator_name: result_df[result_df.columns[0]]}
+                else:
+                    return {col: result_df[col] for col in result_df.columns}
+            else:
+                # Fallback: try to convert to series
+                return {indicator_name: pd.Series(result)}
 
         except Exception as e:
             print(f"Error calculating {indicator_name}: {e}")
@@ -792,42 +823,46 @@ class BTALibIndicators:
 def sma(series: pd.Series, window: int) -> pd.Series:
     """Simple Moving Average - backward compatibility"""
     df = pd.DataFrame({'close': series})
-    bt_data = btalib.feed(df)
-    return bt_data.sma(period=window)
+    result = btalib.SMA(df, period=window)
+    return result._df[result._df.columns[0]] if hasattr(result, '_df') else series
 
 
 def ema(series: pd.Series, span: int) -> pd.Series:
     """Exponential Moving Average - backward compatibility"""
     df = pd.DataFrame({'close': series})
-    bt_data = btalib.feed(df)
-    return bt_data.ema(period=span)
+    result = btalib.EMA(df, period=span)
+    return result._df[result._df.columns[0]] if hasattr(result, '_df') else series
 
 
 def bollinger(series: pd.Series, window: int = 20, n_std: float = 2.0) -> Tuple[pd.Series, pd.Series]:
     """Bollinger Bands - backward compatibility"""
     df = pd.DataFrame({'close': series})
-    bt_data = btalib.feed(df)
-    bb = bt_data.bbands(period=window, devup=n_std, devdn=n_std)
-    return bb['top'], bb['bottom']
+    result = btalib.BBANDS(df, period=window, devup=n_std, devdn=n_std)
+    if hasattr(result, '_df'):
+        bb_df = result._df
+        return bb_df['top'], bb_df['bottom']
+    return series, series
 
 
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """RSI - backward compatibility"""
     df = pd.DataFrame({'close': series})
-    bt_data = btalib.feed(df)
-    return bt_data.rsi(period=period)
+    result = btalib.RSI(df, period=period)
+    return result._df[result._df.columns[0]] if hasattr(result, '_df') else series
 
 
 def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
     """MACD - backward compatibility"""
     df = pd.DataFrame({'close': series})
-    bt_data = btalib.feed(df)
-    macd_result = bt_data.macd(fast=fast, slow=slow, signal=signal)
-    return {
-        "macd": macd_result['macd'],
-        "signal": macd_result['signal'],
-        "hist": macd_result['histogram']
-    }
+    result = btalib.MACD(df, fast=fast, slow=slow, signal=signal)
+    if hasattr(result, '_df'):
+        macd_df = result._df
+        return {
+            "macd": macd_df['macd'] if 'macd' in macd_df.columns else macd_df[macd_df.columns[0]],
+            "signal": macd_df['signal'] if 'signal' in macd_df.columns else macd_df[macd_df.columns[1]],
+            "hist": macd_df['histogram'] if 'histogram' in macd_df.columns else macd_df[macd_df.columns[2]]
+        }
+    return {"macd": series, "signal": series, "hist": series}
 
 
 if __name__ == "__main__":

@@ -854,26 +854,28 @@ class PlotService(ChartServiceBase):
                     # Create subplots: main chart + normalized subplot
                     self._subplot_service.create_subplots(has_normalized=True)
 
+            # Prepare DataFrame for indicator calculation
+            indicator_df = pd.DataFrame({
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume
+            })
+
             # Calculate and plot each indicator
             for indicator_name in enabled_indicator_names:
                 try:
-                    # Get indicator config
-                    indicator_config = indicators_system.get_indicator_config(indicator_name)
+                    # Get indicator config from enabled_indicators dict
+                    indicator_config = indicators_system.enabled_indicators.get(indicator_name)
                     if not indicator_config:
                         logger.warning(f"Indicator {indicator_name} not found in system")
                         continue
 
-                    # Calculate indicator (simplified - you may need to handle parameters)
-                    result = indicators_system.calculate_indicator(
-                        indicator_name,
-                        open=open_price,
-                        high=high,
-                        low=low,
-                        close=close,
-                        volume=volume
-                    )
+                    # Calculate indicator using correct API: calculate_indicator(data, indicator_name, custom_params)
+                    result_dict = indicators_system.calculate_indicator(indicator_df, indicator_name)
 
-                    if result is None:
+                    if not result_dict:
                         continue
 
                     # Get subplot recommendation
@@ -883,44 +885,58 @@ class PlotService(ChartServiceBase):
                     # Get indicator color
                     color = indicator_colors.get(indicator_name, None)
 
+                    # Determine if multi-series or single series
+                    is_multi_series = len(result_dict) > 1
+
                     # Plot based on subplot type
                     if subplot_type == 'main_chart' and not self._subplot_enabled:
                         # Overlay on main price chart
-                        if isinstance(result, pd.Series):
-                            plot_kwargs = {'alpha': 0.7, 'linewidth': 1.2, 'label': indicator_name}
-                            if color:
-                                plot_kwargs['color'] = color
-                            self.ax.plot(x_dt, result.values, **plot_kwargs)
-                        elif isinstance(result, dict):
-                            # Handle multi-series indicators (like Bollinger Bands)
-                            for key, series in result.items():
+                        if is_multi_series:
+                            # Handle multi-series indicators (like Bollinger Bands, MACD)
+                            for key, series in result_dict.items():
                                 if isinstance(series, pd.Series):
                                     self.ax.plot(x_dt, series.values, alpha=0.6, linewidth=1.0,
-                                               label=f"{indicator_name}_{key}", linestyle='--')
+                                               label=key, linestyle='--')
+                        else:
+                            # Single series
+                            result = next(iter(result_dict.values()))
+                            if isinstance(result, pd.Series):
+                                plot_kwargs = {'alpha': 0.7, 'linewidth': 1.2, 'label': indicator_name}
+                                if color:
+                                    plot_kwargs['color'] = color
+                                self.ax.plot(x_dt, result.values, **plot_kwargs)
 
                     elif self._subplot_enabled and self._subplot_service:
                         # Use subplot service
-                        if isinstance(result, pd.Series):
-                            plot_kwargs = {}
-                            if color:
-                                plot_kwargs['color'] = color
-                            self._subplot_service.plot_indicator(indicator_name, result, **plot_kwargs)
-                        elif isinstance(result, dict):
+                        if is_multi_series:
                             # Handle multi-series (e.g., bands)
-                            if 'upper' in result and 'middle' in result and 'lower' in result:
-                                self._subplot_service.plot_bands(
-                                    indicator_name,
-                                    result['upper'],
-                                    result['middle'],
-                                    result['lower']
-                                )
+                            # Check for common band patterns
+                            keys_lower = [k.lower() for k in result_dict.keys()]
+                            has_bands = any(k in keys_lower for k in ['upper', 'top', 'middle', 'lower', 'bottom'])
+
+                            if has_bands and len(result_dict) >= 3:
+                                # Try to identify upper, middle, lower
+                                series_list = list(result_dict.values())
+                                if len(series_list) == 3:
+                                    self._subplot_service.plot_bands(
+                                        indicator_name,
+                                        series_list[0],  # upper/top
+                                        series_list[1],  # middle
+                                        series_list[2]   # lower/bottom
+                                    )
                             else:
-                                for key, series in result.items():
+                                # Plot each series separately
+                                for key, series in result_dict.items():
                                     if isinstance(series, pd.Series):
-                                        self._subplot_service.plot_indicator(
-                                            f"{indicator_name}_{key}",
-                                            series
-                                        )
+                                        self._subplot_service.plot_indicator(key, series)
+                        else:
+                            # Single series
+                            result = next(iter(result_dict.values()))
+                            if isinstance(result, pd.Series):
+                                plot_kwargs = {}
+                                if color:
+                                    plot_kwargs['color'] = color
+                                self._subplot_service.plot_indicator(indicator_name, result, **plot_kwargs)
 
                 except Exception as e:
                     logger.error(f"Failed to plot indicator {indicator_name}: {e}")
