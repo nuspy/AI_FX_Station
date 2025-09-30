@@ -56,6 +56,10 @@ class PlotService(ChartServiceBase):
         self._subplot_enabled = False
 
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
+        # Check if using finplot
+        if hasattr(self.view, 'use_finplot') and self.view.use_finplot:
+            return self._update_plot_finplot(df, quantiles)
+
         if df is None or df.empty:
             self._clear_candles()
             if hasattr(self, '_price_line') and self._price_line is not None:
@@ -337,6 +341,122 @@ class PlotService(ChartServiceBase):
             call_patterns_detection(self.controller, self.view, df if 'df' in locals() else df2)
         except Exception as e:
             logger.debug(f'patterns hook error: {e}')
+
+    def _update_plot_finplot(self, df: pd.DataFrame, quantiles: Optional[dict] = None):
+        """Update plot using finplot (high-performance financial charting)"""
+        try:
+            import finplot as fplt
+
+            if df is None or df.empty:
+                return
+
+            self._last_df = df.copy()
+
+            # Prepare data
+            df2 = df.copy()
+            y_col = 'close' if 'close' in df2.columns else 'price'
+            df2['ts_utc'] = pd.to_numeric(df2['ts_utc'], errors='coerce')
+            df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')
+            df2 = df2.dropna(subset=['ts_utc', y_col]).reset_index(drop=True)
+
+            # Convert timestamp to datetime
+            df2['time'] = pd.to_datetime(df2['ts_utc'], unit='ms', utc=True)
+            df2 = df2.set_index('time')
+
+            # Clear previous plots
+            fplt.close()
+
+            # Get enabled indicators
+            enabled_indicator_names = get_setting("indicators.enabled_list", [])
+            indicator_colors = get_setting("indicators.colors", {})
+
+            # Check what subplots we need
+            has_normalized = False
+            if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
+                has_normalized = any(
+                    indicator_range_classifier.get_range_info(name).subplot_recommendation == 'normalized_subplot'
+                    for name in enabled_indicator_names
+                    if indicator_range_classifier.get_range_info(name)
+                )
+
+            # Create subplots
+            if has_normalized:
+                # Main chart + normalized subplot
+                axs = fplt.create_plot(rows=2, init_zoom_periods=100)
+                ax_price = axs[0]
+                ax_normalized = axs[1]
+            else:
+                # Only main chart
+                axs = fplt.create_plot(rows=1, init_zoom_periods=100)
+                ax_price = axs[0] if isinstance(axs, list) else axs
+                ax_normalized = None
+
+            # Plot candlesticks if OHLC data available
+            if {'open', 'high', 'low', 'close'}.issubset(df2.columns):
+                fplt.candlestick_ochl(df2[['open', 'close', 'high', 'low']], ax=ax_price)
+            else:
+                fplt.plot(df2.index, df2[y_col], ax=ax_price, legend='Price')
+
+            # Plot indicators
+            if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
+                indicators_system = BTALibIndicators()
+
+                # Prepare OHLCV data
+                close = df2['close'] if 'close' in df2.columns else df2[y_col]
+                high = df2.get('high', close)
+                low = df2.get('low', close)
+                open_price = df2.get('open', close)
+                volume = df2.get('volume', pd.Series([1.0] * len(close), index=close.index))
+
+                for indicator_name in enabled_indicator_names:
+                    try:
+                        # Calculate indicator
+                        result = indicators_system.calculate_indicator(
+                            indicator_name,
+                            open=open_price,
+                            high=high,
+                            low=low,
+                            close=close,
+                            volume=volume
+                        )
+
+                        if result is None:
+                            continue
+
+                        # Get subplot recommendation
+                        range_info = indicator_range_classifier.get_range_info(indicator_name)
+                        subplot_type = range_info.subplot_recommendation if range_info else 'main_chart'
+
+                        # Get color
+                        color = indicator_colors.get(indicator_name, None)
+
+                        # Plot based on subplot
+                        if subplot_type == 'normalized_subplot' and ax_normalized:
+                            if isinstance(result, pd.Series):
+                                fplt.plot(result.index, result.values, ax=ax_normalized,
+                                         legend=indicator_name, color=color)
+                        else:
+                            # Overlay on main chart
+                            if isinstance(result, pd.Series):
+                                fplt.plot(result.index, result.values, ax=ax_price,
+                                         legend=indicator_name, color=color)
+
+                    except Exception as e:
+                        logger.error(f"Failed to plot indicator {indicator_name} with finplot: {e}")
+
+            # Show the plot
+            fplt.show()
+
+            # Store axis reference
+            self.ax = ax_price
+            self.view.finplot_axes = [ax_price]
+            if ax_normalized:
+                self.view.finplot_axes.append(ax_normalized)
+
+        except Exception as e:
+            logger.error(f"Error in _update_plot_finplot: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _render_candles(self, df2: pd.DataFrame, x_dt: Optional[pd.Series] = None):
         """Render OHLC candles on the main axis."""

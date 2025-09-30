@@ -138,18 +138,26 @@ class ChartTabUI(
 
     def _setup_chart_components(self):
         """Setup chart components after UI is built."""
-        # Initialize plot axes
-        self.ax = self.canvas.figure.subplots()
-        self._osc_ax = None
-        self._ind_artists = {}
+        # Check if using finplot or matplotlib
+        if hasattr(self, 'use_finplot') and self.use_finplot:
+            # Finplot initialization
+            # Axes will be created dynamically when plotting
+            self.ax = None  # Will be set when first plot is created
+            self._osc_ax = None
+            self._ind_artists = {}
+        else:
+            # Matplotlib initialization
+            self.ax = self.canvas.figure.subplots()
+            self._osc_ax = None
+            self._ind_artists = {}
 
-        # Configure figure layout
-        self.canvas.figure.set_constrained_layout(False)
-        self.canvas.figure.subplots_adjust(left=0.04, right=0.995, top=0.97, bottom=0.08)
-        self.ax.margins(x=0.001, y=0.05)
+            # Configure figure layout
+            self.canvas.figure.set_constrained_layout(False)
+            self.canvas.figure.subplots_adjust(left=0.04, right=0.995, top=0.97, bottom=0.08)
+            self.ax.margins(x=0.001, y=0.05)
 
-        # Connect xlim change callback
-        self._xlim_cid = self.ax.callbacks.connect('xlim_changed', self._on_main_xlim_changed)
+            # Connect xlim change callback
+            self._xlim_cid = self.ax.callbacks.connect('xlim_changed', self._on_main_xlim_changed)
 
     def _initialize_timers_and_connections(self):
         """Setup timers and UI connections."""

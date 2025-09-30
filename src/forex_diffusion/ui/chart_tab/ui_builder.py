@@ -17,6 +17,14 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from ...utils.user_settings import get_setting, set_setting
 
+# Try to import finplot
+try:
+    import finplot as fplt
+    FINPLOT_AVAILABLE = True
+except ImportError:
+    FINPLOT_AVAILABLE = False
+    fplt = None
+
 
 class UIBuilderMixin:
     """Mixin containing all UI construction methods for ChartTab."""
@@ -27,7 +35,19 @@ class UIBuilderMixin:
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
 
-        self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
+        # Check chart system setting
+        chart_system = get_setting("chart.system", "matplotlib")
+
+        if chart_system in ["finplot", "finplot_enhanced"] and FINPLOT_AVAILABLE:
+            # Use finplot
+            self.canvas = fplt.create_plot_widget(parent=self, init_zoom_periods=100)
+            self.use_finplot = True
+            # Initialize finplot axes (will be created by finplot dynamically)
+            self.finplot_axes = []
+        else:
+            # Use matplotlib (default)
+            self.canvas = FigureCanvas(Figure(figsize=(6, 4)))
+            self.use_finplot = False
 
         # Create topbar and populate it with two rows
         topbar = QWidget()
