@@ -13,8 +13,9 @@ from .patterns_hook import call_patterns_detection
 from forex_diffusion.utils.user_settings import get_setting, set_setting
 from .base import ChartServiceBase
 
-# Import finplot
-import finplot as fplt
+# Import PyQtGraph for high-performance charting
+import pyqtgraph as pg
+from .pyqtgraph_candlestick import add_candlestick
 
 # Enhanced indicators support
 try:
@@ -36,21 +37,16 @@ class PlotService(ChartServiceBase):
         self._subplot_enabled = False
 
     def enable_indicator_subplots(self):
-        """Enable multi-subplot mode for indicators"""
-        try:
-            from .matplotlib_subplot_service import MatplotlibSubplotService
-            if hasattr(self.view, 'canvas') and hasattr(self.view.canvas, 'figure'):
-                self._subplot_service = MatplotlibSubplotService(self.view.canvas.figure)
-                self._subplot_enabled = True
-                logger.info("Indicator subplots enabled")
-        except Exception as e:
-            logger.error(f"Failed to enable indicator subplots: {e}")
-            self._subplot_enabled = False
+        """Enable multi-subplot mode for indicators (PyQtGraph-based)"""
+        # Subplots are managed dynamically in _update_plot_finplot
+        # This method is kept for compatibility
+        self._subplot_enabled = True
+        logger.info("Indicator subplots enabled (PyQtGraph)")
 
     def disable_indicator_subplots(self):
         """Disable multi-subplot mode"""
-        self._subplot_service = None
         self._subplot_enabled = False
+        logger.info("Indicator subplots disabled")
 
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
         # Check if using finplot
@@ -340,10 +336,8 @@ class PlotService(ChartServiceBase):
             logger.debug(f'patterns hook error: {e}')
 
     def _update_plot_finplot(self, df: pd.DataFrame, quantiles: Optional[dict] = None):
-        """Update plot using finplot (high-performance financial charting)"""
+        """Update plot using PyQtGraph (high-performance financial charting)"""
         try:
-            import finplot as fplt
-
             if df is None or df.empty:
                 return
 
@@ -360,10 +354,7 @@ class PlotService(ChartServiceBase):
             df2['time'] = pd.to_datetime(df2['ts_utc'], unit='ms', utc=True)
             df2 = df2.set_index('time')
 
-            # Clear previous plots
-            fplt.close()
-
-            # Get enabled indicators
+            # Get enabled indicators to check if we need 2 subplots
             enabled_indicator_names = get_setting("indicators.enabled_list", [])
             indicator_colors = get_setting("indicators.colors", {})
 
@@ -376,23 +367,51 @@ class PlotService(ChartServiceBase):
                     if indicator_range_classifier.get_range_info(name)
                 )
 
-            # Create subplots
-            if has_normalized:
-                # Main chart + normalized subplot
-                axs = fplt.create_plot(rows=2, init_zoom_periods=100)
-                ax_price = axs[0]
-                ax_normalized = axs[1]
-            else:
-                # Only main chart
-                axs = fplt.create_plot(rows=1, init_zoom_periods=100)
-                ax_price = axs[0] if isinstance(axs, list) else axs
-                ax_normalized = None
+            # Manage subplots in PyQtGraph GraphicsLayoutWidget
+            graphics_layout = self.view.graphics_layout
+            current_rows = len(self.view.finplot_axes) if hasattr(self.view, 'finplot_axes') else 1
+            needed_rows = 2 if has_normalized else 1
 
-            # Plot candlesticks if OHLC data available
-            if {'open', 'high', 'low', 'close'}.issubset(df2.columns):
-                fplt.candlestick_ochl(df2[['open', 'close', 'high', 'low']], ax=ax_price)
+            # Recreate plots if row count changed
+            if current_rows != needed_rows:
+                graphics_layout.clear()
+                self.view.finplot_axes = []
+
+                # Create main price plot
+                main_plot = graphics_layout.addPlot(row=0, col=0)
+                main_plot.showGrid(x=True, y=True, alpha=0.3)
+                self.view.finplot_axes.append(main_plot)
+                self.view.main_plot = main_plot
+
+                if needed_rows == 2:
+                    # Create normalized subplot
+                    normalized_plot = graphics_layout.addPlot(row=1, col=0)
+                    normalized_plot.showGrid(x=True, y=True, alpha=0.3)
+                    normalized_plot.setYRange(0, 1)  # Normalized range
+                    self.view.finplot_axes.append(normalized_plot)
+                    self.view.normalized_plot = normalized_plot
+                else:
+                    self.view.normalized_plot = None
             else:
-                fplt.plot(df2.index, df2[y_col], ax=ax_price, legend='Price')
+                # Just clear existing plots
+                for plot in self.view.finplot_axes:
+                    plot.clear()
+
+            # Get plot references
+            ax_price = self.view.main_plot
+            ax_normalized = getattr(self.view, 'normalized_plot', None)
+
+            # Determine chart mode (candles vs line)
+            chart_mode = get_setting('chart.price_mode', 'candles')
+
+            # Plot price data
+            if chart_mode == 'candles' and {'open', 'high', 'low', 'close'}.issubset(df2.columns):
+                add_candlestick(ax_price, df2[['open', 'high', 'low', 'close']])
+            else:
+                # Plot line chart
+                x_data = np.arange(len(df2))
+                y_data = df2[y_col].values
+                ax_price.plot(x_data, y_data, pen=pg.mkPen('#2196F3', width=1.5))
 
             # Plot indicators
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
@@ -432,28 +451,35 @@ class PlotService(ChartServiceBase):
                         # Plot based on subplot
                         target_ax = ax_normalized if (subplot_type == 'normalized_subplot' and ax_normalized) else ax_price
 
+                        # Prepare x-axis data (numeric indices)
+                        x_data = np.arange(len(df2))
+
+                        # Convert color to PyQtGraph format
+                        pg_pen = pg.mkPen(color if color else '#FFA726', width=1.5)
+
                         if isinstance(result, pd.Series):
-                            # Single series
-                            fplt.plot(result.index, result.values, ax=target_ax,
-                                     legend=indicator_name, color=color)
+                            # Single series - plot with PyQtGraph
+                            y_data = result.values
+                            if len(y_data) == len(x_data):
+                                target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
                         elif isinstance(result, dict):
                             # Multi-series (MACD, Bollinger Bands, etc.)
-                            for key, series in result.items():
+                            for i, (key, series) in enumerate(result.items()):
                                 if isinstance(series, pd.Series):
-                                    fplt.plot(series.index, series.values, ax=target_ax,
-                                             legend=key, color=color)
+                                    y_data = series.values
+                                    if len(y_data) == len(x_data):
+                                        # Use different colors for multi-series
+                                        colors = ['#FFA726', '#66BB6A', '#EF5350']
+                                        pg_pen = pg.mkPen(colors[i % len(colors)], width=1.5)
+                                        target_ax.plot(x_data, y_data, pen=pg_pen, name=key)
 
                     except Exception as e:
-                        logger.error(f"Failed to plot indicator {indicator_name} with finplot: {e}")
-
-            # Show the plot
-            fplt.show()
+                        logger.error(f"Failed to plot indicator {indicator_name}: {e}")
 
             # Store axis reference
             self.ax = ax_price
-            self.view.finplot_axes = [ax_price]
-            if ax_normalized:
-                self.view.finplot_axes.append(ax_normalized)
+
+            logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
 
         except Exception as e:
             logger.error(f"Error in _update_plot_finplot: {e}")

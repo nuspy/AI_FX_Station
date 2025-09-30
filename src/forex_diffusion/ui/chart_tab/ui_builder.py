@@ -22,18 +22,10 @@ class UIBuilderMixin:
     """Mixin containing all UI construction methods for ChartTab."""
 
     def _build_ui(self) -> None:
-        """Programmatically builds the entire UI with a two-row topbar and tab structure."""
+        """Programmatically builds the entire UI with finplot as the primary chart widget."""
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
-
-        # Use finplot exclusively - create the window first, then get the widget
-        # finplot.show() creates a Qt window, we need to embed it in our layout
-        # Create a pyqtgraph PlotWidget for finplot
-        from pyqtgraph import PlotWidget
-        self.canvas = PlotWidget(parent=self)
-        self.use_finplot = True
-        self.finplot_axes = []
 
         # Create topbar and populate it with two rows
         topbar = QWidget()
@@ -45,7 +37,7 @@ class UIBuilderMixin:
         self.main_tabs = QTabWidget()
         self.layout().addWidget(self.main_tabs)
 
-        # Chart tab (original functionality)
+        # Chart tab (finplot-based)
         self._create_chart_tab()
 
         # Training/Backtest tab (new functionality)
@@ -85,10 +77,24 @@ class UIBuilderMixin:
         drawbar_layout.addWidget(self._drawbar)
         chart_area_splitter.addWidget(drawbar_container)
 
+        # Create PyQtGraph widget for high-performance charting
+        # PyQtGraph is what finplot uses internally - we use it directly for full control
         chart_container = QWidget()
         chart_container_layout = QVBoxLayout(chart_container)
         chart_container_layout.setContentsMargins(0,0,0,0)
-        chart_container_layout.addWidget(self.canvas)
+
+        # Use PyQtGraph PlotWidget directly for embedding
+        from pyqtgraph import PlotWidget, GraphicsLayoutWidget
+        self.graphics_layout = GraphicsLayoutWidget()
+        self.canvas = self.graphics_layout  # Keep canvas reference
+        self.use_finplot = True  # Flag to use PyQtGraph-based plotting
+        self.finplot_axes = []
+
+        # Create initial plot
+        self.main_plot = self.graphics_layout.addPlot(row=0, col=0)
+        self.finplot_axes.append(self.main_plot)
+
+        chart_container_layout.addWidget(self.graphics_layout)
         self.chart_container = chart_container  # keep reference for overlays
         chart_area_splitter.addWidget(chart_container)
 

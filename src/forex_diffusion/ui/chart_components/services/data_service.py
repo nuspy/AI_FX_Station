@@ -89,8 +89,14 @@ class DataService(ChartServiceBase):
             self._rt_dirty = False
             # preserve current view
             try:
-                prev_xlim = self.ax.get_xlim()
-                prev_ylim = self.ax.get_ylim()
+                # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
+                if hasattr(self.ax, 'viewRange'):
+                    view_range = self.ax.viewRange()
+                    prev_xlim = view_range[0]
+                    prev_ylim = view_range[1]
+                else:
+                    prev_xlim = self.ax.get_xlim()
+                    prev_ylim = self.ax.get_ylim()
             except Exception:
                 prev_xlim = prev_ylim = None
             # redraw base chart (quantiles overlay mantenuti da _forecasts)
@@ -126,17 +132,20 @@ class DataService(ChartServiceBase):
 
     def _reload_view_window(self):
         """Reload only data covering [view_left .. view_right] plus one span of history."""
+        # TODO: Reimplement for PyQtGraph without matplotlib dependencies
+        # For now, disable dynamic reloading
+        return
         try:
             # get current view in data coordinates
-            xlim = self.ax.get_xlim()
+            if hasattr(self.ax, 'viewRange'):
+                # PyQtGraph
+                xlim = self.ax.viewRange()[0]
+            else:
+                # matplotlib (fallback)
+                xlim = self.ax.get_xlim()
+
             if not xlim or xlim[0] >= xlim[1]:
                 return
-            # matplotlib floats on X may be compressed (weekend removed) -> expand to real time
-            import matplotlib.dates as mdates
-            left_num = float(self._expand_compressed_x(float(xlim[0])))
-            right_num = float(self._expand_compressed_x(float(xlim[1])))
-            left_dt = mdates.num2date(left_num)
-            right_dt = mdates.num2date(right_num)
             # ensure UTC ms
             from datetime import timezone
             if left_dt.tzinfo is None:

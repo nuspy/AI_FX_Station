@@ -22,7 +22,8 @@
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''matplotlib''); print(''Chart system set to matplotlib'')\")",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -m pip uninstall matplotlib -y)",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''finplot''); print(''Chart system set to finplot'')\")",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; w = fplt.create_plot_widget(None, rows=1); print(type(w), type(w).__mro__)\")"
     ],
     "deny": [],
     "ask": []
