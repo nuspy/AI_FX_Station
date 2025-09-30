@@ -388,6 +388,8 @@ class PlotService(ChartServiceBase):
                     normalized_plot = graphics_layout.addPlot(row=1, col=0)
                     normalized_plot.showGrid(x=True, y=True, alpha=0.3)
                     normalized_plot.setYRange(0, 1)  # Normalized range
+                    # Link X axes for synchronized zoom/pan
+                    normalized_plot.setXLink(main_plot)
                     self.view.finplot_axes.append(normalized_plot)
                     self.view.normalized_plot = normalized_plot
                 else:
