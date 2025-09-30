@@ -107,12 +107,10 @@ class EventHandlersMixin:
 
     def _connect_mouse_events(self):
         """Connect mouse events for chart interaction."""
-        if hasattr(self, 'canvas'):
-            self.canvas.mpl_connect('button_press_event', self._on_mouse_press)
-            self.canvas.mpl_connect('button_release_event', self._on_mouse_release)
-            self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
-            self.canvas.mpl_connect('scroll_event', self._on_scroll_zoom)
-            self.canvas.mpl_connect('pick_event', self._on_pick_pattern_artist)
+        # Mouse events are handled directly by finplot/PyQtGraph
+        # mpl_connect is matplotlib-specific and not available in finplot
+        # Events will be connected through finplot's native event system
+        pass
 
     # Symbol and timeframe change handlers
     def _on_symbol_combo_changed(self, new_symbol: str) -> None:

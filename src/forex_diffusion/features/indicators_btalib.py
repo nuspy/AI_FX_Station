@@ -642,7 +642,7 @@ class BTALibIndicators:
         Calculate a single indicator
 
         Args:
-            data: OHLC(V) DataFrame
+            data: OHLC(V) DataFrame with DatetimeIndex
             indicator_name: Name of indicator to calculate
             custom_params: Override default parameters
 
@@ -672,6 +672,21 @@ class BTALibIndicators:
                 print(f"Indicator {indicator_name} not found in btalib")
                 return {}
 
+            # Ensure data has DatetimeIndex for btalib
+            df_for_btalib = data.copy()
+            if not isinstance(df_for_btalib.index, pd.DatetimeIndex):
+                # Try to use a datetime column if available
+                if 'datetime' in df_for_btalib.columns:
+                    df_for_btalib = df_for_btalib.set_index('datetime')
+                elif 'timestamp' in df_for_btalib.columns:
+                    df_for_btalib = df_for_btalib.set_index('timestamp')
+                else:
+                    # Create a dummy datetime index
+                    df_for_btalib.index = pd.date_range(start='2020-01-01', periods=len(df_for_btalib), freq='1min')
+
+            # Ensure column names are lowercase
+            df_for_btalib.columns = df_for_btalib.columns.str.lower()
+
             # Fix parameter names for btalib compatibility
             # btalib uses singular 'period', not 'periods'
             fixed_params = {}
@@ -688,13 +703,13 @@ class BTALibIndicators:
             # btalib expects: Indicator(data, **params)
             try:
                 if fixed_params:
-                    result = indicator_class(data, **fixed_params)
+                    result = indicator_class(df_for_btalib, **fixed_params)
                 else:
-                    result = indicator_class(data)
+                    result = indicator_class(df_for_btalib)
             except TypeError as te:
                 # If parameter error, try without params
                 print(f"Warning: {indicator_name} parameter error ({te}), trying default parameters")
-                result = indicator_class(data)
+                result = indicator_class(df_for_btalib)
 
             # Convert result to dictionary format
             if hasattr(result, '_df') and hasattr(result._df, 'columns'):

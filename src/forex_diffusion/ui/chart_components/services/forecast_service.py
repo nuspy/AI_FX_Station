@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 import time
 
-import matplotlib.dates as mdates
+# matplotlib removed - using finplot for all charting
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -346,7 +346,12 @@ class ForecastService(ChartServiceBase):
                 # Ensure forecast is visible in current axes (extend limits if needed)
                 try:
                     last_x_dt = x_vals[-1]
-                    last_x_num = mdates.date2num(last_x_dt)
+                    # Convert datetime to Unix timestamp for finplot
+                    if isinstance(last_x_dt, pd.Timestamp):
+                        last_x_num = last_x_dt.timestamp()
+                    else:
+                        last_x_num = pd.Timestamp(last_x_dt).timestamp()
+
                     xmin, xmax = self.ax.get_xlim()
                     if last_x_num > xmax:
                         span = (xmax - xmin) if (xmax > xmin) else 1.0

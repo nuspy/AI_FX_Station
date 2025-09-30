@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 import time
 
-import matplotlib.dates as mdates
+# matplotlib removed - using finplot for all charting
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -34,56 +34,26 @@ class InteractionService(ChartServiceBase):
 
             # If drawing mode is active handle first
             if self._drawing_mode and event.xdata is not None and event.ydata is not None:
-                import matplotlib.patches as patches
-                if self._drawing_mode == "hline":
-                    ln = self.ax.axhline(event.ydata, color=self._get_color("hline_color", "#9bdcff"), linestyle="--", alpha=0.8)
-                    self.canvas.draw()
-                    return
-                if self._drawing_mode == "trend":
-                    if not hasattr(self, "_trend_points"):
-                        self._trend_points = []
-                    self._trend_points.append((event.xdata, event.ydata))
-                    if len(self._trend_points) == 2:
-                        (x1, y1), (x2, y2) = self._trend_points
-                        self.ax.plot([mdates.num2date(x1), mdates.num2date(x2)], [y1, y2], color=self._get_color("trend_color", "#ff9bdc"), linewidth=1.5)
-                        self.canvas.draw()
-                        self._trend_points = []
-                    return
-                if self._drawing_mode == "rect":
-                    if not hasattr(self, "_rect_points"):
-                        self._rect_points = []
-                    self._rect_points.append((event.xdata, event.ydata))
-                    if len(self._rect_points) == 2:
-                        (x1, y1), (x2, y2) = self._rect_points
-                        xmin, xmax = sorted([x1, x2]); ymin, ymax = sorted([y1, y2])
-                        rect = patches.Rectangle((mdates.num2date(xmin), ymin), mdates.num2num(mdates.num2date(xmax)) - mdates.num2num(mdates.num2date(xmin)), ymax - ymin, fill=False, edgecolor=self._get_color("rect_color", "#f0c674"), linewidth=1.2)
-                        self.ax.add_patch(rect); self.canvas.draw(); self._rect_points = []
-                    return
-                if self._drawing_mode == "fib":
-                    if not hasattr(self, "_fib_points"):
-                        self._fib_points = []
-                    self._fib_points.append((event.xdata, event.ydata))
-                    if len(self._fib_points) == 2:
-                        (x1, y1), (x2, y2) = self._fib_points
-                        levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
-                        a, b = (y1, y2) if y2 > y1 else (y2, y1)
-                        for lv in levels:
-                            y = a + lv * (b - a)
-                            self.ax.axhline(y, color=self._get_color("fib_color", "#9fe6a0"), alpha=0.6, linestyle=":")
-                        self.canvas.draw(); self._fib_points = []
-                    return
-                if self._drawing_mode == "label":
-                    txt = self.ax.text(mdates.num2date(event.xdata), event.ydata, "Label", color=self._get_color("label_color", "#ffd479"))
-                    try:
-                        txt.set_draggable(True)
-                    except Exception:
-                        pass
-                    # non bloccare il main loop: draw_idle
-                    try:
-                        self.canvas.draw_idle()
-                    except Exception:
-                        self.canvas.draw()
-                    return
+                # Drawing tools temporarily disabled - will be reimplemented with finplot
+                logger.debug(f"Drawing mode {self._drawing_mode} not yet implemented in finplot")
+                return
+                # TODO: Implement drawing tools with finplot API
+                # if self._drawing_mode == "hline":
+                #     fplt.add_line(y=event.ydata, color='#9bdcff', style='--')
+                # if self._drawing_mode == "trend":
+                #     if not hasattr(self, "_trend_points"):
+                #         self._trend_points = []
+                #     self._trend_points.append((event.xdata, event.ydata))
+                #     if len(self._trend_points) == 2:
+                #         (x1, y1), (x2, y2) = self._trend_points
+                #         fplt.add_line([(x1, y1), (x2, y2)], color='#ff9bdc', width=1.5)
+                #         self._trend_points = []
+
+            # TODO: Re-implement all drawing tools with finplot
+            # All drawing modes temporarily disabled until finplot implementation
+            # if self._drawing_mode == "rect":
+            # if self._drawing_mode == "fib":
+            # if self._drawing_mode == "label":
 
             # TestingPoint logic (requires Alt)
             # GUI event gives access to modifiers
@@ -109,17 +79,20 @@ class InteractionService(ChartServiceBase):
             if not alt_pressed:
                 return  # only interested in Alt+click combos
 
-            # convert xdata (matplotlib float date) to utc ms
+            # convert xdata to utc ms
             try:
-                # use global mdates imported at module level
                 from datetime import timezone
-                dt = mdates.num2date(event.xdata)
-                # ensure timezone-aware UTC
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                # event.xdata is already a Unix timestamp in finplot
+                if isinstance(event.xdata, (int, float)):
+                    clicked_ms = int(event.xdata * 1000)
                 else:
-                    dt = dt.astimezone(timezone.utc)
-                clicked_ms = int(dt.timestamp() * 1000)
+                    # Fallback: try to convert as pandas Timestamp
+                    dt = pd.Timestamp(event.xdata)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = dt.astimezone(timezone.utc)
+                    clicked_ms = int(dt.timestamp() * 1000)
             except Exception:
                 logger.exception("Failed to convert click xdata to datetime")
                 return

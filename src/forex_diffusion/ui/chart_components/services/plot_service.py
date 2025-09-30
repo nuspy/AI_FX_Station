@@ -398,27 +398,29 @@ class PlotService(ChartServiceBase):
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
                 indicators_system = BTALibIndicators()
 
-                # Prepare OHLCV data
-                close = df2['close'] if 'close' in df2.columns else df2[y_col]
-                high = df2.get('high', close)
-                low = df2.get('low', close)
-                open_price = df2.get('open', close)
-                volume = df2.get('volume', pd.Series([1.0] * len(close), index=close.index))
+                # Prepare OHLCV DataFrame
+                indicator_df = pd.DataFrame({
+                    'open': df2.get('open', df2[y_col]),
+                    'high': df2.get('high', df2[y_col]),
+                    'low': df2.get('low', df2[y_col]),
+                    'close': df2['close'] if 'close' in df2.columns else df2[y_col],
+                    'volume': df2.get('volume', pd.Series([1.0] * len(df2), index=df2.index))
+                })
 
                 for indicator_name in enabled_indicator_names:
                     try:
-                        # Calculate indicator
-                        result = indicators_system.calculate_indicator(
-                            indicator_name,
-                            open=open_price,
-                            high=high,
-                            low=low,
-                            close=close,
-                            volume=volume
-                        )
+                        # Calculate indicator using correct API
+                        result_dict = indicators_system.calculate_indicator(indicator_df, indicator_name)
 
-                        if result is None:
+                        if not result_dict:
                             continue
+
+                        # Extract first result or all results for multi-series
+                        if len(result_dict) == 1:
+                            result = next(iter(result_dict.values()))
+                        else:
+                            # Multi-series indicator - plot all
+                            result = result_dict
 
                         # Get subplot recommendation
                         range_info = indicator_range_classifier.get_range_info(indicator_name)
@@ -428,15 +430,18 @@ class PlotService(ChartServiceBase):
                         color = indicator_colors.get(indicator_name, None)
 
                         # Plot based on subplot
-                        if subplot_type == 'normalized_subplot' and ax_normalized:
-                            if isinstance(result, pd.Series):
-                                fplt.plot(result.index, result.values, ax=ax_normalized,
-                                         legend=indicator_name, color=color)
-                        else:
-                            # Overlay on main chart
-                            if isinstance(result, pd.Series):
-                                fplt.plot(result.index, result.values, ax=ax_price,
-                                         legend=indicator_name, color=color)
+                        target_ax = ax_normalized if (subplot_type == 'normalized_subplot' and ax_normalized) else ax_price
+
+                        if isinstance(result, pd.Series):
+                            # Single series
+                            fplt.plot(result.index, result.values, ax=target_ax,
+                                     legend=indicator_name, color=color)
+                        elif isinstance(result, dict):
+                            # Multi-series (MACD, Bollinger Bands, etc.)
+                            for key, series in result.items():
+                                if isinstance(series, pd.Series):
+                                    fplt.plot(series.index, series.values, ax=target_ax,
+                                             legend=key, color=color)
 
                     except Exception as e:
                         logger.error(f"Failed to plot indicator {indicator_name} with finplot: {e}")
