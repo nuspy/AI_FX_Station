@@ -128,13 +128,13 @@ class ForecastService(ChartServiceBase):
                 self._legend_once.add(model_name)
 
             # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
-            line50, = self.ax.plot(
+            # PyQtGraph returns single PlotDataItem, not tuple like matplotlib
+            line50 = self.ax.plot(
                 x_vals, q50_arr,
-                color=color, linestyle='-',
-                marker='o', markersize=3.5,
-                markerfacecolor=color, markeredgecolor=color,
-                alpha=0.95,
-                label=(model_name if first_for_model else None)
+                pen={'color': color, 'width': 2},
+                symbol='o', symbolSize=3.5,
+                symbolBrush=color, symbolPen=color,
+                name=(model_name if first_for_model else None)
             )
             artists = [line50]
 
@@ -169,51 +169,53 @@ class ForecastService(ChartServiceBase):
                     close_all = _np.concatenate([close_hist_tail.values, q50_arr])
                     f_start = len(close_all) - len(q50_arr)
 
-                    # SMA
+                    # SMA (PyQtGraph conversion)
                     if cfg.get("use_sma", False) and n_sma > 0:
                         sma_all = self._sma(pd.Series(close_all), n_sma).to_numpy()
                         try:
-                            ln, = self.ax.plot(x_vals, sma_all[f_start:], color=cfg.get("color_sma", "#7f7f7f"),
-                                               linestyle=":", linewidth=1.0, alpha=0.7, label=None)
+                            x_numeric = np.arange(len(x_vals))
+                            ln = self.ax.plot(x_numeric, sma_all[f_start:],
+                                            pen={'color': cfg.get("color_sma", "#7f7f7f"),
+                                                 'width': 1.0, 'style': 2})  # Qt.DotLine
                             artists.append(ln)
                         except Exception:
                             pass
-                    # EMA
+                    # EMA (PyQtGraph conversion)
                     if cfg.get("use_ema", False):
                         if n_ef > 0:
                             emaf_all = self._ema(pd.Series(close_all), n_ef).to_numpy()
                             try:
-                                ln, = self.ax.plot(x_vals, emaf_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
-                                                   linestyle="--", linewidth=1.0, alpha=0.7, label=None)
+                                x_numeric = np.arange(len(x_vals))
+                                ln = self.ax.plot(x_numeric, emaf_all[f_start:],
+                                                pen={'color': cfg.get("color_ema", "#bcbd22"),
+                                                     'width': 1.0, 'style': 2})
                                 artists.append(ln)
                             except Exception:
                                 pass
                         if n_es > 0:
                             emas_all = self._ema(pd.Series(close_all), n_es).to_numpy()
                             try:
-                                ln, = self.ax.plot(x_vals, emas_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
-                                                   linestyle=":", linewidth=1.0, alpha=0.6, label=None)
+                                x_numeric = np.arange(len(x_vals))
+                                ln = self.ax.plot(x_numeric, emas_all[f_start:],
+                                                pen={'color': cfg.get("color_ema", "#bcbd22"),
+                                                     'width': 1.0, 'style': 2})
                                 artists.append(ln)
                             except Exception:
                                 pass
-                    # Bollinger
+                    # Bollinger (PyQtGraph conversion - simplified, no fill_between)
                     if cfg.get("use_bollinger", False) and n_bb > 0:
                         _, bb_up_all, bb_lo_all = self._bollinger(pd.Series(close_all), n_bb, float(cfg.get("bb_k", 2.0)))
                         bu = bb_up_all.to_numpy()[f_start:]
                         bl = bb_lo_all.to_numpy()[f_start:]
                         c_bb = cfg.get("color_bollinger", "#2ca02c")
                         try:
-                            l1, = self.ax.plot(x_vals, bu, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
-                            l2, = self.ax.plot(x_vals, bl, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
+                            x_numeric = np.arange(len(x_vals))
+                            l1 = self.ax.plot(x_numeric, bu, pen={'color': c_bb, 'width': 0.9, 'style': 2})
+                            l2 = self.ax.plot(x_numeric, bl, pen={'color': c_bb, 'width': 0.9, 'style': 2})
                             artists.extend([l1, l2])
-                            try:
-                                poly = self.ax.fill_between(x_vals, bl, bu, color=c_bb, alpha=0.06)
-                                artists.append(poly)
-                            except Exception:
-                                pass
                         except Exception:
                             pass
-                    # Keltner
+                    # Keltner (PyQtGraph conversion)
                     if cfg.get("use_keltner", False) and n_k > 0:
                         high_all = pd.Series(close_all)
                         low_all = pd.Series(close_all)
@@ -222,39 +224,46 @@ class ForecastService(ChartServiceBase):
                         kl = (kl_all.to_numpy() if hasattr(kl_all, "to_numpy") else kl_all.values)[f_start:]
                         c_k = cfg.get("color_keltner", "#17becf")
                         try:
-                            l1, = self.ax.plot(x_vals, ku, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
-                            l2, = self.ax.plot(x_vals, kl, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
+                            x_numeric = np.arange(len(x_vals))
+                            l1 = self.ax.plot(x_numeric, ku, pen={'color': c_k, 'width': 0.9, 'style': 2})
+                            l2 = self.ax.plot(x_numeric, kl, pen={'color': c_k, 'width': 0.9, 'style': 2})
                             artists.extend([l1, l2])
                         except Exception:
                             pass
                 except Exception:
                     pass
 
-            # se disponibili, punti ad alta risoluzione (es. 1m) come scatter
+            # se disponibili, punti ad alta risoluzione (es. 1m) come scatter (PyQtGraph conversion)
             try:
                 f_hr = quantiles.get("future_ts_hr"); q50_hr = quantiles.get("q50_hr")
                 if f_hr and q50_hr and len(f_hr) == len(q50_hr):
-                    x_hr = pd.to_datetime(f_hr, unit="ms", utc=True).tz_convert(None)
-                    scat = self.ax.scatter(x_hr, q50_hr, s=10, color=color, alpha=0.6, edgecolors='none')
+                    x_hr_numeric = np.arange(len(f_hr))
+                    import pyqtgraph as pg
+                    scat = pg.ScatterPlotItem(x=x_hr_numeric, y=q50_hr, size=10,
+                                            brush=pg.mkBrush(color), pen=None)
+                    self.ax.addItem(scat)
                     artists.append(scat)
             except Exception:
                 pass
 
-            # evidenzia il punto 0 (istante richiesta) con marker più grande
+            # evidenzia il punto 0 (istante richiesta) con marker più grande (PyQtGraph conversion)
             try:
                 req_ms = quantiles.get("requested_at_ms", None)
                 if req_ms is not None and len(q50_arr) > 0:
-                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
-                    m0 = self.ax.scatter([t0], [float(q50_arr[0])], s=28, color=color, edgecolor='white', linewidths=0.8, zorder=3.5)
+                    import pyqtgraph as pg
+                    m0 = pg.ScatterPlotItem(x=[0], y=[float(q50_arr[0])], size=28,
+                                          brush=pg.mkBrush(color), pen=pg.mkPen('w', width=0.8))
+                    self.ax.addItem(m0)
                     artists.append(m0)
             except Exception:
                 pass
 
+            # Quantiles (PyQtGraph conversion - simplified, no fill_between)
             if q05_arr is not None and q95_arr is not None:
-                line05, = self.ax.plot(x_vals, q05_arr, color=color, linestyle='--', alpha=0.8, label=None)
-                line95, = self.ax.plot(x_vals, q95_arr, color=color, linestyle='--', alpha=0.8, label=None)
-                fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12, label=None)
-                artists.extend([line05, line95, fill])
+                x_numeric = np.arange(len(x_vals))
+                line05 = self.ax.plot(x_numeric, q05_arr, pen={'color': color, 'width': 1, 'style': 2})
+                line95 = self.ax.plot(x_numeric, q95_arr, pen={'color': color, 'width': 1, 'style': 2})
+                artists.extend([line05, line95])
 
                 # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
                 try:
