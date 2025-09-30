@@ -251,17 +251,17 @@ class EnhancedIndicatorTreeWidgetItem(QTreeWidgetItem):
             "custom_subplot": QColor(147, 112, 219)    # Medium Purple
         }
 
-        if subplot_rec in subplot_colors:
-            color = subplot_colors[subplot_rec]
-            self.setBackground(2, color)
+        if self.subplot_recommendation in subplot_colors:
+            bg_color = subplot_colors[self.subplot_recommendation]
+            self.setBackground(2, bg_color)
             self.setForeground(2, QColor(255, 255, 255))  # White text
 
         # Tooltip with description
-        tooltip = f"<b>{config.display_name}</b><br>"
-        tooltip += f"Range: {range_text}<br>"
-        tooltip += f"Subplot: {subplot_rec.replace('_', ' ').title()}<br>"
-        tooltip += f"Data Requirement: {config.data_requirement.value}<br>"
-        tooltip += f"Description: {config.description}"
+        tooltip = f"<b>{self.config.display_name}</b><br>"
+        tooltip += f"Range: {self.range_text}<br>"
+        tooltip += f"Subplot: {self.subplot_recommendation.replace('_', ' ').title()}<br>"
+        tooltip += f"Data Requirement: {self.config.data_requirement.value}<br>"
+        tooltip += f"Description: {self.config.description}"
         self.setToolTip(0, tooltip)
 
 

@@ -1,29 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_app_import.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" fixed_app_startup.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_setup_ui.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" run_forexgpt.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_phase3_integration.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_phase3_simple.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_subplot_integration.py)",
+      "Bash(git log:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\nfeat: Add advanced multi-subplot indicator system with 200+ indicators\n\nImplemented comprehensive indicator visualization system:\n- MatplotlibSubplotService: dual-subplot architecture for normalized (0-1) vs price-range indicators\n- EnhancedIndicatorsDialog: GUI with 200+ VectorBT Pro + bta-lib indicators, scrollable categories\n- Enhanced chart services: finplot/matplotlib subplot integration with smart classification\n- PlotService integration: enable/disable methods for indicator subplots\n- Indicator ranges classification system for proper subplot routing\n\nFixed FastAPI import error in inference/__init__.py preventing desktop app startup\nCleaned chart_tab_ui.py to professional bridge implementation\n\nAll tests passing - matplotlib subplot system fully operational\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_indicator_plotting.py)",
-      "Bash(git commit:*)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''finplot_enhanced''); print(''Chart system set to finplot_enhanced'')\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; print(dir(btalib))\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; import pandas as pd; df = pd.DataFrame({''close'': [1,2,3,4,5]*20}); r = btalib.RSI(df); print(''RSI params:'', r.__init__.__code__.co_varnames[:10])\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import btalib; help(btalib.RSI)\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; help(fplt.create_plot_widget)\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" scripts/run_gui.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; w = fplt.create_plot_widget(None); print(type(w), dir(w)[:10])\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''matplotlib''); print(''Chart system set to matplotlib'')\")",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -m pip uninstall matplotlib -y)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"from src.forex_diffusion.utils.user_settings import set_setting; set_setting(''chart.system'', ''finplot''); print(''Chart system set to finplot'')\")",
-      "Bash(timeout:*)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"import finplot as fplt; w = fplt.create_plot_widget(None, rows=1); print(type(w), type(w).__mro__)\")"
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

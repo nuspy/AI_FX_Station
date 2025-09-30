@@ -346,14 +346,6 @@ class TALibIndicators:
                 parameters={'timeperiod': 20, 'nbdev': 1},
                 description='Standard deviation volatility measure'
             ),
-            'var': IndicatorConfig(
-                name='var',
-                display_name='Variance',
-                category=IndicatorCategories.VOLATILITY,
-                data_requirement=DataRequirement.OHLC_ONLY,
-                parameters={'timeperiod': 20, 'nbdev': 1},
-                description='Variance volatility measure'
-            ),
         })
 
         # ========== TREND INDICATORS (OHLC ONLY) ==========
@@ -727,21 +719,35 @@ class TALibIndicators:
                 return {'sine': pd.Series(sine, index=data.index),
                         'leadsine': pd.Series(leadsine, index=data.index)}
 
-            # Price transform indicators (need high, low, close)
-            elif indicator_name in ['avgprice', 'medprice', 'typprice', 'wclprice']:
-                result = talib_func(open_, high, low, close)
+            # Price transform indicators - each has different signature
+            elif indicator_name == 'avgprice':
+                result = talib.AVGPRICE(open_, high, low, close)
+            elif indicator_name == 'medprice':
+                result = talib.MEDPRICE(high, low)
+            elif indicator_name == 'typprice':
+                result = talib.TYPPRICE(high, low, close)
+            elif indicator_name == 'wclprice':
+                result = talib.WCLPRICE(high, low, close)
 
             # Volume indicators
-            elif indicator_name in ['obv', 'ad']:
-                result = talib_func(high, low, close, volume)
-
+            elif indicator_name == 'obv':
+                result = talib.OBV(close, volume)
+            elif indicator_name == 'ad':
+                result = talib.AD(high, low, close, volume)
             elif indicator_name in ['adosc', 'mfi']:
                 result = talib_func(high, low, close, volume, **params)
 
             # Trend indicators needing high/low
-            elif indicator_name in ['adx', 'adxr', 'plus_di', 'minus_di', 'plus_dm', 'minus_dm',
-                                   'aroonosc', 'cci', 'dx']:
+            elif indicator_name in ['adx', 'adxr', 'plus_di', 'minus_di', 'plus_dm', 'minus_dm', 'cci', 'dx']:
                 result = talib_func(high, low, close, **params)
+
+            # Aroon oscillator - special case to avoid parameter conflict
+            elif indicator_name == 'aroonosc':
+                result = talib.AROONOSC(high, low, timeperiod=params.get('timeperiod', 14))
+
+            # Williams %R needs high, low, close
+            elif indicator_name == 'willr':
+                result = talib.WILLR(high, low, close, **params)
 
             # Volatility indicators needing high/low
             elif indicator_name in ['atr', 'natr', 'trange']:
