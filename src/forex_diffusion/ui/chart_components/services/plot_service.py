@@ -358,6 +358,12 @@ class PlotService(ChartServiceBase):
             enabled_indicator_names = get_setting("indicators.enabled_list", [])
             indicator_colors = get_setting("indicators.colors", {})
 
+            # Filter enabled indicators to only include those that exist in TA-Lib
+            if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
+                indicators_system_temp = BTALibIndicators()
+                available_names = set(indicators_system_temp.enabled_indicators.keys())
+                enabled_indicator_names = [name for name in enabled_indicator_names if name in available_names]
+
             # Check what subplots we need
             has_normalized = False
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
