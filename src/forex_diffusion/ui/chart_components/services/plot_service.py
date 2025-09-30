@@ -59,30 +59,52 @@ class PlotService(ChartServiceBase):
 
         # Get colors from settings
         chart_bg = get_setting('chart_bg', '#0f1115')
+        mini_chart_bg_1 = get_setting('mini_chart_bg_1', '#14181f')
+        mini_chart_bg_2 = get_setting('mini_chart_bg_2', '#1a1e25')
         axes_color = get_setting('axes_color', '#cfd6e1')
         grid_color = get_setting('grid_color', '#3a4250')
         text_color = get_setting('text_color', '#e0e0e0')
+        title_color = get_setting('title_bar_color', '#cfd6e1')
 
         try:
-            # Apply to all plots
-            for plot_item in self.view.finplot_axes:
-                # Set background color
-                plot_item.setBackground(chart_bg)
+            import pyqtgraph as pg
 
-                # Set axes colors
+            # Apply to all plots with specific backgrounds
+            for i, plot_item in enumerate(self.view.finplot_axes):
+                # Determine which background color to use
+                if i == 0:
+                    # Main price plot
+                    bg_color = chart_bg
+                elif hasattr(self.view, 'normalized_plot') and plot_item == self.view.normalized_plot:
+                    # First subplot (normalized)
+                    bg_color = mini_chart_bg_1
+                elif hasattr(self.view, 'custom_plot') and plot_item == self.view.custom_plot:
+                    # Second subplot (custom)
+                    bg_color = mini_chart_bg_2
+                else:
+                    # Default to chart_bg
+                    bg_color = chart_bg
+
+                # Set background color using ViewBox
+                plot_item.getViewBox().setBackgroundColor(bg_color)
+
+                # Set axes colors and text
                 for axis_name in ['left', 'right', 'top', 'bottom']:
                     axis = plot_item.getAxis(axis_name)
                     axis.setPen(axes_color)
                     axis.setTextPen(text_color)
 
-                # Set grid color
-                plot_item.getViewBox().setBackgroundColor(chart_bg)
+                # Set grid color (show grid with default alpha)
+                plot_item.showGrid(x=True, y=True, alpha=0.3)
 
-                # Update grid pen
-                plot_item.getAxis('left').setGrid(128)  # Set grid opacity
-                plot_item.getAxis('bottom').setGrid(128)
+                # Update title color if title exists (LabelItem uses setColor, not setDefaultTextColor)
+                if hasattr(plot_item, 'titleLabel') and plot_item.titleLabel is not None:
+                    try:
+                        plot_item.setTitle(plot_item.titleLabel.text, color=title_color)
+                    except Exception:
+                        pass
 
-            # Apply to graphics layout background
+            # Apply to graphics layout background (use chart_bg)
             if hasattr(self.view, 'graphics_layout'):
                 self.view.graphics_layout.setBackground(chart_bg)
 
@@ -428,6 +450,8 @@ class PlotService(ChartServiceBase):
             if current_rows != needed_rows:
                 graphics_layout.clear()
                 self.view.finplot_axes = []
+                # Reset click filter flag so it will be reinstalled
+                self._click_filter_installed = False
 
                 # Set minimal spacing between plots (using central item's layout)
                 graphics_layout.ci.layout.setSpacing(0)
@@ -545,7 +569,9 @@ class PlotService(ChartServiceBase):
                 x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
                 y_data = df2[y_col].values / pip_divisor
                 symbol = getattr(self.view, 'symbol', 'Price')
-                ax_price.plot(x_data, y_data, pen=pg.mkPen('#2196F3', width=1.5), name=symbol)
+                # Get price line color from settings
+                price_line_color = get_setting('price_line_color', '#2196F3')
+                ax_price.plot(x_data, y_data, pen=pg.mkPen(price_line_color, width=1.5), name=symbol)
 
             # Plot indicators
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
@@ -740,13 +766,16 @@ class PlotService(ChartServiceBase):
             # Get modifiers from the event
             try:
                 modifiers = event.modifiers()
-            except:
-                # Fallback: no modifiers
+                button = event.button()
+                logger.debug(f"Mouse clicked: button={button}, modifiers={modifiers}, Alt={bool(modifiers & QtCore_Qt.KeyboardModifier.AltModifier)}")
+            except Exception as e:
+                logger.debug(f"Failed to get event modifiers: {e}")
                 return
 
             # Check for left button + Alt modifier (forecast trigger)
-            # In PyQtGraph, event.button is already an integer (1=left, 2=right, 4=middle)
-            if event.button() == 1 and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
+            # button is MouseButton enum, check for LeftButton
+            if button == QtCore_Qt.MouseButton.LeftButton and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
+                logger.info("Alt+Click detected, triggering forecast")
                 # Get mouse position in view coordinates
                 scene_pos = event.scenePos()
                 if plot_item.sceneBoundingRect().contains(scene_pos):
@@ -781,9 +810,10 @@ class PlotService(ChartServiceBase):
                         logger.error(f"Failed to trigger forecast: {e}")
 
         # Install event filter on the scene
-        if not hasattr(self, '_click_filter_installed'):
+        if not hasattr(self, '_click_filter_installed') or not self._click_filter_installed:
             plot_item.scene().sigMouseClicked.connect(mouse_clicked)
             self._click_filter_installed = True
+            logger.info("Mouse click handler installed for forecast functionality")
 
     def _render_candles(self, df2: pd.DataFrame, x_dt: Optional[pd.Series] = None):
         """Render OHLC candles on the main axis."""

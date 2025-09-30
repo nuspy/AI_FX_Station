@@ -1,7 +1,7 @@
 {
     "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h20_rf_pca.pkl",
     "model_paths": [
-        "weighted_forecast_EURUSD_1m_h5_ridge_none.pkl"
+        "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h10_rf_pca.pkl"
     ],
     "forecast_types": [
         "basic",
@@ -82,10 +82,10 @@
         ]
     },
     "warmup_bars": 16,
-    "atr_n": 14,
+    "atr_n": 19,
     "rsi_n": 14,
     "bb_n": 20,
-    "rv_window": 55,
+    "rv_window": 52,
     "ema_fast": 12,
     "ema_slow": 26,
     "don_n": 20,
@@ -95,7 +95,7 @@
     "test_history_bars": 53,
     "auto_predict": false,
     "auto_interval_seconds": 60,
-    "use_hierarchical_multitf": false,
+    "use_hierarchical_multitf": true,
     "query_timeframe": "1h",
     "hierarchical_timeframes": [
         "1m",
@@ -115,5 +115,11 @@
         "1h",
         "4h"
     ],
-    "enable_performance_tracking": true
+    "enable_performance_tracking": true,
+    "dialog_geometry": [
+        483,
+        181,
+        720,
+        600
+    ]
 }

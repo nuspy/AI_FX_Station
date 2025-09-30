@@ -176,7 +176,7 @@ class ForecastService(ChartServiceBase):
                             x_numeric = np.arange(len(x_vals))
                             ln = self.ax.plot(x_numeric, sma_all[f_start:],
                                             pen={'color': cfg.get("color_sma", "#7f7f7f"),
-                                                 'width': 1.0, 'style': 2})  # Qt.DotLine
+                                                 'width': 1.0})  # Removed style - use default solid line
                             artists.append(ln)
                         except Exception:
                             pass
@@ -188,7 +188,7 @@ class ForecastService(ChartServiceBase):
                                 x_numeric = np.arange(len(x_vals))
                                 ln = self.ax.plot(x_numeric, emaf_all[f_start:],
                                                 pen={'color': cfg.get("color_ema", "#bcbd22"),
-                                                     'width': 1.0, 'style': 2})
+                                                     'width': 1.0})
                                 artists.append(ln)
                             except Exception:
                                 pass
@@ -198,7 +198,7 @@ class ForecastService(ChartServiceBase):
                                 x_numeric = np.arange(len(x_vals))
                                 ln = self.ax.plot(x_numeric, emas_all[f_start:],
                                                 pen={'color': cfg.get("color_ema", "#bcbd22"),
-                                                     'width': 1.0, 'style': 2})
+                                                     'width': 1.0})
                                 artists.append(ln)
                             except Exception:
                                 pass
@@ -210,8 +210,8 @@ class ForecastService(ChartServiceBase):
                         c_bb = cfg.get("color_bollinger", "#2ca02c")
                         try:
                             x_numeric = np.arange(len(x_vals))
-                            l1 = self.ax.plot(x_numeric, bu, pen={'color': c_bb, 'width': 0.9, 'style': 2})
-                            l2 = self.ax.plot(x_numeric, bl, pen={'color': c_bb, 'width': 0.9, 'style': 2})
+                            l1 = self.ax.plot(x_numeric, bu, pen={'color': c_bb, 'width': 0.9})
+                            l2 = self.ax.plot(x_numeric, bl, pen={'color': c_bb, 'width': 0.9})
                             artists.extend([l1, l2])
                         except Exception:
                             pass
@@ -225,8 +225,8 @@ class ForecastService(ChartServiceBase):
                         c_k = cfg.get("color_keltner", "#17becf")
                         try:
                             x_numeric = np.arange(len(x_vals))
-                            l1 = self.ax.plot(x_numeric, ku, pen={'color': c_k, 'width': 0.9, 'style': 2})
-                            l2 = self.ax.plot(x_numeric, kl, pen={'color': c_k, 'width': 0.9, 'style': 2})
+                            l1 = self.ax.plot(x_numeric, ku, pen={'color': c_k, 'width': 0.9})
+                            l2 = self.ax.plot(x_numeric, kl, pen={'color': c_k, 'width': 0.9})
                             artists.extend([l1, l2])
                         except Exception:
                             pass
@@ -260,9 +260,11 @@ class ForecastService(ChartServiceBase):
 
             # Quantiles (PyQtGraph conversion - simplified, no fill_between)
             if q05_arr is not None and q95_arr is not None:
+                from PySide6.QtCore import Qt
                 x_numeric = np.arange(len(x_vals))
-                line05 = self.ax.plot(x_numeric, q05_arr, pen={'color': color, 'width': 1, 'style': 2})
-                line95 = self.ax.plot(x_numeric, q95_arr, pen={'color': color, 'width': 1, 'style': 2})
+                # Use Qt.PenStyle.DashLine instead of integer 2
+                line05 = self.ax.plot(x_numeric, q05_arr, pen={'color': color, 'width': 1, 'style': Qt.PenStyle.DashLine})
+                line95 = self.ax.plot(x_numeric, q95_arr, pen={'color': color, 'width': 1, 'style': Qt.PenStyle.DashLine})
                 artists.extend([line05, line95])
 
                 # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
@@ -448,10 +450,15 @@ class ForecastService(ChartServiceBase):
                     self.ax.legend()
                 except Exception:
                     pass
+            # PyQtGraph doesn't need explicit draw calls - it updates automatically
+            # Only call draw for matplotlib canvas
             try:
-                self.canvas.draw_idle()
+                if hasattr(self.canvas, 'draw_idle'):
+                    self.canvas.draw_idle()
+                elif hasattr(self.canvas, 'draw'):
+                    self.canvas.draw()
             except Exception:
-                self.canvas.draw()
+                pass
         except Exception as e:
             logger.exception(f"Failed to plot forecast overlay: {e}")
 
@@ -546,7 +553,12 @@ class ForecastService(ChartServiceBase):
                         pass
             except Exception:
                 pass
-            self.canvas.draw()
+            # PyQtGraph updates automatically, only call draw for matplotlib
+            try:
+                if hasattr(self.canvas, 'draw'):
+                    self.canvas.draw()
+            except Exception:
+                pass
         except Exception as e:
             logger.exception(f"Failed to clear forecasts: {e}")
 

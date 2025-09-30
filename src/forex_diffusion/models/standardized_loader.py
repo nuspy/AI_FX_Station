@@ -199,9 +199,12 @@ class StandardizedModelLoader:
             if 'metadata' in model_data:
                 metadata_dict = model_data['metadata']
                 if isinstance(metadata_dict, ModelMetadata):
+                    # Ensure model_path is set
+                    if not hasattr(metadata_dict, 'model_path') or not metadata_dict.model_path:
+                        metadata_dict.model_path = str(model_path)
                     return metadata_dict
                 elif isinstance(metadata_dict, dict):
-                    return ModelMetadata.from_dict(metadata_dict)
+                    return ModelMetadata.from_dict(metadata_dict, model_path=str(model_path))
 
             # Try to load metadata from companion file
             try:

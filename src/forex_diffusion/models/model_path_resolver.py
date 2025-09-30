@@ -55,32 +55,36 @@ class ModelPathResolver:
         return validated_paths
 
     def _collect_paths_by_priority(self, settings: Dict[str, Any]) -> List[str]:
-        """Collect paths from all sources in priority order."""
-        paths = []
+        """Collect paths from all sources in priority order.
 
+        Uses first non-empty source only (priority order):
+        1. Multi-selection paths
+        2. Text area paths
+        3. Single model path
+        """
         # Priority 1: Multi-selection paths (from dialog cache)
         try:
             from ..ui.prediction_settings_dialog import PredictionSettingsDialog
             multi_paths = PredictionSettingsDialog.get_model_paths()
             if multi_paths:
-                paths.extend(multi_paths)
-                logger.debug(f"Found {len(multi_paths)} paths from multi-selection")
+                logger.debug(f"Using {len(multi_paths)} paths from multi-selection (highest priority)")
+                return multi_paths
         except Exception as e:
             logger.debug(f"Could not get multi-selection paths: {e}")
 
         # Priority 2: Text area paths (models_edit field)
         text_paths = self._parse_text_paths(settings.get("model_paths", []))
         if text_paths:
-            paths.extend(text_paths)
-            logger.debug(f"Found {len(text_paths)} paths from text area")
+            logger.debug(f"Using {len(text_paths)} paths from text area")
+            return text_paths
 
         # Priority 3: Single model path (legacy)
         single_path = settings.get("model_path")
         if single_path and single_path.strip():
-            paths.append(single_path.strip())
-            logger.debug("Found single model path (legacy)")
+            logger.debug("Using single model path (legacy)")
+            return [single_path.strip()]
 
-        return paths
+        return []
 
     def _parse_text_paths(self, text_input: Any) -> List[str]:
         """Parse paths from text input (supports various formats)."""

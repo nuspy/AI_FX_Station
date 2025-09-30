@@ -240,13 +240,23 @@ class ModelMetadata:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ModelMetadata':
-        """Create ModelMetadata from dictionary."""
+    def from_dict(cls, data: Dict[str, Any], model_path: Optional[str] = None) -> 'ModelMetadata':
+        """Create ModelMetadata from dictionary.
+
+        Args:
+            data: Dictionary with metadata
+            model_path: Optional model path to set if not in data
+        """
         metadata = cls()
 
         for key, value in data.items():
             if hasattr(metadata, key):
                 setattr(metadata, key, value)
+
+        # Ensure model_path is set (use parameter if not in data)
+        if not hasattr(metadata, 'model_path') or not metadata.model_path:
+            if model_path:
+                metadata.model_path = model_path
 
         return metadata
 
@@ -388,7 +398,7 @@ class MetadataManager:
                 with open(sidecar_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 logger.info(f"Loaded metadata from sidecar: {sidecar_path}")
-                return ModelMetadata.from_dict(data)
+                return ModelMetadata.from_dict(data, model_path=str(model_path))
             except Exception as e:
                 logger.warning(f"Failed to load sidecar metadata: {e}")
 
@@ -400,7 +410,7 @@ class MetadataManager:
 
                 if isinstance(model_data, dict) and 'metadata' in model_data:
                     logger.info(f"Loaded embedded metadata from: {model_path}")
-                    return ModelMetadata.from_dict(model_data['metadata'])
+                    return ModelMetadata.from_dict(model_data['metadata'], model_path=str(model_path))
 
             except Exception as e:
                 logger.warning(f"Failed to load embedded metadata: {e}")

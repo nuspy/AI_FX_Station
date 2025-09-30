@@ -105,8 +105,11 @@ def setup_ui(
             m = list(quantiles.get("q50") or [])
             q05 = list(quantiles.get("q05") or [])
             q95 = list(quantiles.get("q95") or [])
-            
-            # ... [rest of the adherence logic remains the same]
+
+            # For new forecasts, we don't have actual values yet
+            # These will be populated later when comparing past forecasts to actual data
+            actual_ts = []
+            actual_y = []
 
             quantiles["adherence_metrics"] = adherence_metrics(
                 fut_ts=fut_ts, m=m, q05=q05, q95=q95,
