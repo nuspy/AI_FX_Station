@@ -87,10 +87,8 @@ def add_candlestick(plot_widget, data):
     candle_item = CandlestickItem(data)
     plot_widget.addItem(candle_item)
 
-    # Set axis labels
-    if isinstance(data.index, pd.DatetimeIndex):
-        # Custom time axis
-        axis = pg.DateAxisItem(orientation='bottom')
-        plot_widget.setAxisItems({'bottom': axis})
+    # Do NOT set DateAxisItem - use numeric indices for consistency
+    # All plots (candlesticks, lines, indicators) use numeric x-axis (0, 1, 2, ...)
+    # This ensures proper alignment and prevents scale issues
 
     return candle_item
