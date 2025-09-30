@@ -327,7 +327,7 @@ class OptimizedPatternPredictor:
 
         try:
             scaled_features = scaler.transform(features.reshape(1, -1))
-        except:
+        except Exception:
             # If transform fails, refit and transform
             scaler.fit(features.reshape(-1, features.shape[-1]))
             scaled_features = scaler.transform(features.reshape(1, -1))
@@ -338,7 +338,7 @@ class OptimizedPatternPredictor:
             try:
                 prediction = rf_model.predict(scaled_features)[0]
                 confidence = self._calculate_confidence(rf_model, scaled_features)
-            except:
+            except Exception:
                 # Model needs retraining
                 prediction = 0.5
                 confidence = 0.3
@@ -434,7 +434,7 @@ class OptimizedPatternPredictor:
                 return min(0.95, float(np.random.uniform(0.6, 0.9)))
             else:
                 return 0.5
-        except:
+        except Exception:
             return 0.5
 
     def clear_prediction_cache(self):

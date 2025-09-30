@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" -c \"\nimport sys\nsys.path.append(''src'')\ntry:\n    # Test ParameterSpace method\n    from forex_diffusion.training.optimization.parameter_space import ParameterSpace\n    ps = ParameterSpace()\n    print(''SUCCESS: ParameterSpace has get_suggested_ranges:'', hasattr(ps, ''get_suggested_ranges''))\n    \n    # Test PatternOverlayRenderer method\n    from forex_diffusion.ui.pattern_overlay import PatternOverlayRenderer\n    por = PatternOverlayRenderer(None)\n    print(''SUCCESS: PatternOverlayRenderer has on_pick:'', hasattr(por, ''on_pick''))\n    \n    # Test TaskManager class (without instantiation)\n    from forex_diffusion.training.optimization.task_manager import TaskManager\n    print(''SUCCESS: TaskManager class has get_best_parameters_for_pattern:'', hasattr(TaskManager, ''get_best_parameters_for_pattern''))\n    print(''SUCCESS: TaskManager class has stop_study:'', hasattr(TaskManager, ''stop_study''))\n    \n    print()\n    print(''All missing method references have been resolved!'')\n    \nexcept Exception as e:\n    print(f''Error: {e}'')\n    import traceback\n    traceback.print_exc()\n\")"
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_app_import.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" fixed_app_startup.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_setup_ui.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" run_forexgpt.py)"
     ],
     "deny": [],
     "ask": []

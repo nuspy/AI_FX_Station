@@ -63,20 +63,21 @@ def setup_ui(
     tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # --- Create and connect the single, consolidated chart tab ---
+    # Re-enabling ChartTab functionality
     chart_tab = ChartTabUI(main_window)
-    training_tab = TrainingTab(main_window)
-    signals_tab = SignalsTab(main_window, db_service=db_service)
-    backtesting_tab = BacktestingTab(main_window)
 
-    # Add 3D Reports Tab
-    from .reports_3d_tab import Reports3DTab
-    reports_3d_tab = Reports3DTab(data_manager=market_service, parent=main_window)
+    # Keep other tabs disabled for now to isolate any issues
+    from PySide6.QtWidgets import QLabel
+    training_tab = QLabel("Training tab temporarily disabled")
+    signals_tab = QLabel("Signals tab temporarily disabled")
+    backtesting_tab = QLabel("Backtesting tab temporarily disabled")
+    reports_3d_tab = QLabel("3D Reports tab temporarily disabled")
 
     tab_widget.addTab(chart_tab, "Chart")
-    tab_widget.addTab(training_tab, "Training")
-    tab_widget.addTab(signals_tab, "Signals")
-    tab_widget.addTab(backtesting_tab, "Backtesting")
-    tab_widget.addTab(reports_3d_tab, "3D Reports")
+    tab_widget.addTab(training_tab, "Training (Temp)")
+    tab_widget.addTab(signals_tab, "Signals (Temp)")
+    tab_widget.addTab(backtesting_tab, "Backtesting (Temp)")
+    tab_widget.addTab(reports_3d_tab, "3D Reports (Temp)")
     layout.addWidget(tab_widget)
 
     result["chart_tab"] = chart_tab
@@ -145,7 +146,7 @@ def setup_ui(
     controller.signals.error.connect(status_label.setText)
 
     # --- Backtesting Tab Handlers ---
-    backtesting_tab.startRequested.connect(lambda payload: controller.handle_backtest_request(payload, backtesting_tab))
+    # backtesting_tab.startRequested.connect(lambda payload: controller.handle_backtest_request(payload, backtesting_tab))  # DISABLED: backtesting_tab is placeholder
 
     # --- Graceful shutdown on app exit ---
     from PySide6.QtWidgets import QApplication

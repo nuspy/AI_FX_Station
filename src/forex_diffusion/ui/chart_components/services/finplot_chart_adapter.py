@@ -225,7 +225,7 @@ class FinplotChartAdapter(QObject):
             if 'volume' in data.columns:
                 try:
                     fplt.volume_ocv(data[['open', 'close', 'volume']])
-                except:
+                except Exception:
                     pass  # Skip if volume plotting fails
 
             self.is_initialized = True

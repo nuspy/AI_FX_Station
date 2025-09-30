@@ -32,6 +32,7 @@ dependencies = [
   # Trading & Analysis Libraries
   "bta-lib>=1.0.0",
   "finplot>=1.9.0",
+  "yfinance>=0.2.0",
   # VectorBT Pro - installed from wheel file in VectorBt_PRO/
   # pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl
 

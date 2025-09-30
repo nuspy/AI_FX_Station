@@ -356,7 +356,7 @@ class Reports3DTab(QWidget):
                     time_display = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     time_display = "Unknown time"
-            except:
+            except Exception:
                 time_display = file_path.stat().st_mtime
                 time_display = datetime.fromtimestamp(time_display).strftime("%Y-%m-%d %H:%M:%S")
 

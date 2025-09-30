@@ -270,7 +270,7 @@ class PatternsConfigDialog(QDialog):
                             'enabled': current_state,
                             'parameters': self._pattern_states[kind].get(current_key, {}).get('parameters', {})
                         }
-                except:
+                except Exception:
                     pass
 
         # Clear current parameters widget

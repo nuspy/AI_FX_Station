@@ -475,7 +475,7 @@ class PatternBenchmarkSuite:
             try:
                 correlation, _ = stats.pearsonr(confidence_scores, temporal_accuracy_scores)
                 confidence_correlation = correlation if not np.isnan(correlation) else 0.0
-            except:
+            except Exception:
                 confidence_correlation = 0.0
 
         temporal_accuracy = np.mean(temporal_accuracy_scores) if temporal_accuracy_scores else 0.0

@@ -161,7 +161,7 @@ class FinplotChartService:
         # Set chart title if possible
         try:
             fplt.plot([], legend=chart_title)
-        except:
+        except Exception:
             pass  # Fallback if title setting fails
 
     def _add_price_indicators(self):
@@ -193,7 +193,7 @@ class FinplotChartService:
             try:
                 fplt.fill_between(indicators['bb_upper'], indicators['bb_lower'],
                                  color='#E74C3C', alpha=0.1)
-            except:
+            except Exception:
                 pass  # Fallback if fill_between fails
 
         # Support/Resistance levels
