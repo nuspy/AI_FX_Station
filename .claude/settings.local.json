@@ -4,7 +4,11 @@
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_app_import.py)",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" fixed_app_startup.py)",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_setup_ui.py)",
-      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" run_forexgpt.py)"
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" run_forexgpt.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_phase3_integration.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_phase3_simple.py)",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_subplot_integration.py)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

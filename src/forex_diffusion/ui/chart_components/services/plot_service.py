@@ -23,6 +23,28 @@ from .base import ChartServiceBase
 class PlotService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
 
+    def __init__(self, view, controller):
+        super().__init__(view, controller)
+        self._subplot_service = None
+        self._subplot_enabled = False
+
+    def enable_indicator_subplots(self):
+        """Enable multi-subplot mode for indicators"""
+        try:
+            from .matplotlib_subplot_service import MatplotlibSubplotService
+            if hasattr(self.view, 'canvas') and hasattr(self.view.canvas, 'figure'):
+                self._subplot_service = MatplotlibSubplotService(self.view.canvas.figure)
+                self._subplot_enabled = True
+                logger.info("Indicator subplots enabled")
+        except Exception as e:
+            logger.error(f"Failed to enable indicator subplots: {e}")
+            self._subplot_enabled = False
+
+    def disable_indicator_subplots(self):
+        """Disable multi-subplot mode"""
+        self._subplot_service = None
+        self._subplot_enabled = False
+
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
         if df is None or df.empty:
             self._clear_candles()

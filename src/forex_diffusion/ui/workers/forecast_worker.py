@@ -20,7 +20,20 @@ import numpy as np
 from PySide6.QtCore import QRunnable
 from loguru import logger
 
+import pickle
+import hashlib
+
 from ...services.marketdata import MarketDataService
+from ...inference.parallel_inference import get_parallel_engine
+from ...utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
+
+from ...utils.horizon_converter import (
+    convert_horizons_for_inference,
+    create_future_timestamps,
+    convert_single_to_multi_horizon,
+    get_trading_scenarios
+)
+from ...services.performance_registry import get_performance_registry
 
 # Ensure features helper
 _ensure_features_for_prediction: Optional[Callable] = None
@@ -231,17 +244,8 @@ class ForecastWorker(QRunnable):
         if self.payload.get("parallel_inference", False):
             return self._parallel_infer()
 
-        import numpy as np
-        import pickle
-        import hashlib
 
-        from ...utils.horizon_converter import (
-            convert_horizons_for_inference,
-            create_future_timestamps,
-            convert_single_to_multi_horizon,
-            get_trading_scenarios
-        )
-        from ...services.performance_registry import get_performance_registry
+
 
         sym = self.payload.get("symbol")
         tf = (self.payload.get("timeframe") or "1m")
@@ -786,9 +790,8 @@ class ForecastWorker(QRunnable):
         """
         Parallel inference using multiple models for ensemble predictions.
         """
+
         try:
-            from ...inference.parallel_inference import get_parallel_engine
-            from ...utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
 
             symbol = str(self.payload.get("symbol", "EUR/USD"))
             tf = str(self.payload.get("timeframe", "1m"))
@@ -1026,7 +1029,6 @@ class ForecastWorker(QRunnable):
         except Exception as e:
             logger.error(f"Parallel inference failed: {e}")
             # Fallback to RW prediction
-            import numpy as np
             from ...utils.horizon_converter import create_future_timestamps
 
             symbol = str(self.payload.get("symbol", "EUR/USD"))
