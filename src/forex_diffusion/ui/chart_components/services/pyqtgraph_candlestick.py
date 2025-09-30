@@ -6,6 +6,31 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtGui, QtCore
+from datetime import datetime
+
+
+class DateAxisItem(pg.AxisItem):
+    """Custom axis item that formats timestamps as dates"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def tickStrings(self, values, scale, spacing):
+        """Convert timestamp values to formatted date strings"""
+        strings = []
+        for v in values:
+            try:
+                dt = datetime.fromtimestamp(v)
+                # Format based on time range
+                if spacing < 3600:  # Less than 1 hour spacing
+                    strings.append(dt.strftime('%H:%M'))
+                elif spacing < 86400:  # Less than 1 day spacing
+                    strings.append(dt.strftime('%m-%d %H:%M'))
+                else:  # 1+ day spacing
+                    strings.append(dt.strftime('%Y-%m-%d'))
+            except (ValueError, OSError):
+                strings.append('')
+        return strings
 
 
 class CandlestickItem(pg.GraphicsObject):
@@ -27,13 +52,18 @@ class CandlestickItem(pg.GraphicsObject):
         self.picture = QtGui.QPicture()
         p = QtGui.QPainter(self.picture)
 
-        # Convert datetime index to numeric
+        # Convert datetime index to timestamp (seconds since epoch)
         if isinstance(self.data.index, pd.DatetimeIndex):
-            x_data = np.arange(len(self.data))
+            x_data = self.data.index.astype(np.int64) / 10**9  # Convert to seconds
         else:
             x_data = self.data.index.values
 
-        w = 0.4  # candlestick width
+        # Calculate appropriate candlestick width based on data spacing
+        if len(x_data) > 1:
+            avg_spacing = np.median(np.diff(x_data))
+            w = avg_spacing * 0.4  # 40% of average spacing
+        else:
+            w = 60  # Default to 1 minute for single candle
 
         for i, (idx, row) in enumerate(self.data.iterrows()):
             try:
@@ -83,12 +113,9 @@ def add_candlestick(plot_widget, data):
     Args:
         plot_widget: PyQtGraph PlotWidget or PlotItem
         data: pandas DataFrame with columns: open, high, low, close
+              Index should be DatetimeIndex for proper timestamp display
     """
     candle_item = CandlestickItem(data)
     plot_widget.addItem(candle_item)
-
-    # Do NOT set DateAxisItem - use numeric indices for consistency
-    # All plots (candlesticks, lines, indicators) use numeric x-axis (0, 1, 2, ...)
-    # This ensures proper alignment and prevents scale issues
 
     return candle_item

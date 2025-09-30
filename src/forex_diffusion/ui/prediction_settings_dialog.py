@@ -26,6 +26,7 @@ class PredictionSettingsDialog(QDialog):
         self.setMinimumWidth(520)
         # make window compact (scrollable content)
         try:
+            # Load geometry first (will be overridden by load_settings if exists)
             self.resize(720, 600)
         except Exception:
             pass
@@ -731,6 +732,11 @@ class PredictionSettingsDialog(QDialog):
             # Sync legacy indicator structure to simplified indicators
             self._sync_legacy_to_indicators()
 
+            # Load dialog geometry
+            geometry = settings.get("dialog_geometry", None)
+            if geometry and len(geometry) == 4:
+                self.setGeometry(geometry[0], geometry[1], geometry[2], geometry[3])
+
             logger.info(f"Loaded prediction settings from {CONFIG_FILE}")
         except Exception as e:
             logger.exception(f"Failed to load prediction settings: {e}")
@@ -800,6 +806,9 @@ class PredictionSettingsDialog(QDialog):
             "trading_scenario": str(self.scenario_combo.currentData() or ""),
             "custom_horizons": [h.strip() for h in self.custom_horizons_edit.text().split(",") if h.strip()],
             "enable_performance_tracking": bool(self.performance_tracking_cb.isChecked()),
+
+            # Save dialog geometry
+            "dialog_geometry": [self.geometry().x(), self.geometry().y(), self.geometry().width(), self.geometry().height()],
         }
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)

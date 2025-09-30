@@ -295,6 +295,17 @@ class InteractionService(ChartServiceBase):
                 # reload dati dopo zoom
                 self._schedule_view_reload()
             if btn == 1:
+                # Check for Alt+Click forecast trigger before clearing pan state
+                try:
+                    gui = getattr(event, "guiEvent", None)
+                    if gui is not None:
+                        modifiers = gui.modifiers()
+                        if modifiers & Qt.AltModifier:
+                            # Trigger forecast on Alt+Click
+                            self._on_canvas_click(event)
+                except Exception as e:
+                    logger.debug(f"Alt+Click forecast check failed: {e}")
+
                 self._lbtn_pan = False
                 self._pan_last_xy = None
                 # reload dati dopo pan

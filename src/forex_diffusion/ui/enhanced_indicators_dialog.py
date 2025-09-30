@@ -102,6 +102,9 @@ class EnhancedIndicatorTreeWidget(QTreeWidget):
         # Enable double-click to change color
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
 
+        # Connect checkbox changes to update config
+        self.itemChanged.connect(self.on_item_changed)
+
         self.indicators_system = None
         self.category_items = {}
         self.indicator_items = {}
@@ -127,6 +130,22 @@ class EnhancedIndicatorTreeWidget(QTreeWidget):
             item._update_color_display()
             # Signal that color changed
             self.indicatorToggled.emit(item.name, item.config.enabled)
+
+    def on_item_changed(self, item: QTreeWidgetItem, column: int):
+        """Handle checkbox state changes"""
+        # Only handle indicator items (not category items) and only column 0 (checkbox)
+        if not isinstance(item, EnhancedIndicatorTreeWidgetItem) or column != 0:
+            return
+
+        # Update config.enabled based on checkbox state
+        is_checked = item.checkState(0) == Qt.CheckState.Checked
+        item.config.enabled = is_checked
+
+        # Update status column
+        item.setText(4, "Enabled" if is_checked else "Disabled")
+
+        # Emit signal for external listeners
+        self.indicatorToggled.emit(item.name, is_checked)
 
     def setup_indicators(self, indicators_system: BTALibIndicators):
         """Setup tree with indicators from the system"""
@@ -183,12 +202,24 @@ class EnhancedIndicatorTreeWidget(QTreeWidget):
     def filter_by_subplot(self, subplot_type: str):
         """Filter indicators by subplot recommendation"""
         for name, item in self.indicator_items.items():
-            range_info = self.range_classifier.get_range_info(name)
-            if range_info:
-                should_show = (subplot_type == "all" or
-                             range_info.subplot_recommendation == subplot_type)
-                item.setHidden(not should_show)
-                item.parent().setHidden(False)  # Always show category
+            if subplot_type == "all":
+                # Show all indicators
+                item.setHidden(False)
+            else:
+                # Filter by subplot type
+                range_info = self.range_classifier.get_range_info(name)
+                if range_info:
+                    should_show = (range_info.subplot_recommendation == subplot_type)
+                    item.setHidden(not should_show)
+                else:
+                    # If no range info, hide by default when filtering
+                    item.setHidden(True)
+
+        # Hide empty categories
+        for category_item in self.category_items.values():
+            has_visible = any(not category_item.child(i).isHidden()
+                            for i in range(category_item.childCount()))
+            category_item.setHidden(not has_visible)
 
     def search_indicators(self, search_text: str):
         """Search indicators by name or description"""
@@ -219,6 +250,9 @@ class EnhancedIndicatorTreeWidgetItem(QTreeWidgetItem):
         # Set up checkbox for enabling/disabling
         self.setFlags(self.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         self.setCheckState(0, Qt.CheckState.Checked if config.enabled else Qt.CheckState.Unchecked)
+
+        # Set initial status text
+        self.setText(4, "Enabled" if config.enabled else "Disabled")
 
         # Show color in the color column
         self._update_color_display()
@@ -283,7 +317,13 @@ class EnhancedIndicatorsDialog(QDialog):
 
         self.setWindowTitle("Enhanced Indicators Configuration - 200+ Professional Indicators")
         self.setModal(True)
-        self.resize(1000, 700)
+
+        # Load geometry from settings or use defaults
+        geometry = get_setting("indicators.dialog.geometry", None)
+        if geometry and len(geometry) == 4:
+            self.setGeometry(geometry[0], geometry[1], geometry[2], geometry[3])
+        else:
+            self.resize(1000, 700)
 
         self.initUI()
         self.load_settings()
@@ -504,21 +544,58 @@ class EnhancedIndicatorsDialog(QDialog):
                         item = self.indicators_tree.indicator_items[name]
                         item.config.color = color
                         item._update_color_display()
+
+            # Load enabled indicators list and update checkboxes
+            enabled_list = get_setting("indicators.enabled_list", [])
+            if isinstance(enabled_list, list):
+                # Temporarily block signals to avoid triggering itemChanged
+                self.indicators_tree.blockSignals(True)
+
+                # First disable all indicators
+                for name, item in self.indicators_tree.indicator_items.items():
+                    item.config.enabled = False
+                    item.setCheckState(0, Qt.CheckState.Unchecked)
+                    item.setText(4, "Disabled")
+
+                # Then enable only the saved ones
+                for name in enabled_list:
+                    if name in self.indicators_tree.indicator_items:
+                        item = self.indicators_tree.indicator_items[name]
+                        item.config.enabled = True
+                        item.setCheckState(0, Qt.CheckState.Checked)
+                        item.setText(4, "Enabled")
+
+                # Re-enable signals
+                self.indicators_tree.blockSignals(False)
+
+                # Update category counts and statistics
+                self.indicators_tree.update_category_counts()
+                self.update_statistics()
         except Exception as e:
-            logger.warning(f"Failed to load indicator color settings: {e}")
+            logger.warning(f"Failed to load indicator settings: {e}")
 
     def save_settings(self):
         """Save settings to persistent storage"""
         try:
             # Save indicator colors
             colors_dict = {}
+            # Save enabled indicators list
+            enabled_list = []
+
             for name, item in self.indicators_tree.indicator_items.items():
                 if hasattr(item.config, 'color') and item.config.color:
                     colors_dict[name] = item.config.color
+                if item.config.enabled:
+                    enabled_list.append(name)
 
             set_setting("indicators.colors", colors_dict)
+            set_setting("indicators.enabled_list", enabled_list)
+
+            # Save dialog geometry
+            geometry = self.geometry()
+            set_setting("indicators.dialog.geometry", [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
         except Exception as e:
-            logger.warning(f"Failed to save indicator color settings: {e}")
+            logger.warning(f"Failed to save indicator settings: {e}")
 
     def apply_settings(self):
         """Apply current settings without closing dialog"""

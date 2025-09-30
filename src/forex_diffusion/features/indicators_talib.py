@@ -738,8 +738,14 @@ class TALibIndicators:
                 result = talib_func(high, low, close, volume, **params)
 
             # Trend indicators needing high/low
-            elif indicator_name in ['adx', 'adxr', 'plus_di', 'minus_di', 'plus_dm', 'minus_dm', 'cci', 'dx']:
+            elif indicator_name in ['adx', 'adxr', 'plus_di', 'minus_di', 'cci', 'dx']:
                 result = talib_func(high, low, close, **params)
+
+            # Plus/Minus DM - special case to avoid parameter conflict
+            elif indicator_name == 'plus_dm':
+                result = talib.PLUS_DM(high, low, timeperiod=params.get('timeperiod', 14))
+            elif indicator_name == 'minus_dm':
+                result = talib.MINUS_DM(high, low, timeperiod=params.get('timeperiod', 14))
 
             # Aroon oscillator - special case to avoid parameter conflict
             elif indicator_name == 'aroonosc':

@@ -15,7 +15,7 @@ from .base import ChartServiceBase
 
 # Import PyQtGraph for high-performance charting
 import pyqtgraph as pg
-from .pyqtgraph_candlestick import add_candlestick
+from .pyqtgraph_candlestick import add_candlestick, DateAxisItem
 
 # Enhanced indicators support
 try:
@@ -35,6 +35,10 @@ class PlotService(ChartServiceBase):
         super().__init__(view, controller)
         self._subplot_service = None
         self._subplot_enabled = False
+        self._mouse_label = None
+        self._crosshair_v = None
+        self._crosshair_h = None
+        self._mouse_proxy = None
 
     def enable_indicator_subplots(self):
         """Enable multi-subplot mode for indicators (PyQtGraph-based)"""
@@ -366,59 +370,130 @@ class PlotService(ChartServiceBase):
 
             # Check what subplots we need
             has_normalized = False
+            has_custom = False
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
-                has_normalized = any(
-                    indicator_range_classifier.get_range_info(name).subplot_recommendation == 'normalized_subplot'
-                    for name in enabled_indicator_names
-                    if indicator_range_classifier.get_range_info(name)
-                )
+                for name in enabled_indicator_names:
+                    range_info = indicator_range_classifier.get_range_info(name)
+                    if range_info:
+                        if range_info.subplot_recommendation == 'normalized_subplot':
+                            has_normalized = True
+                        elif range_info.subplot_recommendation == 'custom_subplot':
+                            has_custom = True
 
             # Manage subplots in PyQtGraph GraphicsLayoutWidget
             graphics_layout = self.view.graphics_layout
             current_rows = len(self.view.finplot_axes) if hasattr(self.view, 'finplot_axes') else 1
-            needed_rows = 2 if has_normalized else 1
+            # Count needed rows: 1 (price) + normalized + custom
+            needed_rows = 1 + (1 if has_normalized else 0) + (1 if has_custom else 0)
 
             # Recreate plots if row count changed
             if current_rows != needed_rows:
                 graphics_layout.clear()
                 self.view.finplot_axes = []
 
-                # Create main price plot
-                main_plot = graphics_layout.addPlot(row=0, col=0)
+                # Set minimal spacing between plots (using central item's layout)
+                graphics_layout.ci.layout.setSpacing(0)
+                graphics_layout.ci.layout.setContentsMargins(0, 0, 0, 0)
+
+                # Create main price plot (70% height) with date axis
+                date_axis = DateAxisItem(orientation='bottom')
+                main_plot = graphics_layout.addPlot(row=0, col=0, axisItems={'bottom': date_axis})
                 main_plot.showGrid(x=True, y=True, alpha=0.3)
+                main_plot.setMinimumHeight(300)
+                # Reduce margins
+                main_plot.setContentsMargins(5, 5, 5, 5)
+                main_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                # Add legend (movable by default in PyQtGraph)
+                main_plot.addLegend(offset=(10, 10))
                 self.view.finplot_axes.append(main_plot)
                 self.view.main_plot = main_plot
 
-                if needed_rows == 2:
-                    # Create normalized subplot
-                    normalized_plot = graphics_layout.addPlot(row=1, col=0)
+                row_idx = 1
+                if has_normalized:
+                    # Create normalized subplot (reduced 30% from 90px to 63px)
+                    normalized_plot = graphics_layout.addPlot(row=row_idx, col=0)
                     normalized_plot.showGrid(x=True, y=True, alpha=0.3)
-                    normalized_plot.setYRange(0, 1)  # Normalized range
-                    # Link X axes for synchronized zoom/pan
+                    normalized_plot.setYRange(0, 100)  # Normalized range 0-100
+                    normalized_plot.setMaximumHeight(63)
+                    # Reduce margins
+                    normalized_plot.setContentsMargins(5, 5, 5, 5)
+                    normalized_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Add legend (movable by default in PyQtGraph)
+                    normalized_plot.addLegend(offset=(10, 10))
+                    # Link X and Y axes for synchronized zoom/pan and aligned width
                     normalized_plot.setXLink(main_plot)
+                    # Set same Y-axis width for alignment
+                    normalized_plot.getAxis('left').setWidth(main_plot.getAxis('left').width())
                     self.view.finplot_axes.append(normalized_plot)
                     self.view.normalized_plot = normalized_plot
+                    row_idx += 1
                 else:
                     self.view.normalized_plot = None
+
+                if has_custom:
+                    # Create custom subplot (reduced 30% from 90px to 63px)
+                    custom_plot = graphics_layout.addPlot(row=row_idx, col=0)
+                    custom_plot.showGrid(x=True, y=True, alpha=0.3)
+                    custom_plot.setMaximumHeight(63)
+                    # Reduce margins
+                    custom_plot.setContentsMargins(5, 5, 5, 5)
+                    custom_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Add legend (movable by default in PyQtGraph)
+                    custom_plot.addLegend(offset=(10, 10))
+                    # Link X and Y axes for synchronized zoom/pan and aligned width
+                    custom_plot.setXLink(main_plot)
+                    # Set same Y-axis width for alignment
+                    custom_plot.getAxis('left').setWidth(main_plot.getAxis('left').width())
+                    self.view.finplot_axes.append(custom_plot)
+                    self.view.custom_plot = custom_plot
+                else:
+                    self.view.custom_plot = None
             else:
-                # Just clear existing plots
+                # Clear existing plots but maintain references
                 for plot in self.view.finplot_axes:
                     plot.clear()
+
+                # Ensure references are set correctly
+                if len(self.view.finplot_axes) >= 1:
+                    self.view.main_plot = self.view.finplot_axes[0]
+
+                # Set normalized and custom plot references based on what exists
+                row_idx = 1
+                if has_normalized and len(self.view.finplot_axes) > row_idx:
+                    self.view.normalized_plot = self.view.finplot_axes[row_idx]
+                    row_idx += 1
+                else:
+                    self.view.normalized_plot = None
+
+                if has_custom and len(self.view.finplot_axes) > row_idx:
+                    self.view.custom_plot = self.view.finplot_axes[row_idx]
+                else:
+                    self.view.custom_plot = None
 
             # Get plot references
             ax_price = self.view.main_plot
             ax_normalized = getattr(self.view, 'normalized_plot', None)
+            ax_custom = getattr(self.view, 'custom_plot', None)
+
+            # Check if data needs pip format conversion for display
+            sample_close = df2['close'].iloc[0] if 'close' in df2.columns else df2[y_col].iloc[0]
+            is_pip_format = sample_close > 100
+            pip_divisor = 10000.0 if is_pip_format else 1.0
 
             # Determine chart mode (candles vs line)
             chart_mode = get_setting('chart.price_mode', 'candles')
 
-            # Plot price data
+            # Plot price data (convert from pip format if needed)
             if chart_mode == 'candles' and {'open', 'high', 'low', 'close'}.issubset(df2.columns):
-                add_candlestick(ax_price, df2[['open', 'high', 'low', 'close']])
+                # Convert candlestick data from pip format
+                candle_df = df2[['open', 'high', 'low', 'close']].copy()
+                if is_pip_format:
+                    candle_df = candle_df / pip_divisor
+                add_candlestick(ax_price, candle_df)
             else:
-                # Plot line chart
-                x_data = np.arange(len(df2))
-                y_data = df2[y_col].values
+                # Plot line chart (convert from pip format) using timestamps
+                x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
+                y_data = df2[y_col].values / pip_divisor
                 ax_price.plot(x_data, y_data, pen=pg.mkPen('#2196F3', width=1.5))
 
             # Plot indicators
@@ -426,13 +501,32 @@ class PlotService(ChartServiceBase):
                 indicators_system = BTALibIndicators()
 
                 # Prepare OHLCV DataFrame
-                indicator_df = pd.DataFrame({
-                    'open': df2.get('open', df2[y_col]),
-                    'high': df2.get('high', df2[y_col]),
-                    'low': df2.get('low', df2[y_col]),
-                    'close': df2['close'] if 'close' in df2.columns else df2[y_col],
-                    'volume': df2.get('volume', pd.Series([1.0] * len(df2), index=df2.index))
-                })
+                # Check if data is in pip format (values > 100 indicate pip format for forex)
+                sample_close = df2['close'].iloc[0] if 'close' in df2.columns else df2[y_col].iloc[0]
+                is_pip_format = sample_close > 100  # Forex prices are typically 0.5-2.0, so >100 means pip format
+
+                if is_pip_format:
+                    # Convert from pip format (11700) to actual price (1.1700)
+                    pip_divisor = 10000.0
+                    logger.debug(f"Converting price data from pip format (divisor={pip_divisor})")
+                    indicator_df = pd.DataFrame({
+                        'open': df2.get('open', df2[y_col]) / pip_divisor,
+                        'high': df2.get('high', df2[y_col]) / pip_divisor,
+                        'low': df2.get('low', df2[y_col]) / pip_divisor,
+                        'close': (df2['close'] if 'close' in df2.columns else df2[y_col]) / pip_divisor,
+                        'volume': df2.get('volume', pd.Series([1.0] * len(df2), index=df2.index))
+                    })
+                else:
+                    indicator_df = pd.DataFrame({
+                        'open': df2.get('open', df2[y_col]),
+                        'high': df2.get('high', df2[y_col]),
+                        'low': df2.get('low', df2[y_col]),
+                        'close': df2['close'] if 'close' in df2.columns else df2[y_col],
+                        'volume': df2.get('volume', pd.Series([1.0] * len(df2), index=df2.index))
+                    })
+
+                # Debug: log price data range
+                logger.debug(f"Price data range - close: min={indicator_df['close'].min():.6f}, max={indicator_df['close'].max():.6f}")
 
                 for indicator_name in enabled_indicator_names:
                     try:
@@ -457,10 +551,15 @@ class PlotService(ChartServiceBase):
                         color = indicator_colors.get(indicator_name, None)
 
                         # Plot based on subplot
-                        target_ax = ax_normalized if (subplot_type == 'normalized_subplot' and ax_normalized) else ax_price
+                        if subplot_type == 'normalized_subplot' and ax_normalized:
+                            target_ax = ax_normalized
+                        elif subplot_type == 'custom_subplot' and ax_custom:
+                            target_ax = ax_custom
+                        else:
+                            target_ax = ax_price
 
-                        # Prepare x-axis data (numeric indices)
-                        x_data = np.arange(len(df2))
+                        # Prepare x-axis data (timestamps in seconds)
+                        x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
 
                         # Convert color to PyQtGraph format
                         pg_pen = pg.mkPen(color if color else '#FFA726', width=1.5)
@@ -468,6 +567,10 @@ class PlotService(ChartServiceBase):
                         if isinstance(result, pd.Series):
                             # Single series - plot with PyQtGraph
                             y_data = result.values
+                            # Debug: log indicator value range
+                            valid_data = y_data[~np.isnan(y_data)]
+                            if len(valid_data) > 0:
+                                logger.debug(f"Indicator {indicator_name} ({subplot_type}) - min={valid_data.min():.2f}, max={valid_data.max():.2f}, mean={valid_data.mean():.2f}")
                             if len(y_data) == len(x_data):
                                 target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
                         elif isinstance(result, dict):
@@ -487,12 +590,136 @@ class PlotService(ChartServiceBase):
             # Store axis reference
             self.ax = ax_price
 
+            # Setup mouse tracking for coordinates display
+            self._setup_mouse_tracking(ax_price, df2)
+
             logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
 
         except Exception as e:
             logger.error(f"Error in _update_plot_finplot: {e}")
             import traceback
             traceback.print_exc()
+
+    def _setup_mouse_tracking(self, plot_item, df):
+        """Setup mouse tracking to display coordinates and price"""
+        from PySide6.QtWidgets import QLabel, QVBoxLayout, QDialog
+        from PySide6.QtCore import Qt as QtCore_Qt
+        from datetime import datetime
+
+        # Create or update mouse position label
+        if self._mouse_label is None:
+            # Create a floating label dialog
+            self._mouse_label = QDialog(self.view)
+            self._mouse_label.setWindowFlags(QtCore_Qt.WindowType.Tool | QtCore_Qt.WindowType.WindowStaysOnTopHint | QtCore_Qt.WindowType.FramelessWindowHint)
+            self._mouse_label.setAttribute(QtCore_Qt.WidgetAttribute.WA_TranslucentBackground)
+
+            layout = QVBoxLayout(self._mouse_label)
+            layout.setContentsMargins(5, 5, 5, 5)
+
+            self._mouse_label_text = QLabel()
+            self._mouse_label_text.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(40, 40, 40, 200);
+                    color: white;
+                    padding: 8px;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    font-size: 11px;
+                }
+            """)
+            layout.addWidget(self._mouse_label_text)
+
+            # Position the label at top-right of view
+            view_pos = self.view.mapToGlobal(self.view.rect().topRight())
+            self._mouse_label.move(view_pos.x() - 250, view_pos.y() + 10)
+            self._mouse_label.show()
+
+        # Remove old proxy if exists
+        if self._mouse_proxy is not None:
+            try:
+                plot_item.scene().sigMouseMoved.disconnect(self._mouse_proxy)
+            except:
+                pass
+
+        # Create mouse move handler
+        def mouse_moved(pos):
+            try:
+                if plot_item.sceneBoundingRect().contains(pos):
+                    mouse_point = plot_item.vb.mapSceneToView(pos)
+                    x_timestamp = mouse_point.x()
+                    y_price = mouse_point.y()
+
+                    # Convert timestamp to datetime
+                    try:
+                        dt = datetime.fromtimestamp(x_timestamp)
+                        date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        date_str = f"{x_timestamp:.0f}"
+
+                    # Update label
+                    label_text = f"X: {date_str}\nY: {y_price:.5f}\nPrice: {y_price:.5f}"
+                    self._mouse_label_text.setText(label_text)
+            except Exception as e:
+                pass
+
+        # Connect signal
+        self._mouse_proxy = mouse_moved
+        plot_item.scene().sigMouseMoved.connect(mouse_moved)
+
+        # Set up mouse click handler for forecast (Alt+Click)
+        def mouse_clicked(event):
+            from PySide6.QtCore import Qt as QtCore_Qt
+            from PySide6.QtCore import QEvent
+
+            # Only handle mouse button release events
+            if event.type() != QEvent.Type.GraphicsSceneMouseRelease:
+                return
+
+            # Get mouse button and modifiers
+            button = event.button()
+            modifiers = event.modifiers()
+
+            # Check for left button + Alt modifier (forecast trigger)
+            if button == QtCore_Qt.MouseButton.LeftButton and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
+                # Get mouse position in view coordinates
+                scene_pos = event.scenePos()
+                if plot_item.sceneBoundingRect().contains(scene_pos):
+                    view_pos = plot_item.vb.mapSceneToView(scene_pos)
+
+                    # Create a mock event object compatible with _on_canvas_click
+                    class MockEvent:
+                        def __init__(self, x_timestamp, y_price, modifiers):
+                            self.xdata = x_timestamp
+                            self.ydata = y_price
+                            self.button = 1
+                            self._modifiers = modifiers
+
+                        def guiEvent(self):
+                            return None
+
+                        @property
+                        def guiEvent(self):
+                            class MockGUI:
+                                def __init__(self, mods):
+                                    self._mods = mods
+                                def modifiers(self):
+                                    return self._mods
+                            return MockGUI(self._modifiers)
+
+                    mock_event = MockEvent(view_pos.x(), view_pos.y(), modifiers)
+
+                    # Call forecast handler from interaction service
+                    try:
+                        from ..services.interaction_service import InteractionService
+                        if hasattr(self, 'controller') and hasattr(self.controller, 'interaction_service'):
+                            self.controller.interaction_service._on_canvas_click(mock_event)
+                    except Exception as e:
+                        logger.error(f"Failed to trigger forecast: {e}")
+
+        # Install event filter on the scene
+        if not hasattr(self, '_click_filter_installed'):
+            plot_item.scene().sigMouseClicked.connect(mouse_clicked)
+            self._click_filter_installed = True
 
     def _render_candles(self, df2: pd.DataFrame, x_dt: Optional[pd.Series] = None):
         """Render OHLC candles on the main axis."""
