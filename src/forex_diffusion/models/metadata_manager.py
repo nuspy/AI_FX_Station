@@ -29,6 +29,10 @@ class ModelMetadata:
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.updated_at = None
 
+        # Model file information
+        self.model_path = None
+        self.file_size = 0
+
         # Model information
         self.model_type = None  # 'sklearn', 'pytorch', 'lightning'
         self.model_class = None

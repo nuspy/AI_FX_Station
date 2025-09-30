@@ -686,45 +686,25 @@ class PlotService(ChartServiceBase):
         from PySide6.QtCore import Qt as QtCore_Qt
         from datetime import datetime
 
-        # Create or update mouse position label
+        # Create or update mouse position label as TextItem within the plot
         if self._mouse_label is None:
-            # Create a floating label dialog
-            self._mouse_label = QDialog(self.view)
-            self._mouse_label.setWindowFlags(QtCore_Qt.WindowType.Tool | QtCore_Qt.WindowType.WindowStaysOnTopHint | QtCore_Qt.WindowType.FramelessWindowHint)
-            self._mouse_label.setAttribute(QtCore_Qt.WidgetAttribute.WA_TranslucentBackground)
+            import pyqtgraph as pg
+            # Create a TextItem that stays within the plot
+            self._mouse_label = pg.TextItem(
+                text="X: --\nY: --\nPrice: --",
+                anchor=(1, 0),  # Top-right anchor
+                color=(255, 255, 255),
+                fill=pg.mkBrush(40, 40, 40, 200),
+                border=pg.mkPen(None)
+            )
+            # Add to the plot
+            plot_item.addItem(self._mouse_label)
 
-            layout = QVBoxLayout(self._mouse_label)
-            layout.setContentsMargins(5, 5, 5, 5)
-
-            self._mouse_label_text = QLabel()
-            self._mouse_label_text.setStyleSheet("""
-                QLabel {
-                    background-color: rgba(40, 40, 40, 200);
-                    color: white;
-                    padding: 8px;
-                    border-radius: 4px;
-                    font-family: monospace;
-                    font-size: 11px;
-                }
-            """)
-            layout.addWidget(self._mouse_label_text)
-
-            # Set initial text
-            self._mouse_label_text.setText("X: --\nY: --\nPrice: --")
-
-            # Position the label at top-right of graphics_layout widget
-            try:
-                # Get the graphics_layout widget position
-                graphics_widget = self.view.graphics_layout
-                widget_pos = graphics_widget.mapToGlobal(graphics_widget.rect().topRight())
-                self._mouse_label.move(widget_pos.x() - 250, widget_pos.y() + 10)
-            except:
-                # Fallback to view position
-                view_pos = self.view.mapToGlobal(self.view.rect().topRight())
-                self._mouse_label.move(view_pos.x() - 250, view_pos.y() + 50)
-
-            self._mouse_label.show()
-            self._mouse_label.raise_()
+            # Position at top-right of the plot view
+            view_range = plot_item.viewRange()
+            x_range = view_range[0]
+            y_range = view_range[1]
+            self._mouse_label.setPos(x_range[1], y_range[1])
 
         # Remove old proxy if exists
         if self._mouse_proxy is not None:
@@ -748,9 +728,15 @@ class PlotService(ChartServiceBase):
                     except:
                         date_str = f"{x_timestamp:.0f}"
 
-                    # Update label
+                    # Update TextItem text
                     label_text = f"X: {date_str}\nY: {y_price:.5f}\nPrice: {y_price:.5f}"
-                    self._mouse_label_text.setText(label_text)
+                    self._mouse_label.setText(label_text)
+
+                    # Keep label at top-right of current view
+                    view_range = plot_item.viewRange()
+                    x_max = view_range[0][1]
+                    y_max = view_range[1][1]
+                    self._mouse_label.setPos(x_max, y_max)
             except Exception as e:
                 pass
 

@@ -1,7 +1,7 @@
 {
     "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h20_rf_pca.pkl",
     "model_paths": [
-        "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h10_rf_pca.pkl"
+        "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d30_h180_elasticnet_pca16.pkl"
     ],
     "forecast_types": [
         "basic",
@@ -36,7 +36,7 @@
     ],
     "N_samples": 235,
     "apply_conformal": true,
-    "model_weight_pct": 100,
+    "model_weight_pct": 25,
     "indicator_tfs": {
         "atr": [
             "1m",
@@ -81,8 +81,8 @@
             "1h"
         ]
     },
-    "warmup_bars": 16,
-    "atr_n": 19,
+    "warmup_bars": 12,
+    "atr_n": 25,
     "rsi_n": 14,
     "bb_n": 20,
     "rv_window": 52,
@@ -91,7 +91,7 @@
     "don_n": 20,
     "hurst_window": 64,
     "keltner_k": 1,
-    "max_forecasts": 29,
+    "max_forecasts": 32,
     "test_history_bars": 53,
     "auto_predict": false,
     "auto_interval_seconds": 60,
@@ -107,7 +107,7 @@
     "use_parallel_inference": true,
     "max_parallel_workers": 4,
     "use_enhanced_scaling": true,
-    "scaling_mode": "sqrt",
+    "scaling_mode": "smart_adaptive",
     "trading_scenario": "",
     "custom_horizons": [
         "10m",

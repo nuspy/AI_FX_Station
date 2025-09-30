@@ -147,8 +147,8 @@ def _realized_vol_feature(df: pd.DataFrame, window: int) -> pd.DataFrame:
     return feature
 
 def _resample(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-    if timeframe.endswith("m"): rule = f"{int(timeframe[:-1])}T"
-    elif timeframe.endswith("h"): rule = f"{int(timeframe[:-1])}H"
+    if timeframe.endswith("m"): rule = f"{int(timeframe[:-1])}min"
+    elif timeframe.endswith("h"): rule = f"{int(timeframe[:-1])}h"
     else: raise ValueError(f"Timeframe non supportato: {timeframe}")
     x = df.copy(); x.index = pd.to_datetime(x["ts_utc"], unit="ms", utc=True)
     ohlc = x[["open","high","low","close"]].astype(float).resample(rule, label="right").agg(

@@ -194,7 +194,10 @@ class TrainingTab(QWidget):
         # Log & progress
         lp = QHBoxLayout()
         self.progress = QProgressBar(); self.progress.setValue(0); self.progress.setTextVisible(True)
-        self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMinimumHeight(140)
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMinimumHeight(140)
+        self.log_view.setTextInteractionFlags(self.log_view.textInteractionFlags() | Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         lp.addWidget(self.progress, 1); lp.addWidget(self.log_view, 3)
         self.layout.addLayout(lp)
 
@@ -394,17 +397,56 @@ class TrainingTab(QWidget):
         self.progress.setValue(100 if ok else 0)
         self._append_log("[done] ok" if ok else "[done] failed")
         if ok:
-            # Attach meta to latest model file in <artifacts_dir>/models (sidecar JSON)
+            # Attach meta to latest model file using MetadataManager
             try:
                 if self._pending_out_dir and self._pending_out_dir.exists() and isinstance(self._pending_meta, dict):
                     latest = self._find_latest_model_file(self._pending_out_dir)
                     if latest:
-                        sidecar = latest.with_suffix(latest.suffix + ".meta.json")
-                        sidecar.write_text(json.dumps(self._pending_meta, indent=2), encoding="utf-8")
-                        self._append_log(f"[meta] saved sidecar: {sidecar}")
+                        from ...models.metadata_manager import MetadataManager, ModelMetadata
+
+                        # Create ModelMetadata object with correct structure
+                        metadata = ModelMetadata()
+                        metadata.model_path = str(latest)
+                        metadata.file_size = latest.stat().st_size if latest.exists() else 0
+
+                        # Map training metadata to ModelMetadata attributes
+                        meta = self._pending_meta
+                        metadata.symbol = meta.get('symbol')
+                        metadata.base_timeframe = meta.get('base_timeframe')
+                        metadata.horizon_bars = meta.get('horizon_bars')
+                        metadata.horizon_minutes = None  # Could calculate from horizon_bars * timeframe
+                        metadata.model_type = meta.get('model_type', 'sklearn')
+                        metadata.model_class = meta.get('model_type', 'unknown')
+                        metadata.created_at = meta.get('created_at')
+
+                        # Feature configuration
+                        metadata.feature_names = []  # Will be populated from model file
+                        metadata.num_features = 0
+
+                        # Advanced parameters
+                        if 'advanced_params' in meta:
+                            metadata.preprocessing_config = meta['advanced_params']
+
+                        # Indicator configuration
+                        if 'indicator_tfs' in meta:
+                            metadata.multi_timeframe_config = {'indicator_tfs': meta['indicator_tfs']}
+                            metadata.multi_timeframe_enabled = True
+
+                        # Training parameters
+                        metadata.training_params = {
+                            'days_history': meta.get('days_history'),
+                            'optimization': meta.get('optimization'),
+                            'encoder': meta.get('encoder')
+                        }
+
+                        # Save using MetadataManager
+                        manager = MetadataManager()
+                        manager.save_metadata(metadata, str(latest))
+                        self._append_log(f"[meta] saved sidecar: {latest}.meta.json")
                     else:
                         self._append_log("[meta] no model file found to attach meta")
             except Exception as e:
+                logger.exception("Metadata save error")
                 self._append_log(f"[meta] save failed: {e}")
             QMessageBox.information(self, "Training", "Training completato.")
         else:
