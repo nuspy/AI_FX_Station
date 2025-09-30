@@ -8,6 +8,7 @@ import json
 from typing import Dict, Any, Optional, List, Set
 from pathlib import Path
 
+from loguru import logger
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QCheckBox, QLabel, QSpinBox, QDoubleSpinBox, QPushButton, QWidget,
@@ -88,19 +89,44 @@ class EnhancedIndicatorTreeWidget(QTreeWidget):
         self.initUI()
 
     def initUI(self):
-        self.setHeaderLabels(["Indicator", "Range", "Subplot", "Status"])
+        self.setHeaderLabels(["Indicator", "Range", "Subplot", "Color", "Status"])
         self.setColumnWidth(0, 250)
         self.setColumnWidth(1, 120)
         self.setColumnWidth(2, 120)
-        self.setColumnWidth(3, 80)
+        self.setColumnWidth(3, 60)  # Color column
+        self.setColumnWidth(4, 80)  # Status column
 
         # Allow sorting
         self.setSortingEnabled(True)
+
+        # Enable double-click to change color
+        self.itemDoubleClicked.connect(self.on_item_double_clicked)
 
         self.indicators_system = None
         self.category_items = {}
         self.indicator_items = {}
         self.range_classifier = indicator_range_classifier
+
+    def on_item_double_clicked(self, item: QTreeWidgetItem, column: int):
+        """Handle double click on item to change color"""
+        # Only handle indicator items (not category items)
+        if not isinstance(item, EnhancedIndicatorTreeWidgetItem):
+            return
+
+        # Only if clicked on color column
+        if column == 3:
+            self._change_indicator_color(item)
+
+    def _change_indicator_color(self, item: EnhancedIndicatorTreeWidgetItem):
+        """Open color picker dialog for indicator"""
+        current_color = QColor(item.config.color)
+        color = QColorDialog.getColor(current_color, self, f"Choose Color for {item.config.display_name}")
+
+        if color.isValid():
+            item.config.color = color.name()
+            item._update_color_display()
+            # Signal that color changed
+            self.indicatorToggled.emit(item.name, item.config.enabled)
 
     def setup_indicators(self, indicators_system: BTALibIndicators):
         """Setup tree with indicators from the system"""
@@ -180,15 +206,42 @@ class EnhancedIndicatorTreeWidgetItem(QTreeWidgetItem):
     def __init__(self, parent: QTreeWidgetItem, name: str, config: IndicatorConfig,
                  range_text: str, subplot_rec: str):
         super().__init__(parent, [config.display_name, range_text,
-                                 subplot_rec.replace('_', ' ').title(), ""])
+                                 subplot_rec.replace('_', ' ').title(), "", ""])
         self.name = name
         self.config = config
         self.range_text = range_text
         self.subplot_recommendation = subplot_rec
 
+        # Initialize color if not set
+        if not hasattr(config, 'color') or not config.color:
+            config.color = self._get_default_color(subplot_rec)
+
         # Set up checkbox for enabling/disabling
         self.setFlags(self.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         self.setCheckState(0, Qt.CheckState.Checked if config.enabled else Qt.CheckState.Unchecked)
+
+        # Show color in the color column
+        self._update_color_display()
+
+    def _get_default_color(self, subplot_rec: str) -> str:
+        """Get default color based on subplot type"""
+        default_colors = {
+            "main_chart": "#6495ED",         # Cornflower Blue
+            "normalized_subplot": "#3CB371", # Medium Sea Green
+            "volume_subplot": "#FFA500",     # Orange
+            "custom_subplot": "#9370DB"      # Medium Purple
+        }
+        return default_colors.get(subplot_rec, "#6495ED")
+
+    def _update_color_display(self):
+        """Update color display in the tree"""
+        color = QColor(self.config.color)
+        self.setBackground(3, color)  # Color column
+        # Set text color to contrast
+        luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255
+        text_color = QColor(0, 0, 0) if luminance > 0.5 else QColor(255, 255, 255)
+        self.setForeground(3, text_color)
+        self.setText(3, "■")  # Color indicator
 
         # Color coding by subplot type
         subplot_colors = {
@@ -442,13 +495,30 @@ class EnhancedIndicatorsDialog(QDialog):
 
     def load_settings(self):
         """Load settings from persistent storage"""
-        # Implementation depends on your settings system
-        pass
+        try:
+            # Load indicator colors from settings
+            colors_dict = get_setting("indicators.colors", {})
+            if isinstance(colors_dict, dict):
+                for name, color in colors_dict.items():
+                    if name in self.indicators_tree.indicator_items:
+                        item = self.indicators_tree.indicator_items[name]
+                        item.config.color = color
+                        item._update_color_display()
+        except Exception as e:
+            logger.warning(f"Failed to load indicator color settings: {e}")
 
     def save_settings(self):
         """Save settings to persistent storage"""
-        # Implementation depends on your settings system
-        pass
+        try:
+            # Save indicator colors
+            colors_dict = {}
+            for name, item in self.indicators_tree.indicator_items.items():
+                if hasattr(item.config, 'color') and item.config.color:
+                    colors_dict[name] = item.config.color
+
+            set_setting("indicators.colors", colors_dict)
+        except Exception as e:
+            logger.warning(f"Failed to save indicator color settings: {e}")
 
     def apply_settings(self):
         """Apply current settings without closing dialog"""

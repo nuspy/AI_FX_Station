@@ -56,13 +56,14 @@ class MatplotlibSubplotService:
             'volume': []       # Volume subplot (if needed)
         }
 
-    def create_subplots(self, has_normalized: bool = False, has_volume: bool = False) -> Dict[str, Axes]:
+    def create_subplots(self, has_normalized: bool = False) -> Dict[str, Axes]:
         """
-        Create subplot layout based on what indicators are active
+        Create subplot layout:
+        - Main chart for price + price-range indicators (SMA, EMA, Bollinger, etc.)
+        - One additional subplot for normalized indicators (RSI, Stochastic, etc.)
 
         Args:
-            has_normalized: Whether normalized indicators are active
-            has_volume: Whether volume indicator is active
+            has_normalized: Whether normalized indicators (0-1 range) are active
 
         Returns:
             Dictionary of axes by name
@@ -70,20 +71,13 @@ class MatplotlibSubplotService:
         self.figure.clear()
         self.axes = {}
 
-        # Calculate grid layout
-        n_subplots = 1  # Always have price chart
+        # Layout: Always have price chart + optional normalized subplot
         if has_normalized:
-            n_subplots += 1
-        if has_volume:
-            n_subplots += 1
-
-        # Height ratios: price gets most space
-        if n_subplots == 1:
-            height_ratios = [1]
-        elif n_subplots == 2:
-            height_ratios = [3, 1]  # price:indicators = 3:1
+            n_subplots = 2
+            height_ratios = [3, 1]  # price:normalized = 3:1
         else:
-            height_ratios = [3, 1, 1]  # price:normalized:volume = 3:1:1
+            n_subplots = 1
+            height_ratios = [1]
 
         # Create subplots
         axes_list = self.figure.subplots(
@@ -96,28 +90,20 @@ class MatplotlibSubplotService:
         if n_subplots == 1:
             axes_list = [axes_list]
 
-        # Assign axes
-        idx = 0
-        self.axes['price'] = axes_list[idx]
+        # Assign main price axis (for price + price-range indicators overlay)
+        self.axes['price'] = axes_list[0]
         self.axes['price'].set_ylabel('Price', fontsize=9)
         self.axes['price'].grid(True, alpha=0.3)
-        idx += 1
 
+        # Add normalized subplot if needed
         if has_normalized:
-            self.axes['normalized'] = axes_list[idx]
-            self.axes['normalized'].set_ylabel('Normalized (0-1)', fontsize=9)
+            self.axes['normalized'] = axes_list[1]
+            self.axes['normalized'].set_ylabel('Normalized (0-100)', fontsize=9)
             self.axes['normalized'].set_ylim(0, 100)  # 0-100 for percentage-based
             self.axes['normalized'].grid(True, alpha=0.3)
             self.axes['normalized'].axhline(y=30, color='g', linestyle='--', alpha=0.3, linewidth=0.8)
             self.axes['normalized'].axhline(y=70, color='r', linestyle='--', alpha=0.3, linewidth=0.8)
             self.axes['normalized'].axhline(y=50, color='gray', linestyle='-', alpha=0.2, linewidth=0.5)
-            idx += 1
-
-        if has_volume:
-            self.axes['volume'] = axes_list[idx]
-            self.axes['volume'].set_ylabel('Volume', fontsize=9)
-            self.axes['volume'].grid(True, alpha=0.3)
-            idx += 1
 
         # Only show x-axis labels on bottom subplot
         for ax in axes_list[:-1]:
@@ -309,10 +295,9 @@ class MatplotlibSubplotService:
     def refresh_layout(self):
         """Refresh subplot layout based on active indicators"""
         has_normalized = len(self.active_indicators.get('normalized', [])) > 0
-        has_volume = len(self.active_indicators.get('volume', [])) > 0
 
         # Recreate subplots if needed
-        self.create_subplots(has_normalized=has_normalized, has_volume=has_volume)
+        self.create_subplots(has_normalized=has_normalized)
 
     def get_subplot_for_indicator(self, indicator_name: str) -> Optional[str]:
         """Get the subplot where indicator should be plotted"""

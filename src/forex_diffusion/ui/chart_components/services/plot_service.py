@@ -19,6 +19,16 @@ from forex_diffusion.utils.user_settings import get_setting, set_setting
 from .patterns_hook import call_patterns_detection
 from .base import ChartServiceBase
 
+# Enhanced indicators support
+try:
+    from forex_diffusion.features.indicators_btalib import BTALibIndicators
+    from forex_diffusion.features.indicator_ranges import indicator_range_classifier
+    ENHANCED_INDICATORS_AVAILABLE = True
+except ImportError:
+    ENHANCED_INDICATORS_AVAILABLE = False
+    BTALibIndicators = None
+    indicator_range_classifier = None
+
 
 class PlotService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
@@ -223,6 +233,9 @@ class PlotService(ChartServiceBase):
             pass
 
         self._plot_indicators(df2, x_dt)
+
+        # Plot enhanced indicators from EnhancedIndicatorsDialog
+        self._plot_enhanced_indicators(df2, x_dt)
 
         # Draw weekend markers (yellow dashed lines)
         self._draw_weekend_markers()
@@ -676,6 +689,132 @@ class PlotService(ChartServiceBase):
                     spine.set_color(axes_col)
             except Exception:
                 pass
+
+    def _plot_enhanced_indicators(self, df2: pd.DataFrame, x_dt: pd.Series):
+        """
+        Plot enhanced indicators from EnhancedIndicatorsDialog using MatplotlibSubplotService
+        """
+        if not ENHANCED_INDICATORS_AVAILABLE:
+            return
+
+        try:
+            # Get enabled indicators from settings
+            enabled_indicator_names = get_setting("indicators.enabled_list", [])
+            if not enabled_indicator_names or not isinstance(enabled_indicator_names, list):
+                return
+
+            # Get indicator colors from settings
+            indicator_colors = get_setting("indicators.colors", {})
+
+            logger.debug(f"Plotting {len(enabled_indicator_names)} enhanced indicators")
+
+            # Initialize BTALibIndicators system
+            indicators_system = BTALibIndicators()
+
+            # Prepare OHLCV data for indicator calculation
+            close = df2['close'] if 'close' in df2.columns else df2['price']
+            high = df2.get('high', close)
+            low = df2.get('low', close)
+            open_price = df2.get('open', close)
+            volume = df2.get('volume', pd.Series([1.0] * len(close), index=close.index))
+
+            # Check if we have normalized indicators
+            has_normalized = any(
+                indicator_range_classifier.get_range_info(name).subplot_recommendation == 'normalized_subplot'
+                for name in enabled_indicator_names
+                if indicator_range_classifier.get_range_info(name)
+            )
+
+            # Enable subplot service if we have normalized indicators
+            if has_normalized:
+                if not self._subplot_enabled:
+                    self.enable_indicator_subplots()
+
+                if self._subplot_service:
+                    # Create subplots: main chart + normalized subplot
+                    self._subplot_service.create_subplots(has_normalized=True)
+
+            # Calculate and plot each indicator
+            for indicator_name in enabled_indicator_names:
+                try:
+                    # Get indicator config
+                    indicator_config = indicators_system.get_indicator_config(indicator_name)
+                    if not indicator_config:
+                        logger.warning(f"Indicator {indicator_name} not found in system")
+                        continue
+
+                    # Calculate indicator (simplified - you may need to handle parameters)
+                    result = indicators_system.calculate_indicator(
+                        indicator_name,
+                        open=open_price,
+                        high=high,
+                        low=low,
+                        close=close,
+                        volume=volume
+                    )
+
+                    if result is None:
+                        continue
+
+                    # Get subplot recommendation
+                    range_info = indicator_range_classifier.get_range_info(indicator_name)
+                    subplot_type = range_info.subplot_recommendation if range_info else 'main_chart'
+
+                    # Get indicator color
+                    color = indicator_colors.get(indicator_name, None)
+
+                    # Plot based on subplot type
+                    if subplot_type == 'main_chart' and not self._subplot_enabled:
+                        # Overlay on main price chart
+                        if isinstance(result, pd.Series):
+                            plot_kwargs = {'alpha': 0.7, 'linewidth': 1.2, 'label': indicator_name}
+                            if color:
+                                plot_kwargs['color'] = color
+                            self.ax.plot(x_dt, result.values, **plot_kwargs)
+                        elif isinstance(result, dict):
+                            # Handle multi-series indicators (like Bollinger Bands)
+                            for key, series in result.items():
+                                if isinstance(series, pd.Series):
+                                    self.ax.plot(x_dt, series.values, alpha=0.6, linewidth=1.0,
+                                               label=f"{indicator_name}_{key}", linestyle='--')
+
+                    elif self._subplot_enabled and self._subplot_service:
+                        # Use subplot service
+                        if isinstance(result, pd.Series):
+                            plot_kwargs = {}
+                            if color:
+                                plot_kwargs['color'] = color
+                            self._subplot_service.plot_indicator(indicator_name, result, **plot_kwargs)
+                        elif isinstance(result, dict):
+                            # Handle multi-series (e.g., bands)
+                            if 'upper' in result and 'middle' in result and 'lower' in result:
+                                self._subplot_service.plot_bands(
+                                    indicator_name,
+                                    result['upper'],
+                                    result['middle'],
+                                    result['lower']
+                                )
+                            else:
+                                for key, series in result.items():
+                                    if isinstance(series, pd.Series):
+                                        self._subplot_service.plot_indicator(
+                                            f"{indicator_name}_{key}",
+                                            series
+                                        )
+
+                except Exception as e:
+                    logger.error(f"Failed to plot indicator {indicator_name}: {e}")
+                    continue
+
+            # Update legend if we added indicators to main axis
+            if not self._subplot_enabled:
+                try:
+                    self._refresh_legend_unique(loc='upper left')
+                except Exception as e:
+                    logger.error(f"Failed to refresh legend: {e}")
+
+        except Exception as e:
+            logger.error(f"Error in _plot_enhanced_indicators: {e}")
 
     def _sma(self, x: pd.Series, n: int) -> pd.Series:
         return x.rolling(n, min_periods=max(1, n // 2)).mean()

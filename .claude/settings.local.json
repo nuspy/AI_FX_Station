@@ -8,7 +8,9 @@
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_phase3_integration.py)",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_phase3_simple.py)",
       "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_subplot_integration.py)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfeat: Add advanced multi-subplot indicator system with 200+ indicators\n\nImplemented comprehensive indicator visualization system:\n- MatplotlibSubplotService: dual-subplot architecture for normalized (0-1) vs price-range indicators\n- EnhancedIndicatorsDialog: GUI with 200+ VectorBT Pro + bta-lib indicators, scrollable categories\n- Enhanced chart services: finplot/matplotlib subplot integration with smart classification\n- PlotService integration: enable/disable methods for indicator subplots\n- Indicator ranges classification system for proper subplot routing\n\nFixed FastAPI import error in inference/__init__.py preventing desktop app startup\nCleaned chart_tab_ui.py to professional bridge implementation\n\nAll tests passing - matplotlib subplot system fully operational\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(\"D:\\Projects\\ForexGPT\\.venv\\Scripts\\python.exe\" test_indicator_plotting.py)"
     ],
     "deny": [],
     "ask": []

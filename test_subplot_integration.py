@@ -54,11 +54,11 @@ def test_subplot_service():
         print("[OK] MatplotlibSubplotService instance created")
 
         # Test subplot creation
-        axes = service.create_subplots(has_normalized=True, has_volume=True)
+        axes = service.create_subplots(has_normalized=True)
         print(f"[OK] Subplots created: {list(axes.keys())}")
 
-        # Test indicator classification
-        test_indicators = ['rsi', 'sma', 'volume', 'bbands', 'stoch', 'ema']
+        # Test indicator classification (volume now goes to main chart, not separate subplot)
+        test_indicators = ['rsi', 'sma', 'bbands', 'stoch', 'ema']
         for ind in test_indicators:
             subplot = service.classify_indicator(ind)
             print(f"  {ind} -> {subplot}")
