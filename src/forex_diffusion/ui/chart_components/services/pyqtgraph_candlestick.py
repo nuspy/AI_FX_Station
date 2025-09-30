@@ -39,12 +39,16 @@ class CandlestickItem(pg.GraphicsObject):
     Efficient rendering of OHLC data
     """
 
-    def __init__(self, data):
+    def __init__(self, data, up_color='#2ecc71', down_color='#e74c3c'):
         """
         data: pandas DataFrame with columns: time, open, high, low, close
+        up_color: color for bullish candles
+        down_color: color for bearish candles
         """
         pg.GraphicsObject.__init__(self)
         self.data = data
+        self.up_color = up_color
+        self.down_color = down_color
         self.generate_picture()
 
     def generate_picture(self):
@@ -76,13 +80,13 @@ class CandlestickItem(pg.GraphicsObject):
 
                 # Color based on price movement
                 if close_price > open_price:
-                    # Bullish candle (green)
-                    p.setPen(pg.mkPen('#26a69a'))
-                    p.setBrush(pg.mkBrush('#26a69a'))
+                    # Bullish candle
+                    p.setPen(pg.mkPen(self.up_color))
+                    p.setBrush(pg.mkBrush(self.up_color))
                 else:
-                    # Bearish candle (red)
-                    p.setPen(pg.mkPen('#ef5350'))
-                    p.setBrush(pg.mkBrush('#ef5350'))
+                    # Bearish candle
+                    p.setPen(pg.mkPen(self.down_color))
+                    p.setBrush(pg.mkBrush(self.down_color))
 
                 # Draw high-low line (wick)
                 p.drawLine(QtCore.QPointF(x, low_price), QtCore.QPointF(x, high_price))
@@ -106,7 +110,7 @@ class CandlestickItem(pg.GraphicsObject):
         return QtCore.QRectF(self.picture.boundingRect())
 
 
-def add_candlestick(plot_widget, data):
+def add_candlestick(plot_widget, data, up_color='#2ecc71', down_color='#e74c3c'):
     """
     Add candlestick chart to a PlotWidget
 
@@ -114,8 +118,10 @@ def add_candlestick(plot_widget, data):
         plot_widget: PyQtGraph PlotWidget or PlotItem
         data: pandas DataFrame with columns: open, high, low, close
               Index should be DatetimeIndex for proper timestamp display
+        up_color: color for bullish candles (default green)
+        down_color: color for bearish candles (default red)
     """
-    candle_item = CandlestickItem(data)
+    candle_item = CandlestickItem(data, up_color=up_color, down_color=down_color)
     plot_widget.addItem(candle_item)
 
     return candle_item

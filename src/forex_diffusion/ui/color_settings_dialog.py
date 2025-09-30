@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+from PySide6.QtCore import Signal
 
 from ..utils.user_settings import get_setting, set_setting
 from .settings_dialog import COLOR_FIELDS, COLOR_DEFAULTS
@@ -20,6 +21,9 @@ from .settings_dialog import COLOR_FIELDS, COLOR_DEFAULTS
 
 class ColorSettingsDialog(QDialog):
     """Lightweight dialog to tweak theme colors quickly."""
+
+    # Signal emitted when colors are saved
+    themeChanged = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -61,4 +65,6 @@ class ColorSettingsDialog(QDialog):
     def _save(self) -> None:
         for key, edit in self.edits.items():
             set_setting(key, edit.text().strip())
+        # Emit signal to trigger theme refresh
+        self.themeChanged.emit()
         self.accept()

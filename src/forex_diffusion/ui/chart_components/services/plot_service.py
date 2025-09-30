@@ -52,6 +52,44 @@ class PlotService(ChartServiceBase):
         self._subplot_enabled = False
         logger.info("Indicator subplots disabled")
 
+    def apply_theme_to_pyqtgraph(self):
+        """Apply theme colors to PyQtGraph plots"""
+        if not hasattr(self.view, 'use_finplot') or not self.view.use_finplot:
+            return
+
+        # Get colors from settings
+        chart_bg = get_setting('chart_bg', '#0f1115')
+        axes_color = get_setting('axes_color', '#cfd6e1')
+        grid_color = get_setting('grid_color', '#3a4250')
+        text_color = get_setting('text_color', '#e0e0e0')
+
+        try:
+            # Apply to all plots
+            for plot_item in self.view.finplot_axes:
+                # Set background color
+                plot_item.setBackground(chart_bg)
+
+                # Set axes colors
+                for axis_name in ['left', 'right', 'top', 'bottom']:
+                    axis = plot_item.getAxis(axis_name)
+                    axis.setPen(axes_color)
+                    axis.setTextPen(text_color)
+
+                # Set grid color
+                plot_item.getViewBox().setBackgroundColor(chart_bg)
+
+                # Update grid pen
+                plot_item.getAxis('left').setGrid(128)  # Set grid opacity
+                plot_item.getAxis('bottom').setGrid(128)
+
+            # Apply to graphics layout background
+            if hasattr(self.view, 'graphics_layout'):
+                self.view.graphics_layout.setBackground(chart_bg)
+
+            logger.info("Theme applied to PyQtGraph plots")
+        except Exception as e:
+            logger.error(f"Failed to apply theme to PyQtGraph: {e}")
+
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
         # Check if using finplot
         if hasattr(self.view, 'use_finplot') and self.view.use_finplot:
@@ -420,8 +458,11 @@ class PlotService(ChartServiceBase):
                     normalized_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
                     # Add legend (movable by default in PyQtGraph)
                     normalized_plot.addLegend(offset=(10, 10))
-                    # Link X and Y axes for synchronized zoom/pan and aligned width
+                    # Link X axis for synchronized zoom/pan but NOT Y axis
                     normalized_plot.setXLink(main_plot)
+                    # Disable Y-axis zoom and pan for this subplot
+                    normalized_plot.setMouseEnabled(y=False)
+                    normalized_plot.getViewBox().setMouseEnabled(y=False)
                     # Set same Y-axis width for alignment
                     normalized_plot.getAxis('left').setWidth(main_plot.getAxis('left').width())
                     self.view.finplot_axes.append(normalized_plot)
@@ -440,8 +481,11 @@ class PlotService(ChartServiceBase):
                     custom_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
                     # Add legend (movable by default in PyQtGraph)
                     custom_plot.addLegend(offset=(10, 10))
-                    # Link X and Y axes for synchronized zoom/pan and aligned width
+                    # Link X axis for synchronized zoom/pan but NOT Y axis
                     custom_plot.setXLink(main_plot)
+                    # Disable Y-axis zoom and pan for this subplot
+                    custom_plot.setMouseEnabled(y=False)
+                    custom_plot.getViewBox().setMouseEnabled(y=False)
                     # Set same Y-axis width for alignment
                     custom_plot.getAxis('left').setWidth(main_plot.getAxis('left').width())
                     self.view.finplot_axes.append(custom_plot)
@@ -452,6 +496,9 @@ class PlotService(ChartServiceBase):
                 # Clear existing plots but maintain references
                 for plot in self.view.finplot_axes:
                     plot.clear()
+                    # Re-add legend after clearing
+                    if not hasattr(plot, 'legend') or plot.legend is None:
+                        plot.addLegend(offset=(10, 10))
 
                 # Ensure references are set correctly
                 if len(self.view.finplot_axes) >= 1:
@@ -489,12 +536,16 @@ class PlotService(ChartServiceBase):
                 candle_df = df2[['open', 'high', 'low', 'close']].copy()
                 if is_pip_format:
                     candle_df = candle_df / pip_divisor
-                add_candlestick(ax_price, candle_df)
+                # Get candle colors from settings
+                up_color = get_setting('candle_up_color', '#2ecc71')
+                down_color = get_setting('candle_down_color', '#e74c3c')
+                add_candlestick(ax_price, candle_df, up_color=up_color, down_color=down_color)
             else:
                 # Plot line chart (convert from pip format) using timestamps
                 x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
                 y_data = df2[y_col].values / pip_divisor
-                ax_price.plot(x_data, y_data, pen=pg.mkPen('#2196F3', width=1.5))
+                symbol = getattr(self.view, 'symbol', 'Price')
+                ax_price.plot(x_data, y_data, pen=pg.mkPen('#2196F3', width=1.5), name=symbol)
 
             # Plot indicators
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
@@ -593,6 +644,9 @@ class PlotService(ChartServiceBase):
             # Setup mouse tracking for coordinates display
             self._setup_mouse_tracking(ax_price, df2)
 
+            # Apply theme colors to PyQtGraph elements
+            self.apply_theme_to_pyqtgraph()
+
             logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
 
         except Exception as e:
@@ -629,10 +683,22 @@ class PlotService(ChartServiceBase):
             """)
             layout.addWidget(self._mouse_label_text)
 
-            # Position the label at top-right of view
-            view_pos = self.view.mapToGlobal(self.view.rect().topRight())
-            self._mouse_label.move(view_pos.x() - 250, view_pos.y() + 10)
+            # Set initial text
+            self._mouse_label_text.setText("X: --\nY: --\nPrice: --")
+
+            # Position the label at top-right of graphics_layout widget
+            try:
+                # Get the graphics_layout widget position
+                graphics_widget = self.view.graphics_layout
+                widget_pos = graphics_widget.mapToGlobal(graphics_widget.rect().topRight())
+                self._mouse_label.move(widget_pos.x() - 250, widget_pos.y() + 10)
+            except:
+                # Fallback to view position
+                view_pos = self.view.mapToGlobal(self.view.rect().topRight())
+                self._mouse_label.move(view_pos.x() - 250, view_pos.y() + 50)
+
             self._mouse_label.show()
+            self._mouse_label.raise_()
 
         # Remove old proxy if exists
         if self._mouse_proxy is not None:
@@ -669,42 +735,40 @@ class PlotService(ChartServiceBase):
         # Set up mouse click handler for forecast (Alt+Click)
         def mouse_clicked(event):
             from PySide6.QtCore import Qt as QtCore_Qt
-            from PySide6.QtCore import QEvent
 
-            # Only handle mouse button release events
-            if event.type() != QEvent.Type.GraphicsSceneMouseRelease:
+            # PyQtGraph MouseClickEvent doesn't have type() method - it's already a click event
+            # Get modifiers from the event
+            try:
+                modifiers = event.modifiers()
+            except:
+                # Fallback: no modifiers
                 return
 
-            # Get mouse button and modifiers
-            button = event.button()
-            modifiers = event.modifiers()
-
             # Check for left button + Alt modifier (forecast trigger)
-            if button == QtCore_Qt.MouseButton.LeftButton and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
+            # In PyQtGraph, event.button is already an integer (1=left, 2=right, 4=middle)
+            if event.button() == 1 and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
                 # Get mouse position in view coordinates
                 scene_pos = event.scenePos()
                 if plot_item.sceneBoundingRect().contains(scene_pos):
                     view_pos = plot_item.vb.mapSceneToView(scene_pos)
 
                     # Create a mock event object compatible with _on_canvas_click
+                    class MockGUI:
+                        def __init__(self, mods):
+                            self._mods = mods
+                        def modifiers(self):
+                            return self._mods
+
                     class MockEvent:
                         def __init__(self, x_timestamp, y_price, modifiers):
                             self.xdata = x_timestamp
                             self.ydata = y_price
                             self.button = 1
-                            self._modifiers = modifiers
-
-                        def guiEvent(self):
-                            return None
+                            self._gui_event = MockGUI(modifiers)
 
                         @property
                         def guiEvent(self):
-                            class MockGUI:
-                                def __init__(self, mods):
-                                    self._mods = mods
-                                def modifiers(self):
-                                    return self._mods
-                            return MockGUI(self._modifiers)
+                            return self._gui_event
 
                     mock_event = MockEvent(view_pos.x(), view_pos.y(), modifiers)
 
@@ -1465,15 +1529,34 @@ class PlotService(ChartServiceBase):
     def _open_color_settings(self):
         try:
             from forex_diffusion.ui.color_settings_dialog import ColorSettingsDialog
-            dlg = ColorSettingsDialog(self)
+            dlg = ColorSettingsDialog(self.view)
+
+            # Connect the theme changed signal to refresh the chart
+            dlg.themeChanged.connect(lambda: self._refresh_theme_colors())
+
             if dlg.exec():
-                # re-draw to apply new colors
-                if self._last_df is not None and not self._last_df.empty:
-                    self.update_plot(self._last_df)
-                # ri-applica il tema per aggiornare QSS/palette
-                self._apply_theme(self.theme_combo.currentText())
+                # Theme has already been applied via signal if colors were saved
+                pass
         except Exception as e:
             QMessageBox.warning(self.view, "Colors", str(e))
+
+    def _refresh_theme_colors(self):
+        """Refresh chart with new theme colors"""
+        try:
+            # Apply PyQtGraph theme
+            self.apply_theme_to_pyqtgraph()
+
+            # Re-draw plot to apply new colors to data
+            if self._last_df is not None and not self._last_df.empty:
+                self.update_plot(self._last_df)
+
+            # Apply matplotlib theme if applicable
+            if hasattr(self.view, 'theme_combo') and self.view.theme_combo:
+                self._apply_theme(self.view.theme_combo.currentText())
+
+            logger.info("Theme colors refreshed")
+        except Exception as e:
+            logger.error(f"Failed to refresh theme colors: {e}")
 
     def _toggle_drawbar(self, visible: bool):
         try:

@@ -71,7 +71,11 @@ class ChartTabController:
         return self.plot_service._on_mode_toggled(*args, **kwargs)
 
     def apply_theme(self, *args, **kwargs):
-        return self.plot_service._apply_theme(*args, **kwargs)
+        # Apply matplotlib theme (if applicable)
+        result = self.plot_service._apply_theme(*args, **kwargs)
+        # Also apply to PyQtGraph
+        self.plot_service.apply_theme_to_pyqtgraph()
+        return result
 
     def get_color(self, *args, **kwargs):
         return self.plot_service._get_color(*args, **kwargs)
