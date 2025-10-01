@@ -1,8 +1,17 @@
 """
 Dialog for configuring prediction settings.
+DEPRECATED: Use UnifiedPredictionSettingsDialog instead.
+This file is kept for backward compatibility - it imports and aliases the new unified dialog.
 """
 from __future__ import annotations
 
+# Import the new unified dialog
+from .unified_prediction_settings_dialog import UnifiedPredictionSettingsDialog
+
+# Create alias for backward compatibility
+PredictionSettingsDialog = UnifiedPredictionSettingsDialog
+
+# Legacy imports (kept for compatibility)
 import json
 from pathlib import Path
 from typing import Dict, Any
@@ -15,7 +24,12 @@ from loguru import logger
 
 CONFIG_FILE = Path(__file__).resolve().parents[3] / "configs" / "prediction_settings.json"
 
-class PredictionSettingsDialog(QDialog):
+# The old class is now replaced by UnifiedPredictionSettingsDialog
+# All imports of PredictionSettingsDialog will automatically use the new unified version
+"""
+Legacy class definition - DEPRECATED, kept for reference only
+"""
+class _LegacyPredictionSettingsDialog(QDialog):
     """
     A dialog window for setting prediction parameters (basic + advanced),
     which are persisted to a JSON file.

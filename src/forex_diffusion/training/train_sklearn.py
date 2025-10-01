@@ -11,6 +11,16 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
 
+# Import neural encoders
+try:
+    from .encoders import SklearnAutoencoder, SklearnVAE
+except ImportError:
+    try:
+        from encoders import SklearnAutoencoder, SklearnVAE
+    except ImportError:
+        SklearnAutoencoder = None
+        SklearnVAE = None
+
 # Use project's MarketDataService (SQLAlchemy) to load candles for training.
 # This avoids file-based adapters and ensures a single DB access mode across the app.
 try:
@@ -386,7 +396,10 @@ def main():
     ap.add_argument("--timeframe", required=True)
     ap.add_argument("--horizon", type=int, required=True)
     ap.add_argument("--algo", choices=["ridge","lasso","elasticnet","rf"], required=True)
-    ap.add_argument("--pca", type=int, default=0)
+    ap.add_argument("--pca", type=int, default=0, help="PCA components (0=disabled)")
+    ap.add_argument("--encoder", type=str, choices=["none", "pca", "autoencoder", "vae", "latents"], default="none", help="Encoder type")
+    ap.add_argument("--latent_dim", type=int, default=16, help="Latent dimension for autoencoder/VAE")
+    ap.add_argument("--encoder_epochs", type=int, default=50, help="Training epochs for neural encoders")
     ap.add_argument("--artifacts_dir", required=True)
     ap.add_argument("--warmup_bars", type=int, default=64)
     ap.add_argument("--val_frac", type=float, default=0.2)
@@ -404,6 +417,13 @@ def main():
     ap.add_argument("--indicator_tfs", type=str, default="{}")
     ap.add_argument("--use_relative_ohlc", action="store_true", default=True)
     ap.add_argument("--use_temporal_features", action="store_true", default=True)
+
+    # Additional feature parameters (from new training tab)
+    ap.add_argument("--returns_window", type=int, default=5, help="Window for returns calculation")
+    ap.add_argument("--session_overlap", type=int, default=30, help="Session overlap in minutes")
+    ap.add_argument("--higher_tf", type=str, default="15m", help="Higher timeframe for candlestick patterns")
+    ap.add_argument("--vp_bins", type=int, default=50, help="Number of bins for volume profile")
+
     args = ap.parse_args()
 
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
@@ -450,13 +470,76 @@ def main():
     Xtr, ytr = Xtr_f, ytr_f
     Xva, yva = Xva_f, yva_f
 
-    pca_model = None
-    if int(args.pca) > 0:
-        ncomp = min(int(args.pca), Xtr.shape[1], Xtr.shape[0])
+    # Apply encoder/dimensionality reduction
+    encoder_model = None
+    encoder_type = args.encoder if hasattr(args, 'encoder') else "none"
+
+    # Legacy support: if --pca is set but --encoder is "none", use PCA
+    if int(args.pca) > 0 and encoder_type == "none":
+        encoder_type = "pca"
+
+    if encoder_type == "pca":
+        # PCA encoder
+        ncomp = int(args.latent_dim) if hasattr(args, 'latent_dim') else int(args.pca)
+        if ncomp <= 0:
+            ncomp = 16  # Default
+        ncomp = min(ncomp, Xtr.shape[1], Xtr.shape[0])
         if ncomp > 0:
-            pca_model = PCA(n_components=ncomp, whiten=False, random_state=args.random_state)
-            Xtr = pca_model.fit_transform(Xtr)
-            Xva = pca_model.transform(Xva)
+            print(f"[Encoder] Training PCA with {ncomp} components...")
+            encoder_model = PCA(n_components=ncomp, whiten=False, random_state=args.random_state)
+            Xtr = encoder_model.fit_transform(Xtr)
+            Xva = encoder_model.transform(Xva)
+            print(f"[Encoder] PCA reduced features: {Xtr_f.shape[1]} -> {Xtr.shape[1]}")
+
+    elif encoder_type == "autoencoder":
+        # Autoencoder
+        if SklearnAutoencoder is None:
+            raise RuntimeError("Autoencoder not available. Install PyTorch: pip install torch")
+
+        latent_dim = int(args.latent_dim) if hasattr(args, 'latent_dim') else 16
+        epochs = int(args.encoder_epochs) if hasattr(args, 'encoder_epochs') else 50
+        print(f"[Encoder] Training Autoencoder with {latent_dim} latent dimensions for {epochs} epochs...")
+        encoder_model = SklearnAutoencoder(
+            latent_dim=latent_dim,
+            hidden_dims=[128, 64],
+            epochs=epochs,
+            batch_size=64,
+            learning_rate=0.001,
+            verbose=True
+        )
+        Xtr = encoder_model.fit_transform(Xtr)
+        Xva = encoder_model.transform(Xva)
+        print(f"[Encoder] Autoencoder reduced features: {Xtr_f.shape[1]} -> {Xtr.shape[1]}")
+
+    elif encoder_type == "vae":
+        # Variational Autoencoder
+        if SklearnVAE is None:
+            raise RuntimeError("VAE not available. Install PyTorch: pip install torch")
+
+        latent_dim = int(args.latent_dim) if hasattr(args, 'latent_dim') else 16
+        epochs = int(args.encoder_epochs) if hasattr(args, 'encoder_epochs') else 50
+        print(f"[Encoder] Training VAE with {latent_dim} latent dimensions for {epochs} epochs...")
+        encoder_model = SklearnVAE(
+            latent_dim=latent_dim,
+            hidden_dims=[128, 64],
+            epochs=epochs,
+            batch_size=64,
+            learning_rate=0.001,
+            beta=1.0,
+            verbose=True
+        )
+        Xtr = encoder_model.fit_transform(Xtr)
+        Xva = encoder_model.transform(Xva)
+        print(f"[Encoder] VAE reduced features: {Xtr_f.shape[1]} -> {Xtr.shape[1]}")
+
+    elif encoder_type == "latents":
+        # Placeholder for pre-trained encoder (user must load separately)
+        print("[Encoder] Using 'latents' mode - no encoder training, expecting pre-trained encoder at inference time")
+        encoder_model = None
+
+    else:
+        # No encoder
+        encoder_model = None
 
     model = _fit_model(args.algo, Xtr, ytr, args)
     model.fit(Xtr, ytr)
@@ -465,11 +548,38 @@ def main():
     mae = float(mean_absolute_error(yva, val_pred))
 
     out_dir = Path(args.artifacts_dir) / "models"; out_dir.mkdir(parents=True, exist_ok=True)
-    run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{args.horizon}_{args.algo}{'_pca'+str(args.pca) if int(args.pca)>0 else ''}"
-    payload = {"model_type": args.algo, "model": model, "scaler_mu": mu, "scaler_sigma": sigma, "pca": pca_model,
-               "features": meta["features"], "indicator_tfs": meta["indicator_tfs"], "params_used": meta["args_used"],
-               "val_mae": mae}
-    out_path = out_dir / f"{run_name}.pkl"; dump(payload, out_path, compress=3)
-    print(f"[OK] saved model to {out_path} (val_mae={mae:.6f})")
+
+    # Build run name with encoder info
+    encoder_suffix = ""
+    if encoder_type == "pca":
+        ncomp = encoder_model.n_components_ if encoder_model else 0
+        encoder_suffix = f"_pca{ncomp}"
+    elif encoder_type == "autoencoder":
+        encoder_suffix = f"_ae{args.latent_dim}"
+    elif encoder_type == "vae":
+        encoder_suffix = f"_vae{args.latent_dim}"
+    elif encoder_type == "latents":
+        encoder_suffix = "_latents"
+
+    run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{args.horizon}_{args.algo}{encoder_suffix}"
+
+    # Save payload with encoder
+    payload = {
+        "model_type": args.algo,
+        "model": model,
+        "scaler_mu": mu,
+        "scaler_sigma": sigma,
+        "encoder": encoder_model,  # Generic 'encoder' key instead of just 'pca'
+        "pca": encoder_model if encoder_type == "pca" else None,  # Keep 'pca' for backward compatibility
+        "encoder_type": encoder_type,
+        "features": meta["features"],
+        "indicator_tfs": meta["indicator_tfs"],
+        "params_used": meta["args_used"],
+        "val_mae": mae
+    }
+
+    out_path = out_dir / f"{run_name}.pkl"
+    dump(payload, out_path, compress=3)
+    print(f"[OK] saved model to {out_path} (val_mae={mae:.6f}, encoder={encoder_type})")
 
 if __name__ == "__main__": main()

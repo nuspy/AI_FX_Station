@@ -23,12 +23,6 @@ class ForecastService(ChartServiceBase):
         Plot quantiles on the chart. quantiles expected to have keys 'q50','q05','q95'
         Each value can be a list/array of floats. Optionally 'future_ts' can provide UTC ms or datetimes.
         """
-
-        try:
-            logger.info("Q95: ", quantiles.get("q95")  )
-        except Exception:
-            pass
-
         try:
             # extract and coerce to arrays
             q50 = quantiles.get("q50")
@@ -44,6 +38,8 @@ class ForecastService(ChartServiceBase):
             q05_arr = np.asarray(q05, dtype=float).flatten() if q05 is not None else None
             q95_arr = np.asarray(q95, dtype=float).flatten() if q95 is not None else None
 
+            logger.warning(f"[FORECAST PLOT] q50 has {len(q50_arr)} points, q05={len(q05_arr) if q05_arr is not None else 'None'}, q95={len(q95_arr) if q95_arr is not None else 'None'}")
+
             # build x positions from future_ts or from last ts + tf
             future_ts = quantiles.get("future_ts", None)
             x_vals = None
@@ -51,7 +47,9 @@ class ForecastService(ChartServiceBase):
                 # accetta lista di ms o datetime-like
                 try:
                     x_vals = pd.to_datetime(future_ts, unit="ms", utc=True)
-                except Exception:
+                    logger.warning(f"[FORECAST PLOT] future_ts has {len(future_ts)} points, x_vals has {len(x_vals)} after conversion")
+                except Exception as e:
+                    logger.warning(f"[FORECAST PLOT] Failed to convert future_ts with unit='ms': {e}")
                     x_vals = pd.to_datetime(future_ts, utc=True)
             else:
                 # fallback: deriva da ultimo ts e TF corrente
@@ -127,13 +125,28 @@ class ForecastService(ChartServiceBase):
             if first_for_model:
                 self._legend_once.add(model_name)
 
+            # Convert datetime x_vals to numeric timestamps for PyQtGraph
+            import pyqtgraph as pg
+            if isinstance(x_vals, pd.DatetimeIndex):
+                x_numeric = x_vals.astype('int64') // 10**9  # Convert to Unix timestamp (seconds)
+            elif hasattr(x_vals, '__iter__'):
+                try:
+                    x_numeric = np.array([pd.Timestamp(x).timestamp() for x in x_vals])
+                except Exception:
+                    x_numeric = np.arange(len(x_vals))
+            else:
+                x_numeric = np.arange(len(q50_arr))
+
+            logger.warning(f"[FORECAST PLOT] x_numeric range: {x_numeric[0]:.1f} to {x_numeric[-1]:.1f} ({len(x_numeric)} points)")
+            logger.warning(f"[FORECAST PLOT] y values (q50) range: {q50_arr.min():.5f} to {q50_arr.max():.5f}")
+
             # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
             # PyQtGraph returns single PlotDataItem, not tuple like matplotlib
             line50 = self.ax.plot(
-                x_vals, q50_arr,
-                pen={'color': color, 'width': 2},
+                x_numeric, q50_arr,
+                pen=pg.mkPen(color, width=2),
                 symbol='o', symbolSize=3.5,
-                symbolBrush=color, symbolPen=color,
+                symbolBrush=pg.mkBrush(color), symbolPen=pg.mkPen(color),
                 name=(model_name if first_for_model else None)
             )
             artists = [line50]
@@ -261,10 +274,9 @@ class ForecastService(ChartServiceBase):
             # Quantiles (PyQtGraph conversion - simplified, no fill_between)
             if q05_arr is not None and q95_arr is not None:
                 from PySide6.QtCore import Qt
-                x_numeric = np.arange(len(x_vals))
                 # Use Qt.PenStyle.DashLine instead of integer 2
-                line05 = self.ax.plot(x_numeric, q05_arr, pen={'color': color, 'width': 1, 'style': Qt.PenStyle.DashLine})
-                line95 = self.ax.plot(x_numeric, q95_arr, pen={'color': color, 'width': 1, 'style': Qt.PenStyle.DashLine})
+                line05 = self.ax.plot(x_numeric, q05_arr, pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine))
+                line95 = self.ax.plot(x_numeric, q95_arr, pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine))
                 artists.extend([line05, line95])
 
                 # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
@@ -354,31 +366,32 @@ class ForecastService(ChartServiceBase):
                 except Exception:
                     metrics = {}
 
-                # Ensure forecast is visible in current axes (extend limits if needed)
+                # Ensure forecast is visible in current axes (extend limits if needed) - PyQtGraph version
                 try:
-                    last_x_dt = x_vals[-1]
-                    # Convert datetime to Unix timestamp for finplot
-                    if isinstance(last_x_dt, pd.Timestamp):
-                        last_x_num = last_x_dt.timestamp()
-                    else:
-                        last_x_num = pd.Timestamp(last_x_dt).timestamp()
+                    last_x_num = x_numeric[-1] if len(x_numeric) > 0 else 0
+                    y_last = float(q95_arr[-1]) if len(q95_arr) > 0 else 0
 
-                    xmin, xmax = self.ax.get_xlim()
-                    if last_x_num > xmax:
-                        span = (xmax - xmin) if (xmax > xmin) else 1.0
-                        margin = 0.02 * span
-                        self.ax.set_xlim(left=xmin, right=last_x_num + margin)
-                    ymin, ymax = self.ax.get_ylim()
-                    y_last = float(q95_arr[-1])
-                    pad = 0.02 * (ymax - ymin if ymax > ymin else 1.0)
-                    if y_last > ymax:
-                        self.ax.set_ylim(bottom=ymin, top=y_last + pad)
-                    elif y_last < ymin:
-                        self.ax.set_ylim(bottom=y_last - pad, top=ymax)
-                except Exception:
-                    pass
+                    # Get current view range
+                    view_range = self.ax.viewRange()
+                    if view_range:
+                        [[xmin, xmax], [ymin, ymax]] = view_range
 
-                # Draw adherence badge (oval) at the end of q95 with median color; always show
+                        # Extend X range if needed
+                        if last_x_num > xmax:
+                            span = (xmax - xmin) if (xmax > xmin) else 1.0
+                            margin = 0.02 * span
+                            self.ax.setXRange(xmin, last_x_num + margin, padding=0)
+
+                        # Extend Y range if needed
+                        pad = 0.02 * (ymax - ymin if ymax > ymin else 1.0)
+                        if y_last > ymax:
+                            self.ax.setYRange(ymin, y_last + pad, padding=0)
+                        elif y_last < ymin:
+                            self.ax.setYRange(y_last - pad, ymax, padding=0)
+                except Exception as e:
+                    logger.debug(f"Failed to extend view range: {e}")
+
+                # Draw adherence badge (text annotation) - PyQtGraph version
                 try:
                     adh = (metrics or {}).get("adherence", None)
                     # Robust numeric conversion: handles numpy scalars too; fallback to "0.00"
@@ -389,34 +402,27 @@ class ForecastService(ChartServiceBase):
                     except Exception:
                         val = None
                     txt = f"{val:.2f}" if val is not None else "0.00"
-                    badge = self.ax.annotate(
-                        txt,
-                        xy=(x_vals[-1], float(q95_arr[-1])),
-                        xycoords="data",
-                        textcoords="offset points",
-                        xytext=(6, 0),
-                        ha="left",
-                        va="center",
-                        fontsize=15,
-                        fontweight="bold",
-                        bbox=dict(
-                            facecolor="white",
-                            edgecolor=color,           # same as median line color
-                            boxstyle="round,pad=0.38", # rounded -> oval-like; auto width fits text
-                            linewidth=1.4,
-                            alpha=0.98
-                        ),
-                        zorder=100,
-                        clip_on=False
+
+                    # Create text item for badge
+                    from PySide6.QtGui import QColor
+                    text_item = pg.TextItem(
+                        text=txt,
+                        color=QColor('white'),
+                        anchor=(0, 0.5)
                     )
-                    artists.append(badge)
-                    # register globally for hover-hide
+                    text_item.setPos(x_numeric[-1], float(q95_arr[-1]))
+                    self.ax.addItem(text_item)
+                    artists.append(text_item)
+
+                    # Register globally for hover-hide
                     try:
-                        self._adh_badges.append(badge)
+                        if not hasattr(self, '_adh_badges'):
+                            self._adh_badges = []
+                        self._adh_badges.append(text_item)
                     except Exception:
                         pass
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to add adherence badge: {e}")
 
             # aggiorna legenda unica (no duplicati per modello)
             try:
@@ -435,30 +441,10 @@ class ForecastService(ChartServiceBase):
             }
             self._forecasts.append(forecast)
             self._trim_forecasts()
-            # unique legend
-            try:
-                handles, labels = self.ax.get_legend_handles_labels()
-                uniq = {}
-                for h, l in zip(handles, labels):
-                    if not l:
-                        continue
-                    if l not in uniq:
-                        uniq[l] = h
-                self.ax.legend(list(uniq.values()), list(uniq.keys()))
-            except Exception:
-                try:
-                    self.ax.legend()
-                except Exception:
-                    pass
-            # PyQtGraph doesn't need explicit draw calls - it updates automatically
-            # Only call draw for matplotlib canvas
-            try:
-                if hasattr(self.canvas, 'draw_idle'):
-                    self.canvas.draw_idle()
-                elif hasattr(self.canvas, 'draw'):
-                    self.canvas.draw()
-            except Exception:
-                pass
+
+            # PyQtGraph handles legend and rendering automatically
+            # Legend items are added via the 'name' parameter in plot() calls
+            logger.debug(f"Forecast overlay added: {len(artists)} artists, model={model_name}")
         except Exception as e:
             logger.exception(f"Failed to plot forecast overlay: {e}")
 

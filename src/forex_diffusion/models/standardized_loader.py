@@ -137,6 +137,10 @@ class StandardizedModelLoader:
                 'validation': validation_result,
                 'standardizer': model_data.get('standardizer'),
                 'scaler': model_data.get('scaler', model_data.get('std')),  # Handle legacy naming
+                'pca': model_data.get('pca'),  # PCA preprocessor for backward compatibility
+                'encoder': model_data.get('encoder'),  # Generic encoder (PCA, VAE, Autoencoder)
+                'preprocessor': model_data.get('preprocessor'),  # Alternative key for encoder
+                'encoder_type': model_data.get('encoder_type', 'none'),  # Type of encoder used
                 'raw_data': model_data  # Keep original for compatibility
             }
 
@@ -164,10 +168,48 @@ class StandardizedModelLoader:
             raise ModelLoadError(f"PyTorch model loading failed: {e}") from e
 
     def _load_pickle(self, model_path: Path) -> Dict[str, Any]:
-        """Load pickled model (.pkl/.pickle)."""
+        """Load pickled model (.pkl/.pickle), handles both plain and compressed formats."""
+        import gzip
+        import zlib
+
         try:
-            with open(model_path, 'rb') as f:
-                data = pickle.load(f)
+            # Try joblib first (it handles compression automatically)
+            try:
+                data = joblib.load(model_path)
+                logger.debug("Successfully loaded with joblib")
+                if isinstance(data, dict):
+                    return data
+                else:
+                    return {'model': data}
+            except Exception as joblib_err:
+                logger.debug(f"Joblib load failed: {joblib_err}, trying pickle methods")
+
+            # Try loading directly (uncompressed pickle)
+            try:
+                with open(model_path, 'rb') as f:
+                    data = pickle.load(f)
+                logger.debug("Successfully loaded uncompressed pickle")
+            except (pickle.UnpicklingError, EOFError) as e:
+                # If direct pickle fails, try decompressing first
+                logger.debug(f"Direct pickle load failed, trying decompression: {e}")
+
+                # Try gzip decompression
+                try:
+                    with gzip.open(model_path, 'rb') as f:
+                        data = pickle.load(f)
+                    logger.debug("Successfully loaded gzip-compressed pickle")
+                except Exception as gzip_err:
+                    logger.debug(f"Gzip load failed: {gzip_err}, trying zlib")
+                    # Try zlib decompression
+                    try:
+                        with open(model_path, 'rb') as f:
+                            compressed_data = f.read()
+                        decompressed_data = zlib.decompress(compressed_data)
+                        data = pickle.loads(decompressed_data)
+                        logger.debug("Successfully loaded zlib-compressed pickle")
+                    except Exception as zlib_err:
+                        logger.error(f"All decompression methods failed. Joblib: {joblib_err}, Gzip: {gzip_err}, Zlib: {zlib_err}")
+                        raise
 
             if isinstance(data, dict):
                 return data

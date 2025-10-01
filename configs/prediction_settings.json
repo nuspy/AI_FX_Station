@@ -1,125 +1,110 @@
 {
-    "model_path": "D:/Projects/ForexGPT/artifacts/models/weighted_forecast_EURUSD_1m_h20_rf_pca.pkl",
-    "model_paths": [
-        "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d30_h180_elasticnet_pca16.pkl"
-    ],
-    "forecast_types": [
-        "basic",
-        "advanced"
-    ],
-    "horizons": [
-        "1m",
-        "2m",
-        "3m",
-        "4m",
-        "5m",
-        "6m",
-        "7m",
-        "8m",
-        "9m",
-        "10m",
-        "11m",
-        "12m",
-        "13m",
-        "14m",
-        "15m",
-        "16m",
-        "17m",
-        "18m",
-        "19m",
-        "20m",
-        "30 m",
-        "45m",
-        "1h",
-        "2h",
-        "3h"
-    ],
-    "N_samples": 235,
-    "apply_conformal": true,
-    "model_weight_pct": 25,
-    "indicator_tfs": {
-        "atr": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ],
-        "rsi": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ],
-        "bollinger": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ],
-        "macd": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ],
-        "donchian": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ],
-        "keltner": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ],
-        "hurst": [
-            "1m",
-            "5m",
-            "15m",
-            "1h"
-        ]
+  "model_paths": [
+    "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d30_h180_ridge_pca16.pkl"
+  ],
+  "type_basic": true,
+  "type_advanced": false,
+  "type_rw": false,
+  "horizons": "1m,2m,3m,5m,10m,15m,20m,30m,45m,60m,90m,120m,150m,180m",
+  "n_samples": 100,
+  "quantiles": "0.05, 0.50, 0.75",
+  "indicators": {
+    "atr": {
+      "enabled": true,
+      "weight": 100
     },
-    "warmup_bars": 12,
-    "atr_n": 25,
-    "rsi_n": 14,
-    "bb_n": 20,
-    "rv_window": 52,
-    "ema_fast": 12,
-    "ema_slow": 26,
-    "don_n": 20,
-    "hurst_window": 64,
-    "keltner_k": 1,
-    "max_forecasts": 32,
-    "test_history_bars": 53,
-    "auto_predict": false,
-    "auto_interval_seconds": 60,
-    "use_hierarchical_multitf": true,
-    "query_timeframe": "1h",
-    "hierarchical_timeframes": [
-        "1m",
-        "5m",
-        "15m",
-        "1h"
-    ],
-    "exclude_children": true,
-    "use_parallel_inference": true,
-    "max_parallel_workers": 4,
-    "use_enhanced_scaling": true,
-    "scaling_mode": "smart_adaptive",
-    "trading_scenario": "",
-    "custom_horizons": [
-        "10m",
-        "30m",
-        "1h",
-        "4h"
-    ],
-    "enable_performance_tracking": true,
-    "dialog_geometry": [
-        483,
-        181,
-        720,
-        600
-    ]
+    "rsi": {
+      "enabled": true,
+      "weight": 100
+    },
+    "macd": {
+      "enabled": true,
+      "weight": 100
+    },
+    "bollinger": {
+      "enabled": true,
+      "weight": 100
+    },
+    "stoch": {
+      "enabled": true,
+      "weight": 100
+    },
+    "cci": {
+      "enabled": true,
+      "weight": 30
+    },
+    "williams_r": {
+      "enabled": true,
+      "weight": 100
+    },
+    "adx": {
+      "enabled": true,
+      "weight": 100
+    },
+    "mfi": {
+      "enabled": true,
+      "weight": 100
+    },
+    "obv": {
+      "enabled": true,
+      "weight": 100
+    },
+    "trix": {
+      "enabled": true,
+      "weight": 100
+    },
+    "ultimate": {
+      "enabled": true,
+      "weight": 100
+    },
+    "donchian": {
+      "enabled": true,
+      "weight": 100
+    },
+    "keltner": {
+      "enabled": true,
+      "weight": 30
+    },
+    "ema": {
+      "enabled": true,
+      "weight": 100
+    },
+    "sma": {
+      "enabled": true,
+      "weight": 100
+    },
+    "hurst": {
+      "enabled": true,
+      "weight": 100
+    },
+    "vwap": {
+      "enabled": true,
+      "weight": 100
+    }
+  },
+  "additional_features": {
+    "returns": {
+      "enabled": true,
+      "weight": 100
+    },
+    "sessions": {
+      "enabled": true,
+      "weight": 100
+    },
+    "candlestick": {
+      "enabled": true,
+      "weight": 100
+    },
+    "volume_profile": {
+      "enabled": true,
+      "weight": 100
+    }
+  },
+  "warmup_bars": 16,
+  "rv_window": 60,
+  "returns_window": 100,
+  "min_coverage": 0.15,
+  "session_overlap": true,
+  "higher_tf": "15m",
+  "model_path": "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d30_h180_ridge_pca16.pkl"
 }

@@ -110,8 +110,102 @@ def time_labels_to_horizon_bars(
     return horizon_bars
 
 
+def _expand_horizon_range(range_str: str) -> List[str]:
+    """
+    Expand horizon range notation to list of time labels.
+
+    Supported formats:
+    - "1-5m": range from 1m to 5m with step 1m (same unit)
+    - "1m-5m": range from 1m to 5m with step 1m (explicit units)
+    - "15-30m/5m": range from 15m to 30m with step 5m
+    - "30m-1h": range from 30m to 1h with step 30m (different units, infer step)
+    - "1h-5h/30m": range from 1h to 5h with step 30m (different units, explicit step)
+
+    Args:
+        range_str: Range string (e.g., "1-5m", "15-30m/5m")
+
+    Returns:
+        List of time labels (e.g., ["1m", "2m", "3m", "4m", "5m"])
+    """
+    range_str = range_str.strip()
+
+    # Check for step specification (e.g., "15-30m/5m")
+    step_str = None
+    if '/' in range_str:
+        range_str, step_str = range_str.split('/', 1)
+        step_str = step_str.strip()
+
+    # Split by '-' to get start and end
+    parts = range_str.split('-')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid range format: {range_str}. Expected 'start-end' or 'start-end/step'")
+
+    start_str, end_str = parts[0].strip(), parts[1].strip()
+
+    # Parse start value
+    # If start has unit (e.g., "1m"), extract it
+    # If no unit (e.g., "1"), unit will be taken from end
+    if start_str[-1].isalpha():
+        start_val = int(start_str[:-1])
+        start_unit = start_str[-1]
+    else:
+        start_val = int(start_str)
+        start_unit = None
+
+    # Parse end value (must have unit)
+    if not end_str[-1].isalpha():
+        raise ValueError(f"End value must have unit (e.g., '5m', '1h'): {end_str}")
+
+    end_val = int(end_str[:-1])
+    end_unit = end_str[-1]
+
+    # If start has no unit, use end's unit
+    if start_unit is None:
+        start_unit = end_unit
+
+    # Convert to minutes
+    def to_minutes(val: int, unit: str) -> int:
+        if unit == 'm':
+            return val
+        elif unit == 'h':
+            return val * 60
+        elif unit == 'd':
+            return val * 24 * 60
+        else:
+            raise ValueError(f"Unsupported unit: {unit}")
+
+    start_minutes = to_minutes(start_val, start_unit)
+    end_minutes = to_minutes(end_val, end_unit)
+
+    # Parse step
+    if step_str:
+        # Explicit step (e.g., "5m", "30m")
+        if not step_str[-1].isalpha():
+            raise ValueError(f"Step must have unit (e.g., '5m', '30m'): {step_str}")
+        step_val = int(step_str[:-1])
+        step_unit = step_str[-1]
+        step_minutes = to_minutes(step_val, step_unit)
+    else:
+        # Infer step
+        if start_unit == end_unit:
+            # Same unit: step is 1 in that unit
+            step_minutes = to_minutes(1, start_unit)
+        else:
+            # Different units: step is the smaller of the two start values
+            step_minutes = min(start_minutes, to_minutes(1, end_unit))
+
+    # Generate range
+    result = []
+    current = start_minutes
+    while current <= end_minutes:
+        result.append(minutes_to_timeframe(current))
+        current += step_minutes
+
+    return result
+
+
 def convert_horizons_for_inference(
-    horizons: Union[List[str], List[int], int],
+    horizons: Union[List[str], List[int], int, str],
     base_timeframe: str,
     model_horizon_bars: int = None
 ) -> Tuple[List[str], List[int]]:
@@ -119,14 +213,37 @@ def convert_horizons_for_inference(
     Convert various horizon formats to consistent inference format.
 
     Args:
-        horizons: Horizons in various formats
+        horizons: Horizons in various formats (string, int, or list of strings/ints)
         base_timeframe: Base timeframe for conversion
         model_horizon_bars: Original model horizon in bars (for validation)
 
     Returns:
         Tuple of (time_labels, horizon_bars)
     """
-    if isinstance(horizons, int):
+    if isinstance(horizons, str):
+        # Single horizon time label (e.g., "180m", "3h") or comma-separated list (e.g., "1m,2m,3m")
+        # Also supports range notation: "1-5m" (1m to 5m), "15-30m/5m" (15m to 30m step 5m)
+        if ',' in horizons:
+            # Split comma-separated string into list and expand ranges
+            time_labels = []
+            for h in horizons.split(','):
+                h = h.strip()
+                if not h:
+                    continue
+                # Check if this is a range (contains '-')
+                if '-' in h:
+                    time_labels.extend(_expand_horizon_range(h))
+                else:
+                    time_labels.append(h)
+        else:
+            # Single horizon or range
+            if '-' in horizons:
+                time_labels = _expand_horizon_range(horizons)
+            else:
+                time_labels = [horizons]
+        horizon_bars = time_labels_to_horizon_bars(time_labels, base_timeframe)
+
+    elif isinstance(horizons, int):
         # Single horizon bar value
         time_labels = horizon_bars_to_time_labels(horizons, base_timeframe)
         horizon_bars = [horizons]

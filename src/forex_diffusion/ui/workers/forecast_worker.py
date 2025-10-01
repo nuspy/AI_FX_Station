@@ -255,6 +255,7 @@ class ForecastWorker(QRunnable):
 
         # Converti horizons al formato corretto
         horizons_time_labels, horizons_bars = convert_horizons_for_inference(horizons_raw, tf)
+        logger.warning(f"[FORECAST HORIZONS] horizons_raw={horizons_raw}, horizons_time_labels={horizons_time_labels}, horizons_bars={horizons_bars}")
 
         # 1) dati (ancorati all'eventuale timestamp del click)
         anchor_ts = None
@@ -299,6 +300,8 @@ class ForecastWorker(QRunnable):
         features_list: List[str] = []
         std_mu: Dict[str, float] = {}
         std_sigma: Dict[str, float] = {}
+        preprocessor = None  # Initialize preprocessor outside try-except
+
         if ftype != "rw":
             from ...models.standardized_loader import get_model_loader
 
@@ -317,6 +320,18 @@ class ForecastWorker(QRunnable):
                 model = model_data['model']
                 features_list = model_data.get('features', [])
 
+                # Extract any preprocessor/encoder (PCA, autoencoder, etc.)
+                preprocessor = None
+                if 'pca' in model_data and model_data['pca'] is not None:
+                    preprocessor = model_data['pca']
+                    logger.debug(f"Found PCA preprocessor with {preprocessor.n_components_} components")
+                elif 'encoder' in model_data and model_data['encoder'] is not None:
+                    preprocessor = model_data['encoder']
+                    logger.debug(f"Found encoder preprocessor: {type(preprocessor).__name__}")
+                elif 'preprocessor' in model_data and model_data['preprocessor'] is not None:
+                    preprocessor = model_data['preprocessor']
+                    logger.debug(f"Found generic preprocessor: {type(preprocessor).__name__}")
+
                 # Handle standardizer/scaler with legacy compatibility
                 scaler = model_data.get('scaler') or model_data.get('standardizer')
                 if scaler:
@@ -327,6 +342,12 @@ class ForecastWorker(QRunnable):
                     payload_obj = model_data.get('raw_data', {})
                     std_mu = payload_obj.get("std_mu") or payload_obj.get("std") or {}
                     std_sigma = payload_obj.get("std_sigma") or ({c: 1.0 for c in features_list} if "std" in payload_obj else {})
+
+                # Also check for scaler_mu/scaler_sigma (direct keys in model_data)
+                if not std_mu and 'scaler_mu' in model_data:
+                    std_mu = model_data['scaler_mu']
+                if not std_sigma and 'scaler_sigma' in model_data:
+                    std_sigma = model_data['scaler_sigma']
 
                 # Calculate model hash
                 try:
@@ -345,23 +366,28 @@ class ForecastWorker(QRunnable):
                 logger.debug(f"Loaded model: {model_data.get('model_type', 'unknown')} from {Path(p).name}")
 
             except Exception as e:
-                logger.error(f"Standardized loader failed, falling back to legacy loader: {e}")
-                # Fallback to legacy loading
-                with open(p, "rb") as f:
-                    payload_obj = pickle.load(f)
-                model = payload_obj.get("model")
-                features_list = payload_obj.get("features") or []
-                std_mu = payload_obj.get("std_mu") or payload_obj.get("std") or {}
-                std_sigma = payload_obj.get("std_sigma") or ({c: 1.0 for c in features_list} if "std" in payload_obj else {})
+                logger.error(f"Standardized loader failed with error: {type(e).__name__}: {e}")
+                logger.error(f"Full traceback:", exc_info=True)
+                logger.error(f"Model path: {p}")
+                logger.error(f"File exists: {p.exists()}")
+                if p.exists():
+                    logger.error(f"File size: {p.stat().st_size} bytes")
 
-                # Calculate model hash
+                # Try to understand why it failed
                 try:
-                    model_sha16 = hashlib.sha256(open(p, "rb").read()).hexdigest()[:16]
-                except Exception:
-                    model_sha16 = None
+                    import joblib
+                    test_data = joblib.load(p)
+                    logger.error(f"Joblib can load the file. Keys: {list(test_data.keys()) if isinstance(test_data, dict) else type(test_data)}")
+                except Exception as joblib_err:
+                    logger.error(f"Even joblib fails to load: {joblib_err}")
 
-                if model is None or not features_list:
-                    raise RuntimeError("Model payload missing 'model' or 'features'")
+                # DO NOT use legacy fallback - fail explicitly so user can fix the issue
+                raise RuntimeError(
+                    f"Model loading failed. Please check the model file format.\n"
+                    f"Error: {type(e).__name__}: {e}\n"
+                    f"Model path: {p}\n"
+                    f"This is a critical error that needs to be fixed in the model file or loader."
+                ) from e
         else:
             # RW baseline
             std_mu, std_sigma = {}, {}
@@ -605,6 +631,22 @@ class ForecastWorker(QRunnable):
         if model is not None:
             # Usa l'ultimo sample per la predizione
             X_last = X_arr[-1:, :]  # Shape: (1, n_features)
+
+            # Apply preprocessor/encoder transformation if present
+            if preprocessor is not None:
+                if hasattr(preprocessor, 'transform'):
+                    # Scikit-learn style transformer (PCA, StandardScaler, etc.)
+                    X_last = preprocessor.transform(X_last)
+                    logger.debug(f"Applied {type(preprocessor).__name__} transformation: {X_arr.shape[1]} -> {X_last.shape[1]} features")
+                elif hasattr(preprocessor, 'encode') or hasattr(preprocessor, 'predict'):
+                    # Neural network encoder (autoencoder, VAE, etc.)
+                    if hasattr(preprocessor, 'encode'):
+                        X_last = preprocessor.encode(X_last)
+                    else:
+                        X_last = preprocessor.predict(X_last)
+                    logger.debug(f"Applied {type(preprocessor).__name__} encoding")
+                else:
+                    logger.warning(f"Preprocessor {type(preprocessor).__name__} has no transform/encode/predict method, skipping")
 
             # torch?
             try:

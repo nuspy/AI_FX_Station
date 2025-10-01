@@ -5,7 +5,13 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(taskkill:*)",
-      "Read(//d/**)"
+      "Read(//d/**)",
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)",
+      "Read(//c/Users/hpome/.forexgpt/**)",
+      "Read(//c/Users/hpome/**)"
     ],
     "deny": [],
     "ask": []
