@@ -255,7 +255,7 @@ class ForecastWorker(QRunnable):
 
         # Converti horizons al formato corretto
         horizons_time_labels, horizons_bars = convert_horizons_for_inference(horizons_raw, tf)
-        logger.warning(f"[FORECAST HORIZONS] horizons_raw={horizons_raw}, horizons_time_labels={horizons_time_labels}, horizons_bars={horizons_bars}")
+        logger.debug(f"Horizons: {len(horizons_time_labels)} points from {horizons_raw}")
 
         # 1) dati (ancorati all'eventuale timestamp del click)
         anchor_ts = None

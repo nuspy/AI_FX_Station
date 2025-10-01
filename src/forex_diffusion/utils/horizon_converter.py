@@ -226,15 +226,21 @@ def convert_horizons_for_inference(
         if ',' in horizons:
             # Split comma-separated string into list and expand ranges
             time_labels = []
+            seen = set()  # Track seen labels to avoid duplicates
             for h in horizons.split(','):
                 h = h.strip()
                 if not h:
                     continue
                 # Check if this is a range (contains '-')
                 if '-' in h:
-                    time_labels.extend(_expand_horizon_range(h))
+                    for label in _expand_horizon_range(h):
+                        if label not in seen:
+                            time_labels.append(label)
+                            seen.add(label)
                 else:
-                    time_labels.append(h)
+                    if h not in seen:
+                        time_labels.append(h)
+                        seen.add(h)
         else:
             # Single horizon or range
             if '-' in horizons:

@@ -659,6 +659,9 @@ class UnifiedPredictionSettingsDialog(QDialog):
             # Also save last browse directory
             set_setting('last_model_browse_dir', self.__class__._last_browse_dir)
 
+            # Update class variable to persist model paths across instances
+            self.__class__._last_model_paths = self._model_paths
+
             logger.info(f"Settings saved to {CONFIG_FILE}")
 
         except Exception as e:

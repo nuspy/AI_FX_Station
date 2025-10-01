@@ -13,10 +13,59 @@ from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDial
 from forex_diffusion.utils.user_settings import get_setting
 
 from .base import ChartServiceBase
+from .draggable_legend import DraggableLegend
 
 
 class ForecastService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
+
+    # Color palette: 100 vivid, distinct colors (excluding black)
+    _COLOR_PALETTE = [
+        '#2196F3', '#E91E63', '#00BCD4', '#FFC107', '#FF5722', '#9C27B0', '#4CAF50', '#FF9800',
+        '#03A9F4', '#F44336', '#00E676', '#FFEB3B', '#673AB7', '#8BC34A', '#FF6F00', '#E040FB',
+        '#00ACC1', '#FF1744', '#76FF03', '#FDD835', '#5E35B1', '#C0CA33', '#FF3D00', '#D500F9',
+        '#0097A7', '#D32F2F', '#64DD17', '#F9A825', '#512DA8', '#AFB42B', '#DD2C00', '#AA00FF',
+        '#00838F', '#C62828', '#00C853', '#F57F17', '#4527A0', '#9E9D24', '#BF360C', '#6200EA',
+        '#006064', '#B71C1C', '#00E676', '#F57C00', '#311B92', '#827717', '#BF360C', '#304FFE',
+        '#0091EA', '#FF6D00', '#00B8D4', '#FFD600', '#6200EA', '#C6FF00', '#DD2C00', '#2962FF',
+        '#00B0FF', '#FF3D00', '#18FFFF', '#FFEA00', '#AA00FF', '#AEEA00', '#D50000', '#2979FF',
+        '#00E5FF', '#FF9100', '#1DE9B6', '#FFC400', '#D500F9', '#76FF03', '#FF1744', '#448AFF',
+        '#84FFFF', '#FFAB00', '#00E676', '#FFAB00', '#E040FB', '#64DD17', '#F50057', '#536DFE',
+        '#A7FFEB', '#FF6D00', '#69F0AE', '#FFD740', '#D500F9', '#C6FF00', '#FF5252', '#7C4DFF',
+        '#CCFF90', '#FFAB40', '#00E676', '#FFFF00', '#E040FB', '#F4FF81', '#FF1744', '#536DFE',
+        '#80D8FF', '#FF9E80', '#1DE9B6', '#F4FF81'
+    ]
+
+    # Class-level mapping: model_path -> color_index (persists across instances)
+    _model_color_mapping = {}
+
+    def _get_color_for_model(self, model_path: str) -> str:
+        """
+        Get consistent color for a model based on its path.
+
+        Args:
+            model_path: Full path to the model file
+
+        Returns:
+            Hex color string
+        """
+        # Check if model already has a color assigned
+        if model_path in self._model_color_mapping:
+            color_idx = self._model_color_mapping[model_path]
+            return self._COLOR_PALETTE[color_idx % len(self._COLOR_PALETTE)]
+
+        # Find first unused color
+        used_indices = set(self._model_color_mapping.values())
+        for i in range(len(self._COLOR_PALETTE)):
+            if i not in used_indices:
+                self._model_color_mapping[model_path] = i
+                logger.debug(f"Assigned color #{i} to model {Path(model_path).name}")
+                return self._COLOR_PALETTE[i]
+
+        # If all colors used, cycle back (shouldn't happen with 100 colors)
+        fallback_idx = len(self._model_color_mapping) % len(self._COLOR_PALETTE)
+        self._model_color_mapping[model_path] = fallback_idx
+        return self._COLOR_PALETTE[fallback_idx]
 
     def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
         """
@@ -38,8 +87,6 @@ class ForecastService(ChartServiceBase):
             q05_arr = np.asarray(q05, dtype=float).flatten() if q05 is not None else None
             q95_arr = np.asarray(q95, dtype=float).flatten() if q95 is not None else None
 
-            logger.warning(f"[FORECAST PLOT] q50 has {len(q50_arr)} points, q05={len(q05_arr) if q05_arr is not None else 'None'}, q95={len(q95_arr) if q95_arr is not None else 'None'}")
-
             # build x positions from future_ts or from last ts + tf
             future_ts = quantiles.get("future_ts", None)
             x_vals = None
@@ -47,9 +94,7 @@ class ForecastService(ChartServiceBase):
                 # accetta lista di ms o datetime-like
                 try:
                     x_vals = pd.to_datetime(future_ts, unit="ms", utc=True)
-                    logger.warning(f"[FORECAST PLOT] future_ts has {len(future_ts)} points, x_vals has {len(x_vals)} after conversion")
-                except Exception as e:
-                    logger.warning(f"[FORECAST PLOT] Failed to convert future_ts with unit='ms': {e}")
+                except Exception:
                     x_vals = pd.to_datetime(future_ts, utc=True)
             else:
                 # fallback: deriva da ultimo ts e TF corrente
@@ -98,21 +143,9 @@ class ForecastService(ChartServiceBase):
             except Exception:
                 pass
 
-            # color per sorgente e gestione legenda per modello
-            def _color_for(src: str):
-                try:
-                    import hashlib, colorsys
-                    key = str(src or "default").encode("utf-8")
-                    hnum = int(hashlib.sha1(key).hexdigest()[:8], 16)
-                    hue = (hnum % 360) / 360.0
-                    sat = 0.65
-                    val = 0.95
-                    r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
-                    return (r, g, b)
-                except Exception:
-                    palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
-                    return palette[abs(hash(src)) % len(palette)] if src else "tab:orange"
-            color = _color_for(quantiles.get("source", source))
+            # Get consistent color for this model
+            model_path = quantiles.get("model_path_used", quantiles.get("model_path", source))
+            color = self._get_color_for_model(model_path)
 
             # nome modello per legenda (mostra una sola volta)
             try:
@@ -137,8 +170,7 @@ class ForecastService(ChartServiceBase):
             else:
                 x_numeric = np.arange(len(q50_arr))
 
-            logger.warning(f"[FORECAST PLOT] x_numeric range: {x_numeric[0]:.1f} to {x_numeric[-1]:.1f} ({len(x_numeric)} points)")
-            logger.warning(f"[FORECAST PLOT] y values (q50) range: {q50_arr.min():.5f} to {q50_arr.max():.5f}")
+            logger.debug(f"Forecast: {len(x_numeric)} points, x range: {x_numeric[0]:.1f} to {x_numeric[-1]:.1f}")
 
             # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
             # PyQtGraph returns single PlotDataItem, not tuple like matplotlib
@@ -271,12 +303,42 @@ class ForecastService(ChartServiceBase):
             except Exception:
                 pass
 
-            # Quantiles (PyQtGraph conversion - simplified, no fill_between)
+            # Quantiles (PyQtGraph with filled area between q05 and q95)
             if q05_arr is not None and q95_arr is not None:
                 from PySide6.QtCore import Qt
-                # Use Qt.PenStyle.DashLine instead of integer 2
-                line05 = self.ax.plot(x_numeric, q05_arr, pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine))
-                line95 = self.ax.plot(x_numeric, q95_arr, pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine))
+                from PySide6.QtGui import QColor
+
+                # Parse color to get RGB values
+                if isinstance(color, tuple) and len(color) >= 3:
+                    r, g, b = int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)
+                else:
+                    # Fallback: try to parse as hex or use default
+                    try:
+                        if isinstance(color, str) and color.startswith('#'):
+                            qcolor = QColor(color)
+                            r, g, b = qcolor.red(), qcolor.green(), qcolor.blue()
+                        else:
+                            r, g, b = 33, 150, 243  # Default blue
+                    except Exception:
+                        r, g, b = 33, 150, 243
+
+                # Create semi-transparent colors for borders (alpha=180)
+                border_color = QColor(r, g, b, 180)
+                # Create fill color (alpha=100)
+                fill_color = QColor(r, g, b, 100)
+
+                # Draw filled area between q05 and q95
+                fill_curve = pg.FillBetweenItem(
+                    pg.PlotDataItem(x_numeric, q05_arr),
+                    pg.PlotDataItem(x_numeric, q95_arr),
+                    brush=pg.mkBrush(fill_color)
+                )
+                self.ax.addItem(fill_curve)
+                artists.append(fill_curve)
+
+                # Draw border lines with semi-transparent color
+                line05 = self.ax.plot(x_numeric, q05_arr, pen=pg.mkPen(border_color, width=1, style=Qt.PenStyle.DashLine))
+                line95 = self.ax.plot(x_numeric, q95_arr, pen=pg.mkPen(border_color, width=1, style=Qt.PenStyle.DashLine))
                 artists.extend([line05, line95])
 
                 # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
@@ -510,9 +572,8 @@ class ForecastService(ChartServiceBase):
         Adds the forecast overlay without removing existing ones (trimming oldest if needed).
         """
         try:
-            # Plot overlay and keep previous views
-            self.update_plot(self._last_df, quantiles=None)  # redraw base chart preserving zoom
-            # Plot forecast overlay, source label if present
+            # Plot forecast overlay without redrawing the chart (which would clear previous forecasts)
+            # The chart is already displayed, we just add the overlay on top
             source = quantiles.get("source", "basic") if isinstance(quantiles, dict) else "basic"
             self._plot_forecast_overlay(quantiles, source=source)
         except Exception as e:
