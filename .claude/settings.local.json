@@ -11,7 +11,9 @@
       "Bash(dir:*)",
       "Bash(cat:*)",
       "Read(//c/Users/hpome/.forexgpt/**)",
-      "Read(//c/Users/hpome/**)"
+      "Read(//c/Users/hpome/**)",
+      "Bash(find:*)",
+      "Bash(if exist:*)"
     ],
     "deny": [],
     "ask": []

@@ -117,7 +117,7 @@ class InteractionService(ChartServiceBase):
 
             # load number of history bars from settings
             from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-            settings = PredictionSettingsDialog.get_settings() or {}
+            settings = PredictionSettingsDialog.get_settings_from_file() or {}
             n_bars = int(settings.get("test_history_bars", 128))
 
             # build candles_override: take last n_bars ending at testing_ts (inclusive)
@@ -139,13 +139,13 @@ class InteractionService(ChartServiceBase):
                 QMessageBox.information(self.view, "Testing point", "Not enough historical bars available for testing.")
                 return
 
-            # Build payload: include candles_override so worker can run local inference on this slice
+            # Build payload: DON'T include candles_override - let worker fetch from DB
+            # This ensures enough data for multi-timeframe indicators
             payload = {
                 "symbol": getattr(self, "symbol", ""),
                 "timeframe": getattr(self, "timeframe", ""),
                 "testing_point_ts": int(testing_ts),
                 "test_history_bars": int(n_bars),
-                "candles_override": df_slice.to_dict(orient="records"),
             }
             if shift_pressed:
                 payload["advanced"] = True
@@ -153,7 +153,7 @@ class InteractionService(ChartServiceBase):
                 payload["advanced"] = False
 
             # also include model_path and other settings to allow worker to run (use saved settings)
-            saved = PredictionSettingsDialog.get_settings() or {}
+            saved = PredictionSettingsDialog.get_settings_from_file() or {}
             payload.update({
                 "model_path": saved.get("model_path"),
                 "horizons": saved.get("horizons", ["1m", "5m", "15m"]),

@@ -108,7 +108,7 @@ class PlotService(ChartServiceBase):
             if hasattr(self.view, 'graphics_layout'):
                 self.view.graphics_layout.setBackground(chart_bg)
 
-            logger.info("Theme applied to PyQtGraph plots")
+            # PlutoTouch logger.info("Theme applied to PyQtGraph plots")
         except Exception as e:
             logger.error(f"Failed to apply theme to PyQtGraph: {e}")
 
@@ -405,6 +405,16 @@ class PlotService(ChartServiceBase):
             if df is None or df.empty:
                 return
 
+            # Save current view range before update (unless explicitly cleared by user action)
+            saved_range = getattr(self, '_saved_view_range', None)
+            if hasattr(self, 'ax') and self.ax is not None and saved_range is not False:
+                try:
+                    view_range = self.ax.viewRange()
+                    self._saved_view_range = view_range
+                    logger.debug(f"Saved view range before update: {view_range}")
+                except Exception as e:
+                    logger.debug(f"Could not save view range: {e}")
+
             self._last_df = df.copy()
 
             # Prepare data
@@ -448,6 +458,18 @@ class PlotService(ChartServiceBase):
 
             # Recreate plots if row count changed
             if current_rows != needed_rows:
+                # Save forecast items before clearing
+                forecast_items = []
+                try:
+                    from .forecast_service import get_forecast_service
+                    forecast_svc = get_forecast_service(self.controller, self.view, create=False)
+                    if forecast_svc and hasattr(forecast_svc, '_forecasts'):
+                        for f in forecast_svc._forecasts:
+                            for art in f.get("artists", []):
+                                forecast_items.append(art)
+                except Exception:
+                    pass
+
                 graphics_layout.clear()
                 self.view.finplot_axes = []
                 # Reset click filter flag so it will be reinstalled
@@ -462,8 +484,8 @@ class PlotService(ChartServiceBase):
                 main_plot = graphics_layout.addPlot(row=0, col=0, axisItems={'bottom': date_axis})
                 main_plot.showGrid(x=True, y=True, alpha=0.3)
                 main_plot.setMinimumHeight(300)
-                # Reduce margins
-                main_plot.setContentsMargins(5, 5, 5, 5)
+                # Minimize margins
+                main_plot.setContentsMargins(0, 0, 0, 0)
                 main_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
                 # Add legend (movable by default in PyQtGraph)
                 main_plot.addLegend(offset=(10, 10))
@@ -477,9 +499,11 @@ class PlotService(ChartServiceBase):
                     normalized_plot.showGrid(x=True, y=True, alpha=0.3)
                     normalized_plot.setYRange(0, 100)  # Normalized range 0-100
                     normalized_plot.setMaximumHeight(63)
-                    # Reduce margins
-                    normalized_plot.setContentsMargins(5, 5, 5, 5)
+                    # Minimize margins
+                    normalized_plot.setContentsMargins(0, 0, 0, 0)
                     normalized_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Hide Y-axis (values same as main plot)
+                    normalized_plot.showAxis('left', False)
                     # Add legend (movable by default in PyQtGraph)
                     normalized_plot.addLegend(offset=(10, 10))
                     # Link X axis for synchronized zoom/pan but NOT Y axis
@@ -487,8 +511,6 @@ class PlotService(ChartServiceBase):
                     # Disable Y-axis zoom and pan for this subplot
                     normalized_plot.setMouseEnabled(y=False)
                     normalized_plot.getViewBox().setMouseEnabled(y=False)
-                    # Set same Y-axis width for alignment
-                    normalized_plot.getAxis('left').setWidth(main_plot.getAxis('left').width())
                     self.view.finplot_axes.append(normalized_plot)
                     self.view.normalized_plot = normalized_plot
                     row_idx += 1
@@ -500,9 +522,11 @@ class PlotService(ChartServiceBase):
                     custom_plot = graphics_layout.addPlot(row=row_idx, col=0)
                     custom_plot.showGrid(x=True, y=True, alpha=0.3)
                     custom_plot.setMaximumHeight(63)
-                    # Reduce margins
-                    custom_plot.setContentsMargins(5, 5, 5, 5)
+                    # Minimize margins
+                    custom_plot.setContentsMargins(0, 0, 0, 0)
                     custom_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Hide Y-axis (values same as main plot)
+                    custom_plot.showAxis('left', False)
                     # Add legend (movable by default in PyQtGraph)
                     custom_plot.addLegend(offset=(10, 10))
                     # Link X axis for synchronized zoom/pan but NOT Y axis
@@ -510,16 +534,50 @@ class PlotService(ChartServiceBase):
                     # Disable Y-axis zoom and pan for this subplot
                     custom_plot.setMouseEnabled(y=False)
                     custom_plot.getViewBox().setMouseEnabled(y=False)
-                    # Set same Y-axis width for alignment
-                    custom_plot.getAxis('left').setWidth(main_plot.getAxis('left').width())
                     self.view.finplot_axes.append(custom_plot)
                     self.view.custom_plot = custom_plot
                 else:
                     self.view.custom_plot = None
+
+                # Restore forecast items to the new main plot
+                if forecast_items and self.view.main_plot:
+                    for item in forecast_items:
+                        try:
+                            self.view.main_plot.addItem(item)
+                        except Exception as e:
+                            logger.debug(f"Failed to restore forecast item: {e}")
             else:
-                # Clear existing plots but maintain references
+                # Clear existing plots but preserve forecast overlays
+                # Save forecast items before clearing
+                forecast_items = []
+                try:
+                    # Get forecast service to access forecast artists
+                    from .forecast_service import get_forecast_service
+                    forecast_svc = get_forecast_service(self.controller, self.view, create=False)
+                    if forecast_svc and hasattr(forecast_svc, '_forecasts'):
+                        for f in forecast_svc._forecasts:
+                            for art in f.get("artists", []):
+                                forecast_items.append(art)
+                except Exception:
+                    pass
+
                 for plot in self.view.finplot_axes:
+                    # Remove forecast items from plot temporarily (they'll be re-added)
+                    for item in forecast_items:
+                        try:
+                            plot.removeItem(item)
+                        except Exception:
+                            pass
+
                     plot.clear()
+
+                    # Re-add forecast items
+                    for item in forecast_items:
+                        try:
+                            plot.addItem(item)
+                        except Exception:
+                            pass
+
                     # Re-add legend after clearing
                     if not hasattr(plot, 'legend') or plot.legend is None:
                         plot.addLegend(offset=(10, 10))
@@ -667,13 +725,68 @@ class PlotService(ChartServiceBase):
             # Store axis reference
             self.ax = ax_price
 
+            # Check if we have a saved view range to restore
+            saved_view_range = getattr(self, '_saved_view_range', None)
+
+            if saved_view_range is not None and saved_view_range is not False:
+                # Restore previous view range
+                try:
+                    x_range, y_range = saved_view_range
+                    ax_price.setXRange(x_range[0], x_range[1], padding=0)
+                    ax_price.setYRange(y_range[0], y_range[1], padding=0)
+                    ax_price.enableAutoRange(enable=False)
+                    logger.debug(f"Restored view range: X={x_range}, Y={y_range}")
+                except Exception as e:
+                    logger.warning(f"Failed to restore view range: {e}")
+                    saved_view_range = None
+            elif saved_view_range is False:
+                # False means user intentionally changed timeframe/range, reset to None for future saves
+                self._saved_view_range = None
+                saved_view_range = None
+                logger.debug("Skipped view range restore due to user action")
+
+            # Set initial zoom only if no saved view range
+            if saved_view_range is None:
+                # Show last N bars based on timeframe
+                n_bars_to_show = 100  # Default for 1m
+                if hasattr(self, 'timeframe'):
+                    tf = self.timeframe.lower()
+                    if '1m' in tf:
+                        n_bars_to_show = 100
+                    elif '5m' in tf:
+                        n_bars_to_show = 80
+                    elif '15m' in tf:
+                        n_bars_to_show = 60
+                    elif '1h' in tf or '60m' in tf:
+                        n_bars_to_show = 40
+                    elif '4h' in tf:
+                        n_bars_to_show = 30
+                    elif '1d' in tf:
+                        n_bars_to_show = 20
+
+                # Set X range to show last n_bars_to_show
+                if len(x_data) > n_bars_to_show:
+                    x_min = x_data[-n_bars_to_show]
+                    x_max = x_data[-1]
+                    ax_price.setXRange(x_min, x_max, padding=0.02)
+
+                    # Set Y range based on visible data
+                    visible_y = y_data[-n_bars_to_show:]
+                    y_min = np.nanmin(visible_y)
+                    y_max = np.nanmax(visible_y)
+                    y_padding = (y_max - y_min) * 0.1
+                    ax_price.setYRange(y_min - y_padding, y_max + y_padding, padding=0)
+
+                    # Disable auto-range after setting initial range
+                    ax_price.enableAutoRange(enable=False)
+
             # Setup mouse tracking for coordinates display
             self._setup_mouse_tracking(ax_price, df2)
 
             # Apply theme colors to PyQtGraph elements
             self.apply_theme_to_pyqtgraph()
 
-            logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
+            # PlutoTouch logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
 
         except Exception as e:
             logger.error(f"Error in _update_plot_finplot: {e}")
@@ -682,29 +795,80 @@ class PlotService(ChartServiceBase):
 
     def _setup_mouse_tracking(self, plot_item, df):
         """Setup mouse tracking to display coordinates and price"""
-        from PySide6.QtWidgets import QLabel, QVBoxLayout, QDialog
-        from PySide6.QtCore import Qt as QtCore_Qt
+        from PySide6.QtWidgets import QLabel, QVBoxLayout, QDialog, QFrame
+        from PySide6.QtCore import Qt as QtCore_Qt, QPoint
+        from PySide6.QtGui import QFont
         from datetime import datetime
+        from ..services.draggable_legend import DraggableLegend
 
-        # Create or update mouse position label as TextItem within the plot
+        # Create or update mouse position label as draggable QFrame widget
         if self._mouse_label is None:
-            import pyqtgraph as pg
-            # Create a TextItem that stays within the plot
-            self._mouse_label = pg.TextItem(
-                text="X: --\nY: --\nPrice: --",
-                anchor=(1, 0),  # Top-right anchor
-                color=(255, 255, 255),
-                fill=pg.mkBrush(40, 40, 40, 200),
-                border=pg.mkPen(None)
-            )
-            # Add to the plot
-            plot_item.addItem(self._mouse_label)
+            # Get the plot widget as parent
+            parent = getattr(self.view, 'finplot_widget', self.view)
 
-            # Position at top-right of the plot view
-            view_range = plot_item.viewRange()
-            x_range = view_range[0]
-            y_range = view_range[1]
-            self._mouse_label.setPos(x_range[1], y_range[1])
+            # Create draggable frame
+            mouse_frame = QFrame(parent)
+            mouse_frame.setFrameStyle(QFrame.Box | QFrame.Plain)
+            mouse_frame.setLineWidth(1)
+            mouse_frame.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(40, 40, 40, 220);
+                    border: 1px solid #666;
+                    border-radius: 4px;
+                    padding: 5px;
+                }
+            """)
+
+            # Add label inside frame
+            layout = QVBoxLayout(mouse_frame)
+            layout.setContentsMargins(6, 4, 6, 4)
+            label = QLabel("X: --\nY: --\nPrice: --")
+            label_font = QFont()
+            label_font.setPointSize(8)
+            label.setFont(label_font)
+            label.setStyleSheet("color: #ffffff; background: transparent; border: none;")
+            layout.addWidget(label)
+
+            # Make it draggable
+            mouse_frame._dragging = False
+            mouse_frame._drag_offset = QPoint()
+            mouse_frame._label = label
+
+            def mousePressEvent(event):
+                if event.button() == QtCore_Qt.MouseButton.LeftButton:
+                    mouse_frame._dragging = True
+                    mouse_frame._drag_offset = event.pos()
+                    mouse_frame.setCursor(QtCore_Qt.CursorShape.ClosedHandCursor)
+
+            def mouseMoveEvent(event):
+                if mouse_frame._dragging:
+                    new_pos = mouse_frame.mapToParent(event.pos() - mouse_frame._drag_offset)
+                    mouse_frame.move(new_pos)
+
+            def mouseReleaseEvent(event):
+                if event.button() == QtCore_Qt.MouseButton.LeftButton and mouse_frame._dragging:
+                    mouse_frame._dragging = False
+                    mouse_frame.setCursor(QtCore_Qt.CursorShape.ArrowCursor)
+                    # Save position
+                    from forex_diffusion.utils.user_settings import set_setting
+                    set_setting('mouse_info_position', {'x': mouse_frame.x(), 'y': mouse_frame.y()})
+
+            mouse_frame.mousePressEvent = mousePressEvent
+            mouse_frame.mouseMoveEvent = mouseMoveEvent
+            mouse_frame.mouseReleaseEvent = mouseReleaseEvent
+
+            # Load saved position or default to top-right
+            from forex_diffusion.utils.user_settings import get_setting
+            saved_pos = get_setting('mouse_info_position')
+            if saved_pos and isinstance(saved_pos, dict):
+                mouse_frame.move(saved_pos.get('x', 10), saved_pos.get('y', 10))
+            else:
+                # Default: top-right with margin
+                mouse_frame.move(parent.width() - 200, 10)
+
+            mouse_frame.show()
+            mouse_frame.raise_()
+            self._mouse_label = mouse_frame
 
         # Remove old proxy if exists
         if self._mouse_proxy is not None:
@@ -728,15 +892,10 @@ class PlotService(ChartServiceBase):
                     except:
                         date_str = f"{x_timestamp:.0f}"
 
-                    # Update TextItem text
+                    # Update QLabel text inside frame
                     label_text = f"X: {date_str}\nY: {y_price:.5f}\nPrice: {y_price:.5f}"
-                    self._mouse_label.setText(label_text)
-
-                    # Keep label at top-right of current view
-                    view_range = plot_item.viewRange()
-                    x_max = view_range[0][1]
-                    y_max = view_range[1][1]
-                    self._mouse_label.setPos(x_max, y_max)
+                    self._mouse_label._label.setText(label_text)
+                    self._mouse_label.adjustSize()  # Resize frame to fit content
             except Exception as e:
                 pass
 

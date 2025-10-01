@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 import time
+from pathlib import Path
 
 # matplotlib removed - using finplot for all charting
 import numpy as np
@@ -14,6 +15,17 @@ from forex_diffusion.utils.user_settings import get_setting
 
 from .base import ChartServiceBase
 from .draggable_legend import DraggableLegend
+
+
+def get_forecast_service(controller, view, create=True):
+    """Get or create ForecastService instance."""
+    if hasattr(view, '_forecast_service_instance'):
+        return view._forecast_service_instance
+    elif create:
+        instance = ForecastService(view, controller)
+        view._forecast_service_instance = instance
+        return instance
+    return None
 
 
 class ForecastService(ChartServiceBase):
@@ -38,6 +50,18 @@ class ForecastService(ChartServiceBase):
 
     # Class-level mapping: model_path -> color_index (persists across instances)
     _model_color_mapping = {}
+
+    def _ensure_legend(self):
+        """Forecast items are automatically added to main chart legend via 'name' parameter."""
+        # PyQtGraph automatically handles legend via plot(..., name=model_name)
+        # No separate legend widget needed
+        pass
+
+    def _update_legend(self, model_path: str, model_name: str, color: str):
+        """Forecast items are automatically added to main chart legend via 'name' parameter."""
+        # PyQtGraph automatically handles legend via plot(..., name=model_name)
+        # No manual legend update needed
+        pass
 
     def _get_color_for_model(self, model_path: str) -> str:
         """
@@ -172,6 +196,9 @@ class ForecastService(ChartServiceBase):
 
             logger.debug(f"Forecast: {len(x_numeric)} points, x range: {x_numeric[0]:.1f} to {x_numeric[-1]:.1f}")
 
+            # Update legend with this model
+            self._update_legend(model_path, model_name, color)
+
             # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
             # PyQtGraph returns single PlotDataItem, not tuple like matplotlib
             line50 = self.ax.plot(
@@ -218,7 +245,6 @@ class ForecastService(ChartServiceBase):
                     if cfg.get("use_sma", False) and n_sma > 0:
                         sma_all = self._sma(pd.Series(close_all), n_sma).to_numpy()
                         try:
-                            x_numeric = np.arange(len(x_vals))
                             ln = self.ax.plot(x_numeric, sma_all[f_start:],
                                             pen={'color': cfg.get("color_sma", "#7f7f7f"),
                                                  'width': 1.0})  # Removed style - use default solid line
@@ -230,7 +256,6 @@ class ForecastService(ChartServiceBase):
                         if n_ef > 0:
                             emaf_all = self._ema(pd.Series(close_all), n_ef).to_numpy()
                             try:
-                                x_numeric = np.arange(len(x_vals))
                                 ln = self.ax.plot(x_numeric, emaf_all[f_start:],
                                                 pen={'color': cfg.get("color_ema", "#bcbd22"),
                                                      'width': 1.0})
@@ -240,7 +265,6 @@ class ForecastService(ChartServiceBase):
                         if n_es > 0:
                             emas_all = self._ema(pd.Series(close_all), n_es).to_numpy()
                             try:
-                                x_numeric = np.arange(len(x_vals))
                                 ln = self.ax.plot(x_numeric, emas_all[f_start:],
                                                 pen={'color': cfg.get("color_ema", "#bcbd22"),
                                                      'width': 1.0})
@@ -254,7 +278,6 @@ class ForecastService(ChartServiceBase):
                         bl = bb_lo_all.to_numpy()[f_start:]
                         c_bb = cfg.get("color_bollinger", "#2ca02c")
                         try:
-                            x_numeric = np.arange(len(x_vals))
                             l1 = self.ax.plot(x_numeric, bu, pen={'color': c_bb, 'width': 0.9})
                             l2 = self.ax.plot(x_numeric, bl, pen={'color': c_bb, 'width': 0.9})
                             artists.extend([l1, l2])
@@ -269,7 +292,6 @@ class ForecastService(ChartServiceBase):
                         kl = (kl_all.to_numpy() if hasattr(kl_all, "to_numpy") else kl_all.values)[f_start:]
                         c_k = cfg.get("color_keltner", "#17becf")
                         try:
-                            x_numeric = np.arange(len(x_vals))
                             l1 = self.ax.plot(x_numeric, ku, pen={'color': c_k, 'width': 0.9})
                             l2 = self.ax.plot(x_numeric, kl, pen={'color': c_k, 'width': 0.9})
                             artists.extend([l1, l2])
@@ -504,6 +526,9 @@ class ForecastService(ChartServiceBase):
             self._forecasts.append(forecast)
             self._trim_forecasts()
 
+            # Disable auto-range to prevent zoom changes when adding forecast
+            self.ax.enableAutoRange(enable=False)
+
             # PyQtGraph handles legend and rendering automatically
             # Legend items are added via the 'name' parameter in plot() calls
             logger.debug(f"Forecast overlay added: {len(artists)} artists, model={model_name}")
@@ -516,7 +541,7 @@ class ForecastService(ChartServiceBase):
         # execute and then apply relevant runtime settings (max_forecasts, auto)
         dialog.exec()
         try:
-            settings = PredictionSettingsDialog.get_settings()
+            settings = PredictionSettingsDialog.get_settings_from_file()
             self.max_forecasts = int(settings.get("max_forecasts", self.max_forecasts))
             auto = bool(settings.get("auto_predict", False))
             interval = int(settings.get("auto_interval_seconds", self._auto_timer.interval() // 1000))
@@ -530,12 +555,14 @@ class ForecastService(ChartServiceBase):
 
     def _on_forecast_clicked(self):
         from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-        settings = PredictionSettingsDialog.get_settings()
-        if not settings.get("model_path"):
+        settings = PredictionSettingsDialog.get_settings_from_file()
+        logger.info(f"Forecast clicked. Settings loaded: model_paths={settings.get('model_paths')}, horizons={settings.get('horizons')}")
+        if not settings.get("model_paths") and not settings.get("model_path"):
             QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")
             return
 
         payload = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
+        logger.info(f"Forecast payload: {len(payload.get('model_paths', []))} models, horizons={payload.get('horizons')}")
         # add forecast granularity from UI
         try:
             if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None:
@@ -553,8 +580,8 @@ class ForecastService(ChartServiceBase):
     def _on_advanced_forecast_clicked(self):
         # advanced forecast: use same settings but tag source
         from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-        settings = PredictionSettingsDialog.get_settings()
-        if not settings.get("model_path"):
+        settings = PredictionSettingsDialog.get_settings_from_file()
+        if not settings.get("model_paths") and not settings.get("model_path"):
             QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")
             return
         payload = {"symbol": self.symbol, "timeframe": self.timeframe, "advanced": True, **settings}
@@ -589,6 +616,11 @@ class ForecastService(ChartServiceBase):
                     except Exception:
                         pass
             self._forecasts = []
+
+            # Clear draggable legend
+            if hasattr(self, '_forecast_legend') and self._forecast_legend:
+                self._forecast_legend.clear_all()
+
             # reset legenda/registro modelli
             try:
                 self._legend_once = set()
@@ -631,7 +663,7 @@ class ForecastService(ChartServiceBase):
         try:
             # Use saved settings to build payloads; emit two requests: basic and advanced
             from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-            settings = PredictionSettingsDialog.get_settings() or {}
+            settings = PredictionSettingsDialog.get_settings_from_file() or {}
             # Basic
             payload_basic = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
             self.forecastRequested.emit(payload_basic)

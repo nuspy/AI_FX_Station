@@ -185,6 +185,9 @@ class ChartTabController:
     def on_symbol_changed(self, *args, **kwargs):
         return self.data_service._on_symbol_changed(*args, **kwargs)
 
+    def on_timeframe_changed(self, *args, **kwargs):
+        return self.data_service._on_timeframe_changed(*args, **kwargs)
+
     def on_backfill_missing_clicked(self, *args, **kwargs):
         return self.data_service._on_backfill_missing_clicked(*args, **kwargs)
 

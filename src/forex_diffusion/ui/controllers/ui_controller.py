@@ -215,7 +215,7 @@ class UIController:
     # ---- Forecast da menu (usa le settings correnti) ---------------------- #
     @Slot()
     def handle_forecast_requested(self):
-        settings = PredictionSettingsDialog.get_settings() or {}
+        settings = PredictionSettingsDialog.get_settings_from_file() or {}
 
         # Usa ModelPathResolver unificato
         from ...models.model_path_resolver import ModelPathResolver
@@ -291,7 +291,7 @@ class UIController:
         Supporta selezione multipla: lancia un worker per ogni file modello selezionato.
         """
         try:
-            settings = PredictionSettingsDialog.get_settings() or {}
+            settings = PredictionSettingsDialog.get_settings_from_file() or {}
             chart_tab = getattr(self, "chart_tab", None)
             if chart_tab:
                 payload.setdefault("symbol", getattr(chart_tab, "symbol", None))

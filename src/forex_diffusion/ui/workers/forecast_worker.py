@@ -268,9 +268,23 @@ class ForecastWorker(QRunnable):
         except Exception:
             anchor_ts = None
 
+        # Check if multi-timeframe indicators are configured (need more data from DB)
+        has_multi_tf_indicators = bool(self.payload.get("indicator_tfs", {}))
+
         # Sorgente dati: override esplicito o fetch dal DB; se anchor_ts è definito, non includere barre successive
         if isinstance(self.payload.get("candles_override"), (list, tuple)):
             df_candles = self._dict_to_candles(self.payload["candles_override"])
+            # If candles_override too small for multi-timeframe, fetch from DB
+            if len(df_candles) < limit or has_multi_tf_indicators:
+                logger.info(f"candles_override has {len(df_candles)} rows, fetching {limit} from DB for multi-timeframe indicators")
+                df_candles_db = self._fetch_recent_candles(
+                    self.market_service.engine, sym, tf,
+                    n_bars=limit,
+                    end_ts=anchor_ts if anchor_ts is not None else None
+                )
+                if df_candles_db is not None and not df_candles_db.empty:
+                    df_candles = df_candles_db
+                    logger.debug(f"Fetched {len(df_candles)} candles from DB for single model inference")
         else:
             df_candles = self._fetch_recent_candles(
                 self.market_service.engine, sym, tf,
@@ -280,6 +294,14 @@ class ForecastWorker(QRunnable):
 
         if df_candles is None or df_candles.empty:
             raise RuntimeError("No candles available for local inference")
+
+        # Rename 'price' to OHLC for tick data
+        if "price" in df_candles.columns and "close" not in df_candles.columns:
+            df_candles["close"] = df_candles["price"]
+            df_candles["open"] = df_candles["price"]
+            df_candles["high"] = df_candles["price"]
+            df_candles["low"] = df_candles["price"]
+            logger.debug("Converted tick 'price' data to OHLC format for single model inference")
 
         # Normalizza ordine ASC e, se presente anchor_ts, taglia le barre > anchor
         df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
@@ -297,6 +319,7 @@ class ForecastWorker(QRunnable):
         model_sha16 = None
         payload_obj = {}
         model = None
+        model_data = None  # Initialize for later access
         features_list: List[str] = []
         std_mu: Dict[str, float] = {}
         std_sigma: Dict[str, float] = {}
@@ -400,12 +423,30 @@ class ForecastWorker(QRunnable):
         # Configura la cache delle features
         feature_cache = get_feature_cache()
 
+        # Extract multi-timeframe config from model metadata if available
+        model_indicator_tfs = {}
+        if ftype != "rw" and model_data:
+            # Get multi-timeframe config from model metadata
+            metadata = model_data.get('metadata', {})
+            # metadata can be ModelMetadata object or dict
+            if hasattr(metadata, 'multi_timeframe_config'):
+                mtf_config = metadata.multi_timeframe_config
+            else:
+                mtf_config = metadata.get('multi_timeframe_config', {}) if isinstance(metadata, dict) else {}
+
+            if mtf_config and 'indicator_tfs' in mtf_config:
+                model_indicator_tfs = mtf_config['indicator_tfs']
+                logger.info(f"Using multi-timeframe config from model metadata: {len(model_indicator_tfs)} indicators")
+
         # Crea configurazione per il caching
+        # Use model's indicator_tfs if available, otherwise fall back to payload
+        indicator_tfs_to_use = model_indicator_tfs if model_indicator_tfs else self.payload.get("indicator_tfs", {})
+
         cache_config = {
             "use_relative_ohlc": self.payload.get("use_relative_ohlc", True),
             "use_temporal_features": self.payload.get("use_temporal_features", True),
             "rv_window": int(self.payload.get("rv_window", 60)),
-            "indicator_tfs": self.payload.get("indicator_tfs", {}),
+            "indicator_tfs": indicator_tfs_to_use,
             "advanced": self.payload.get("advanced", False),
             "use_advanced_features": self.payload.get("use_advanced_features", False),
             "enable_ema_features": self.payload.get("enable_ema_features", False),
@@ -842,8 +883,11 @@ class ForecastWorker(QRunnable):
 
             logger.info(f"Starting parallel inference for {symbol} {tf}")
 
+            # Map 'tick' and 'auto' to 1m for horizon conversion
+            tf_for_conversion = "1m" if tf in ("tick", "auto") else tf
+
             # Converti horizons al formato corretto
-            horizons_time_labels, horizons_bars = convert_horizons_for_inference(horizons_raw, tf)
+            horizons_time_labels, horizons_bars = convert_horizons_for_inference(horizons_raw, tf_for_conversion)
 
             # Get candles (reuse existing logic)
             anchor_ts = None
@@ -856,9 +900,46 @@ class ForecastWorker(QRunnable):
             except Exception:
                 anchor_ts = None
 
-            # Get data
-            if isinstance(self.payload.get("candles_override"), (list, tuple)):
+            # Check if any model needs multi-timeframe indicators (must check BEFORE fetching data)
+            has_multi_tf_indicators = False
+            try:
+                model_paths = self.payload.get("model_paths", [])
+                if model_paths and len(model_paths) > 0:
+                    from ...models.standardized_loader import get_model_loader
+                    loader = get_model_loader()
+                    first_model_data = loader.load_single_model(str(model_paths[0]))
+                    metadata = first_model_data.get('metadata', {})
+                    # metadata can be ModelMetadata object or dict
+                    if hasattr(metadata, 'multi_timeframe_config'):
+                        mtf_config = metadata.multi_timeframe_config
+                    else:
+                        mtf_config = metadata.get('multi_timeframe_config', {}) if isinstance(metadata, dict) else {}
+
+                    if mtf_config and 'indicator_tfs' in mtf_config:
+                        has_multi_tf_indicators = bool(mtf_config['indicator_tfs'])
+                        logger.info(f"Detected multi-timeframe indicators in model metadata: {has_multi_tf_indicators}")
+            except Exception as e:
+                logger.warning(f"Could not check for multi-timeframe indicators: {e}")
+                has_multi_tf_indicators = False
+
+            # Get data - ALWAYS fetch from DB for multi-timeframe indicators
+            # Don't use candles_override for multi-TF as it's too small (causes cache issues)
+            if has_multi_tf_indicators:
+                logger.info(f"Multi-timeframe indicators detected, fetching {limit} from DB (ignoring candles_override)")
+                df_candles = self._fetch_recent_candles(
+                    self.market_service.engine, symbol, tf, limit, anchor_ts
+                )
+            elif isinstance(self.payload.get("candles_override"), (list, tuple)):
                 df_candles = self._dict_to_candles(self.payload["candles_override"])
+                # If candles_override too small, fetch from DB
+                if len(df_candles) < limit:
+                    logger.info(f"candles_override has {len(df_candles)} rows, fetching {limit} from DB")
+                    df_candles_db = self._fetch_recent_candles(
+                        self.market_service.engine, symbol, tf, limit, anchor_ts
+                    )
+                    if df_candles_db is not None and not df_candles_db.empty:
+                        df_candles = df_candles_db
+                        logger.debug(f"Fetched {len(df_candles)} candles from DB")
             else:
                 df_candles = self._fetch_recent_candles(
                     self.market_service.engine, symbol, tf, limit, anchor_ts
@@ -867,17 +948,32 @@ class ForecastWorker(QRunnable):
             if df_candles is None or df_candles.empty:
                 raise RuntimeError("No candles available for parallel inference")
 
-            # Normalize and filter by anchor if provided
+            # Normalize data
             df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
+            df_candles["ts_utc"] = pd.to_numeric(df_candles["ts_utc"], errors="coerce").astype("int64")
+
+            # Rename 'price' to 'close' for tick data - feature functions expect 'close' column
+            if "price" in df_candles.columns and "close" not in df_candles.columns:
+                df_candles["close"] = df_candles["price"]
+                df_candles["open"] = df_candles["price"]
+                df_candles["high"] = df_candles["price"]
+                df_candles["low"] = df_candles["price"]
+                logger.debug("Converted tick 'price' data to OHLC format for feature calculation")
+
+            # Store full dataframe for feature calculation - DO NOT filter by anchor yet
+            # Multi-timeframe indicators need full historical data
+            df_candles_full = df_candles.copy()
+
+            # Find the index of the anchor timestamp for later extraction
+            anchor_idx = None
             if anchor_ts is not None:
                 try:
-                    df_candles["ts_utc"] = pd.to_numeric(df_candles["ts_utc"], errors="coerce").astype("int64")
-                    df_candles = df_candles[df_candles["ts_utc"] <= int(anchor_ts)].reset_index(drop=True)
-                except Exception:
-                    pass
+                    anchor_idx = df_candles_full[df_candles_full["ts_utc"] <= int(anchor_ts)].index[-1]
+                    logger.debug(f"Anchor timestamp {anchor_ts} corresponds to index {anchor_idx}")
+                except (IndexError, KeyError):
+                    raise RuntimeError(f"No candles available at anchor timestamp {anchor_ts}")
 
-            if df_candles.empty:
-                raise RuntimeError("No candles available at anchor timestamp")
+            logger.debug(f"Parallel inference: {len(df_candles_full)} total candles for feature calculation")
 
             # Prepare features using the same system as single model inference
             from ...training.train_sklearn import _relative_ohlc, _temporal_feats, _realized_vol_feature, _indicators, _coerce_indicator_tfs
@@ -885,38 +981,62 @@ class ForecastWorker(QRunnable):
 
             # Feature cache and config (reuse from single model logic)
             feature_cache = get_feature_cache()
+
+            # Extract multi-timeframe config from first model's metadata
+            model_indicator_tfs = {}
+            try:
+                model_paths = self.payload.get("model_paths", [])
+                if model_paths and len(model_paths) > 0:
+                    from ...models.standardized_loader import get_model_loader
+                    loader = get_model_loader()
+                    first_model_data = loader.load_single_model(str(model_paths[0]))
+                    metadata = first_model_data.get('metadata', {})
+                    # metadata can be ModelMetadata object or dict
+                    if hasattr(metadata, 'multi_timeframe_config'):
+                        mtf_config = metadata.multi_timeframe_config
+                    else:
+                        mtf_config = metadata.get('multi_timeframe_config', {}) if isinstance(metadata, dict) else {}
+
+                    if mtf_config and 'indicator_tfs' in mtf_config:
+                        model_indicator_tfs = mtf_config['indicator_tfs']
+                        logger.info(f"Parallel inference using multi-timeframe config from model metadata: {len(model_indicator_tfs)} indicators")
+            except Exception as e:
+                logger.warning(f"Could not extract indicator_tfs from model metadata for parallel inference: {e}")
+
+            indicator_tfs_to_use = model_indicator_tfs if model_indicator_tfs else self.payload.get("indicator_tfs", {})
+
             cache_config = {
                 "use_relative_ohlc": self.payload.get("use_relative_ohlc", True),
                 "use_temporal_features": self.payload.get("use_temporal_features", True),
                 "rv_window": int(self.payload.get("rv_window", 60)),
-                "indicator_tfs": self.payload.get("indicator_tfs", {}),
+                "indicator_tfs": indicator_tfs_to_use,
                 "advanced": self.payload.get("advanced", False),
                 "atr_n": int(self.payload.get("atr_n", 14)),
                 "rsi_n": int(self.payload.get("rsi_n", 14)),
                 "bb_n": int(self.payload.get("bb_n", 20))
             }
 
-            # Check cache first
-            cached_result = feature_cache.get_cached_features(df_candles, cache_config, tf)
+            # Check cache first - use FULL dataframe for cache key
+            cached_result = feature_cache.get_cached_features(df_candles_full, cache_config, tf)
 
             if cached_result is not None:
                 feats_df, feature_metadata = cached_result
                 logger.debug(f"Features loaded from cache for parallel inference {symbol} {tf}")
             else:
-                # Compute features (cache miss)
+                # Compute features (cache miss) - use FULL dataframe for multi-timeframe indicators
                 feats_list = []
 
                 # Build features using same logic as single model
                 if cache_config["use_relative_ohlc"]:
-                    feats_list.append(_relative_ohlc(df_candles))
+                    feats_list.append(_relative_ohlc(df_candles_full))
 
                 if cache_config["use_temporal_features"]:
-                    feats_list.append(_temporal_feats(df_candles))
+                    feats_list.append(_temporal_feats(df_candles_full))
 
                 if cache_config["rv_window"] > 1:
-                    feats_list.append(_realized_vol_feature(df_candles, cache_config["rv_window"]))
+                    feats_list.append(_realized_vol_feature(df_candles_full, cache_config["rv_window"]))
 
-                # Multi-timeframe indicators
+                # Multi-timeframe indicators - MUST use full dataframe for resampling
                 indicator_tfs_raw = cache_config["indicator_tfs"]
                 indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
 
@@ -930,7 +1050,7 @@ class ForecastWorker(QRunnable):
                         ind_cfg["bollinger"] = {"n": cache_config["bb_n"], "dev": 2.0}
 
                     if ind_cfg:
-                        feats_list.append(_indicators(df_candles, ind_cfg, indicator_tfs, tf))
+                        feats_list.append(_indicators(df_candles_full, ind_cfg, indicator_tfs, tf))
 
                 if not feats_list:
                     # Fallback to basic features
@@ -944,17 +1064,17 @@ class ForecastWorker(QRunnable):
                 # Save to cache
                 feature_metadata = {
                     "config": cache_config,
-                    "timestamp": df_candles["ts_utc"].iat[-1] if len(df_candles) > 0 else 0,
+                    "timestamp": df_candles_full["ts_utc"].iat[-1] if len(df_candles_full) > 0 else 0,
                     "symbol": symbol,
                     "timeframe": tf
                 }
 
                 try:
-                    feature_cache.cache_features(df_candles, feats_df, feature_metadata, cache_config, tf)
+                    feature_cache.cache_features(df_candles_full, feats_df, feature_metadata, cache_config, tf)
                 except Exception as e:
                     logger.warning(f"Failed to cache features for parallel inference: {e}")
 
-            # Apply preprocessing (same as single model)
+            # Apply preprocessing (same as single model) on FULL feature set
             coverage = feats_df.notna().mean()
             min_cov = float(self.payload.get("min_feature_coverage", 0.15))
             if min_cov > 0.0:
@@ -964,13 +1084,23 @@ class ForecastWorker(QRunnable):
 
             feats_df = feats_df.dropna()
 
-            # Apply warmup
+            # Apply warmup on full dataset
             warmup_bars = int(self.payload.get("warmup_bars", 16))
             if warmup_bars > 0 and len(feats_df) > warmup_bars:
                 feats_df = feats_df.iloc[warmup_bars:]
 
             if feats_df.empty:
                 raise RuntimeError("No features computed for parallel inference")
+
+            # NOW extract only the row at anchor index (after all preprocessing)
+            if anchor_idx is not None:
+                # Adjust anchor_idx if warmup was applied
+                adjusted_idx = anchor_idx - warmup_bars if warmup_bars > 0 else anchor_idx
+                if adjusted_idx >= 0 and adjusted_idx < len(feats_df):
+                    feats_df = feats_df.iloc[adjusted_idx:adjusted_idx+1]  # Extract single row as DataFrame
+                    logger.debug(f"Extracted feature row at anchor index {adjusted_idx} (original: {anchor_idx})")
+                else:
+                    raise RuntimeError(f"Anchor index {adjusted_idx} out of range after preprocessing (feats_df has {len(feats_df)} rows)")
 
             # Setup parallel inference
             model_paths = self.payload.get("model_paths", [])
@@ -1070,6 +1200,8 @@ class ForecastWorker(QRunnable):
 
         except Exception as e:
             logger.error(f"Parallel inference failed: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Fallback to RW prediction
             from ...utils.horizon_converter import create_future_timestamps
 
@@ -1086,8 +1218,12 @@ class ForecastWorker(QRunnable):
             if df_candles.empty:
                 raise RuntimeError("No fallback data available")
 
-            last_close = float(df_candles["close"].iat[-1])
-            horizons_time_labels, _ = convert_horizons_for_inference(horizons_raw, tf)
+            # Handle both 'close' and 'price' column names
+            price_col = "close" if "close" in df_candles.columns else "price"
+            last_close = float(df_candles[price_col].iat[-1])
+            # Map 'tick' and 'auto' to 1m for horizon conversion
+            tf_for_conversion = "1m" if tf in ("tick", "auto") else tf
+            horizons_time_labels, _ = convert_horizons_for_inference(horizons_raw, tf_for_conversion)
 
             # RW prediction (no change)
             prices = [last_close] * len(horizons_time_labels)

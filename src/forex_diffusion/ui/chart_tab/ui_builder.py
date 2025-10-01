@@ -102,13 +102,19 @@ class UIBuilderMixin:
 
         self.orders_table = QTableWidget(0, 9)
         self.orders_table.setHorizontalHeaderLabels(["ID", "Time", "Symbol", "Type", "Volume", "Price", "SL", "TP", "Status"])
+        # Hide vertical header (row numbers) and minimize margins
+        self.orders_table.verticalHeader().setVisible(False)
+        self.orders_table.setContentsMargins(0, 0, 0, 0)
         right_splitter.addWidget(self.orders_table)
+        # Minimize splitter handle width
+        right_splitter.setHandleWidth(1)
 
         main_splitter.addWidget(right_splitter)
 
         # Set up chart tab layout
         chart_layout = QVBoxLayout(chart_tab)
         chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.setSpacing(0)
         chart_layout.addWidget(main_splitter)
 
         # Set stretch factors to make the chart area expand
@@ -282,7 +288,7 @@ class UIBuilderMixin:
         # Timeframe selection
         row1_layout.addWidget(QLabel("TF:"))
         self.tf_combo = QComboBox()
-        self.tf_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"])
+        self.tf_combo.addItems(["auto", "tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"])
         row1_layout.addWidget(self.tf_combo)
 
         # Data range controls

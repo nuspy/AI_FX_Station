@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from typing import Optional, Dict
+import numpy as np
 import pandas as pd
 # import matplotlib.dates as mdates  # matplotlib removed
 from PySide6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QMessageBox
@@ -128,18 +129,34 @@ class EventHandlersMixin:
         self.chart_controller.on_symbol_changed(new_symbol=new_symbol)
 
     def _on_timeframe_changed(self, value: str) -> None:
+        logger.info(f"Timeframe changed to: {value}")
         set_setting('chart.timeframe', value)
         self.timeframe = value
-        self._schedule_view_reload()
+        # Clear saved view range so chart resets to default zoom for new timeframe
+        if hasattr(self.chart_controller, 'plot_service'):
+            self.chart_controller.plot_service._saved_view_range = False  # False = don't save on next update
+            logger.debug("Cleared saved view range for timeframe change")
+        # Reload data from DB with new timeframe
+        self.chart_controller.on_timeframe_changed(value)
+        logger.debug("Reloaded data for timeframe change")
 
     def _on_pred_step_changed(self, value: str) -> None:
         set_setting('chart.pred_step', value)
 
     def _on_backfill_range_changed(self, _value: str) -> None:
+        logger.info(f"Range changed to: {_value}")
         if (ys := getattr(self, 'years_combo', None)):
             set_setting('chart.backfill_years', ys.currentText())
         if (ms := getattr(self, 'months_combo', None)):
             set_setting('chart.backfill_months', ms.currentText())
+            logger.debug(f"Set months to: {ms.currentText()}")
+        # Clear saved view range so chart resets to default zoom for new range
+        if hasattr(self.chart_controller, 'plot_service'):
+            self.chart_controller.plot_service._saved_view_range = False  # False = don't save on next update
+            logger.debug("Cleared saved view range for range change")
+        # Reload data from DB with new range
+        self.chart_controller.on_timeframe_changed(getattr(self, 'timeframe', '1m'))
+        logger.debug("Reloaded data for range change")
 
     # Theme and UI changes
     def _on_theme_changed(self, theme: str) -> None:
@@ -224,12 +241,11 @@ class EventHandlersMixin:
         last_row = ldf.iloc[-1]
         last_ts, last_price = float(last_row['ts_utc']), float(last_row.get(y_col, last_row.get('price')))
 
-        # Convert to naive datetime (local) safely, then to mdates number
+        # PyQtGraph uses Unix timestamps in seconds
         try:
-            ts_obj = pd.to_datetime(last_ts, unit='ms', utc=True).tz_convert('UTC').tz_localize(None)
-            last_dt = mdates.date2num(ts_obj)
+            last_dt = last_ts / 1000.0  # Convert milliseconds to seconds
         except Exception:
-            last_dt = mdates.date2num(pd.to_datetime(last_ts, unit='ms'))
+            last_dt = pd.to_datetime(last_ts, unit='ms').timestamp()
 
         # map to compressed X if compression is active
         try:
@@ -238,18 +254,27 @@ class EventHandlersMixin:
         except Exception:
             last_dt_comp = last_dt
 
-        # Center the view on the last data point
-        x_span = ax.get_xlim()[1] - ax.get_xlim()[0]
-        ax.set_xlim(last_dt_comp - x_span * 0.8, last_dt_comp + x_span * 0.2)
-
-        # Optional: also center Y around the current price
-        y_span = ax.get_ylim()[1] - ax.get_ylim()[0]
-        ax.set_ylim(last_price - y_span * 0.5, last_price + y_span * 0.5)
-
+        # Center the view on the last data point using PyQtGraph API
         try:
-            self.canvas.draw_idle()
+            x_range = ax.viewRange()[0]  # Get current X range
+            x_span = x_range[1] - x_range[0]
+
+            # Validate x_span is valid
+            if not (x_span > 0 and np.isfinite(x_span) and np.isfinite(last_dt_comp)):
+                logger.debug(f"Invalid x_span ({x_span}) or last_dt_comp ({last_dt_comp}), skipping follow")
+                return
+
+            ax.setXRange(last_dt_comp - x_span * 0.8, last_dt_comp + x_span * 0.2, padding=0)
+
+            # Optional: also center Y around the current price
+            y_range = ax.viewRange()[1]  # Get current Y range
+            y_span = y_range[1] - y_range[0]
+
+            # Validate y_span is valid
+            if y_span > 0 and np.isfinite(y_span) and np.isfinite(last_price):
+                ax.setYRange(last_price - y_span * 0.5, last_price + y_span * 0.5, padding=0)
         except Exception as e:
-            logger.debug(f"Follow center draw failed: {e}")
+            logger.debug(f"Follow center view update failed: {e}")
 
     # Mouse event handlers
     def _on_mouse_press(self, event):

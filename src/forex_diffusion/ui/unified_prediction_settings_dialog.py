@@ -477,6 +477,8 @@ class UnifiedPredictionSettingsDialog(QDialog):
             return []
 
         paths = [line.strip() for line in text.split('\n') if line.strip()]
+        logger.warning(f"[GET_MODEL_PATHS] models_edit contains: {paths}")
+        logger.warning(f"[GET_MODEL_PATHS] self._model_paths contains: {self._model_paths}")
         return paths
 
     def _save_configuration_file(self):
@@ -536,9 +538,19 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
     def get_settings(self) -> Dict[str, Any]:
         """Get all current settings as dictionary"""
+        logger.debug("[GET_SETTINGS] Reading current UI state")
+        # Sync self._model_paths with UI content before saving
+        ui_paths = self._get_model_paths()
+        if ui_paths:
+            self._model_paths = ui_paths
+            logger.debug(f"Updated model paths from UI: {len(ui_paths)} paths")
+
+        # Read current horizons value from UI
+        horizons_value = self.horizons_edit.text()
+
         settings = {
-            # Model paths
-            'model_paths': self._get_model_paths(),
+            # Model paths - use self._model_paths (synced from UI above)
+            'model_paths': self._model_paths,
 
             # Forecast types
             'type_basic': self.type_basic_cb.isChecked(),
@@ -546,7 +558,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
             'type_rw': self.type_rw_cb.isChecked(),
 
             # Core settings
-            'horizons': self.horizons_edit.text(),
+            'horizons': horizons_value,
             'n_samples': self.n_samples_spinbox.value(),
             'quantiles': self.quantiles_edit.text(),
 
@@ -588,19 +600,22 @@ class UnifiedPredictionSettingsDialog(QDialog):
     def set_settings(self, settings: Dict[str, Any]):
         """Apply settings from dictionary"""
         # Model paths (handle both old and new formats)
+        # IMPORTANT: Check model_paths first (plural), then model_path (singular) for backward compatibility
         if 'model_paths' in settings and settings['model_paths']:
             paths = settings['model_paths']
-            if isinstance(paths, list):
+            if isinstance(paths, list) and len(paths) > 0:
                 self.models_edit.setPlainText("\n".join(paths))
                 self._model_paths = paths
+                logger.debug(f"Loaded {len(paths)} model paths from settings")
             elif isinstance(paths, str):
                 self.models_edit.setPlainText(paths)
                 self._model_paths = [p.strip() for p in paths.split('\n') if p.strip()]
         elif 'model_path' in settings and settings['model_path']:
-            # Legacy single path
+            # Legacy single path (only if model_paths not present)
             path = settings['model_path']
             self.models_edit.setPlainText(path)
             self._model_paths = [path]
+            logger.debug(f"Loaded 1 legacy model path from settings")
 
         # Forecast types
         self.type_basic_cb.setChecked(settings.get('type_basic', True))
@@ -662,7 +677,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
             # Update class variable to persist model paths across instances
             self.__class__._last_model_paths = self._model_paths
 
-            logger.info(f"Settings saved to {CONFIG_FILE}")
+            logger.info(f"Settings saved: {len(self._model_paths)} model(s), horizons={settings.get('horizons')}")
 
         except Exception as e:
             logger.exception("Failed to save settings")
@@ -693,7 +708,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
             return []
 
     @staticmethod
-    def get_settings() -> Optional[Dict[str, Any]]:
+    def get_settings_from_file() -> Optional[Dict[str, Any]]:
         """Load and return current settings from persistent storage (static method for compatibility)"""
         try:
             if CONFIG_FILE.exists():

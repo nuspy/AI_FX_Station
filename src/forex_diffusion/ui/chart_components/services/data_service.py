@@ -78,6 +78,7 @@ class DataService(ChartServiceBase):
 
                 # mark dirty for throttled redraw
                 self._rt_dirty = True
+                logger.debug(f"Tick received for {sym}: price={y}, ts={ts}, marked dirty")
         except Exception as e:
             logger.exception("Failed to handle tick on GUI: {}", e)
 
@@ -87,6 +88,7 @@ class DataService(ChartServiceBase):
             if not getattr(self, "_rt_dirty", False):
                 return
             self._rt_dirty = False
+            logger.debug("RT flush triggered, updating chart")
             # preserve current view
             try:
                 # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
@@ -102,6 +104,12 @@ class DataService(ChartServiceBase):
             # redraw base chart (quantiles overlay mantenuti da _forecasts)
             if self._last_df is not None and not self._last_df.empty:
                 self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+                # Trigger follow mode if enabled and timeout expired
+                try:
+                    if hasattr(self, '_follow_center_if_needed'):
+                        self._follow_center_if_needed()
+                except Exception:
+                    pass
         except Exception as e:
             logger.exception("Realtime flush failed: {}", e)
 
@@ -529,6 +537,34 @@ class DataService(ChartServiceBase):
                     pass
         except Exception as e:
             logger.exception("Failed to switch symbol: {}", e)
+
+    def _on_timeframe_changed(self, new_timeframe: str):
+        """Handle timeframe change: reload candles from DB with new timeframe."""
+        try:
+            if not new_timeframe:
+                return
+            self.timeframe = new_timeframe
+            # reset cache so next reload uses the new context
+            self._current_cache_tf = None
+            self._current_cache_range = None
+            # reload last candles for this symbol/timeframe (respect view range)
+            from datetime import datetime, timezone, timedelta
+            try:
+                yrs = int(self.years_combo.currentText() or "0")
+                mos = int(self.months_combo.currentText() or "0")
+                days = yrs * 365 + mos * 30
+                start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
+            except Exception:
+                start_ms_view = None
+            df = self._load_candles_from_db(getattr(self, "symbol", "EURUSD"), new_timeframe, limit=3000, start_ms=start_ms_view)
+            if df is not None and not df.empty:
+                self.update_plot(df)
+                try:
+                    self._backfill_on_open(df)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.exception("Failed to switch timeframe: {}", e)
 
     # --- Backfill-on-open helpers ---
     def _period_includes_weekend(self, start_ms: int, end_ms: int) -> bool:

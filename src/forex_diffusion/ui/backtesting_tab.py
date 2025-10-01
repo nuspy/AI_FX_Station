@@ -441,7 +441,7 @@ class BacktestingTab(QWidget):
 
     def _load_prediction_defaults(self) -> None:
         try:
-            settings = PredictionSettingsDialog.get_settings()
+            settings = PredictionSettingsDialog.get_settings_from_file()
         except Exception:
             settings = {}
         if not settings:
@@ -641,7 +641,7 @@ class BacktestingTab(QWidget):
                 "forecast_types": [target.lower()],
                 "model_paths": [payload.get("model")] if payload.get("model") else [],
             }
-            current = PredictionSettingsDialog.get_settings()
+            current = PredictionSettingsDialog.get_settings_from_file()
             current.update(mapped)
             from pathlib import Path
             import json as _json
