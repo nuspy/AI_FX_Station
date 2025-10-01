@@ -881,6 +881,9 @@ class ForecastWorker(QRunnable):
             horizons_raw = self.payload.get("horizons", ["5m"])
             limit = int(self.payload.get("limit_candles", 512))
 
+            # Initial limit - will be adjusted for multi-timeframe if needed
+            base_limit = limit
+
             logger.info(f"Starting parallel inference for {symbol} {tf}")
 
             # Map 'tick' and 'auto' to 1m for horizon conversion
@@ -900,8 +903,10 @@ class ForecastWorker(QRunnable):
             except Exception:
                 anchor_ts = None
 
-            # Check if any model needs multi-timeframe indicators (must check BEFORE fetching data)
+            # Check if any model needs multi-timeframe indicators and calculate required data
             has_multi_tf_indicators = False
+            max_tf_minutes = 1  # Track highest timeframe in minutes
+
             try:
                 model_paths = self.payload.get("model_paths", [])
                 if model_paths and len(model_paths) > 0:
@@ -917,19 +922,36 @@ class ForecastWorker(QRunnable):
 
                     if mtf_config and 'indicator_tfs' in mtf_config:
                         has_multi_tf_indicators = bool(mtf_config['indicator_tfs'])
-                        logger.info(f"Detected multi-timeframe indicators in model metadata: {has_multi_tf_indicators}")
+
+                        # Calculate max timeframe across all indicators
+                        for indicator, tfs_list in mtf_config['indicator_tfs'].items():
+                            for tf_str in tfs_list:
+                                tf_str = str(tf_str).strip().lower()
+                                if tf_str.endswith('m'):
+                                    mins = int(tf_str[:-1])
+                                elif tf_str.endswith('h'):
+                                    mins = int(tf_str[:-1]) * 60
+                                elif tf_str.endswith('d'):
+                                    mins = int(tf_str[:-1]) * 1440
+                                else:
+                                    continue
+                                max_tf_minutes = max(max_tf_minutes, mins)
+
+                        # ATR needs window=14, so we need 14 * max_timeframe worth of base data
+                        # Plus margin for resampling alignment
+                        required_bars = max(limit, max_tf_minutes * 20)  # 20x to ensure enough after resampling
+
+                        if required_bars > limit:
+                            limit = required_bars
+                            logger.info(f"Increased data limit to {limit} bars for {max_tf_minutes}m max timeframe (MTF indicators: {has_multi_tf_indicators})")
+                        else:
+                            logger.info(f"Detected multi-timeframe indicators with max TF {max_tf_minutes}m (limit {limit} sufficient)")
             except Exception as e:
                 logger.warning(f"Could not check for multi-timeframe indicators: {e}")
                 has_multi_tf_indicators = False
 
-            # Get data - ALWAYS fetch from DB for multi-timeframe indicators
-            # Don't use candles_override for multi-TF as it's too small (causes cache issues)
-            if has_multi_tf_indicators:
-                logger.info(f"Multi-timeframe indicators detected, fetching {limit} from DB (ignoring candles_override)")
-                df_candles = self._fetch_recent_candles(
-                    self.market_service.engine, symbol, tf, limit, anchor_ts
-                )
-            elif isinstance(self.payload.get("candles_override"), (list, tuple)):
+            # Get data - prefer candles_override if sufficient, else fetch from DB
+            if isinstance(self.payload.get("candles_override"), (list, tuple)):
                 df_candles = self._dict_to_candles(self.payload["candles_override"])
                 # If candles_override too small, fetch from DB
                 if len(df_candles) < limit:
@@ -940,7 +962,11 @@ class ForecastWorker(QRunnable):
                     if df_candles_db is not None and not df_candles_db.empty:
                         df_candles = df_candles_db
                         logger.debug(f"Fetched {len(df_candles)} candles from DB")
+                else:
+                    logger.info(f"Using candles_override with {len(df_candles)} rows for multi-timeframe indicators")
             else:
+                # No override provided, fetch from DB
+                logger.info(f"No candles_override provided, fetching {limit} from DB")
                 df_candles = self._fetch_recent_candles(
                     self.market_service.engine, symbol, tf, limit, anchor_ts
                 )
@@ -999,11 +1025,17 @@ class ForecastWorker(QRunnable):
 
                     if mtf_config and 'indicator_tfs' in mtf_config:
                         model_indicator_tfs = mtf_config['indicator_tfs']
-                        logger.info(f"Parallel inference using multi-timeframe config from model metadata: {len(model_indicator_tfs)} indicators")
+                        logger.info(f"✓ Parallel inference using multi-timeframe config from model metadata: {len(model_indicator_tfs)} indicators")
+                        logger.debug(f"  indicator_tfs: {model_indicator_tfs}")
+                    else:
+                        logger.warning(f"✗ No indicator_tfs found in model metadata: mtf_config={mtf_config}")
             except Exception as e:
-                logger.warning(f"Could not extract indicator_tfs from model metadata for parallel inference: {e}")
+                logger.warning(f"✗ Could not extract indicator_tfs from model metadata for parallel inference: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
 
             indicator_tfs_to_use = model_indicator_tfs if model_indicator_tfs else self.payload.get("indicator_tfs", {})
+            logger.info(f"Using indicator_tfs: {indicator_tfs_to_use if indicator_tfs_to_use else 'NONE'}")
 
             cache_config = {
                 "use_relative_ohlc": self.payload.get("use_relative_ohlc", True),
@@ -1041,6 +1073,7 @@ class ForecastWorker(QRunnable):
                 indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
 
                 if indicator_tfs:
+                    # Build full indicator config from model metadata
                     ind_cfg = {}
                     if "atr" in indicator_tfs:
                         ind_cfg["atr"] = {"n": cache_config["atr_n"]}
@@ -1048,6 +1081,36 @@ class ForecastWorker(QRunnable):
                         ind_cfg["rsi"] = {"n": cache_config["rsi_n"]}
                     if "bollinger" in indicator_tfs:
                         ind_cfg["bollinger"] = {"n": cache_config["bb_n"], "dev": 2.0}
+                    if "macd" in indicator_tfs:
+                        ind_cfg["macd"] = {"fast": 12, "slow": 26, "signal": 9}
+                    if "stochastic" in indicator_tfs:
+                        ind_cfg["stochastic"] = {"k": 14, "d": 3, "smooth_k": 3}
+                    if "cci" in indicator_tfs:
+                        ind_cfg["cci"] = {"n": 20}
+                    if "williamsr" in indicator_tfs:
+                        ind_cfg["williamsr"] = {"n": 14}
+                    if "adx" in indicator_tfs:
+                        ind_cfg["adx"] = {"n": 14}
+                    if "mfi" in indicator_tfs:
+                        ind_cfg["mfi"] = {"n": 14}
+                    if "obv" in indicator_tfs:
+                        ind_cfg["obv"] = {}
+                    if "trix" in indicator_tfs:
+                        ind_cfg["trix"] = {"n": 15}
+                    if "ultimate" in indicator_tfs:
+                        ind_cfg["ultimate"] = {"short": 7, "medium": 14, "long": 28}
+                    if "donchian" in indicator_tfs:
+                        ind_cfg["donchian"] = {"n": 20}
+                    if "keltner" in indicator_tfs:
+                        ind_cfg["keltner"] = {"n": 20, "atr_n": 10, "mult": 1.5}
+                    if "ema" in indicator_tfs:
+                        ind_cfg["ema"] = {"n": 20}
+                    if "sma" in indicator_tfs:
+                        ind_cfg["sma"] = {"n": 20}
+                    if "hurst" in indicator_tfs:
+                        ind_cfg["hurst"] = {"window": 64}
+                    if "vwap" in indicator_tfs:
+                        ind_cfg["vwap"] = {}
 
                     if ind_cfg:
                         feats_list.append(_indicators(df_candles_full, ind_cfg, indicator_tfs, tf))
@@ -1060,6 +1123,13 @@ class ForecastWorker(QRunnable):
                 # Combine features
                 feats_df = pd.concat(feats_list, axis=1)
                 feats_df = feats_df.replace([np.inf, -np.inf], np.nan)
+
+                # Debug: log ATR features before filtering
+                atr_features = [c for c in feats_df.columns if 'atr' in str(c)]
+                logger.debug(f"ATR features before filtering: {atr_features}")
+                if atr_features:
+                    atr_coverage = feats_df[atr_features].notna().mean()
+                    logger.debug(f"ATR coverage: {dict(atr_coverage)}")
 
                 # Save to cache
                 feature_metadata = {
@@ -1080,9 +1150,12 @@ class ForecastWorker(QRunnable):
             if min_cov > 0.0:
                 low_cov = coverage[coverage < min_cov]
                 if not low_cov.empty:
+                    logger.debug(f"Dropping {len(low_cov)} low-coverage features (< {min_cov}): {list(low_cov.index)}")
                     feats_df = feats_df.drop(columns=list(low_cov.index), errors="ignore")
 
-            feats_df = feats_df.dropna()
+            # Fill NaN values with forward fill, then backward fill, then 0
+            # This is necessary for multi-timeframe features which have sparse coverage
+            feats_df = feats_df.fillna(method='ffill').fillna(method='bfill').fillna(0)
 
             # Apply warmup on full dataset
             warmup_bars = int(self.payload.get("warmup_bars", 16))
@@ -1126,10 +1199,16 @@ class ForecastWorker(QRunnable):
                 parallel_settings, feats_df, symbol, tf, horizons_raw
             )
 
+            # Check if we should combine models or keep them separate
+            combine_models = self.payload.get("combine_models", True)
+
             # Extract ensemble predictions
             ensemble_preds = parallel_results.get("ensemble_predictions")
             if ensemble_preds is None:
                 raise RuntimeError("Parallel inference failed to produce ensemble predictions")
+
+            # Get individual results for separate forecasts
+            individual_results = parallel_results.get("individual_results", [])
 
             # Convert ensemble predictions to price forecasts
             last_close = float(df_candles["close"].iat[-1])
@@ -1190,56 +1269,74 @@ class ForecastWorker(QRunnable):
                     "execution_summary": parallel_results.get("execution_summary", {}),
                     "individual_predictions": ensemble_preds.get("individual", [])
                 },
-                "parallel_inference": True
+                "parallel_inference": True,
+                "anchor_price": self.payload.get("anchor_price")  # Pass through Alt+Click Y coordinate
             }
 
             logger.info(f"Parallel inference completed for {symbol} {tf}: "
                        f"{len(model_paths)} models, mean accuracy: {parallel_results.get('mean_accuracy', 'N/A')}")
 
+            # If combine_models is False, emit individual forecasts for each model
+            if not combine_models and individual_results:
+                logger.info(f"Emitting {len([r for r in individual_results if r.get('success')])} separate forecasts (combine_models=False)")
+                for idx, result in enumerate(individual_results):
+                    if not result.get('success'):
+                        continue
+
+                    # Extract model-specific predictions
+                    model_path = result.get('model_path', '')
+                    model_name = Path(model_path).stem if model_path else f"Model_{idx+1}"
+                    predictions = result.get('predictions', [])
+
+                    if predictions is None or len(predictions) == 0:
+                        continue
+
+                    # Convert returns to prices for this model
+                    model_prices = []
+                    p = last_close
+                    for r in predictions:
+                        p *= (1.0 + float(r))
+                        model_prices.append(p)
+
+                    # Pad to match horizons if needed
+                    if len(model_prices) < len(horizons_bars):
+                        model_prices.extend([model_prices[-1]] * (len(horizons_bars) - len(model_prices)))
+                    model_prices = model_prices[:len(horizons_bars)]
+
+                    q50_model = np.asarray(model_prices, dtype=float)
+
+                    # Simple confidence bands (±5% for individual models without ensemble uncertainty)
+                    q05_model = q50_model * 0.95
+                    q95_model = q50_model * 1.05
+
+                    # Create quantiles for this model
+                    model_quantiles = {
+                        "q50": q50_model.tolist(),
+                        "q05": q05_model.tolist(),
+                        "q95": q95_model.tolist(),
+                        "future_ts": future_ts,
+                        "source": model_name,
+                        "label": model_name,
+                        "model_path_used": Path(model_path).name if model_path else model_name,
+                        "model_sha16": None,
+                        "parallel_inference": True,
+                        "separate_model": True,  # Mark as individual model forecast
+                        "anchor_price": self.payload.get("anchor_price")
+                    }
+
+                    # Emit individual forecast
+                    self.signals.forecastReady.emit(df_candles, model_quantiles)
+
+                # Return the ensemble as well (but it was already emitted individually)
+                return df_candles, quantiles
+
+            # Default: return combined ensemble
             return df_candles, quantiles
 
         except Exception as e:
             logger.error(f"Parallel inference failed: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # Fallback to RW prediction
-            from ...utils.horizon_converter import create_future_timestamps
-
-            symbol = str(self.payload.get("symbol", "EUR/USD"))
-            tf = str(self.payload.get("timeframe", "1m"))
-            horizons_raw = self.payload.get("horizons", ["5m"])
-
-            # Simple fallback data
-            if isinstance(self.payload.get("candles_override"), (list, tuple)):
-                df_candles = self._dict_to_candles(self.payload["candles_override"])
-            else:
-                df_candles = self._fetch_recent_candles(self.market_service.engine, symbol, tf, 100, None).copy()
-
-            if df_candles.empty:
-                raise RuntimeError("No fallback data available")
-
-            # Handle both 'close' and 'price' column names
-            price_col = "close" if "close" in df_candles.columns else "price"
-            last_close = float(df_candles[price_col].iat[-1])
-            # Map 'tick' and 'auto' to 1m for horizon conversion
-            tf_for_conversion = "1m" if tf in ("tick", "auto") else tf
-            horizons_time_labels, _ = convert_horizons_for_inference(horizons_raw, tf_for_conversion)
-
-            # RW prediction (no change)
-            prices = [last_close] * len(horizons_time_labels)
-
-            quantiles = {
-                "q50": prices,
-                "q05": [p * 0.95 for p in prices],
-                "q95": [p * 1.05 for p in prices],
-                "future_ts": create_future_timestamps(int(df_candles["ts_utc"].iat[-1]), tf, horizons_time_labels),
-                "source": "Parallel Ensemble (Fallback)",
-                "label": "Parallel Ensemble (Fallback)",
-                "model_path_used": "fallback_rw",
-                "model_sha16": None,
-                "parallel_inference": True,
-                "fallback": True,
-                "error": str(e)
-            }
-
-            return df_candles, quantiles
+            # NO FALLBACK! Parallel inference must succeed or fail completely
+            # RW is only for benchmarking model efficiency, NOT as a fallback predictor
+            raise

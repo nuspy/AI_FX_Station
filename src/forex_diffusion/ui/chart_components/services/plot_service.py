@@ -548,7 +548,7 @@ class PlotService(ChartServiceBase):
                             logger.debug(f"Failed to restore forecast item: {e}")
             else:
                 # Clear existing plots but preserve forecast overlays
-                # Save forecast items before clearing
+                # Save forecast items before clearing (only from main plot)
                 forecast_items = []
                 try:
                     # Get forecast service to access forecast artists
@@ -558,29 +558,37 @@ class PlotService(ChartServiceBase):
                         for f in forecast_svc._forecasts:
                             for art in f.get("artists", []):
                                 forecast_items.append(art)
-                except Exception:
-                    pass
+                        if forecast_items:
+                            logger.debug(f"Preserving {len(forecast_items)} forecast items across {len(forecast_svc._forecasts)} forecasts")
+                except Exception as e:
+                    logger.debug(f"Failed to collect forecast items: {e}")
 
+                # Remove forecast items from main plot only (where they're displayed)
+                main_plot = self.view.finplot_axes[0] if self.view.finplot_axes else None
+                if main_plot and forecast_items:
+                    for item in forecast_items:
+                        try:
+                            main_plot.removeItem(item)
+                        except Exception as e:
+                            logger.debug(f"Failed to remove forecast item before clear: {e}")
+
+                # Clear all plots
                 for plot in self.view.finplot_axes:
-                    # Remove forecast items from plot temporarily (they'll be re-added)
-                    for item in forecast_items:
-                        try:
-                            plot.removeItem(item)
-                        except Exception:
-                            pass
-
                     plot.clear()
-
-                    # Re-add forecast items
-                    for item in forecast_items:
-                        try:
-                            plot.addItem(item)
-                        except Exception:
-                            pass
-
                     # Re-add legend after clearing
                     if not hasattr(plot, 'legend') or plot.legend is None:
                         plot.addLegend(offset=(10, 10))
+
+                # Re-add forecast items ONLY to main plot after all clearing is done
+                if main_plot and forecast_items:
+                    restored_count = 0
+                    for item in forecast_items:
+                        try:
+                            main_plot.addItem(item)
+                            restored_count += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to restore forecast item: {e}")
+                    logger.debug(f"Restored {restored_count}/{len(forecast_items)} forecast items to main plot")
 
                 # Ensure references are set correctly
                 if len(self.view.finplot_axes) >= 1:

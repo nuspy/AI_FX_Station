@@ -13,7 +13,9 @@
       "Read(//c/Users/hpome/.forexgpt/**)",
       "Read(//c/Users/hpome/**)",
       "Bash(find:*)",
-      "Bash(if exist:*)"
+      "Bash(if exist:*)",
+      "Bash(cmd:*)",
+      "Bash(cd:*)"
     ],
     "deny": [],
     "ask": []

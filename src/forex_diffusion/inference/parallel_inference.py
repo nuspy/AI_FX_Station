@@ -94,6 +94,15 @@ class ModelExecutor:
                             if sigma > 0:
                                 X[:, i] = (X[:, i] - mu) / sigma
 
+            # Apply dimensionality reduction (PCA/VAE) if present
+            encoder = self.model_data.get('pca') or self.model_data.get('encoder')
+            if encoder is not None:
+                try:
+                    X = encoder.transform(X)
+                    logger.debug(f"Applied {self.model_data.get('encoder_type', 'encoder')} transform: {X.shape}")
+                except Exception as e:
+                    logger.warning(f"Failed to apply encoder transform: {e}")
+
             # Make prediction
             X_last = X[-1:] if len(X) > 0 else np.zeros((1, X.shape[1] if X.ndim > 1 else 1))
 
@@ -113,8 +122,8 @@ class ModelExecutor:
                     predictions = np.ravel(model.predict(X_last))
 
             if predictions is None:
-                # Fallback: zero predictions
-                predictions = np.zeros((1,), dtype=float)
+                # NO FALLBACK! Model must have predict method or fail
+                raise RuntimeError(f"Model {Path(self.model_path).name} has no predict method")
 
             execution_time = time.time() - start_time
 

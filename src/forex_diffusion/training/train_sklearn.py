@@ -192,6 +192,8 @@ def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[str, List[str]], base_tf: str) -> pd.DataFrame:
+    from loguru import logger
+    logger.debug(f"_indicators called with df shape: {df.shape}, base_tf: {base_tf}")
     frames: List[pd.DataFrame] = []
     base = _ensure_dt_index(df)
     base_lookup = base[["ts_utc"]].copy()
@@ -204,10 +206,13 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
         tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
         for tf in tfs:
             tmp = df.copy()
+            logger.debug(f"Processing indicator {key} for TF {tf}, tmp shape before resample: {tmp.shape}")
             if tf != base_tf:
                 try:
                     tmp = _resample(tmp, tf)
-                except Exception:
+                    logger.debug(f"After resample to {tf}, tmp shape: {tmp.shape}")
+                except Exception as e:
+                    logger.warning(f"Resample failed for {tf}: {e}")
                     continue
             tmp = _ensure_dt_index(tmp)
             cols: Dict[str, pd.Series] = {}

@@ -199,6 +199,20 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         layout.addWidget(types_box)
 
+        # Model Combination Settings
+        combination_box = QGroupBox("Model Combination")
+        combination_layout = QVBoxLayout(combination_box)
+
+        self.combine_models_cb = QCheckBox("Combina modelli (Ensemble)")
+        self.combine_models_cb.setChecked(True)  # Default: ensemble attivo
+        self.combine_models_cb.setToolTip(
+            "Se attivo: combina tutti i modelli in un unico forecast (media ponderata).\n"
+            "Se disattivo: genera forecast separati per ogni modello, visualizzati individualmente."
+        )
+        combination_layout.addWidget(self.combine_models_cb)
+
+        layout.addWidget(combination_box)
+
         # Core Settings
         core_box = QGroupBox("Core Prediction Settings")
         core_form = QFormLayout(core_box)
@@ -557,6 +571,9 @@ class UnifiedPredictionSettingsDialog(QDialog):
             'type_advanced': self.type_advanced_cb.isChecked(),
             'type_rw': self.type_rw_cb.isChecked(),
 
+            # Model combination
+            'combine_models': self.combine_models_cb.isChecked(),
+
             # Core settings
             'horizons': horizons_value,
             'n_samples': self.n_samples_spinbox.value(),
@@ -621,6 +638,9 @@ class UnifiedPredictionSettingsDialog(QDialog):
         self.type_basic_cb.setChecked(settings.get('type_basic', True))
         self.type_advanced_cb.setChecked(settings.get('type_advanced', False))
         self.type_rw_cb.setChecked(settings.get('type_rw', False))
+
+        # Model combination
+        self.combine_models_cb.setChecked(settings.get('combine_models', True))
 
         # Core settings (handle both string and list formats)
         horizons = settings.get('horizons', '1m, 5m, 15m')

@@ -146,20 +146,25 @@ class InteractionService(ChartServiceBase):
                 "timeframe": getattr(self, "timeframe", ""),
                 "testing_point_ts": int(testing_ts),
                 "test_history_bars": int(n_bars),
+                "anchor_price": float(event.ydata) if event.ydata is not None else None,
             }
             if shift_pressed:
                 payload["advanced"] = True
             else:
                 payload["advanced"] = False
 
-            # also include model_path and other settings to allow worker to run (use saved settings)
+            # also include model_paths and other settings to allow worker to run (use saved settings)
             saved = PredictionSettingsDialog.get_settings_from_file() or {}
             payload.update({
-                "model_path": saved.get("model_path"),
+                "model_paths": saved.get("model_paths", []),  # Use model_paths for parallel inference
                 "horizons": saved.get("horizons", ["1m", "5m", "15m"]),
                 "N_samples": saved.get("N_samples", 200),
                 "apply_conformal": saved.get("apply_conformal", True),
                 "forecast_step": (self.pred_step_combo.currentText() if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None else saved.get("forecast_step", "auto")),
+                "parallel_inference": True,  # Enable parallel inference for multi-model support
+                "warmup_bars": saved.get("warmup_bars", 16),
+                "rv_window": saved.get("rv_window", 60),
+                "min_feature_coverage": saved.get("min_feature_coverage", 0.05),
             })
 
             # emit forecast request (will not remove existing forecasts on chart)

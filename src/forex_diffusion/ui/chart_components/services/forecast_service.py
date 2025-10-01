@@ -153,12 +153,17 @@ class ForecastService(ChartServiceBase):
             if len(x_vals) != n:
                 x_vals = x_vals[:n]
 
-            # prepend point 0 (t0 = requested_at_ms) con last_close
+            # prepend point 0 (t0 = requested_at_ms) con anchor_price o last_close
             try:
                 req_ms = quantiles.get("requested_at_ms", None)
                 if req_ms is not None:
                     t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
-                    last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    # Use anchor_price if provided (from Alt+Click Y coordinate), else use last_close
+                    anchor_price = quantiles.get("anchor_price")
+                    if anchor_price is not None:
+                        last_close = float(anchor_price)
+                    else:
+                        last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
                     x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
                     import numpy as _np
                     q50_arr = _np.insert(q50_arr, 0, last_close)
