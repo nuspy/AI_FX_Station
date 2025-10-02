@@ -627,7 +627,12 @@ class ForecastWorker(QRunnable):
                         }
 
                     if ind_cfg:
-                        feats_list.append(_indicators(df_candles, ind_cfg, indicator_tfs, tf))
+                        # Calculate days_history from limit for better data fetching
+                        # For 1h TF: 24 bars = 1 day, for 1m TF: 1440 bars = 1 day
+                        tf_bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "4h": 6, "1d": 1, "1w": 1/7}
+                        bars_per_day = tf_bars_per_day.get(tf, 24)
+                        days_history_est = max(1, int(limit / bars_per_day)) if bars_per_day > 0 else 7
+                        feats_list.append(_indicators(df_candles, ind_cfg, indicator_tfs, tf, symbol=sym, days_history=days_history_est))
 
                 if not feats_list:
                     raise RuntimeError("No features configured for inference")
@@ -1149,7 +1154,11 @@ class ForecastWorker(QRunnable):
                         ind_cfg["vwap"] = {}
 
                     if ind_cfg:
-                        feats_list.append(_indicators(df_candles_full, ind_cfg, indicator_tfs, tf))
+                        # Calculate days_history from limit for better data fetching
+                        tf_bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "4h": 6, "1d": 1, "1w": 1/7}
+                        bars_per_day = tf_bars_per_day.get(tf, 24)
+                        days_history_est = max(1, int(limit / bars_per_day)) if bars_per_day > 0 else 7
+                        feats_list.append(_indicators(df_candles_full, ind_cfg, indicator_tfs, tf, symbol=symbol, days_history=days_history_est))
 
                 if not feats_list:
                     # Fallback to basic features

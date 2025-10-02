@@ -539,56 +539,40 @@ class PlotService(ChartServiceBase):
                 else:
                     self.view.custom_plot = None
 
-                # Restore forecast items to the new main plot
-                if forecast_items and self.view.main_plot:
-                    for item in forecast_items:
-                        try:
-                            self.view.main_plot.addItem(item)
-                        except Exception as e:
-                            logger.debug(f"Failed to restore forecast item: {e}")
-            else:
-                # Clear existing plots but preserve forecast overlays
-                # Save forecast items before clearing (only from main plot)
-                forecast_items = []
+                # Re-plot forecasts from saved data (items are invalidated after graphics_layout.clear())
                 try:
-                    # Get forecast service to access forecast artists
                     from .forecast_service import get_forecast_service
                     forecast_svc = get_forecast_service(self.controller, self.view, create=False)
-                    if forecast_svc and hasattr(forecast_svc, '_forecasts'):
+                    if forecast_svc and hasattr(forecast_svc, '_forecasts') and forecast_svc._forecasts:
+                        logger.debug(f"Re-plotting {len(forecast_svc._forecasts)} forecasts after subplot change")
+                        # Save forecasts data before clearing
+                        saved_forecasts = []
                         for f in forecast_svc._forecasts:
-                            for art in f.get("artists", []):
-                                forecast_items.append(art)
-                        if forecast_items:
-                            logger.debug(f"Preserving {len(forecast_items)} forecast items across {len(forecast_svc._forecasts)} forecasts")
+                            saved_forecasts.append(f.get("quantiles"))
+                        # Clear artists (they're invalid now)
+                        forecast_svc._forecasts = []
+                        # Re-plot each forecast
+                        for quantiles in saved_forecasts:
+                            if quantiles:
+                                source = quantiles.get("source", "basic")
+                                forecast_svc._plot_forecast_overlay(quantiles, source=source)
+                        logger.debug(f"Successfully re-plotted {len(saved_forecasts)} forecasts")
                 except Exception as e:
-                    logger.debug(f"Failed to collect forecast items: {e}")
+                    logger.warning(f"Failed to restore forecasts after subplot change: {e}")
+            else:
+                # Remove only candlestick/indicator items from previous render, preserve forecast overlays
+                # Check if we have saved chart items from previous render
+                if hasattr(self, '_chart_items'):
+                    for plot, items in self._chart_items.items():
+                        for item in items:
+                            try:
+                                plot.removeItem(item)
+                            except Exception:
+                                pass
+                    logger.debug(f"Removed {sum(len(items) for items in self._chart_items.values())} chart items, preserved forecasts")
 
-                # Remove forecast items from main plot only (where they're displayed)
-                main_plot = self.view.finplot_axes[0] if self.view.finplot_axes else None
-                if main_plot and forecast_items:
-                    for item in forecast_items:
-                        try:
-                            main_plot.removeItem(item)
-                        except Exception as e:
-                            logger.debug(f"Failed to remove forecast item before clear: {e}")
-
-                # Clear all plots
-                for plot in self.view.finplot_axes:
-                    plot.clear()
-                    # Re-add legend after clearing
-                    if not hasattr(plot, 'legend') or plot.legend is None:
-                        plot.addLegend(offset=(10, 10))
-
-                # Re-add forecast items ONLY to main plot after all clearing is done
-                if main_plot and forecast_items:
-                    restored_count = 0
-                    for item in forecast_items:
-                        try:
-                            main_plot.addItem(item)
-                            restored_count += 1
-                        except Exception as e:
-                            logger.warning(f"Failed to restore forecast item: {e}")
-                    logger.debug(f"Restored {restored_count}/{len(forecast_items)} forecast items to main plot")
+                # Initialize dict to save new chart items (candlestick + indicators)
+                self._chart_items = {}
 
                 # Ensure references are set correctly
                 if len(self.view.finplot_axes) >= 1:
@@ -629,7 +613,11 @@ class PlotService(ChartServiceBase):
                 # Get candle colors from settings
                 up_color = get_setting('candle_up_color', '#2ecc71')
                 down_color = get_setting('candle_down_color', '#e74c3c')
-                add_candlestick(ax_price, candle_df, up_color=up_color, down_color=down_color)
+                candle_item = add_candlestick(ax_price, candle_df, up_color=up_color, down_color=down_color)
+                # Save reference to candlestick item for later removal
+                if ax_price not in self._chart_items:
+                    self._chart_items[ax_price] = []
+                self._chart_items[ax_price].append(candle_item)
             else:
                 # Plot line chart (convert from pip format) using timestamps
                 x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
@@ -637,7 +625,11 @@ class PlotService(ChartServiceBase):
                 symbol = getattr(self.view, 'symbol', 'Price')
                 # Get price line color from settings
                 price_line_color = get_setting('price_line_color', '#2196F3')
-                ax_price.plot(x_data, y_data, pen=pg.mkPen(price_line_color, width=1.5), name=symbol)
+                line_item = ax_price.plot(x_data, y_data, pen=pg.mkPen(price_line_color, width=1.5), name=symbol)
+                # Save reference to line item for later removal
+                if ax_price not in self._chart_items:
+                    self._chart_items[ax_price] = []
+                self._chart_items[ax_price].append(line_item)
 
             # Plot indicators
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
@@ -715,7 +707,11 @@ class PlotService(ChartServiceBase):
                             if len(valid_data) > 0:
                                 logger.debug(f"Indicator {indicator_name} ({subplot_type}) - min={valid_data.min():.2f}, max={valid_data.max():.2f}, mean={valid_data.mean():.2f}")
                             if len(y_data) == len(x_data):
-                                target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
+                                indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
+                                # Save reference to indicator item for later removal
+                                if target_ax not in self._chart_items:
+                                    self._chart_items[target_ax] = []
+                                self._chart_items[target_ax].append(indicator_item)
                         elif isinstance(result, dict):
                             # Multi-series (MACD, Bollinger Bands, etc.)
                             for i, (key, series) in enumerate(result.items()):
@@ -725,7 +721,11 @@ class PlotService(ChartServiceBase):
                                         # Use different colors for multi-series
                                         colors = ['#FFA726', '#66BB6A', '#EF5350']
                                         pg_pen = pg.mkPen(colors[i % len(colors)], width=1.5)
-                                        target_ax.plot(x_data, y_data, pen=pg_pen, name=key)
+                                        indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=key)
+                                        # Save reference to indicator item for later removal
+                                        if target_ax not in self._chart_items:
+                                            self._chart_items[target_ax] = []
+                                        self._chart_items[target_ax].append(indicator_item)
 
                     except Exception as e:
                         logger.error(f"Failed to plot indicator {indicator_name}: {e}")
