@@ -91,7 +91,7 @@ class SettingsStore:
         return DEFAULT_SETTINGS.copy()
 
     @staticmethod
-       def save(data: dict) -> None:
+    def save(data: dict) -> None:
         try:
             SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:

@@ -321,13 +321,12 @@ class ParallelInferenceEngine:
         for result in successful_results:
             preds = result['predictions']
             if len(preds) == 1 and len(horizon_bars) > 1:
-                # Single-step model: scale for different horizons
+                # Single-step model: replicate prediction for all horizons
+                # LINEAR SCALING IS WRONG - model predicts return for horizon H
+                # We cannot multiply by bars count - that's mathematically incorrect
                 base_pred = preds[0]
-                scaled_preds = []
-                for bars in horizon_bars:
-                    scale_factor = bars / horizon_bars[0] if horizon_bars[0] > 0 else 1.0
-                    scaled_preds.append(base_pred * scale_factor)
-                preds = np.array(scaled_preds)
+                preds = np.full(len(horizon_bars), base_pred)
+                logger.debug(f"Replicated single prediction {base_pred:.6f} to {len(horizon_bars)} horizons")
             elif len(preds) < len(horizon_bars):
                 # Extend predictions to cover all horizons
                 preds = np.pad(preds, (0, len(horizon_bars) - len(preds)), mode='edge')
