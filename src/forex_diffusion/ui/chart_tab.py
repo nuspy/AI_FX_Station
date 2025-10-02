@@ -72,6 +72,9 @@ class ChartTab(QWidget):
         if theme_combo is not None:
             self._apply_theme(theme_combo.currentText())
 
+        # Load initial data for the selected symbol/timeframe
+        QTimer.singleShot(100, self._load_initial_chart_data)
+
         self.ax = self.canvas.figure.subplots()
         try:
             # Minimize outer paddings around the plot area
@@ -656,6 +659,23 @@ class ChartTab(QWidget):
             set_setting('chart.backfill_years', years_combo.currentText())
         if months_combo is not None:
             set_setting('chart.backfill_months', months_combo.currentText())
+
+    def _load_initial_chart_data(self) -> None:
+        """Load chart data on startup (after UI is initialized)."""
+        try:
+            symbol_combo = getattr(self, 'symbol_combo', None)
+            tf_combo = getattr(self, 'tf_combo', None)
+
+            if symbol_combo is not None and tf_combo is not None:
+                symbol = symbol_combo.currentText()
+                timeframe = tf_combo.currentText()
+
+                if symbol and timeframe:
+                    logger.debug(f"Loading initial chart data for {symbol} {timeframe}")
+                    # Trigger data load by calling the controller's symbol change handler
+                    self.chart_controller.on_symbol_changed(new_symbol=symbol)
+        except Exception as e:
+            logger.exception(f"Failed to load initial chart data: {e}")
 
     def _on_theme_changed(self, theme: str) -> None:
         set_setting('chart.theme', theme)

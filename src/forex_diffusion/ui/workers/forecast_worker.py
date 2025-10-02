@@ -903,7 +903,9 @@ class ForecastWorker(QRunnable):
             "enhanced_uncertainty": enhanced_uncertainty,  # Include enhanced uncertainty info
             "trading_scenario": scenario,
             "scaling_mode": scaling_mode,
-            "use_enhanced_scaling": use_enhanced_scaling
+            "use_enhanced_scaling": use_enhanced_scaling,
+            "requested_at_ms": self.payload.get("requested_at_ms"),  # For connecting forecast to price line
+            "anchor_price": self.payload.get("anchor_price")  # Alt+Click Y coordinate
         }
         return df_candles, quantiles
 
@@ -1317,6 +1319,7 @@ class ForecastWorker(QRunnable):
                     "individual_predictions": ensemble_preds.get("individual", [])
                 },
                 "parallel_inference": True,
+                "requested_at_ms": self.payload.get("requested_at_ms"),  # For connecting forecast to price line
                 "anchor_price": self.payload.get("anchor_price")  # Pass through Alt+Click Y coordinate
             }
 
@@ -1368,6 +1371,7 @@ class ForecastWorker(QRunnable):
                         "model_sha16": None,
                         "parallel_inference": True,
                         "separate_model": True,  # Mark as individual model forecast
+                        "requested_at_ms": self.payload.get("requested_at_ms"),  # For connecting forecast to price line
                         "anchor_price": self.payload.get("anchor_price")
                     }
 

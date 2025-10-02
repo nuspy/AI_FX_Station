@@ -164,13 +164,17 @@ class ForecastService(ChartServiceBase):
                         last_close = float(anchor_price)
                     else:
                         last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    logger.debug(f"Prepending anchor point: t0={t0}, price={last_close}")
                     x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
                     import numpy as _np
                     q50_arr = _np.insert(q50_arr, 0, last_close)
                     if q05_arr is not None: q05_arr = _np.insert(q05_arr, 0, last_close)
                     if q95_arr is not None: q95_arr = _np.insert(q95_arr, 0, last_close)
-            except Exception:
-                pass
+                    logger.debug(f"After prepend: x_vals len={len(x_vals)}, q50 len={len(q50_arr)}")
+                else:
+                    logger.warning(f"No requested_at_ms in quantiles - forecast won't connect to price line")
+            except Exception as e:
+                logger.warning(f"Failed to prepend anchor point: {e}")
 
             # Get consistent color for this model
             model_path = quantiles.get("model_path_used", quantiles.get("model_path", source))

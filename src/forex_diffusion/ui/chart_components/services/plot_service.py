@@ -615,6 +615,8 @@ class PlotService(ChartServiceBase):
                 down_color = get_setting('candle_down_color', '#e74c3c')
                 candle_item = add_candlestick(ax_price, candle_df, up_color=up_color, down_color=down_color)
                 # Save reference to candlestick item for later removal
+                if not hasattr(self, '_chart_items'):
+                    self._chart_items = {}
                 if ax_price not in self._chart_items:
                     self._chart_items[ax_price] = []
                 self._chart_items[ax_price].append(candle_item)
@@ -627,6 +629,8 @@ class PlotService(ChartServiceBase):
                 price_line_color = get_setting('price_line_color', '#2196F3')
                 line_item = ax_price.plot(x_data, y_data, pen=pg.mkPen(price_line_color, width=1.5), name=symbol)
                 # Save reference to line item for later removal
+                if not hasattr(self, '_chart_items'):
+                    self._chart_items = {}
                 if ax_price not in self._chart_items:
                     self._chart_items[ax_price] = []
                 self._chart_items[ax_price].append(line_item)
@@ -709,6 +713,8 @@ class PlotService(ChartServiceBase):
                             if len(y_data) == len(x_data):
                                 indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
                                 # Save reference to indicator item for later removal
+                                if not hasattr(self, '_chart_items'):
+                                    self._chart_items = {}
                                 if target_ax not in self._chart_items:
                                     self._chart_items[target_ax] = []
                                 self._chart_items[target_ax].append(indicator_item)
@@ -723,6 +729,8 @@ class PlotService(ChartServiceBase):
                                         pg_pen = pg.mkPen(colors[i % len(colors)], width=1.5)
                                         indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=key)
                                         # Save reference to indicator item for later removal
+                                        if not hasattr(self, '_chart_items'):
+                                            self._chart_items = {}
                                         if target_ax not in self._chart_items:
                                             self._chart_items[target_ax] = []
                                         self._chart_items[target_ax].append(indicator_item)

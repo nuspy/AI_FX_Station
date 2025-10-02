@@ -510,9 +510,11 @@ class DataService(ChartServiceBase):
                 mos = int(self.months_combo.currentText() or "0")
                 days = yrs * 365 + mos * 30
                 start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
-            except Exception:
+                logger.debug(f"Symbol changed to {new_symbol}: years={yrs}, months={mos}, days={days}, start_ms_view={start_ms_view}")
+            except Exception as e:
+                logger.warning(f"Failed to calculate date range: {e}")
                 start_ms_view = None
-            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=3000, start_ms=start_ms_view)
+            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=50000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
                 try:
@@ -548,7 +550,7 @@ class DataService(ChartServiceBase):
                 start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
             except Exception:
                 start_ms_view = None
-            df = self._load_candles_from_db(getattr(self, "symbol", "EURUSD"), new_timeframe, limit=3000, start_ms=start_ms_view)
+            df = self._load_candles_from_db(getattr(self, "symbol", "EURUSD"), new_timeframe, limit=50000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
                 try:
@@ -776,7 +778,10 @@ class DataService(ChartServiceBase):
             controller = getattr(self._main_window, "controller", None)
             eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
             if eng is None:
+                logger.warning(f"Cannot load candles: engine is None (controller={controller})")
                 return pd.DataFrame()
+
+            logger.debug(f"Loading candles from DB: symbol={symbol}, tf={timeframe}, limit={limit}, start_ms={start_ms}, end_ms={end_ms}")
             from sqlalchemy import MetaData, select, and_
             meta = MetaData()
             if str(timeframe).lower() == "tick":
@@ -852,7 +857,10 @@ class DataService(ChartServiceBase):
                         .where(cond).order_by(tbl.c.ts_utc.desc()).limit(limit)
                     rows = conn.execute(stmt).fetchall()
                     if not rows:
+                        logger.warning(f"No candles found in DB for {symbol} {timeframe} (start_ms={start_ms}, end_ms={end_ms}, limit={limit})")
                         return pd.DataFrame()
+
+                    logger.debug(f"Loaded {len(rows)} candles from DB for {symbol} {timeframe}")
                     df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
                     # typing e ordinamento ASC
                     try:
