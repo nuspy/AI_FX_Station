@@ -19,6 +19,7 @@ from .training_tab import TrainingTab
 from .signals_tab import SignalsTab
 from .chart_tab_ui import ChartTabUI
 from .backtesting_tab import BacktestingTab
+from .forecast_settings_tab import ForecastSettingsTab
 
 
 def setup_ui(
@@ -90,26 +91,43 @@ def setup_ui(
     # --- Create and connect the single, consolidated chart tab ---
     chart_tab = ChartTabUI(main_window)
 
-    # Re-enable Training tab
-    training_tab = TrainingTab(main_window)
+    # Create Tab UNO with nested tabs (Training, Forecast Settings, Backtesting)
+    uno_tab = QTabWidget()
+    uno_tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    # Keep other tabs disabled for now to isolate any issues
+    # Create nested tabs for UNO
+    training_tab = TrainingTab(main_window)
+    forecast_settings_tab = ForecastSettingsTab(main_window)
+    backtesting_tab = BacktestingTab(main_window)
+
+    # Add nested tabs to UNO
+    uno_tab.addTab(training_tab, "Training")
+    uno_tab.addTab(forecast_settings_tab, "Forecast Settings")
+    uno_tab.addTab(backtesting_tab, "Backtesting")
+
+    # Create Tab DUE (empty for now)
     from PySide6.QtWidgets import QLabel
+    due_tab = QLabel("Tab DUE - Coming soon")
+
+    # Keep other tabs
     signals_tab = QLabel("Signals tab temporarily disabled")
-    backtesting_tab = BacktestingTab(main_window)  # Reactivated main Backtesting tab
     reports_3d_tab = QLabel("3D Reports tab temporarily disabled")
 
+    # Add top-level tabs
     tab_widget.addTab(chart_tab, "Chart")
-    tab_widget.addTab(training_tab, "Training")
+    tab_widget.addTab(uno_tab, "UNO")
+    tab_widget.addTab(due_tab, "DUE")
     tab_widget.addTab(signals_tab, "Signals (Temp)")
-    tab_widget.addTab(backtesting_tab, "Backtesting")
     tab_widget.addTab(reports_3d_tab, "3D Reports (Temp)")
     layout.addWidget(tab_widget)
 
     result["chart_tab"] = chart_tab
     result["training_tab"] = training_tab
+    result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
     result["reports_3d_tab"] = reports_3d_tab
+    result["uno_tab"] = uno_tab
+    result["due_tab"] = due_tab
     result["tab_widget"] = tab_widget
 
     # --- Connect controller and signals to the new chart_tab ---
