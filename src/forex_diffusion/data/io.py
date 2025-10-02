@@ -416,11 +416,11 @@ def backfill_from_provider(
     # LOG: explicitly record upsert details to help debug missing writes
     try:
         # report is expected to contain upsert metadata (inserted/updated/counts); log it plainly
-        logger.info("Backfill persistence details for %s %s: %s", symbol, timeframe, report)
+        logger.info("Backfill persistence details for {} {}: {}", symbol, timeframe, report)
     except Exception:
         # fallback: safe debug if formatting fails
         try:
-            logger.debug("Backfill persistence report (raw): %s", report)
+            logger.debug("Backfill persistence report (raw): {}", report)
         except Exception:
             pass
 
@@ -456,7 +456,7 @@ def backfill_from_provider(
                 # logger.info("Post-upsert DB rows for %s %s in [%s,%s]: %d", symbol, timeframe, start_ts_ms, end_ts_ms, int(cnt))
                 if int(cnt) == 0:
                     logger.warning(
-                        "Backfill verification: no rows found in DB for %s %s in [%s,%s] after upsert. Check upsert implementation.",
+                        "Backfill verification: no rows found in DB for {} {} in [{},{}] after upsert. Check upsert implementation.",
                         symbol,
                         timeframe,
                         start_ts_ms,

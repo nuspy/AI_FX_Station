@@ -249,21 +249,13 @@ class DataService(ChartServiceBase):
             actual = np.array([], dtype=np.int64)
             if df1 is not None and not df1.empty and "ts_utc" in df1.columns:
                 actual = df1["ts_utc"].astype("int64").dropna().values
-            # expected timestamps for each non-weekend segment
-            from forex_diffusion.utils.time_utils import split_range_avoid_weekend
+            # expected timestamps for full range (no weekend split - provider data already excludes weekends)
             import pandas as _pd
             sdt = _pd.to_datetime(int(start_ms), unit="ms", utc=True)
             edt = _pd.to_datetime(int(end_ms), unit="ms", utc=True)
-            segs = split_range_avoid_weekend(sdt.to_pydatetime(), edt.to_pydatetime())
-            expected_list: list[np.ndarray] = []
-            for (sd, ed) in segs:
-                s = _pd.to_datetime(sd, utc=True)
-                e = _pd.to_datetime(ed, utc=True)
-                # 1-min grid; include end boundary
-                idx = _pd.date_range(start=s, end=e, freq="1min", tz="UTC")
-                if len(idx):
-                    expected_list.append((idx.astype("int64") // 10**6).to_numpy(dtype=np.int64))
-            expected = np.concatenate(expected_list) if expected_list else np.array([], dtype=np.int64)
+            # 1-min grid; include end boundary
+            idx = _pd.date_range(start=sdt, end=edt, freq="1min", tz="UTC")
+            expected = (idx.astype("int64") // 10**6).to_numpy(dtype=np.int64) if len(idx) else np.array([], dtype=np.int64)
             if expected.size == 0:
                 return []
             # missing := expected \ actual

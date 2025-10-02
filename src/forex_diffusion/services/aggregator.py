@@ -47,7 +47,7 @@ class AggregatorService:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info("AggregatorService started (symbols=%s)", self._symbols or "<all>")
+        logger.info("AggregatorService started (symbols={})", self._symbols or "<all>")
 
     def stop(self, timeout: float = 2.0):
         self._stop_event.set()

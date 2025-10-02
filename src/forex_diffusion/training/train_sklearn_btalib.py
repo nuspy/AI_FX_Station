@@ -166,7 +166,9 @@ class BTALibIndicatorsTraining:
     def calculate_indicators_multi_timeframe(self,
                                            df: pd.DataFrame,
                                            timeframes: Dict[str, List[str]],
-                                           base_tf: str) -> pd.DataFrame:
+                                           base_tf: str,
+                                           symbol: str = None,
+                                           days_history: int = None) -> pd.DataFrame:
         """
         Calculate indicators across multiple timeframes using bta-lib
 
@@ -174,10 +176,13 @@ class BTALibIndicatorsTraining:
             df: Base OHLC(V) DataFrame
             timeframes: Dict mapping timeframe strings to lists of indicator names
             base_tf: Base timeframe for alignment
+            symbol: Symbol to fetch from DB (for direct queries)
+            days_history: Number of days history to fetch from DB
 
         Returns:
             DataFrame with all calculated indicators
         """
+        from loguru import logger
         frames: List[pd.DataFrame] = []
         base = _ensure_dt_index(df)
         base_lookup = base[["ts_utc"]].copy()
@@ -190,23 +195,33 @@ class BTALibIndicatorsTraining:
                 # Same timeframe - use original data
                 tf_data = df.copy()
             else:
-                # Resample to target timeframe
+                # NEW STRATEGY: Query DB directly for this timeframe instead of resampling
+                # This avoids data quality issues with gaps in resampled data
                 try:
-                    tf_delta = _timeframe_to_timedelta(tf)
-                    resampled = base.resample(tf_delta).agg({
-                        'open': 'first',
-                        'high': 'max',
-                        'low': 'min',
-                        'close': 'last',
-                        'volume': 'sum'
-                    }).dropna()
+                    if symbol and days_history:
+                        logger.info(f"Fetching {tf} candles directly from DB (no resampling)")
+                        from .train_sklearn import fetch_candles_from_db
+                        tf_data = fetch_candles_from_db(symbol, tf, days_history)
+                        logger.debug(f"After DB fetch for {tf}, shape: {tf_data.shape}")
+                    else:
+                        # Fallback to resample if symbol/days_history not provided (backward compatibility)
+                        logger.warning(f"Symbol/days_history not provided, falling back to resample for {tf}")
+                        tf_delta = _timeframe_to_timedelta(tf)
+                        resampled = base.resample(tf_delta).agg({
+                            'open': 'first',
+                            'high': 'max',
+                            'low': 'min',
+                            'close': 'last',
+                            'volume': 'sum'
+                        }).dropna()
 
-                    # Convert back to expected format
-                    tf_data = resampled.reset_index()
-                    tf_data['ts_utc'] = (tf_data['index'].view('int64') // 10**6)
-                    tf_data = tf_data.drop('index', axis=1)
+                        # Convert back to expected format
+                        tf_data = resampled.reset_index()
+                        tf_data['ts_utc'] = (tf_data['index'].view('int64') // 10**6)
+                        tf_data = tf_data.drop('index', axis=1)
                 except Exception as e:
-                    warnings.warn(f"Failed to resample to {tf}: {e}")
+                    logger.exception(f"Failed to fetch {tf} candles from DB: {e}")
+                    warnings.warn(f"Failed to fetch/resample to {tf}: {e}")
                     continue
 
             # Calculate indicators for this timeframe
@@ -303,7 +318,7 @@ class BTALibIndicatorsTraining:
         if indicator_tfs and self.indicators_system:
             try:
                 indicators_df = self.calculate_indicators_multi_timeframe(
-                    candles, indicator_tfs, args.timeframe
+                    candles, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days
                 )
                 if not indicators_df.empty:
                     feats.append(indicators_df)

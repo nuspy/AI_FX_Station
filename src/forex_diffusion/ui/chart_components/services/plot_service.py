@@ -8,7 +8,7 @@ import pandas as pd
 from loguru import logger
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
-from forex_diffusion.utils.time_utils import split_range_avoid_weekend
+# split_range_avoid_weekend removed - no longer needed
 from .patterns_hook import call_patterns_detection
 from forex_diffusion.utils.user_settings import get_setting, set_setting
 from .base import ChartServiceBase

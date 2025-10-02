@@ -62,6 +62,39 @@ class ForecastWorker(QRunnable):
         self.market_service = market_service
         self.signals = signals
 
+    def _get_param_with_override(self, param_name: str, default_value, model_paths: List[str] = None):
+        """
+        Get parameter value with override logic:
+        - If override_<param_name> is True: use payload value
+        - If override_<param_name> is False: try to load from model metadata
+        - Fallback to default_value if metadata not available
+        """
+        override_key = f"override_{param_name}"
+        override_enabled = self.payload.get(override_key, True)  # Default: override enabled
+
+        if override_enabled:
+            # Use value from payload (UI override)
+            return self.payload.get(param_name, default_value)
+
+        # Try to load from model metadata (only for first model if multi-model)
+        if model_paths and len(model_paths) > 0:
+            try:
+                from ...models.metadata_manager import MetadataManager
+                manager = MetadataManager()
+                metadata = manager.load_metadata(model_paths[0])
+
+                if metadata and hasattr(metadata, 'preprocessing_config'):
+                    config = metadata.preprocessing_config
+                    if param_name in config:
+                        logger.debug(f"Using {param_name}={config[param_name]} from model metadata (override disabled)")
+                        return config[param_name]
+            except Exception as e:
+                logger.warning(f"Failed to load {param_name} from model metadata: {e}")
+
+        # Fallback to default
+        logger.debug(f"Using default {param_name}={default_value} (metadata not available)")
+        return default_value
+
     def run(self):
         try:
             self.signals.status.emit("Forecast: running local inference...")
@@ -1037,10 +1070,13 @@ class ForecastWorker(QRunnable):
             indicator_tfs_to_use = model_indicator_tfs if model_indicator_tfs else self.payload.get("indicator_tfs", {})
             logger.info(f"Using indicator_tfs: {indicator_tfs_to_use if indicator_tfs_to_use else 'NONE'}")
 
+            # Get model_paths for metadata lookup
+            model_paths = self.payload.get("model_paths", [])
+
             cache_config = {
                 "use_relative_ohlc": self.payload.get("use_relative_ohlc", True),
                 "use_temporal_features": self.payload.get("use_temporal_features", True),
-                "rv_window": int(self.payload.get("rv_window", 60)),
+                "rv_window": int(self._get_param_with_override("rv_window", 60, model_paths)),
                 "indicator_tfs": indicator_tfs_to_use,
                 "advanced": self.payload.get("advanced", False),
                 "atr_n": int(self.payload.get("atr_n", 14)),
@@ -1146,7 +1182,7 @@ class ForecastWorker(QRunnable):
 
             # Apply preprocessing (same as single model) on FULL feature set
             coverage = feats_df.notna().mean()
-            min_cov = float(self.payload.get("min_feature_coverage", 0.15))
+            min_cov = float(self._get_param_with_override("min_feature_coverage", 0.15, model_paths))
             if min_cov > 0.0:
                 low_cov = coverage[coverage < min_cov]
                 if not low_cov.empty:
@@ -1158,7 +1194,8 @@ class ForecastWorker(QRunnable):
             feats_df = feats_df.fillna(method='ffill').fillna(method='bfill').fillna(0)
 
             # Apply warmup on full dataset
-            warmup_bars = int(self.payload.get("warmup_bars", 16))
+            # Check if override is disabled - if so, try to load from model metadata
+            warmup_bars = self._get_param_with_override("warmup_bars", 16, model_paths)
             if warmup_bars > 0 and len(feats_df) > warmup_bars:
                 feats_df = feats_df.iloc[warmup_bars:]
 

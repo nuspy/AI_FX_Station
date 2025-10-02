@@ -191,7 +191,7 @@ def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[str, List[str]], base_tf: str) -> pd.DataFrame:
+def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[str, List[str]], base_tf: str, symbol: str = None, days_history: int = None) -> pd.DataFrame:
     from loguru import logger
     logger.debug(f"_indicators called with df shape: {df.shape}, base_tf: {base_tf}")
     frames: List[pd.DataFrame] = []
@@ -206,13 +206,22 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
         tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
         for tf in tfs:
             tmp = df.copy()
-            logger.debug(f"Processing indicator {key} for TF {tf}, tmp shape before resample: {tmp.shape}")
+            logger.debug(f"Processing indicator {key} for TF {tf}, tmp shape before fetch/resample: {tmp.shape}")
             if tf != base_tf:
+                # NEW STRATEGY: Query DB directly for this timeframe instead of resampling
+                # This avoids data quality issues with gaps in resampled data
                 try:
-                    tmp = _resample(tmp, tf)
-                    logger.debug(f"After resample to {tf}, tmp shape: {tmp.shape}")
+                    if symbol and days_history:
+                        logger.info(f"Fetching {tf} candles directly from DB for indicator {key} (no resampling)")
+                        tmp = fetch_candles_from_db(symbol, tf, days_history)
+                        logger.debug(f"After DB fetch for {tf}, tmp shape: {tmp.shape}")
+                    else:
+                        # Fallback to resample if symbol/days_history not provided (backward compatibility)
+                        logger.warning(f"Symbol/days_history not provided, falling back to resample for {tf}")
+                        tmp = _resample(tmp, tf)
+                        logger.debug(f"After resample to {tf}, tmp shape: {tmp.shape}")
                 except Exception as e:
-                    logger.warning(f"Resample failed for {tf}: {e}")
+                    logger.exception(f"Failed to fetch {tf} candles from DB for indicator {key}: {e}")
                     continue
             tmp = _ensure_dt_index(tmp)
             cols: Dict[str, pd.Series] = {}
@@ -351,7 +360,7 @@ def _build_features(candles: pd.DataFrame, args):
     if "hurst" in indicator_tfs:
         ind_cfg["hurst"] = {"window": int(args.hurst_window)}
     if ind_cfg:
-        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe))
+        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days))
     if not feats:
         raise RuntimeError("Nessuna feature disponibile per il training")
     X = pd.concat(feats, axis=1)

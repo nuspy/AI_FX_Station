@@ -121,7 +121,7 @@ def main() -> None:
     args = parse_args()
     pl.seed_everything(args.seed, workers=True)
 
-    logger.info("[train] fetching candles for %s %s", args.symbol, args.timeframe)
+    logger.info("[train] fetching candles for {} {}", args.symbol, args.timeframe)
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
     candles = _add_time_features(candles)
 
@@ -170,13 +170,13 @@ def main() -> None:
         fast_dev_run=args.fast_dev_run,
     )
 
-    logger.info("[train] starting Lightning fit on %s batches (val %s)", len(train_loader), len(val_loader))
+    logger.info("[train] starting Lightning fit on {} batches (val {})", len(train_loader), len(val_loader))
     trainer.fit(model, train_loader, val_loader)
 
     ckpt_path = monitor.best_model_path or (out_dir / "last.ckpt")
     if not monitor.best_model_path:
         trainer.save_checkpoint(ckpt_path)
-    logger.info("[train] best checkpoint: %s", ckpt_path)
+    logger.info("[train] best checkpoint: {}", ckpt_path)
 
     sidecar = Path(ckpt_path).with_suffix(Path(ckpt_path).suffix + ".meta.json")
     payload = {

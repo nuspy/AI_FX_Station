@@ -276,7 +276,7 @@ class RegimeService:
         result = {"started": False, "message": "", "task": None}
         def _worker():
             try:
-                logger.info("RegimeService.rebuild_async: starting rebuild n_clusters=%s limit=%s", n_clusters, limit)
+                logger.info("RegimeService.rebuild_async: starting rebuild n_clusters={} limit={}", n_clusters, limit)
                 self.fit_clusters_and_index(n_clusters=n_clusters, limit=limit)
                 logger.info("RegimeService.rebuild_async: rebuild completed")
             except Exception as e:

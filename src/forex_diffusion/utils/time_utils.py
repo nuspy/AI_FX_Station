@@ -29,6 +29,9 @@ TF_TO_PANDAS = {
     "1D": "1D",
     "7d": "7D",
     "30d": "30D",
+    # settimane
+    "1w": "1W",
+    "1W": "1W",
 }
 
 def ms_to_utc_dt(ms: int) -> datetime:
@@ -60,11 +63,11 @@ def is_in_weekend_range(dt: datetime) -> bool:
         return True
     return False
 
-def split_range_avoid_weekend(start: datetime, end: datetime) -> List[Tuple[datetime, datetime]]:
+def split_range_by_month(start: datetime, end: datetime) -> List[Tuple[datetime, datetime]]:
     """
-    Split [start, end] into subranges that do not overlap the weekend off-trading window.
-    Returns list of (substart, subend) pairs in UTC (both timezone-aware).
-    subranges are inclusive of start and end (caller should adjust for provider semantics).
+    Split [start, end] into monthly subranges for API requests.
+    Returns list of (month_start, month_end) pairs in UTC (both timezone-aware).
+    Used only for large historical backfills to avoid API overload.
     """
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
@@ -76,49 +79,18 @@ def split_range_avoid_weekend(start: datetime, end: datetime) -> List[Tuple[date
     ranges: List[Tuple[datetime, datetime]] = []
     cur = start
 
-    # helper to compute next weekend start given a datetime
-    def next_weekend_start(dt: datetime) -> datetime:
-        # find upcoming Friday of week of dt
-        # compute days until Friday (weekday 4)
-        days_ahead = (4 - dt.weekday()) % 7
-        friday = (dt + timedelta(days=days_ahead)).replace(hour=WEEKEND_START_HOUR, minute=0, second=0, microsecond=0)
-        # if dt already past this week's friday at 22:00, take next week's friday
-        if friday <= dt:
-            friday = friday + timedelta(days=7)
-        return friday
-
-    # iterate splitting out weekend periods
     while cur < end:
-        # if current is inside a weekend, advance to weekend end
-        if is_in_weekend_range(cur):
-            # compute the Sunday 22:00 corresponding to the current weekend
-            # find the last Friday before or equal cur
-            # find Sunday of that weekend
-            # compute days to Sunday
-            # find the Sunday date for the weekend containing cur
-            # approach: move to next day until it's Sunday and hour==22
-            # simpler: find the most recent Friday 22:00 <= cur, then add 48 hours
-            # find Friday of current week
-            days_back = (cur.weekday() - 4) % 7
-            friday = (cur - timedelta(days=days_back)).replace(hour=WEEKEND_START_HOUR, minute=0, second=0, microsecond=0)
-            sunday22 = friday + timedelta(days=2, hours=0) + timedelta(hours=WEEKEND_END_HOUR - WEEKEND_START_HOUR)
-            # sunday22 is Friday22 + 48h + (end_hour-start_hour) => effectively Sunday 22:00
-            if sunday22 <= cur:
-                # move to next weekend end
-                sunday22 = sunday22 + timedelta(days=7)
-            cur = min(sunday22, end)
-            # continue loop; do not append ranges while inside weekend
-            continue
-        # current is not inside weekend -> find next weekend start
-        nw_start = next_weekend_start(cur)
-        seg_end = min(nw_start, end)
-        ranges.append((cur, seg_end))
-        cur = seg_end
-        # if cur equals nw_start, skip weekend by moving cur to sunday22
-        if cur >= nw_start and cur < end:
-            # compute corresponding sunday22
-            sunday22 = nw_start + timedelta(days=2, hours=(WEEKEND_END_HOUR - WEEKEND_START_HOUR))
-            cur = min(sunday22, end)
+        # Calculate first day of next month
+        if cur.month == 12:
+            next_month = cur.replace(year=cur.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_month = cur.replace(month=cur.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        # Month end is the minimum of next_month or overall end
+        month_end = min(next_month, end)
+        ranges.append((cur, month_end))
+        cur = month_end
+
     return ranges
 
 def tf_to_pandas_freq(tf: str) -> str:
@@ -139,6 +111,7 @@ def generate_expected_period_ends(start_ms: int, end_ms: int, timeframe: str) ->
     """
     Generate expected period-end timestamps (ms UTC) for timeframe between start_ms and end_ms.
     This uses pandas date_range with freq from tf_to_pandas_freq and labels aligned to period end.
+    EXCLUDES weekend periods (Friday 22:00 UTC - Sunday 22:00 UTC) as forex market is closed.
     """
     if timeframe == "tick":
         # ticks are not regular bars; return empty (caller should handle ticks separately)
@@ -148,6 +121,11 @@ def generate_expected_period_ends(start_ms: int, end_ms: int, timeframe: str) ->
     freq = tf_to_pandas_freq(timeframe)
     # Use date_range with closed='right' to align period end timestamps
     idx = pd.date_range(start=start_dt, end=end_dt, freq=freq, tz="UTC")
-    # convert to ms
-    out = [(int(x.timestamp() * 1000)) for x in idx]
-    return out
+
+    # Filter out weekend timestamps (market closed: Fri 22:00 - Sun 22:00 UTC)
+    filtered = []
+    for ts in idx:
+        if not is_in_weekend_range(ts.to_pydatetime()):
+            filtered.append(int(ts.timestamp() * 1000))
+
+    return filtered

@@ -317,30 +317,45 @@ class UnifiedPredictionSettingsDialog(QDialog):
         params_box = QGroupBox("Advanced Parameters")
         params_form = QFormLayout(params_box)
 
+        # Helper to create parameter row with override checkbox
+        def add_param_with_override(label: str, spinbox: QSpinBox, tooltip: str) -> QCheckBox:
+            """Add a parameter row with [Override] checkbox + spinbox"""
+            row_layout = QHBoxLayout()
+            override_cb = QCheckBox("Override")
+            override_cb.setChecked(True)  # Default: override enabled (single model behavior)
+            override_cb.setToolTip("Se checked: usa valore qui sotto. Se unchecked: usa metadata del modello (solo multi-modello).")
+            spinbox.setToolTip(tooltip)
+            row_layout.addWidget(override_cb)
+            row_layout.addWidget(spinbox)
+            row_layout.addStretch()
+
+            # Enable/disable spinbox based on override checkbox
+            spinbox.setEnabled(override_cb.isChecked())
+            override_cb.toggled.connect(spinbox.setEnabled)
+
+            params_form.addRow(label, row_layout)
+            return override_cb
+
         self.warmup_spinbox = QSpinBox()
         self.warmup_spinbox.setRange(10, 200)
         self.warmup_spinbox.setValue(16)
-        self.warmup_spinbox.setToolTip(TOOLTIPS['warmup_bars'])
-        params_form.addRow("Warmup Bars:", self.warmup_spinbox)
+        self.warmup_override_cb = add_param_with_override("Warmup Bars:", self.warmup_spinbox, TOOLTIPS['warmup_bars'])
 
         self.rv_window_spinbox = QSpinBox()
         self.rv_window_spinbox.setRange(30, 240)
         self.rv_window_spinbox.setValue(60)
-        self.rv_window_spinbox.setToolTip(TOOLTIPS['rv_window'])
-        params_form.addRow("RV Window (min):", self.rv_window_spinbox)
+        self.rv_window_override_cb = add_param_with_override("RV Window (min):", self.rv_window_spinbox, TOOLTIPS['rv_window'])
 
         self.returns_window_spinbox = QSpinBox()
         self.returns_window_spinbox.setRange(10, 200)
         self.returns_window_spinbox.setValue(100)
-        self.returns_window_spinbox.setToolTip(TOOLTIPS['returns_window'])
-        params_form.addRow("Returns Window:", self.returns_window_spinbox)
+        self.returns_window_override_cb = add_param_with_override("Returns Window:", self.returns_window_spinbox, TOOLTIPS['returns_window'])
 
         self.min_coverage_spinbox = QSpinBox()
         self.min_coverage_spinbox.setRange(0, 100)
         self.min_coverage_spinbox.setValue(15)
         self.min_coverage_spinbox.setSuffix("%")
-        self.min_coverage_spinbox.setToolTip(TOOLTIPS['min_coverage'])
-        params_form.addRow("Min Feature Coverage:", self.min_coverage_spinbox)
+        self.min_coverage_override_cb = add_param_with_override("Min Feature Coverage:", self.min_coverage_spinbox, TOOLTIPS['min_coverage'])
 
         layout.addWidget(params_box)
 
@@ -591,6 +606,12 @@ class UnifiedPredictionSettingsDialog(QDialog):
             'returns_window': self.returns_window_spinbox.value(),
             'min_coverage': self.min_coverage_spinbox.value() / 100.0,
 
+            # Parameter override flags (for multi-model metadata usage)
+            'override_warmup_bars': self.warmup_override_cb.isChecked(),
+            'override_rv_window': self.rv_window_override_cb.isChecked(),
+            'override_returns_window': self.returns_window_override_cb.isChecked(),
+            'override_min_coverage': self.min_coverage_override_cb.isChecked(),
+
             # Regime detection
             'session_overlap': self.session_overlap_cb.isChecked(),
 
@@ -674,6 +695,12 @@ class UnifiedPredictionSettingsDialog(QDialog):
         self.rv_window_spinbox.setValue(settings.get('rv_window', 60))
         self.returns_window_spinbox.setValue(settings.get('returns_window', 100))
         self.min_coverage_spinbox.setValue(int(settings.get('min_coverage', 0.15) * 100))
+
+        # Parameter override flags (default True for backward compatibility)
+        self.warmup_override_cb.setChecked(settings.get('override_warmup_bars', True))
+        self.rv_window_override_cb.setChecked(settings.get('override_rv_window', True))
+        self.returns_window_override_cb.setChecked(settings.get('override_returns_window', True))
+        self.min_coverage_override_cb.setChecked(settings.get('override_min_coverage', True))
 
         # Regime detection
         self.session_overlap_cb.setChecked(settings.get('session_overlap', True))

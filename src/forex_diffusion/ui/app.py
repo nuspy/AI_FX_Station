@@ -44,6 +44,31 @@ def setup_ui(
     result["market_service"] = market_service
     result["db_writer"] = db_writer
 
+    # --- Auto-backfill on startup (Mode A) ---
+    # Fill gaps between first candle and now() for each timeframe
+    # Excludes market closed hours (Friday 22:00 UTC - Sunday 22:00 UTC)
+    try:
+        logger.info("Auto-backfill: scanning for gaps in existing data...")
+        symbols_to_backfill = ["EUR/USD"]  # Add more symbols as needed
+        timeframes_to_backfill = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+
+        for symbol in symbols_to_backfill:
+            for tf in timeframes_to_backfill:
+                try:
+                    # backfill_symbol_timeframe with no start_ms_override will fill gaps from last candle to now
+                    market_service.backfill_symbol_timeframe(
+                        symbol=symbol,
+                        timeframe=tf,
+                        force_full=False,  # Only fill gaps, not full history
+                        progress_cb=None,  # No UI progress callback on startup
+                        start_ms_override=None  # Auto-detect from last candle
+                    )
+                except Exception as e:
+                    logger.warning(f"Auto-backfill failed for {symbol} {tf}: {e}")
+        logger.info("Auto-backfill completed.")
+    except Exception as e:
+        logger.exception(f"Auto-backfill error: {e}")
+
     # --- Aggregator Service ---
     symbols_to_aggregate = ["EUR/USD"]
     aggregator = AggregatorService(engine=db_service.engine, symbols=symbols_to_aggregate)
