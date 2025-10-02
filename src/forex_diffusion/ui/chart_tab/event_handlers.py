@@ -84,9 +84,8 @@ class EventHandlersMixin:
             getattr(self, "backfill_btn", None): ("clicked", self.chart_controller.on_backfill_missing_clicked),
             getattr(self, "indicators_btn", None): ("clicked", self.chart_controller.on_indicators_clicked),
             getattr(self, "build_latents_btn", None): ("clicked", self.chart_controller.on_build_latents_clicked),
-            getattr(self, "forecast_settings_btn", None): ("clicked", self.chart_controller.open_forecast_settings),
+            # Forecast settings buttons removed - now in Generative Forecast tab
             getattr(self, "forecast_btn", None): ("clicked", self.chart_controller.on_forecast_clicked),
-            getattr(self, "adv_settings_btn", None): ("clicked", self.chart_controller.open_adv_forecast_settings),
             getattr(self, "adv_forecast_btn", None): ("clicked", self.chart_controller.on_advanced_forecast_clicked),
             getattr(self, "clear_forecasts_btn", None): ("clicked", self.chart_controller.clear_all_forecasts),
             getattr(self, "toggle_drawbar_btn", None): ("toggled", self._toggle_drawbar),

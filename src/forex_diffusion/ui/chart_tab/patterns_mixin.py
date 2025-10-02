@@ -117,9 +117,19 @@ class PatternsMixin:
 
     def _open_patterns_config(self):
         """Open pattern configuration dialog."""
-        # This would open a dialog to configure pattern detection parameters
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Pattern Config", "Pattern configuration dialog not yet implemented.")
+        from ..patterns_config_dialog import PatternsConfigDialog
+
+        patterns_service = getattr(self, 'patterns_service', None)
+        dialog = PatternsConfigDialog(
+            parent=self,
+            yaml_path="configs/patterns.yaml",
+            patterns_service=patterns_service
+        )
+
+        if dialog.exec():
+            # Refresh patterns if config was changed
+            if hasattr(self, '_refresh_patterns'):
+                self._refresh_patterns()
 
     def _clear_pattern_artists(self):
         """Clear all pattern artists from the chart."""

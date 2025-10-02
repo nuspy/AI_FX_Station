@@ -40,11 +40,10 @@ class UIBuilderMixin:
         # Chart tab (finplot-based)
         self._create_chart_tab()
 
-        # Training/Backtest tab (new functionality)
+        # Training/Backtest tab (pattern training - restored from commit 11d3627)
         self._create_training_tab()
 
-        # Log Monitoring tab (for missing parameters and system monitoring)
-        self._create_logs_tab()
+        # Log Monitoring tab moved to top-level (see logs_tab.py)
 
         # Set stretch factors
         self.layout().setStretch(1, 1)
@@ -125,41 +124,11 @@ class UIBuilderMixin:
         self.main_tabs.addTab(chart_tab, "Chart")
 
     def _create_training_tab(self) -> None:
-        """Create the new Training/Backtest tab"""
-        training_tab = QWidget()
-        training_layout = QVBoxLayout(training_tab)
-        training_layout.setContentsMargins(10, 10, 10, 10)
+        """Create the pattern Training/Backtest tab (restored from commit 11d3627)"""
+        from ..pattern_training_tab import PatternTrainingTab
 
-        # Create scrollable area for all the controls
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(15)
-
-        # === Study Setup Section ===
-        self._create_study_setup_section(scroll_layout)
-
-        # === Dataset Configuration Section ===
-        self._create_dataset_config_section(scroll_layout)
-
-        # === Parameter Space Section ===
-        self._create_parameter_space_section(scroll_layout)
-
-        # === Optimization Configuration Section ===
-        self._create_optimization_config_section(scroll_layout)
-
-        # === Execution Control Section ===
-        self._create_execution_control_section(scroll_layout)
-
-        # === Results and Status Section ===
-        self._create_results_section(scroll_layout)
-
-        scroll.setWidget(scroll_content)
-        training_layout.addWidget(scroll)
+        training_tab = PatternTrainingTab(self)
+        self.pattern_training_tab = training_tab  # Keep reference
 
         self.main_tabs.addTab(training_tab, "Training/Backtest")
 
@@ -322,15 +291,9 @@ class UIBuilderMixin:
         self.build_latents_btn = QPushButton("🧠 Build Latents")
         row1_layout.addWidget(self.build_latents_btn)
 
-        # Forecast controls
-        self.forecast_settings_btn = QPushButton("⚙️ Settings")
-        row1_layout.addWidget(self.forecast_settings_btn)
-
+        # Forecast controls (Settings buttons removed - now in Generative Forecast tab)
         self.forecast_btn = QPushButton("🔮 Forecast")
         row1_layout.addWidget(self.forecast_btn)
-
-        self.adv_settings_btn = QPushButton("⚙️ Adv Settings")
-        row1_layout.addWidget(self.adv_settings_btn)
 
         self.adv_forecast_btn = QPushButton("🔮 Adv Forecast")
         row1_layout.addWidget(self.adv_forecast_btn)
@@ -338,25 +301,13 @@ class UIBuilderMixin:
         self.clear_forecasts_btn = QPushButton("🗑️ Clear")
         row1_layout.addWidget(self.clear_forecasts_btn)
 
-        # Second row - additional controls and toggles
+        # Second row - display and interface controls
         row2_widget = QWidget()
         row2_layout = QHBoxLayout(row2_widget)
         row2_layout.setContentsMargins(0, 0, 0, 0)
         row2_layout.setSpacing(5)
 
-        # Pattern controls
-        row2_layout.addWidget(QLabel("Patterns:"))
-        self.cb_chart_patterns = QCheckBox("Chart")
-        self.cb_candle_patterns = QCheckBox("Candle")
-        self.cb_history_patterns = QCheckBox("History")
-        row2_layout.addWidget(self.cb_chart_patterns)
-        row2_layout.addWidget(self.cb_candle_patterns)
-        row2_layout.addWidget(self.cb_history_patterns)
-
-        self.btn_scan_historical = QPushButton("🔍 Scan")
-        self.btn_config_patterns = QPushButton("⚙️ Config")
-        row2_layout.addWidget(self.btn_scan_historical)
-        row2_layout.addWidget(self.btn_config_patterns)
+        # Pattern controls moved to DUE > Patterns tab
 
         row2_layout.addStretch()
 
@@ -393,30 +344,7 @@ class UIBuilderMixin:
     # Large methods for creating complex sections - these would be implemented
     # by reading the remaining sections from the original file
 
-    def _create_study_setup_section(self, layout: QVBoxLayout) -> None:
-        """Create the study setup section - stub for now."""
-        # This would contain the full implementation from the original file
-        pass
-
-    def _create_dataset_config_section(self, layout: QVBoxLayout) -> None:
-        """Create the dataset configuration section - stub for now."""
-        pass
-
-    def _create_parameter_space_section(self, layout: QVBoxLayout) -> None:
-        """Create the parameter space section - stub for now."""
-        pass
-
-    def _create_optimization_config_section(self, layout: QVBoxLayout) -> None:
-        """Create the optimization configuration section - stub for now."""
-        pass
-
-    def _create_execution_control_section(self, layout: QVBoxLayout) -> None:
-        """Create the execution control section - stub for now."""
-        pass
-
-    def _create_results_section(self, layout: QVBoxLayout) -> None:
-        """Create the results section - stub for now."""
-        pass
+    # Training tab methods moved to pattern_training_tab.py (commit 11d3627)
 
     def _create_log_subtabs(self) -> None:
         """Create individual log sub-tabs for different log categories."""

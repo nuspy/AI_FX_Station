@@ -20,6 +20,8 @@ from .signals_tab import SignalsTab
 from .chart_tab_ui import ChartTabUI
 from .backtesting_tab import BacktestingTab
 from .forecast_settings_tab import ForecastSettingsTab
+from .logs_tab import LogsTab
+from .patterns_tab import PatternsTab
 
 
 def setup_ui(
@@ -105,18 +107,27 @@ def setup_ui(
     uno_tab.addTab(forecast_settings_tab, "Forecast Settings")
     uno_tab.addTab(backtesting_tab, "Backtesting")
 
-    # Create Tab DUE (empty for now)
-    from PySide6.QtWidgets import QLabel
-    due_tab = QLabel("Tab DUE - Coming soon")
+    # Create Tab DUE with Patterns as nested tab
+    due_tab = QTabWidget()
+    due_tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    # Create Patterns tab (pass chart_tab reference for pattern display)
+    patterns_tab = PatternsTab(main_window, chart_tab=chart_tab)
+    due_tab.addTab(patterns_tab, "Patterns")
+
+    # Create Logs tab (top-level)
+    logs_tab = LogsTab(main_window)
 
     # Keep other tabs
+    from PySide6.QtWidgets import QLabel
     signals_tab = QLabel("Signals tab temporarily disabled")
     reports_3d_tab = QLabel("3D Reports tab temporarily disabled")
 
     # Add top-level tabs
     tab_widget.addTab(chart_tab, "Chart")
-    tab_widget.addTab(uno_tab, "UNO")
+    tab_widget.addTab(uno_tab, "Generative Forecast")
     tab_widget.addTab(due_tab, "DUE")
+    tab_widget.addTab(logs_tab, "Logs")
     tab_widget.addTab(signals_tab, "Signals (Temp)")
     tab_widget.addTab(reports_3d_tab, "3D Reports (Temp)")
     layout.addWidget(tab_widget)
@@ -125,6 +136,8 @@ def setup_ui(
     result["training_tab"] = training_tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
+    result["patterns_tab"] = patterns_tab
+    result["logs_tab"] = logs_tab
     result["reports_3d_tab"] = reports_3d_tab
     result["uno_tab"] = uno_tab
     result["due_tab"] = due_tab
