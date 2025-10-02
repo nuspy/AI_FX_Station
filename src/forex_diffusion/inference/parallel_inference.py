@@ -19,6 +19,12 @@ from ..models.standardized_loader import get_model_loader
 from ..models.model_path_resolver import ModelPathResolver
 from ..utils.horizon_converter import convert_horizons_for_inference
 
+# Import DeviceManager for GPU support
+try:
+    from ..utils.device_manager import DeviceManager
+except ImportError:
+    DeviceManager = None
+
 
 class ParallelInferenceError(Exception):
     """Raised when parallel inference fails."""
@@ -31,11 +37,20 @@ class ModelExecutor:
     Handles loading and running a single model independently.
     """
 
-    def __init__(self, model_path: str, model_config: Dict[str, Any]):
+    def __init__(self, model_path: str, model_config: Dict[str, Any], use_gpu: bool = False):
         self.model_path = model_path
         self.model_config = model_config
         self.model_data = None
         self.is_loaded = False
+        self.use_gpu = use_gpu
+
+        # Setup device
+        if DeviceManager and use_gpu:
+            self.device = DeviceManager.get_device("cuda")
+            logger.debug(f"ModelExecutor will use GPU: {self.device}")
+        else:
+            import torch
+            self.device = torch.device("cpu")
 
     def load_model(self) -> None:
         """Load the model for this executor."""
@@ -111,9 +126,10 @@ class ModelExecutor:
                 # Try PyTorch model
                 import torch
                 if hasattr(model, 'eval'):
+                    model = model.to(self.device)  # Move model to GPU if available
                     model.eval()
                 with torch.no_grad():
-                    t_in = torch.tensor(X_last, dtype=torch.float32)
+                    t_in = torch.tensor(X_last, dtype=torch.float32).to(self.device)
                     out = model(t_in)
                     predictions = np.ravel(out.detach().cpu().numpy())
             except Exception:
@@ -170,7 +186,8 @@ class ParallelInferenceEngine:
         features_df: pd.DataFrame,
         symbol: str,
         timeframe: str,
-        horizons: List[str]
+        horizons: List[str],
+        use_gpu: bool = False
     ) -> Dict[str, Any]:
         """
         Run parallel inference with multiple models.
@@ -181,6 +198,7 @@ class ParallelInferenceEngine:
             symbol: Trading symbol
             timeframe: Data timeframe
             horizons: Prediction horizons
+            use_gpu: Use GPU for inference (default: False)
 
         Returns:
             Dictionary with aggregated results from all models
@@ -191,7 +209,8 @@ class ParallelInferenceEngine:
         if not model_paths:
             raise ParallelInferenceError("No valid model paths found")
 
-        logger.info(f"Starting parallel inference with {len(model_paths)} models")
+        device_info = "GPU" if use_gpu else "CPU"
+        logger.info(f"Starting parallel inference with {len(model_paths)} models on {device_info}")
 
         # Convert horizons to proper format
         time_labels, horizon_bars = convert_horizons_for_inference(horizons, timeframe)
@@ -206,7 +225,7 @@ class ParallelInferenceEngine:
                 'time_labels': time_labels,
                 'horizon_bars': horizon_bars
             }
-            executors.append(ModelExecutor(model_path, config))
+            executors.append(ModelExecutor(model_path, config, use_gpu=use_gpu))
 
         # Run parallel inference
         start_time = time.time()

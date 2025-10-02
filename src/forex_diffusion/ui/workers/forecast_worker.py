@@ -614,8 +614,11 @@ class ForecastWorker(QRunnable):
             parallel_engine = get_parallel_engine(max_workers)
 
             # Run parallel inference
+            # Get GPU setting from payload
+            use_gpu = self.payload.get("use_gpu_inference", False)
+
             parallel_results = parallel_engine.run_parallel_inference(
-                parallel_settings, feats_df, symbol, tf, horizons_raw
+                parallel_settings, feats_df, symbol, tf, horizons_raw, use_gpu=use_gpu
             )
 
             # Check if we should combine models or keep them separate

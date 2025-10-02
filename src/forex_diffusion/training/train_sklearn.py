@@ -693,6 +693,9 @@ def main():
     ap.add_argument("--gen", type=int, default=5, help="Number of generations for genetic algorithm")
     ap.add_argument("--pop", type=int, default=8, help="Population size for genetic algorithm")
 
+    # GPU Support
+    ap.add_argument("--use-gpu", action="store_true", default=False, help="Use GPU for encoder training (requires CUDA)")
+
     args = ap.parse_args()
 
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
@@ -767,13 +770,16 @@ def main():
 
         latent_dim = int(args.latent_dim) if hasattr(args, 'latent_dim') else 16
         epochs = int(args.encoder_epochs) if hasattr(args, 'encoder_epochs') else 50
-        print(f"[Encoder] Training Autoencoder with {latent_dim} latent dimensions for {epochs} epochs...")
+        use_gpu = getattr(args, 'use_gpu', False)
+        device_str = "cuda" if use_gpu else "cpu"
+        print(f"[Encoder] Training Autoencoder with {latent_dim} latent dimensions for {epochs} epochs on {device_str.upper()}...")
         encoder_model = SklearnAutoencoder(
             latent_dim=latent_dim,
             hidden_dims=[128, 64],
             epochs=epochs,
             batch_size=64,
             learning_rate=0.001,
+            device=device_str,
             verbose=True
         )
         Xtr = encoder_model.fit_transform(Xtr)
@@ -787,13 +793,16 @@ def main():
 
         latent_dim = int(args.latent_dim) if hasattr(args, 'latent_dim') else 16
         epochs = int(args.encoder_epochs) if hasattr(args, 'encoder_epochs') else 50
-        print(f"[Encoder] Training VAE with {latent_dim} latent dimensions for {epochs} epochs...")
+        use_gpu = getattr(args, 'use_gpu', False)
+        device_str = "cuda" if use_gpu else "cpu"
+        print(f"[Encoder] Training VAE with {latent_dim} latent dimensions for {epochs} epochs on {device_str.upper()}...")
         encoder_model = SklearnVAE(
             latent_dim=latent_dim,
             hidden_dims=[128, 64],
             epochs=epochs,
             batch_size=64,
             learning_rate=0.001,
+            device=device_str,
             beta=1.0,
             verbose=True
         )

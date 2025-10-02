@@ -10,8 +10,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Literal
 from loguru import logger
+
+# Import DeviceManager for GPU support
+try:
+    from ..utils.device_manager import DeviceManager, DeviceType
+except ImportError:
+    # Fallback if device_manager not available
+    DeviceManager = None
+    DeviceType = Literal["auto", "cuda", "cpu"]
 
 
 class Autoencoder(nn.Module):
@@ -189,7 +197,7 @@ class SklearnAutoencoder:
         epochs: int = 50,
         batch_size: int = 64,
         learning_rate: float = 0.001,
-        device: str = None,
+        device: str = "auto",
         verbose: bool = True
     ):
         """
@@ -199,7 +207,7 @@ class SklearnAutoencoder:
             epochs: Training epochs
             batch_size: Batch size for training
             learning_rate: Learning rate
-            device: Device ('cuda' or 'cpu', auto-detect if None)
+            device: Device ('auto', 'cuda', or 'cpu' - default: 'auto')
             verbose: Print training progress
         """
         self.latent_dim = latent_dim
@@ -209,11 +217,17 @@ class SklearnAutoencoder:
         self.learning_rate = learning_rate
         self.verbose = verbose
 
-        # Auto-detect device
-        if device is None:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Use DeviceManager for smart device selection
+        if DeviceManager:
+            self.device = DeviceManager.get_device(device)
+            if self.verbose and self.device.type == "cuda":
+                logger.info(f"🚀 Autoencoder will use GPU: {torch.cuda.get_device_name(0)}")
         else:
-            self.device = torch.device(device)
+            # Fallback to legacy logic
+            if device == "auto" or device is None:
+                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            else:
+                self.device = torch.device(device)
 
         self.model = None
         self.input_dim_ = None
@@ -325,7 +339,7 @@ class SklearnVAE:
         batch_size: int = 64,
         learning_rate: float = 0.001,
         beta: float = 1.0,
-        device: str = None,
+        device: str = "auto",
         verbose: bool = True
     ):
         """
@@ -336,7 +350,7 @@ class SklearnVAE:
             batch_size: Batch size for training
             learning_rate: Learning rate
             beta: KL divergence weight (beta-VAE)
-            device: Device ('cuda' or 'cpu', auto-detect if None)
+            device: Device ('auto', 'cuda', or 'cpu' - default: 'auto')
             verbose: Print training progress
         """
         self.latent_dim = latent_dim
@@ -347,11 +361,17 @@ class SklearnVAE:
         self.beta = beta
         self.verbose = verbose
 
-        # Auto-detect device
-        if device is None:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Use DeviceManager for smart device selection
+        if DeviceManager:
+            self.device = DeviceManager.get_device(device)
+            if self.verbose and self.device.type == "cuda":
+                logger.info(f"🚀 VAE will use GPU: {torch.cuda.get_device_name(0)}")
         else:
-            self.device = torch.device(device)
+            # Fallback to legacy logic
+            if device == "auto" or device is None:
+                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            else:
+                self.device = torch.device(device)
 
         self.model = None
         self.input_dim_ = None

@@ -45,9 +45,8 @@ dependencies = [
 
   # Phase 3 Advanced Features Dependencies
   "tensorflow>=2.13.0",
-  "torch>=2.8.0",
-  "torchvision>=0.23.0",
-  "torchaudio>=2.8.0",
+  # PyTorch with CUDA 12.x support (install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121)
+  # Note: Remove CPU-only versions first: pip uninstall torch torchvision torchaudio
   "scipy>=1.10.0",
 
   # Optimization Libraries

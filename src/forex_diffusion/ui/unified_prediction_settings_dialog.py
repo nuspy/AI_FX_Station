@@ -211,6 +211,40 @@ class UnifiedPredictionSettingsDialog(QDialog):
         )
         combination_layout.addWidget(self.combine_models_cb)
 
+        # GPU Inference Checkbox
+        self.use_gpu_inference_cb = QCheckBox("Usa GPU per inference")
+        self.use_gpu_inference_cb.setChecked(False)  # Default: CPU
+
+        # Check if CUDA is available
+        try:
+            import torch
+            cuda_available = torch.cuda.is_available()
+            self.use_gpu_inference_cb.setEnabled(cuda_available)
+
+            if cuda_available:
+                gpu_name = torch.cuda.get_device_name(0)
+                self.use_gpu_inference_cb.setToolTip(
+                    f"Usa GPU per inference dei modelli PyTorch.\n\n"
+                    f"GPU rilevata: {gpu_name}\n\n"
+                    f"Speedup atteso:\n"
+                    f"• Singolo modello: 5x più veloce\n"
+                    f"• Ensemble 10 modelli: 5-8x più veloce\n\n"
+                    f"IMPORTANTE: solo modelli PyTorch usano GPU.\n"
+                    f"Modelli sklearn rimangono su CPU."
+                )
+            else:
+                self.use_gpu_inference_cb.setToolTip(
+                    "GPU non disponibile.\n\n"
+                    "Per usare GPU:\n"
+                    "1. Installa CUDA-enabled PyTorch\n"
+                    "2. Riavvia l'applicazione"
+                )
+        except Exception:
+            self.use_gpu_inference_cb.setEnabled(False)
+            self.use_gpu_inference_cb.setToolTip("PyTorch non disponibile")
+
+        combination_layout.addWidget(self.use_gpu_inference_cb)
+
         layout.addWidget(combination_box)
 
         # Core Settings
@@ -588,6 +622,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
             # Model combination
             'combine_models': self.combine_models_cb.isChecked(),
+            'use_gpu_inference': self.use_gpu_inference_cb.isChecked(),
 
             # Core settings
             'horizons': horizons_value,
@@ -662,6 +697,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         # Model combination
         self.combine_models_cb.setChecked(settings.get('combine_models', True))
+        self.use_gpu_inference_cb.setChecked(settings.get('use_gpu_inference', False))
 
         # Core settings (handle both string and list formats)
         horizons = settings.get('horizons', '1m, 5m, 15m')

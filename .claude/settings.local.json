@@ -17,7 +17,8 @@
       "Bash(cmd:*)",
       "Bash(cd:*)",
       "Bash(pip install:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(pip uninstall:*)"
     ],
     "deny": [],
     "ask": []

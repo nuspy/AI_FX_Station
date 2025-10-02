@@ -304,6 +304,7 @@ class TrainingTab(QWidget):
                 'horizon': self.horizon_spin.value(),
                 'model': self.model_combo.currentText(),
                 'encoder': self.encoder_combo.currentText(),
+                'use_gpu_training': self.use_gpu_training_check.isChecked(),
                 'optimization': self.opt_combo.currentText(),
                 'gen': self.gen_spin.value(),
                 'pop': self.pop_spin.value(),
@@ -387,6 +388,8 @@ class TrainingTab(QWidget):
                 self.model_combo.setCurrentText(settings['model'])
             if 'encoder' in settings:
                 self.encoder_combo.setCurrentText(settings['encoder'])
+            if 'use_gpu_training' in settings:
+                self.use_gpu_training_check.setChecked(settings['use_gpu_training'])
             if 'optimization' in settings:
                 self.opt_combo.setCurrentText(settings['optimization'])
             if 'gen' in settings:
@@ -687,6 +690,40 @@ class TrainingTab(QWidget):
             "  Quando: hai già addestrato encoder in run precedente."
         )
         top.addWidget(self.encoder_combo)
+
+        # GPU Training Checkbox
+        self.use_gpu_training_check = QCheckBox("Usa GPU")
+        self.use_gpu_training_check.setChecked(False)
+
+        # Check if CUDA is available
+        try:
+            import torch
+            cuda_available = torch.cuda.is_available()
+            self.use_gpu_training_check.setEnabled(cuda_available)
+
+            if cuda_available:
+                gpu_name = torch.cuda.get_device_name(0)
+                self.use_gpu_training_check.setToolTip(
+                    f"Usa GPU per training encoder (Autoencoder/VAE).\n\n"
+                    f"GPU rilevata: {gpu_name}\n\n"
+                    f"Speedup atteso:\n"
+                    f"• Autoencoder: 10-15x più veloce\n"
+                    f"• VAE: 10-15x più veloce\n\n"
+                    f"IMPORTANTE: solo encoder usano GPU.\n"
+                    f"Ridge/Lasso/ElasticNet/RF rimangono su CPU."
+                )
+            else:
+                self.use_gpu_training_check.setToolTip(
+                    "GPU non disponibile.\n\n"
+                    "Per usare GPU:\n"
+                    "1. Installa CUDA-enabled PyTorch\n"
+                    "2. Riavvia l'applicazione"
+                )
+        except Exception:
+            self.use_gpu_training_check.setEnabled(False)
+            self.use_gpu_training_check.setToolTip("PyTorch non disponibile")
+
+        top.addWidget(self.use_gpu_training_check)
 
         # Optimization
         lbl_opt = QLabel("Opt:")
@@ -1427,6 +1464,10 @@ class TrainingTab(QWidget):
                     '--random_state', '0',
                     '--n_estimators', '400',
                 ]
+
+                # Add GPU flag if enabled
+                if self.use_gpu_training_check.isChecked():
+                    args.append('--use-gpu')
                 meta = {
                     'symbol': sym,
                     'base_timeframe': tf,
@@ -1714,6 +1755,7 @@ class TrainingTab(QWidget):
                 'horizon': self.horizon_spin.value(),
                 'model': self.model_combo.currentText(),
                 'encoder': self.encoder_combo.currentText(),
+                'use_gpu_training': self.use_gpu_training_check.isChecked(),
                 'optimization': self.opt_combo.currentText(),
                 'gen': self.gen_spin.value(),
                 'pop': self.pop_spin.value(),
