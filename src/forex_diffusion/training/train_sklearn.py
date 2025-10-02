@@ -224,7 +224,9 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                     logger.exception(f"Failed to fetch {tf} candles from DB for indicator {key}: {e}")
                     continue
             tmp = _ensure_dt_index(tmp)
+            logger.debug(f"Indicator {key}_{tf}: final tmp shape = {tmp.shape} (need ≥14 for ATR/RSI)")
             cols: Dict[str, pd.Series] = {}
+
             if not _HAS_TA:
                 if key == "rsi":
                     n = int(params.get("n", 14))
@@ -360,7 +362,7 @@ def _build_features(candles: pd.DataFrame, args):
     if "hurst" in indicator_tfs:
         ind_cfg["hurst"] = {"window": int(args.hurst_window)}
     if ind_cfg:
-        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days))
+        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days_history))
     if not feats:
         raise RuntimeError("Nessuna feature disponibile per il training")
     X = pd.concat(feats, axis=1)
@@ -377,19 +379,19 @@ def _build_features(candles: pd.DataFrame, args):
             X = X.drop(columns=dropped_feats, errors="ignore")
             warnings.warn(f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}", RuntimeWarning)
 
-            X = X.dropna()
-            y = y.loc[X.index].dropna()
-            # riallinea X e y su indice comune dopo dropna
-            common_idx = X.index.intersection(y.index)
-            X = X.loc[common_idx]
-            y = y.loc[common_idx]
-            if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
-                X = X.iloc[int(args.warmup_bars):]
-                y = y.iloc[int(args.warmup_bars):]
-            if X.empty or y.empty:
-                raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
-            meta = {"features": list(X.columns), "indicator_tfs": indicator_tfs, "dropped_features": dropped_feats, "args_used": vars(args)}
-            return X, y, meta
+    X = X.dropna()
+    y = y.loc[X.index].dropna()
+    # riallinea X e y su indice comune dopo dropna
+    common_idx = X.index.intersection(y.index)
+    X = X.loc[common_idx]
+    y = y.loc[common_idx]
+    if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
+        X = X.iloc[int(args.warmup_bars):]
+        y = y.iloc[int(args.warmup_bars):]
+    if X.empty or y.empty:
+        raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
+    meta = {"features": list(X.columns), "indicator_tfs": indicator_tfs, "dropped_features": dropped_feats, "args_used": vars(args)}
+    return X, y, meta
 
 
 def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
@@ -403,6 +405,254 @@ def _fit_model(algo: str, Xtr, ytr, args):
     elif algo == "elasticnet": return ElasticNet(alpha=float(args.alpha), l1_ratio=float(args.l1_ratio), random_state=args.random_state)
     elif algo == "rf":         return RandomForestRegressor(n_estimators=int(args.n_estimators), max_depth=None, min_samples_leaf=2, n_jobs=-1, random_state=args.random_state)
     else: raise ValueError(f"Algo non supportato: {algo}")
+
+
+def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
+    """
+    Simple genetic algorithm for single-objective optimization (minimize MAE).
+    Search space: hyperparameters specific to each algorithm.
+    Returns: best_model, best_params, best_score
+    """
+    from scipy.optimize import differential_evolution
+
+    print(f"[Optimization] Running genetic-basic for {algo} (gen={args.gen}, pop={args.pop})")
+
+    # Define search space based on algorithm
+    if algo == "ridge":
+        bounds = [(1e-6, 10.0)]  # alpha
+        param_names = ["alpha"]
+    elif algo == "lasso":
+        bounds = [(1e-6, 10.0)]  # alpha
+        param_names = ["alpha"]
+    elif algo == "elasticnet":
+        bounds = [(1e-6, 10.0), (0.01, 0.99)]  # alpha, l1_ratio
+        param_names = ["alpha", "l1_ratio"]
+    elif algo == "rf":
+        bounds = [(50, 500), (2, 20), (2, 50)]  # n_estimators, max_depth, min_samples_leaf
+        param_names = ["n_estimators", "max_depth", "min_samples_leaf"]
+    else:
+        raise ValueError(f"Optimization not supported for algo: {algo}")
+
+    # Objective function: minimize validation MAE
+    def objective(params):
+        try:
+            if algo == "ridge":
+                model = Ridge(alpha=params[0], random_state=args.random_state)
+            elif algo == "lasso":
+                model = Lasso(alpha=params[0], random_state=args.random_state)
+            elif algo == "elasticnet":
+                model = ElasticNet(alpha=params[0], l1_ratio=params[1], random_state=args.random_state)
+            elif algo == "rf":
+                model = RandomForestRegressor(
+                    n_estimators=int(params[0]),
+                    max_depth=int(params[1]) if params[1] < 50 else None,
+                    min_samples_leaf=int(params[2]),
+                    n_jobs=-1,
+                    random_state=args.random_state
+                )
+
+            model.fit(Xtr, ytr)
+            pred = model.predict(Xva)
+            mae = mean_absolute_error(yva, pred)
+            return mae
+        except Exception as e:
+            print(f"[Optimization] Error evaluating params {params}: {e}")
+            return 1e10  # Return high error on failure
+
+    # Run differential evolution (genetic algorithm)
+    result = differential_evolution(
+        objective,
+        bounds,
+        maxiter=args.gen,
+        popsize=args.pop,
+        seed=args.random_state,
+        polish=False,
+        workers=1,
+        updating='deferred'
+    )
+
+    best_params = result.x
+    best_score = result.fun
+
+    # Build best model with optimal params
+    if algo == "ridge":
+        best_model = Ridge(alpha=best_params[0], random_state=args.random_state)
+    elif algo == "lasso":
+        best_model = Lasso(alpha=best_params[0], random_state=args.random_state)
+    elif algo == "elasticnet":
+        best_model = ElasticNet(alpha=best_params[0], l1_ratio=best_params[1], random_state=args.random_state)
+    elif algo == "rf":
+        best_model = RandomForestRegressor(
+            n_estimators=int(best_params[0]),
+            max_depth=int(best_params[1]) if best_params[1] < 50 else None,
+            min_samples_leaf=int(best_params[2]),
+            n_jobs=-1,
+            random_state=args.random_state
+        )
+
+    best_model.fit(Xtr, ytr)
+
+    params_dict = {name: val for name, val in zip(param_names, best_params)}
+    print(f"[Optimization] Best params: {params_dict}, Best MAE: {best_score:.6f}")
+
+    return best_model, params_dict, best_score
+
+
+def _optimize_nsga2(algo: str, Xtr, ytr, Xva, yva, args):
+    """
+    NSGA-II multi-objective optimization.
+    Objectives: 1) Minimize MAE, 2) Minimize model complexity
+    Returns: best_model (from Pareto front), best_params, best_score
+    """
+    from pymoo.core.problem import ElementwiseProblem
+    from pymoo.algorithms.moo.nsga2 import NSGA2
+    from pymoo.optimize import minimize
+    from pymoo.operators.sampling.rnd import FloatRandomSampling
+    from pymoo.operators.crossover.sbx import SBX
+    from pymoo.operators.mutation.pm import PM
+
+    print(f"[Optimization] Running NSGA-II for {algo} (gen={args.gen}, pop={args.pop})")
+
+    # Define search space and complexity metric
+    if algo == "ridge":
+        xl = np.array([1e-6])  # alpha lower bound
+        xu = np.array([10.0])  # alpha upper bound
+        param_names = ["alpha"]
+
+        def complexity_metric(params):
+            # Ridge: complexity ≈ 1/alpha (less regularization = more complex)
+            return 1.0 / (params[0] + 1e-9)
+
+    elif algo == "lasso":
+        xl = np.array([1e-6])
+        xu = np.array([10.0])
+        param_names = ["alpha"]
+
+        def complexity_metric(params):
+            return 1.0 / (params[0] + 1e-9)
+
+    elif algo == "elasticnet":
+        xl = np.array([1e-6, 0.01])  # alpha, l1_ratio
+        xu = np.array([10.0, 0.99])
+        param_names = ["alpha", "l1_ratio"]
+
+        def complexity_metric(params):
+            return 1.0 / (params[0] + 1e-9)
+
+    elif algo == "rf":
+        xl = np.array([50, 2, 2])  # n_estimators, max_depth, min_samples_leaf
+        xu = np.array([500, 20, 50])
+        param_names = ["n_estimators", "max_depth", "min_samples_leaf"]
+
+        def complexity_metric(params):
+            # RF: complexity ≈ n_estimators × max_depth / min_samples_leaf
+            n_est, max_d, min_leaf = params
+            return (n_est * max_d) / (min_leaf + 1e-9)
+    else:
+        raise ValueError(f"NSGA-II not supported for algo: {algo}")
+
+    # Define multi-objective problem
+    class HyperparameterProblem(ElementwiseProblem):
+        def __init__(self):
+            super().__init__(n_var=len(xl), n_obj=2, n_constr=0, xl=xl, xu=xu)
+
+        def _evaluate(self, x, out, *args, **kwargs):
+            try:
+                # Build model with current params
+                if algo == "ridge":
+                    model = Ridge(alpha=x[0], random_state=args.random_state)
+                elif algo == "lasso":
+                    model = Lasso(alpha=x[0], random_state=args.random_state)
+                elif algo == "elasticnet":
+                    model = ElasticNet(alpha=x[0], l1_ratio=x[1], random_state=args.random_state)
+                elif algo == "rf":
+                    model = RandomForestRegressor(
+                        n_estimators=int(x[0]),
+                        max_depth=int(x[1]) if x[1] < 50 else None,
+                        min_samples_leaf=int(x[2]),
+                        n_jobs=-1,
+                        random_state=args.random_state
+                    )
+
+                model.fit(Xtr, ytr)
+                pred = model.predict(Xva)
+                mae = mean_absolute_error(yva, pred)
+                complexity = complexity_metric(x)
+
+                # Objectives: minimize MAE and complexity
+                out["F"] = [mae, complexity]
+            except Exception as e:
+                print(f"[NSGA-II] Error evaluating {x}: {e}")
+                out["F"] = [1e10, 1e10]  # Penalize failures
+
+    problem = HyperparameterProblem()
+
+    # Configure NSGA-II algorithm
+    algorithm = NSGA2(
+        pop_size=args.pop,
+        sampling=FloatRandomSampling(),
+        crossover=SBX(prob=0.9, eta=15),
+        mutation=PM(eta=20),
+        eliminate_duplicates=True
+    )
+
+    # Run optimization
+    res = minimize(
+        problem,
+        algorithm,
+        ('n_gen', args.gen),
+        seed=args.random_state,
+        verbose=False
+    )
+
+    # Extract Pareto front
+    if res.F is None or len(res.F) == 0:
+        raise RuntimeError("NSGA-II optimization failed to find solutions")
+
+    # Select solution from Pareto front: lowest MAE with reasonable complexity
+    # Strategy: pick solution with lowest MAE among those with complexity < median
+    complexity_values = res.F[:, 1]
+    mae_values = res.F[:, 0]
+    complexity_threshold = np.median(complexity_values)
+
+    # Filter solutions below complexity threshold
+    mask = complexity_values <= complexity_threshold
+    if mask.sum() == 0:
+        # If no solutions below threshold, just pick lowest MAE
+        best_idx = np.argmin(mae_values)
+    else:
+        filtered_mae = mae_values[mask]
+        filtered_indices = np.where(mask)[0]
+        best_idx = filtered_indices[np.argmin(filtered_mae)]
+
+    best_params = res.X[best_idx]
+    best_score = mae_values[best_idx]
+    best_complexity = complexity_values[best_idx]
+
+    # Build final model
+    if algo == "ridge":
+        best_model = Ridge(alpha=best_params[0], random_state=args.random_state)
+    elif algo == "lasso":
+        best_model = Lasso(alpha=best_params[0], random_state=args.random_state)
+    elif algo == "elasticnet":
+        best_model = ElasticNet(alpha=best_params[0], l1_ratio=best_params[1], random_state=args.random_state)
+    elif algo == "rf":
+        best_model = RandomForestRegressor(
+            n_estimators=int(best_params[0]),
+            max_depth=int(best_params[1]) if best_params[1] < 50 else None,
+            min_samples_leaf=int(best_params[2]),
+            n_jobs=-1,
+            random_state=args.random_state
+        )
+
+    best_model.fit(Xtr, ytr)
+
+    params_dict = {name: val for name, val in zip(param_names, best_params)}
+    print(f"[NSGA-II] Pareto front size: {len(res.F)}")
+    print(f"[NSGA-II] Best params: {params_dict}")
+    print(f"[NSGA-II] Best MAE: {best_score:.6f}, Complexity: {best_complexity:.2f}")
+
+    return best_model, params_dict, best_score
 
 def main():
     ap = argparse.ArgumentParser()
@@ -437,6 +687,11 @@ def main():
     ap.add_argument("--session_overlap", type=int, default=30, help="Session overlap in minutes")
     ap.add_argument("--higher_tf", type=str, default="15m", help="Higher timeframe for candlestick patterns")
     ap.add_argument("--vp_bins", type=int, default=50, help="Number of bins for volume profile")
+
+    # Optimization parameters
+    ap.add_argument("--optimization", type=str, choices=["none", "genetic-basic", "nsga2"], default="none", help="Hyperparameter optimization strategy")
+    ap.add_argument("--gen", type=int, default=5, help="Number of generations for genetic algorithm")
+    ap.add_argument("--pop", type=int, default=8, help="Population size for genetic algorithm")
 
     args = ap.parse_args()
 
@@ -555,11 +810,23 @@ def main():
         # No encoder
         encoder_model = None
 
-    model = _fit_model(args.algo, Xtr, ytr, args)
-    model.fit(Xtr, ytr)
+    # Train model with or without optimization
+    optimization_strategy = getattr(args, 'optimization', 'none')
+    optimized_params = {}
 
-    val_pred = model.predict(Xva)
-    mae = float(mean_absolute_error(yva, val_pred))
+    if optimization_strategy == 'genetic-basic':
+        print(f"[Training] Using genetic-basic optimization")
+        model, optimized_params, mae = _optimize_genetic_basic(args.algo, Xtr, ytr, Xva, yva, args)
+    elif optimization_strategy == 'nsga2':
+        print(f"[Training] Using NSGA-II multi-objective optimization")
+        model, optimized_params, mae = _optimize_nsga2(args.algo, Xtr, ytr, Xva, yva, args)
+    else:
+        # Standard training without optimization
+        print(f"[Training] Training {args.algo} with default parameters (no optimization)")
+        model = _fit_model(args.algo, Xtr, ytr, args)
+        model.fit(Xtr, ytr)
+        val_pred = model.predict(Xva)
+        mae = float(mean_absolute_error(yva, val_pred))
 
     out_dir = Path(args.artifacts_dir) / "models"; out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -577,7 +844,7 @@ def main():
 
     run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{args.horizon}_{args.algo}{encoder_suffix}"
 
-    # Save payload with encoder
+    # Save payload with encoder and optimization info
     payload = {
         "model_type": args.algo,
         "model": model,
@@ -589,7 +856,9 @@ def main():
         "features": meta["features"],
         "indicator_tfs": meta["indicator_tfs"],
         "params_used": meta["args_used"],
-        "val_mae": mae
+        "val_mae": mae,
+        "optimization_strategy": optimization_strategy,
+        "optimized_params": optimized_params if optimization_strategy != 'none' else None
     }
 
     out_path = out_dir / f"{run_name}.pkl"

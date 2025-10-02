@@ -1,13 +1,12 @@
 {
   "model_paths": [
-    "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d30_h180_rf_vae16.pkl",
-    "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d30_h180_ridge_pca16.pkl"
+    "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d500_h180_rf_vae16.pkl"
   ],
   "type_basic": true,
   "type_advanced": true,
   "type_rw": false,
   "combine_models": true,
-  "horizons": "1-180m",
+  "horizons": "1-30m, 30m-1h/5m, 1-3h/10m",
   "n_samples": 99,
   "quantiles": "0.05, 0.50, 0.95",
   "indicators": {
@@ -105,7 +104,11 @@
   "warmup_bars": 16,
   "rv_window": 60,
   "returns_window": 100,
-  "min_feature_coverage": 0.05,
+  "min_coverage": 0.15,
+  "override_warmup_bars": true,
+  "override_rv_window": true,
+  "override_returns_window": true,
+  "override_min_coverage": true,
   "session_overlap": true,
   "higher_tf": "15m"
 }

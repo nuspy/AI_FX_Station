@@ -45,8 +45,14 @@ dependencies = [
 
   # Phase 3 Advanced Features Dependencies
   "tensorflow>=2.13.0",
-  "torch>=2.0.0",
-  "scipy>=1.10.0"
+  "torch>=2.8.0",
+  "torchvision>=0.23.0",
+  "torchaudio>=2.8.0",
+  "scipy>=1.10.0",
+
+  # Optimization Libraries
+  "pymoo>=0.6.0",  # NSGA-II multi-objective optimization
+  "autograd>=1.4",  # Required by pymoo
 ]
 
 [project.scripts]

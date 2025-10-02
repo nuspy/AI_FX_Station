@@ -566,16 +566,14 @@ class MarketDataService:
                 e_ms = int(pd.to_datetime(e_dt_plus).value // 1_000_000)
             out_ranges.append((int(s), e_ms))
 
-        # AGGREGATE nearby gaps: merge ranges separated by weekends or small gaps
-        # Use aggressive threshold: 7 days (covers full week: 5 work days + 2 weekend days)
-        # This ensures bootstrap/backfill makes 1 request instead of weekly splits
+        # AGGREGATE nearby gaps: merge ranges separated by less than 1 hour to reduce API calls
         if len(out_ranges) > 1:
-            aggregation_threshold_ms = 7 * 24 * 60 * 60 * 1000  # 7 days (1 week)
+            aggregation_threshold_ms = 60 * 60 * 1000  # 1 hour
             merged: List[Tuple[int, int]] = []
             current_start, current_end = out_ranges[0]
 
             for next_start, next_end in out_ranges[1:]:
-                # If gap between current_end and next_start is small (e.g., weekend), merge them
+                # If gap between current_end and next_start is small, merge them
                 if next_start - current_end < aggregation_threshold_ms:
                     current_end = next_end  # Extend current range
                 else:

@@ -411,7 +411,7 @@ class PlotService(ChartServiceBase):
                 try:
                     view_range = self.ax.viewRange()
                     self._saved_view_range = view_range
-                    logger.debug(f"Saved view range before update: {view_range}")
+                    # PlutoTouch logger.debug(f"Saved view range before update: {view_range}")
                 except Exception as e:
                     logger.debug(f"Could not save view range: {e}")
 
@@ -569,7 +569,7 @@ class PlotService(ChartServiceBase):
                                 plot.removeItem(item)
                             except Exception:
                                 pass
-                    logger.debug(f"Removed {sum(len(items) for items in self._chart_items.values())} chart items, preserved forecasts")
+                    # PlutoTouch logger.debug(f"Removed {sum(len(items) for items in self._chart_items.values())} chart items, preserved forecasts")
 
                 # Initialize dict to save new chart items (candlestick + indicators)
                 self._chart_items = {}
@@ -661,7 +661,7 @@ class PlotService(ChartServiceBase):
                     })
 
                 # Debug: log price data range
-                logger.debug(f"Price data range - close: min={indicator_df['close'].min():.6f}, max={indicator_df['close'].max():.6f}")
+                # PlutoTouch logger.debug(f"Price data range - close: min={indicator_df['close'].min():.6f}, max={indicator_df['close'].max():.6f}")
 
                 for indicator_name in enabled_indicator_names:
                     try:
@@ -704,8 +704,8 @@ class PlotService(ChartServiceBase):
                             y_data = result.values
                             # Debug: log indicator value range
                             valid_data = y_data[~np.isnan(y_data)]
-                            if len(valid_data) > 0:
-                                logger.debug(f"Indicator {indicator_name} ({subplot_type}) - min={valid_data.min():.2f}, max={valid_data.max():.2f}, mean={valid_data.mean():.2f}")
+                            # PlutoTouch if len(valid_data) > 0:
+                                # PlutoTouch logger.debug(f"Indicator {indicator_name} ({subplot_type}) - min={valid_data.min():.2f}, max={valid_data.max():.2f}, mean={valid_data.mean():.2f}")
                             if len(y_data) == len(x_data):
                                 indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
                                 # Save reference to indicator item for later removal
@@ -743,7 +743,7 @@ class PlotService(ChartServiceBase):
                     ax_price.setXRange(x_range[0], x_range[1], padding=0)
                     ax_price.setYRange(y_range[0], y_range[1], padding=0)
                     ax_price.enableAutoRange(enable=False)
-                    logger.debug(f"Restored view range: X={x_range}, Y={y_range}")
+                    # PlutoTouch logger.debug(f"Restored view range: X={x_range}, Y={y_range}")
                 except Exception as e:
                     logger.warning(f"Failed to restore view range: {e}")
                     saved_view_range = None

@@ -15,7 +15,8 @@
       "Bash(find:*)",
       "Bash(if exist:*)",
       "Bash(cmd:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(pip install:*)"
     ],
     "deny": [],
     "ask": []

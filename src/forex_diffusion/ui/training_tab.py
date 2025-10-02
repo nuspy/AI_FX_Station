@@ -5,6 +5,7 @@ import sys
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
+from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -296,6 +297,7 @@ class TrainingTab(QWidget):
         try:
             settings = {
                 # Top controls
+                'model_name': self.model_name_edit.text(),
                 'symbol': self.symbol_combo.currentText(),
                 'timeframe': self.tf_combo.currentText(),
                 'days_history': self.days_spin.value(),
@@ -338,6 +340,14 @@ class TrainingTab(QWidget):
                 'latent_dim': self.latent_dim.value(),
                 'encoder_epochs': self.encoder_epochs.value(),
 
+                # Diffusion parameters
+                'diffusion_timesteps': self.diffusion_timesteps.value(),
+                'learning_rate': self.learning_rate.value(),
+                'batch_size_dl': self.batch_size_dl.value(),
+                'model_channels': self.model_channels.value(),
+                'dropout': self.dropout.value(),
+                'num_heads': self.num_heads.value(),
+
                 # Output directory
                 'output_dir': self.out_dir.text(),
             }
@@ -363,6 +373,8 @@ class TrainingTab(QWidget):
                 settings = json.load(f)
 
             # Top controls
+            if 'model_name' in settings:
+                self.model_name_edit.setText(settings['model_name'])
             if 'symbol' in settings:
                 self.symbol_combo.setCurrentText(settings['symbol'])
             if 'timeframe' in settings:
@@ -438,6 +450,20 @@ class TrainingTab(QWidget):
             if 'encoder_epochs' in settings:
                 self.encoder_epochs.setValue(settings['encoder_epochs'])
 
+            # Diffusion parameters
+            if 'diffusion_timesteps' in settings:
+                self.diffusion_timesteps.setValue(settings['diffusion_timesteps'])
+            if 'learning_rate' in settings:
+                self.learning_rate.setValue(settings['learning_rate'])
+            if 'batch_size_dl' in settings:
+                self.batch_size_dl.setValue(settings['batch_size_dl'])
+            if 'model_channels' in settings:
+                self.model_channels.setValue(settings['model_channels'])
+            if 'dropout' in settings:
+                self.dropout.setValue(settings['dropout'])
+            if 'num_heads' in settings:
+                self.num_heads.setValue(settings['num_heads'])
+
             # Output directory
             if 'output_dir' in settings:
                 self.out_dir.setText(settings['output_dir'])
@@ -458,99 +484,293 @@ class TrainingTab(QWidget):
         super().hideEvent(event)
 
     def _build_top_controls(self):
-        """Build top control row: symbol, timeframe, days, horizon, model, encoder, optimization"""
+        """Build top control row: model name, load/save config buttons, symbol, timeframe, days, horizon, model, encoder, optimization"""
+
+        # Row 0: Model Name + Load/Save Config
+        row0 = QHBoxLayout()
+
+        lbl_name = QLabel("Model Name:")
+        lbl_name.setToolTip(
+            "Nome del modello salvato.\n"
+            "Se impostato: il modello sarà salvato con questo nome.\n"
+            "Se vuoto: il nome sarà generato automaticamente dall'elenco delle features.\n"
+            "Esempio: 'EUR_USD_1h_ridge_multiTF' o 'my_custom_model_v2'"
+        )
+        row0.addWidget(lbl_name)
+
+        self.model_name_edit = QLineEdit()
+        self.model_name_edit.setPlaceholderText("Auto-generate from features")
+        self.model_name_edit.setToolTip(
+            "Nome personalizzato per il modello.\n"
+            "Lascia vuoto per auto-generazione basata su: symbol_timeframe_model_features.\n"
+            "Caratteri permessi: lettere, numeri, underscore, trattino."
+        )
+        row0.addWidget(self.model_name_edit)
+
+        row0.addStretch()
+
+        self.load_config_btn = QPushButton("📂 Load Config")
+        self.load_config_btn.setToolTip(
+            "Carica una configurazione di training salvata da file JSON.\n"
+            "Include tutti i parametri: features, indicatori, hyperparameters.\n"
+            "Utile per: riproducibilità, condivisione config, A/B testing."
+        )
+        self.load_config_btn.clicked.connect(self._on_load_config)
+        row0.addWidget(self.load_config_btn)
+
+        self.save_config_btn = QPushButton("💾 Save Config")
+        self.save_config_btn.setToolTip(
+            "Salva la configurazione attuale in un file JSON.\n"
+            "Include: tutte le feature selezionate, parametri, indicatori.\n"
+            "Non include: dati o modello addestrato (solo configurazione)."
+        )
+        self.save_config_btn.clicked.connect(self._on_save_config)
+        row0.addWidget(self.save_config_btn)
+
+        self.layout.addLayout(row0)
+
+        # Row 1: Symbol, Timeframe, Days, Horizon, Model, Encoder, Opt, Gen, Pop
         top = QHBoxLayout()
 
         # Symbol
         lbl_sym = QLabel("Symbol:")
-        lbl_sym.setToolTip("Coppia valutaria da usare per il training.")
+        lbl_sym.setToolTip(
+            "Coppia valutaria da usare per il training.\n"
+            "Cosa è: asset finanziario su cui addestrare il modello predittivo.\n"
+            "Perché è importante: ogni coppia ha caratteristiche uniche (volatilità, correlazioni).\n"
+            "Best practice: addestra modelli separati per ciascuna coppia (no mixing)."
+        )
         top.addWidget(lbl_sym)
         self.symbol_combo = QComboBox()
         self.symbol_combo.addItems(["EUR/USD", "GBP/USD", "AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"])
-        self.symbol_combo.setToolTip("Seleziona il simbolo per cui addestrare il modello.")
+        self.symbol_combo.setToolTip(
+            "Seleziona il simbolo per cui addestrare il modello.\n"
+            "EUR/USD: coppia più liquida, spread bassi, volatilità media.\n"
+            "GBP/USD: alta volatilità, buona per swing trading.\n"
+            "Exotic pairs (AUD/JPY, etc.): spread alti, pattern diversi."
+        )
         top.addWidget(self.symbol_combo)
 
         # Base timeframe
         lbl_tf = QLabel("Base TF:")
-        lbl_tf.setToolTip("Timeframe base della serie su cui costruire le feature.")
+        lbl_tf.setToolTip(
+            "Timeframe base della serie su cui costruire le feature.\n"
+            "Cosa è: risoluzione temporale delle candele usate come input.\n"
+            "Perché è importante: determina il tipo di trading (scalping vs swing).\n"
+            "Valori bassi (1m, 5m): day trading, scalping, necessita molti dati (anni).\n"
+            "Valori alti (1h, 4h, 1d): swing/position trading, servono meno dati (mesi).\n"
+            "Best practice: usa multi-timeframe analysis (1m base + 5m/15m/1h indicatori)."
+        )
         top.addWidget(lbl_tf)
         self.tf_combo = QComboBox()
         self.tf_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h", "1d"])
         self.tf_combo.setCurrentText("1m")
-        self.tf_combo.setToolTip("Timeframe delle barre usate per il training.")
+        self.tf_combo.setToolTip(
+            "Timeframe delle candele base.\n"
+            "1m: ~1400 candele/giorno, ottimo per scalping, richiede 30+ giorni dati.\n"
+            "5m: ~280 candele/giorno, day trading, richiede 15+ giorni dati.\n"
+            "1h: ~24 candele/giorno, swing trading, richiede 60+ giorni dati.\n"
+            "1d: 1 candela/giorno, position trading, richiede 1+ anno dati."
+        )
         top.addWidget(self.tf_combo)
 
         # Days history
         lbl_days = QLabel("Days:")
-        lbl_days.setToolTip("Numero di giorni storici da usare per l'addestramento.")
+        lbl_days.setToolTip(
+            "Numero di giorni storici da usare per l'addestramento.\n"
+            "Cosa è: quanti giorni passati includere nel dataset di training.\n"
+            "Perché è importante: più dati = migliore generalizzazione, ma training più lento.\n"
+            "Valori bassi (1-7): training veloce, rischio overfitting, buono per test rapidi.\n"
+            "Valori medi (30-90): bilanciamento speed/quality, uso standard.\n"
+            "Valori alti (365-1825): migliore generalizzazione, cattura cicli stagionali, lento.\n"
+            "Best practice: almeno 1000 samples per feature (es. 100 features → 7 giorni su 1m)."
+        )
         top.addWidget(lbl_days)
         self.days_spin = QSpinBox()
         self.days_spin.setRange(1, 3650)
         self.days_spin.setValue(7)
-        self.days_spin.setToolTip("Maggiore è il valore, più dati verranno usati (training più lungo).")
+        self.days_spin.setToolTip(
+            "Giorni di dati storici per training.\n"
+            "1-7: test rapido, pochi dati, rischio overfitting.\n"
+            "30-90: standard, bilanciamento qualità/velocità.\n"
+            "365+: massima qualità, cattura stagionalità, training lungo (ore).\n"
+            "Nota: con TF=1m, 7 giorni ≈ 10K samples. Con TF=1h, 7 giorni ≈ 168 samples."
+        )
         top.addWidget(self.days_spin)
 
         # Horizon
         lbl_h = QLabel("Horizon:")
-        lbl_h.setToolTip("Orizzonte in barre da prevedere durante il training.")
+        lbl_h.setToolTip(
+            "Orizzonte di predizione: quante candele future prevedere.\n"
+            "Cosa è: numero di step temporali futuri da predire (target).\n"
+            "Perché è importante: determina il range temporale della strategia trading.\n"
+            "Valori bassi (1-5): predizioni a breve termine, più accurate, scalping.\n"
+            "Valori medi (10-50): medio termine, swing trading intraday.\n"
+            "Valori alti (100-500): lungo termine, meno accurate, position trading.\n"
+            "Best practice: horizon ≤ 20 per supervised models, 50-500 per diffusion models."
+        )
         top.addWidget(lbl_h)
         self.horizon_spin = QSpinBox()
         self.horizon_spin.setRange(1, 500)
         self.horizon_spin.setValue(5)
-        self.horizon_spin.setToolTip("Numero di passi futuri/target usati in fase di training.")
+        self.horizon_spin.setToolTip(
+            "Numero di candele future da prevedere.\n"
+            "1-5: ottimo per scalping/day trading, alta precisione.\n"
+            "10-20: swing intraday, accuratezza media.\n"
+            "50-100: swing multi-day, serve modello complesso (RF/diffusion).\n"
+            "200-500: lungo termine, solo per diffusion models.\n"
+            "Esempio: TF=1m, horizon=5 → predici prossimi 5 minuti."
+        )
         top.addWidget(self.horizon_spin)
 
         # Model
         lbl_m = QLabel("Model:")
-        lbl_m.setToolTip("Tipo di modello supervisato da addestrare.")
+        lbl_m.setToolTip(
+            "Tipo di modello supervisionato da addestrare.\n"
+            "Cosa è: algoritmo di machine learning per apprendere pattern dai dati.\n"
+            "Perché è importante: determina capacità di catturare relazioni complesse.\n"
+            "Vedi docs/MODELS_COMPARISON.md per confronto dettagliato supervised vs diffusion."
+        )
         top.addWidget(lbl_m)
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["ridge", "lasso", "elasticnet", "rf", "lightning"])
-        self.model_combo.setToolTip("Scegli l'algoritmo di base (regressione lineare regolarizzata o Random Forest).")
+        self.model_combo.addItems(["ridge", "lasso", "elasticnet", "rf", "lightning", "diffusion-ddpm", "diffusion-ddim"])
+        self.model_combo.setToolTip(
+            "Algoritmi disponibili:\n\n"
+            "SUPERVISED (veloce, interpretabile, short-term):\n"
+            "• ridge: regressione lineare L2, velocissimo, baseline ottimo.\n"
+            "• lasso: regressione lineare L1, feature selection automatica.\n"
+            "• elasticnet: combina ridge+lasso, bilanciamento L1/L2.\n"
+            "• rf: Random Forest, cattura non-linearità, robusto, lento.\n"
+            "• lightning: neural network (MLP/LSTM), molto flessibile, richiede GPU.\n\n"
+            "DIFFUSION (lento, generativo, long-term, incertezza):\n"
+            "• diffusion-ddpm: Denoising Diffusion Probabilistic Model, alta qualità.\n"
+            "• diffusion-ddim: DDIM (deterministic), 10x più veloce di DDPM.\n\n"
+            "Raccomandazioni:\n"
+            "- Test rapido: ridge (secondi)\n"
+            "- Production: ridge/rf (minuti, interpretabile)\n"
+            "- Ricerca: lightning/diffusion (ore, GPU consigliata)\n"
+            "- Long-term forecast: diffusion-ddim (genera scenari multipli)"
+        )
         top.addWidget(self.model_combo)
 
         # Encoder
         lbl_e = QLabel("Encoder:")
-        lbl_e.setToolTip("Preprocessore/encoder opzionale per ridurre dimensionalità.")
+        lbl_e.setToolTip(
+            "Preprocessore per ridurre dimensionalità features (opzionale).\n"
+            "Cosa è: trasformazione che comprime features mantenendo info utile.\n"
+            "Perché è importante: riduce overfitting, accelera training, denoise data.\n"
+            "Quando usarlo: se hai >100 features, prova pca/autoencoder.\n"
+            "Quando NON usarlo: se hai <50 features, encoder aggiunge complessità inutile."
+        )
         top.addWidget(lbl_e)
         self.encoder_combo = QComboBox()
         self.encoder_combo.addItems(["none", "pca", "autoencoder", "vae", "latents"])
         self.encoder_combo.setToolTip(
-            "none: nessun encoder\n"
-            "pca: PCA (Principal Component Analysis)\n"
-            "autoencoder: Neural autoencoder (richiede PyTorch)\n"
-            "vae: Variational Autoencoder (richiede PyTorch)\n"
-            "latents: usa encoder pre-addestrato"
+            "Encoder disponibili:\n\n"
+            "• none: nessuna trasformazione, usa features raw.\n"
+            "  Pro: semplicità, interpretabilità.\n"
+            "  Contro: curse of dimensionality con molte features.\n\n"
+            "• pca: Principal Component Analysis (lineare, veloce).\n"
+            "  Pro: velocissimo, deterministico, mantiene varianza principale.\n"
+            "  Contro: assume linearità, perde info non-lineare.\n"
+            "  Quando: 50-200 features, vuoi velocità.\n\n"
+            "• autoencoder: Neural autoencoder (non-lineare, lento).\n"
+            "  Pro: cattura relazioni non-lineari complesse.\n"
+            "  Contro: training lungo, richiede PyTorch, può overfittare.\n"
+            "  Quando: >200 features, hai GPU, dati massivi.\n\n"
+            "• vae: Variational Autoencoder (probabilistico, regolarizzato).\n"
+            "  Pro: versione robusta di autoencoder, meno overfitting.\n"
+            "  Contro: training molto lento, complesso.\n"
+            "  Quando: >500 features, serve robustezza, hai GPU.\n\n"
+            "• latents: usa encoder pre-addestrato salvato.\n"
+            "  Pro: skip training encoder, veloce.\n"
+            "  Quando: hai già addestrato encoder in run precedente."
         )
         top.addWidget(self.encoder_combo)
 
         # Optimization
         lbl_opt = QLabel("Opt:")
-        lbl_opt.setToolTip("Ricerca automatica dell'ipermodello.")
+        lbl_opt.setToolTip(
+            "Ricerca automatica iperparametri (AutoML).\n"
+            "Cosa è: algoritmo evolutivo che trova best hyperparameters.\n"
+            "Perché è importante: ottimizza performance senza tuning manuale.\n"
+            "Quando usarlo: quando non sai quali parametri scegliere.\n"
+            "Quando NON usarlo: per test rapidi (aggiunge ore di training)."
+        )
         top.addWidget(lbl_opt)
         self.opt_combo = QComboBox()
         self.opt_combo.addItems(["none", "genetic-basic", "nsga2"])
-        self.opt_combo.setToolTip("Seleziona se e come ottimizzare automaticamente gli iperparametri.")
+        self.opt_combo.setToolTip(
+            "Metodi di ottimizzazione automatica:\n\n"
+            "• none: usa parametri di default, training veloce (1x).\n"
+            "  Quando: test rapido, parametri già noti.\n\n"
+            "• genetic-basic: algoritmo genetico single-objective.\n"
+            "  Cosa ottimizza: solo MAE (errore).\n"
+            "  Pro: semplice, funziona bene.\n"
+            "  Contro: ignora trade-off (es. accuracy vs complexity).\n"
+            "  Tempo: ~5-20x più lento di 'none' (dipende da gen×pop).\n"
+            "  Quando: vuoi best accuracy, hai tempo.\n\n"
+            "• nsga2: NSGA-II multi-objective optimization.\n"
+            "  Cosa ottimizza: MAE + complessità + robustezza.\n"
+            "  Pro: trova Pareto front, bilanciamento obiettivi.\n"
+            "  Contro: molto lento, complesso interpretare.\n"
+            "  Tempo: ~10-50x più lento di 'none'.\n"
+            "  Quando: ricerca avanzata, vuoi trade-off espliciti.\n\n"
+            "Nota: gen=10, pop=20 → 200 training runs → 200x tempo!"
+        )
         top.addWidget(self.opt_combo)
 
         # Gen
         lbl_gen = QLabel("Gen:")
-        lbl_gen.setToolTip("Numero di generazioni dell'algoritmo genetico.")
+        lbl_gen.setToolTip(
+            "Numero di generazioni dell'algoritmo genetico.\n"
+            "Cosa è: iterazioni evolutive per convergere a soluzione ottima.\n"
+            "Perché è importante: più generazioni = migliore ottimizzazione, ma più lento.\n"
+            "Valori bassi (1-5): esplorazione limitata, veloce, può non convergere.\n"
+            "Valori medi (10-20): bilanciamento, raccomandato.\n"
+            "Valori alti (30-50): convergenza garantita, molto lento.\n"
+            "Best practice: gen × pop ≤ 200 per training ragionevole (<1 giorno)."
+        )
         top.addWidget(lbl_gen)
         self.gen_spin = QSpinBox()
         self.gen_spin.setRange(1, 50)
         self.gen_spin.setValue(5)
-        self.gen_spin.setToolTip("Quante iterazioni evolutive eseguire.")
+        self.gen_spin.setToolTip(
+            "Iterazioni evolutive.\n"
+            "1-5: test rapido, convergenza parziale.\n"
+            "10-20: standard, buon bilanciamento.\n"
+            "30-50: massima qualità, molto lento (giorni).\n\n"
+            "Tempo stimato (gen×pop training runs):\n"
+            "- gen=5, pop=8 → 40 runs → ~40min (ridge), ~4h (rf)\n"
+            "- gen=20, pop=20 → 400 runs → ~6h (ridge), ~2 giorni (rf)"
+        )
         top.addWidget(self.gen_spin)
 
         # Pop
         lbl_pop = QLabel("Pop:")
-        lbl_pop.setToolTip("Dimensione della popolazione per la ricerca evolutiva.")
+        lbl_pop.setToolTip(
+            "Dimensione popolazione algoritmo genetico.\n"
+            "Cosa è: numero di candidati valutati per ogni generazione.\n"
+            "Perché è importante: più popolazione = esplorazione spazio più ampia.\n"
+            "Valori bassi (2-8): poca diversità, convergenza prematura, veloce.\n"
+            "Valori medi (16-32): bilanciamento diversità/velocità.\n"
+            "Valori alti (48-64): massima esplorazione, molto lento.\n"
+            "Best practice: pop ≥ 2 × numero hyperparameters da ottimizzare."
+        )
         top.addWidget(lbl_pop)
         self.pop_spin = QSpinBox()
         self.pop_spin.setRange(2, 64)
         self.pop_spin.setValue(8)
-        self.pop_spin.setToolTip("Quanti candidati valutare per generazione.")
+        self.pop_spin.setToolTip(
+            "Candidati per generazione.\n"
+            "2-8: veloce, poca esplorazione.\n"
+            "16-32: raccomandato, buona diversità.\n"
+            "48-64: massima esplorazione, lentissimo.\n\n"
+            "Trade-off:\n"
+            "- pop bassa + gen alta: convergenza locale (rischio).\n"
+            "- pop alta + gen bassa: esplorazione ampia ma non raffina.\n"
+            "- bilanciato: pop=20, gen=15 → 300 runs → ~5h (ridge)"
+        )
         top.addWidget(self.pop_spin)
 
         self.layout.addLayout(top)
@@ -829,6 +1049,170 @@ class TrainingTab(QWidget):
         self.encoder_epochs.setToolTip("Quante epoche addestrare l'encoder neurale.")
         adv.addWidget(self.encoder_epochs, row, 3)
 
+        row += 1
+
+        # === DIFFUSION MODEL PARAMETERS (only used when model=diffusion-*) ===
+        lbl_diff_section = QLabel("─── Diffusion Model Parameters ───")
+        lbl_diff_section.setStyleSheet("font-weight: bold; color: #2980b9;")
+        adv.addWidget(lbl_diff_section, row, 0, 1, 6)
+        row += 1
+
+        # Diffusion timesteps
+        lbl_timesteps = QLabel("Diffusion timesteps:")
+        lbl_timesteps.setToolTip(
+            "Numero di timesteps del processo di diffusione.\n"
+            "Cosa è: quanti step di denoising usare (T nella formula DDPM).\n"
+            "Perché è importante: più steps = migliore qualità, ma inference più lenta.\n"
+            "Valori bassi (10-50): veloce, qualità media, buono per test rapidi.\n"
+            "Valori medi (100-500): bilanciamento qualità/velocità, raccomandato.\n"
+            "Valori alti (1000-5000): massima qualità, molto lento (minuti per sample).\n"
+            "Best practice: DDPM usa 1000, DDIM può usare 50-200 (10x più veloce).\n"
+            "SOLO per model=diffusion-ddpm o diffusion-ddim."
+        )
+        adv.addWidget(lbl_timesteps, row, 0)
+        self.diffusion_timesteps = QSpinBox()
+        self.diffusion_timesteps.setRange(10, 5000)
+        self.diffusion_timesteps.setValue(200)
+        self.diffusion_timesteps.setToolTip(
+            "T timesteps per denoising.\n"
+            "10-50: test rapido, bassa qualità.\n"
+            "100-500: raccomandato, bilanciato.\n"
+            "1000-5000: ricerca, massima qualità.\n"
+            "Tempo inference: ~T × 50ms per sample (GPU)."
+        )
+        adv.addWidget(self.diffusion_timesteps, row, 1)
+
+        # Learning rate
+        lbl_lr = QLabel("Learning rate:")
+        lbl_lr.setToolTip(
+            "Step size per gradient descent durante training.\n"
+            "Cosa è: quanto velocemente il modello aggiorna i pesi.\n"
+            "Perché è importante: LR troppo alto → divergenza, troppo basso → non converge.\n"
+            "Valori bassi (1e-6 - 1e-5): training stabile ma lentissimo, usa per fine-tuning.\n"
+            "Valori medi (1e-4 - 5e-4): raccomandato per diffusion/lightning, stabile.\n"
+            "Valori alti (1e-3 - 1e-2): training veloce ma instabile, rischio divergenza.\n"
+            "Best practice: diffusion → 1e-4, lightning → 1e-3, usa warmup + scheduler.\n"
+            "SOLO per model=lightning/diffusion-*."
+        )
+        adv.addWidget(lbl_lr, row, 2)
+        self.learning_rate = QDoubleSpinBox()
+        self.learning_rate.setRange(1e-6, 1e-1)
+        self.learning_rate.setSingleStep(1e-5)
+        self.learning_rate.setDecimals(6)
+        self.learning_rate.setValue(1e-4)
+        self.learning_rate.setToolTip(
+            "Step size ottimizzatore.\n"
+            "1e-6 - 1e-5: ultra safe, lentissimo.\n"
+            "1e-4 - 5e-4: raccomandato (diffusion/lightning).\n"
+            "1e-3 - 1e-2: veloce ma rischioso (divergenza).\n"
+            "Monitor loss: se NaN/Inf, riduci LR 10x."
+        )
+        adv.addWidget(self.learning_rate, row, 3)
+
+        # Batch size (diffusion/lightning)
+        lbl_batch_diff = QLabel("Batch size (DL):")
+        lbl_batch_diff.setToolTip(
+            "Numero di samples per batch durante training deep learning.\n"
+            "Cosa è: quanti esempi elaborare in parallelo prima di aggiornare pesi.\n"
+            "Perché è importante: batch grande = gradiente stabile, batch piccolo = più noise.\n"
+            "Valori bassi (4-16): gradient noisy, generalizza meglio, usa meno RAM.\n"
+            "Valori medi (32-128): bilanciamento, raccomandato.\n"
+            "Valori alti (256-512): gradient smooth, converge veloce, serve molta RAM/GPU.\n"
+            "Best practice: max batch che sta in GPU memory, usa gradient accumulation.\n"
+            "SOLO per model=lightning/diffusion-*."
+        )
+        adv.addWidget(lbl_batch_diff, row, 4)
+        self.batch_size_dl = QSpinBox()
+        self.batch_size_dl.setRange(4, 512)
+        self.batch_size_dl.setValue(64)
+        self.batch_size_dl.setToolTip(
+            "Samples per batch (deep learning).\n"
+            "4-16: bassa RAM, gradient noisy, generalizza.\n"
+            "32-128: raccomandato, bilanciato.\n"
+            "256-512: serve GPU potente (8+ GB VRAM).\n"
+            "Nota: diverso da 'Lightning batch' (supervised)."
+        )
+        adv.addWidget(self.batch_size_dl, row, 5)
+
+        row += 1
+
+        # Model channels (UNet capacity)
+        lbl_channels = QLabel("Model channels:")
+        lbl_channels.setToolTip(
+            "Numero di canali base per architettura UNet/Transformer.\n"
+            "Cosa è: capacità del modello (simile a 'width' di una neural network).\n"
+            "Perché è importante: più canali = più parametri = più capacity, ma overfitting.\n"
+            "Valori bassi (32-64): modello piccolo, veloce, rischio underfitting.\n"
+            "Valori medi (128-192): bilanciamento capacity/overfitting, raccomandato.\n"
+            "Valori alti (256-512): massima capacity, solo con dati massivi (>1M samples).\n"
+            "Best practice: 128 per dataset medi, 256 per dataset grandi (anni di 1m data).\n"
+            "SOLO per model=diffusion-* (parametri UNet = channels² × layers)."
+        )
+        adv.addWidget(lbl_channels, row, 0)
+        self.model_channels = QSpinBox()
+        self.model_channels.setRange(32, 512)
+        self.model_channels.setValue(128)
+        self.model_channels.setToolTip(
+            "Canali base UNet.\n"
+            "32-64: modello piccolo, <1M params, veloce.\n"
+            "128-192: raccomandato, ~5-20M params.\n"
+            "256-512: modello enorme, >50M params, serve GPU potente.\n"
+            "Parametri totali ≈ channels² × num_layers."
+        )
+        adv.addWidget(self.model_channels, row, 1)
+
+        # Dropout
+        lbl_dropout = QLabel("Dropout:")
+        lbl_dropout.setToolTip(
+            "Frazione di neuroni disattivati random durante training (regolarizzazione).\n"
+            "Cosa è: tecnica per prevenire overfitting disattivando random connections.\n"
+            "Perché è importante: riduce overfitting, forza il modello a essere robusto.\n"
+            "Valori bassi (0.0-0.1): nessuna/poca regolarizzazione, rischio overfitting.\n"
+            "Valori medi (0.1-0.3): bilanciamento, raccomandato per la maggior parte dei casi.\n"
+            "Valori alti (0.4-0.6): forte regolarizzazione, rischio underfitting.\n"
+            "Best practice: 0.0 per dataset piccoli, 0.1-0.3 per dataset grandi.\n"
+            "SOLO per model=lightning/diffusion-* (neural networks)."
+        )
+        adv.addWidget(lbl_dropout, row, 2)
+        self.dropout = QDoubleSpinBox()
+        self.dropout.setRange(0.0, 0.6)
+        self.dropout.setSingleStep(0.05)
+        self.dropout.setDecimals(2)
+        self.dropout.setValue(0.1)
+        self.dropout.setToolTip(
+            "Dropout probability.\n"
+            "0.0: nessuna regolarizzazione (overfitting risk).\n"
+            "0.1-0.3: raccomandato, bilanciato.\n"
+            "0.4-0.6: forte regolarizzazione (underfitting risk).\n"
+            "Disabilitato durante inference (automatico)."
+        )
+        adv.addWidget(self.dropout, row, 3)
+
+        # Num heads (Transformer)
+        lbl_heads = QLabel("Attention heads:")
+        lbl_heads.setToolTip(
+            "Numero di teste di attenzione per architettura Transformer.\n"
+            "Cosa è: parallelizzazione del meccanismo di attention (multi-head attention).\n"
+            "Perché è importante: più heads = cattura pattern diversi in parallelo.\n"
+            "Valori bassi (1-2): attenzione semplice, veloce, capacity limitata.\n"
+            "Valori medi (4-8): raccomandato, bilanciamento capacity/complessità.\n"
+            "Valori alti (12-16): massima capacity, solo per dataset massivi.\n"
+            "Best practice: num_heads deve dividere model_channels (es. 128/8=16).\n"
+            "SOLO per model=diffusion-* con architecture=transformer."
+        )
+        adv.addWidget(lbl_heads, row, 4)
+        self.num_heads = QSpinBox()
+        self.num_heads.setRange(1, 16)
+        self.num_heads.setValue(8)
+        self.num_heads.setToolTip(
+            "Teste attention (Transformer).\n"
+            "1-2: semplice, veloce.\n"
+            "4-8: raccomandato (standard).\n"
+            "12-16: massima capacity (GPT-like).\n"
+            "Vincolo: model_channels % num_heads == 0."
+        )
+        adv.addWidget(self.num_heads, row, 5)
+
         self.layout.addWidget(adv_box)
 
     def _build_output_section(self):
@@ -938,8 +1322,7 @@ class TrainingTab(QWidget):
             root = Path(__file__).resolve().parents[3]
 
             strategy = self.opt_combo.currentText()
-            if strategy != 'none' and model != 'lightning':
-                self._append_log(f"[warn] Optimization '{strategy}' non implementata nel trainer sklearn; eseguo una singola fit.")
+            # Optimization is now implemented for both sklearn and lightning models
 
             from datetime import datetime, timezone
 
@@ -1038,6 +1421,9 @@ class TrainingTab(QWidget):
                     '--session_overlap', str(int(self.session_overlap.value())),
                     '--higher_tf', self.higher_tf_combo.currentText(),
                     '--vp_bins', str(int(self.vp_bins.value())),
+                    '--optimization', strategy,
+                    '--gen', str(int(self.gen_spin.value())),
+                    '--pop', str(int(self.pop_spin.value())),
                     '--random_state', '0',
                     '--n_estimators', '400',
                 ]
@@ -1185,3 +1571,203 @@ class TrainingTab(QWidget):
             QMessageBox.information(self, "Training", "Training completato.")
         else:
             QMessageBox.warning(self, "Training", "Training fallito.")
+
+    def _on_load_config(self):
+        """Load training configuration from JSON file"""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load Training Config",
+                str(Path.home()),
+                "JSON Files (*.json);;All Files (*.*)"
+            )
+            if not file_path:
+                return
+
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            # Top controls
+            if 'model_name' in config:
+                self.model_name_edit.setText(config['model_name'])
+            if 'symbol' in config:
+                self.symbol_combo.setCurrentText(config['symbol'])
+            if 'timeframe' in config:
+                self.tf_combo.setCurrentText(config['timeframe'])
+            if 'days_history' in config:
+                self.days_spin.setValue(config['days_history'])
+            if 'horizon' in config:
+                self.horizon_spin.setValue(config['horizon'])
+            if 'model' in config:
+                self.model_combo.setCurrentText(config['model'])
+            if 'encoder' in config:
+                self.encoder_combo.setCurrentText(config['encoder'])
+            if 'optimization' in config:
+                self.opt_combo.setCurrentText(config['optimization'])
+            if 'gen' in config:
+                self.gen_spin.setValue(config['gen'])
+            if 'pop' in config:
+                self.pop_spin.setValue(config['pop'])
+
+            # Indicator selections
+            if 'use_indicators' in config:
+                self.use_indicators_check.setChecked(config['use_indicators'])
+            if 'indicator_tfs' in config:
+                for ind, tfs in config['indicator_tfs'].items():
+                    if ind in self.indicator_checks:
+                        for tf, cb in self.indicator_checks[ind].items():
+                            cb.setChecked(tf in tfs)
+
+            # Additional features
+            if 'returns_enabled' in config:
+                self.returns_check.setChecked(config['returns_enabled'])
+            if 'returns_window' in config:
+                self.returns_window.setValue(config['returns_window'])
+            if 'sessions_enabled' in config:
+                self.sessions_check.setChecked(config['sessions_enabled'])
+            if 'session_overlap' in config:
+                self.session_overlap.setValue(config['session_overlap'])
+            if 'candlestick_enabled' in config:
+                self.candlestick_check.setChecked(config['candlestick_enabled'])
+            if 'higher_tf' in config:
+                self.higher_tf_combo.setCurrentText(config['higher_tf'])
+            if 'volume_profile_enabled' in config:
+                self.volume_profile_check.setChecked(config['volume_profile_enabled'])
+            if 'vp_bins' in config:
+                self.vp_bins.setValue(config['vp_bins'])
+
+            # Advanced parameters
+            if 'warmup_bars' in config:
+                self.warmup.setValue(config['warmup_bars'])
+            if 'rv_window' in config:
+                self.rv_w.setValue(config['rv_window'])
+            if 'min_coverage' in config:
+                self.min_coverage.setValue(config['min_coverage'])
+            if 'atr_n' in config:
+                self.atr_n.setValue(config['atr_n'])
+            if 'rsi_n' in config:
+                self.rsi_n.setValue(config['rsi_n'])
+            if 'bb_n' in config:
+                self.bb_n.setValue(config['bb_n'])
+            if 'hurst_window' in config:
+                self.hurst_w.setValue(config['hurst_window'])
+            if 'light_epochs' in config:
+                self.light_epochs.setValue(config['light_epochs'])
+            if 'light_batch' in config:
+                self.light_batch.setValue(config['light_batch'])
+            if 'light_val_frac' in config:
+                self.light_val_frac.setValue(config['light_val_frac'])
+            if 'patch_len' in config:
+                self.patch_len.setValue(config['patch_len'])
+            if 'latent_dim' in config:
+                self.latent_dim.setValue(config['latent_dim'])
+            if 'encoder_epochs' in config:
+                self.encoder_epochs.setValue(config['encoder_epochs'])
+
+            # Diffusion parameters
+            if 'diffusion_timesteps' in config:
+                self.diffusion_timesteps.setValue(config['diffusion_timesteps'])
+            if 'learning_rate' in config:
+                self.learning_rate.setValue(config['learning_rate'])
+            if 'batch_size_dl' in config:
+                self.batch_size_dl.setValue(config['batch_size_dl'])
+            if 'model_channels' in config:
+                self.model_channels.setValue(config['model_channels'])
+            if 'dropout' in config:
+                self.dropout.setValue(config['dropout'])
+            if 'num_heads' in config:
+                self.num_heads.setValue(config['num_heads'])
+
+            # Output directory
+            if 'output_dir' in config:
+                self.out_dir.setText(config['output_dir'])
+
+            QMessageBox.information(self, "Load Config", f"Configurazione caricata da:\n{file_path}")
+            logger.info(f"Training configuration loaded from {file_path}")
+
+        except Exception as e:
+            logger.exception(f"Failed to load config: {e}")
+            QMessageBox.critical(self, "Load Config Error", f"Errore nel caricamento configurazione:\n{e}")
+
+    def _on_save_config(self):
+        """Save current training configuration to JSON file"""
+        try:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Training Config",
+                str(Path.home() / "training_config.json"),
+                "JSON Files (*.json);;All Files (*.*)"
+            )
+            if not file_path:
+                return
+
+            config = {
+                # Metadata
+                'config_version': '1.0',
+                'created_at': datetime.now().isoformat(),
+
+                # Top controls
+                'model_name': self.model_name_edit.text(),
+                'symbol': self.symbol_combo.currentText(),
+                'timeframe': self.tf_combo.currentText(),
+                'days_history': self.days_spin.value(),
+                'horizon': self.horizon_spin.value(),
+                'model': self.model_combo.currentText(),
+                'encoder': self.encoder_combo.currentText(),
+                'optimization': self.opt_combo.currentText(),
+                'gen': self.gen_spin.value(),
+                'pop': self.pop_spin.value(),
+
+                # Indicator selections
+                'use_indicators': self.use_indicators_check.isChecked(),
+                'indicator_tfs': {
+                    ind: [tf for tf, cb in self.indicator_checks[ind].items() if cb.isChecked()]
+                    for ind in INDICATORS
+                },
+
+                # Additional features
+                'returns_enabled': self.returns_check.isChecked(),
+                'returns_window': self.returns_window.value(),
+                'sessions_enabled': self.sessions_check.isChecked(),
+                'session_overlap': self.session_overlap.value(),
+                'candlestick_enabled': self.candlestick_check.isChecked(),
+                'higher_tf': self.higher_tf_combo.currentText(),
+                'volume_profile_enabled': self.volume_profile_check.isChecked(),
+                'vp_bins': self.vp_bins.value(),
+
+                # Advanced parameters
+                'warmup_bars': self.warmup.value(),
+                'rv_window': self.rv_w.value(),
+                'min_coverage': self.min_coverage.value(),
+                'atr_n': self.atr_n.value(),
+                'rsi_n': self.rsi_n.value(),
+                'bb_n': self.bb_n.value(),
+                'hurst_window': self.hurst_w.value(),
+                'light_epochs': self.light_epochs.value(),
+                'light_batch': self.light_batch.value(),
+                'light_val_frac': self.light_val_frac.value(),
+                'patch_len': self.patch_len.value(),
+                'latent_dim': self.latent_dim.value(),
+                'encoder_epochs': self.encoder_epochs.value(),
+
+                # Diffusion parameters
+                'diffusion_timesteps': self.diffusion_timesteps.value(),
+                'learning_rate': self.learning_rate.value(),
+                'batch_size_dl': self.batch_size_dl.value(),
+                'model_channels': self.model_channels.value(),
+                'dropout': self.dropout.value(),
+                'num_heads': self.num_heads.value(),
+
+                # Output directory
+                'output_dir': self.out_dir.text(),
+            }
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+
+            QMessageBox.information(self, "Save Config", f"Configurazione salvata in:\n{file_path}")
+            logger.info(f"Training configuration saved to {file_path}")
+
+        except Exception as e:
+            logger.exception(f"Failed to save config: {e}")
+            QMessageBox.critical(self, "Save Config Error", f"Errore nel salvataggio configurazione:\n{e}")

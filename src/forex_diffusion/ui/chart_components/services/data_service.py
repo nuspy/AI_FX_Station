@@ -78,7 +78,7 @@ class DataService(ChartServiceBase):
 
                 # mark dirty for throttled redraw
                 self._rt_dirty = True
-                logger.debug(f"Tick received for {sym}: price={y}, ts={ts}, marked dirty")
+                # PlutoTouch logger.debug(f"Tick received for {sym}: price={y}, ts={ts}, marked dirty")
         except Exception as e:
             logger.exception("Failed to handle tick on GUI: {}", e)
 
@@ -88,7 +88,7 @@ class DataService(ChartServiceBase):
             if not getattr(self, "_rt_dirty", False):
                 return
             self._rt_dirty = False
-            logger.debug("RT flush triggered, updating chart")
+            # PlutoTouch logger.debug("RT flush triggered, updating chart")
             # preserve current view
             try:
                 # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
@@ -688,11 +688,11 @@ class DataService(ChartServiceBase):
             finished = Signal(bool)
 
         class BackfillJob(QRunnable):
-            def __init__(self, svc, symbol, timeframe, start_override, signals):
+            def __init__(self, svc, symbol, timeframes, start_override, signals):
                 super().__init__()
                 self.svc = svc
                 self.symbol = symbol
-                self.timeframe = timeframe
+                self.timeframes = timeframes  # Now accepts list of all timeframes
                 self.start_override = start_override
                 self.signals = signals
 
@@ -705,12 +705,18 @@ class DataService(ChartServiceBase):
                         self.svc.rest_enabled = True
                     except Exception:
                         pass
-                    def _cb(pct: int):
-                        try:
-                            self.signals.progress.emit(int(pct))
-                        except Exception:
-                            pass
-                    self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
+
+                    # Backfill ALL timeframes, not just the displayed one
+                    total_tfs = len(self.timeframes)
+                    for i, tf in enumerate(self.timeframes):
+                        def _cb(pct: int):
+                            try:
+                                # Calculate overall progress across all timeframes
+                                overall_pct = int((i * 100 + pct) / total_tfs)
+                                self.signals.progress.emit(overall_pct)
+                            except Exception:
+                                pass
+                        self.svc.backfill_symbol_timeframe(self.symbol, tf, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
                 except Exception as e:
                     ok = False
                 finally:
@@ -727,6 +733,7 @@ class DataService(ChartServiceBase):
         self.setDisabled(True)
         self.backfill_progress.setRange(0, 100)
         self.backfill_progress.setValue(0)
+        self.backfill_progress.setVisible(True)  # Show progress bar when starting
 
         self._bf_signals = BackfillSignals(self.view)
         self._bf_signals.progress.connect(self.backfill_progress.setValue)
@@ -746,15 +753,18 @@ class DataService(ChartServiceBase):
                 if df is not None and not df.empty:
                     self.update_plot(df)
                 if ok:
-                    QMessageBox.information(self.view, "Backfill", f"Backfill completato per {sym} {tf}.")
+                    QMessageBox.information(self.view, "Backfill", f"Backfill completato per {sym}.")
                 else:
                     QMessageBox.warning(self.view, "Backfill", "Backfill fallito (vedi log).")
             finally:
                 self.setDisabled(False)
                 self.backfill_progress.setValue(100)
+                self.backfill_progress.setVisible(False)  # Hide progress bar when done
 
         self._bf_signals.finished.connect(_on_done)
-        job = BackfillJob(ms, sym, tf, start_override, self._bf_signals)
+        # Backfill ALL timeframes, not just the currently displayed one
+        all_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+        job = BackfillJob(ms, sym, all_timeframes, start_override, self._bf_signals)
         QThreadPool.globalInstance().start(job)
 
     def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None, end_ms: Optional[int] = None):
