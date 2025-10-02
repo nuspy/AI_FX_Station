@@ -292,9 +292,14 @@ class UIBuilderMixin:
         row1_layout.addWidget(self.tf_combo)
 
         # Data range controls
-        row1_layout.addWidget(QLabel("Range:"))
+        row1_layout.addWidget(QLabel("Years:"))
+        self.years_combo = QComboBox()
+        self.years_combo.addItems(["0", "1", "2", "3", "5", "10", "20", "30"])
+        row1_layout.addWidget(self.years_combo)
+
+        row1_layout.addWidget(QLabel("Months:"))
         self.months_combo = QComboBox()
-        self.months_combo.addItems(["1", "3", "6", "12", "24", "All"])
+        self.months_combo.addItems(["0", "1", "3", "6", "9", "12"])
         row1_layout.addWidget(self.months_combo)
 
         row1_layout.addStretch()
@@ -302,6 +307,14 @@ class UIBuilderMixin:
         # Chart controls
         self.backfill_btn = QPushButton("📊 Backfill")
         row1_layout.addWidget(self.backfill_btn)
+
+        # Backfill progress bar (initially hidden)
+        self.backfill_progress = QProgressBar()
+        self.backfill_progress.setRange(0, 100)
+        self.backfill_progress.setValue(0)
+        self.backfill_progress.setVisible(False)
+        self.backfill_progress.setMaximumWidth(150)
+        row1_layout.addWidget(self.backfill_progress)
 
         self.indicators_btn = QPushButton("📈 Indicators")
         row1_layout.addWidget(self.indicators_btn)
