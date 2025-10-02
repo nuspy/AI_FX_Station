@@ -254,6 +254,10 @@ class UIController:
                 # Determina se usare advanced features
                 is_advanced = forecast_type == "advanced"
 
+                # Get current timestamp for forecast anchor
+                import time
+                requested_at_ms = int(time.time() * 1000)
+
                 payload = {
                     "symbol": symbol,
                     "timeframe": timeframe,
@@ -267,6 +271,9 @@ class UIController:
                     "forecast_type": forecast_type,
                     "advanced": is_advanced,
                     "allowed_models": list(models),
+
+                    # Forecast anchor timestamp (for connecting to price line)
+                    "requested_at_ms": requested_at_ms,
 
                     # Advanced features configuration
                     "use_advanced_features": is_advanced,

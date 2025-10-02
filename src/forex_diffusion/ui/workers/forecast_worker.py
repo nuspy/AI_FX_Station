@@ -637,18 +637,82 @@ class ForecastWorker(QRunnable):
             mean_returns = np.array(ensemble_preds["mean"])
             std_returns = np.array(ensemble_preds["std"])
 
+            # === ENHANCED MULTI-HORIZON SYSTEM (Ripristinato) ===
+            use_enhanced_scaling = self.payload.get("use_enhanced_scaling", True)
+            scenario = self.payload.get("trading_scenario")
+            scaling_mode = self.payload.get("scaling_mode", "smart_adaptive")
+
             # Scale to match horizon count
             if len(mean_returns) != len(horizons_bars):
                 if len(mean_returns) == 1:
-                    # Single prediction, replicate for each horizon
-                    # We CANNOT scale linearly - that's mathematically wrong
-                    # The compound accumulation will create the proper trajectory
                     base_return = mean_returns[0]
                     base_std = std_returns[0]
-                    mean_returns = np.full(len(horizons_bars), base_return)
-                    # For std, we scale by sqrt(time) as variance scales linearly with time
-                    std_returns = np.array([base_std * np.sqrt(i+1) for i in range(len(horizons_bars))])
-                    logger.debug(f"Parallel ensemble: replicated single return {base_return:.6f} to {len(horizons_bars)} horizons")
+
+                    # Apply Enhanced Multi-Horizon if enabled
+                    if use_enhanced_scaling:
+                        try:
+                            from ...utils.horizon_converter import convert_single_to_multi_horizon
+
+                            # Get recent market data for regime detection
+                            market_data = df_candles.tail(100) if len(df_candles) >= 100 else df_candles
+
+                            logger.info(f"[Enhanced Multi-Horizon] Converting single prediction using {scaling_mode} mode")
+
+                            # Convert single prediction to multi-horizon using smart scaling
+                            multi_horizon_results = convert_single_to_multi_horizon(
+                                base_prediction=base_return,
+                                base_timeframe=tf,
+                                target_horizons=horizons_time_labels,
+                                scenario=scenario,
+                                scaling_mode=scaling_mode,
+                                market_data=market_data,
+                                uncertainty_bands=True
+                            )
+
+                            # Extract predictions and uncertainty info
+                            scaled_preds = []
+                            uncertainty_data = {}
+
+                            for i, horizon in enumerate(horizons_time_labels):
+                                if horizon in multi_horizon_results:
+                                    result = multi_horizon_results[horizon]
+                                    scaled_preds.append(result["prediction"])
+                                    uncertainty_data[horizon] = {
+                                        "lower": result["lower"],
+                                        "upper": result["upper"],
+                                        "confidence": result["confidence"],
+                                        "regime": result["regime"],
+                                        "scaling_mode": result["scaling_mode"]
+                                    }
+                                else:
+                                    # Fallback: replicate base prediction
+                                    scaled_preds.append(base_return)
+
+                            mean_returns = np.array(scaled_preds)
+
+                            # Store uncertainty data for later use
+                            self.payload["enhanced_uncertainty"] = uncertainty_data
+
+                            # For std, scale based on uncertainty bands
+                            std_returns = np.array([
+                                (uncertainty_data.get(h, {}).get("upper", base_return) -
+                                 uncertainty_data.get(h, {}).get("lower", base_return)) / 3.29  # 90% CI → std
+                                for h in horizons_time_labels
+                            ])
+
+                            logger.info(f"[Enhanced Multi-Horizon] Completed: {len(horizons_time_labels)} horizons using {scaling_mode}")
+
+                        except Exception as e:
+                            logger.warning(f"[Enhanced Multi-Horizon] Failed, using simple replication: {e}")
+                            # Fallback: simple replication
+                            mean_returns = np.full(len(horizons_bars), base_return)
+                            std_returns = np.array([base_std * np.sqrt(i+1) for i in range(len(horizons_bars))])
+                    else:
+                        # Simple replication (NO Enhanced)
+                        logger.debug(f"[Simple Replication] Single return {base_return:.6f} → {len(horizons_bars)} horizons")
+                        mean_returns = np.full(len(horizons_bars), base_return)
+                        std_returns = np.array([base_std * np.sqrt(i+1) for i in range(len(horizons_bars))])
+
                 else:
                     # Extend or truncate to match
                     target_len = len(horizons_bars)

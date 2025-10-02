@@ -124,23 +124,23 @@ class DeviceManager:
         logger.info("=" * 50)
 
         if info["cuda_available"]:
-            logger.info(f"✅ CUDA Available: YES")
-            logger.info(f"   GPU: {info['cuda_device_name']}")
-            logger.info(f"   CUDA Version: {info['cuda_version']}")
-            logger.info(f"   Device Count: {info['cuda_device_count']}")
+            logger.info(f"[+] CUDA Available: YES")
+            logger.info(f"    GPU: {info['cuda_device_name']}")
+            logger.info(f"    CUDA Version: {info['cuda_version']}")
+            logger.info(f"    Device Count: {info['cuda_device_count']}")
             if info["cuda_memory_total_gb"]:
-                logger.info(f"   Total Memory: {info['cuda_memory_total_gb']} GB")
-                logger.info(f"   Free Memory: {info['cuda_memory_free_gb']} GB")
+                logger.info(f"    Total Memory: {info['cuda_memory_total_gb']} GB")
+                logger.info(f"    Free Memory: {info['cuda_memory_free_gb']} GB")
         else:
-            logger.info(f"❌ CUDA Available: NO")
+            logger.info(f"[-] CUDA Available: NO")
 
         if info["mps_available"]:
-            logger.info(f"✅ Apple MPS Available: YES")
+            logger.info(f"[+] Apple MPS Available: YES")
         else:
-            logger.info(f"❌ Apple MPS Available: NO")
+            logger.info(f"[-] Apple MPS Available: NO")
 
-        logger.info(f"💻 CPU Threads: {info['cpu_count']}")
-        logger.info(f"🎯 Recommended Device: {info['recommended_device'].upper()}")
+        logger.info(f"[CPU] Threads: {info['cpu_count']}")
+        logger.info(f"[REC] Recommended Device: {info['recommended_device'].upper()}")
         logger.info("=" * 50)
 
     @staticmethod

@@ -224,7 +224,7 @@ class ForecastService(ChartServiceBase):
             if anchor_price is not None:
                 # This forecast was requested with Alt+Click, show precision badge
                 try:
-                    from ..services.performance_registry import get_performance_registry
+                    from ....services.performance_registry import get_performance_registry
                     registry = get_performance_registry()
 
                     # Get model performance stats

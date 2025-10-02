@@ -221,7 +221,7 @@ class SklearnAutoencoder:
         if DeviceManager:
             self.device = DeviceManager.get_device(device)
             if self.verbose and self.device.type == "cuda":
-                logger.info(f"🚀 Autoencoder will use GPU: {torch.cuda.get_device_name(0)}")
+                logger.info(f"[GPU] Autoencoder will use GPU: {torch.cuda.get_device_name(0)}")
         else:
             # Fallback to legacy logic
             if device == "auto" or device is None:
@@ -365,7 +365,7 @@ class SklearnVAE:
         if DeviceManager:
             self.device = DeviceManager.get_device(device)
             if self.verbose and self.device.type == "cuda":
-                logger.info(f"🚀 VAE will use GPU: {torch.cuda.get_device_name(0)}")
+                logger.info(f"[GPU] VAE will use GPU: {torch.cuda.get_device_name(0)}")
         else:
             # Fallback to legacy logic
             if device == "auto" or device is None:

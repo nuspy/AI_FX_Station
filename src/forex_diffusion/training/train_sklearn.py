@@ -201,28 +201,50 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
         base_delta = _timeframe_to_timedelta(base_tf)
     except Exception:
         base_delta = pd.Timedelta("1min")
+
+    # OPTIMIZATION: Pre-fetch all timeframes needed (cache to avoid redundant DB queries)
+    timeframe_cache: Dict[str, pd.DataFrame] = {base_tf: df.copy()}
+
+    # Collect all unique timeframes needed
+    unique_tfs = set([base_tf])
+    for name in ind_cfg.keys():
+        key = str(name).lower()
+        tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
+        unique_tfs.update(tfs)
+
+    # Pre-fetch all non-base timeframes ONCE
+    for tf in unique_tfs:
+        if tf != base_tf and tf not in timeframe_cache:
+            try:
+                if symbol and days_history:
+                    logger.info(f"[CACHE] Pre-fetching {tf} candles from DB (will be reused for all indicators)")
+                    timeframe_cache[tf] = fetch_candles_from_db(symbol, tf, days_history)
+                    logger.debug(f"[CACHE] Cached {tf}: {timeframe_cache[tf].shape[0]} rows")
+                else:
+                    # Fallback to resample if symbol/days_history not provided
+                    logger.warning(f"Symbol/days_history not provided, falling back to resample for {tf}")
+                    timeframe_cache[tf] = _resample(df, tf)
+            except Exception as e:
+                logger.exception(f"Failed to pre-fetch {tf} candles: {e}")
+                # Don't cache failed fetches
+
+    logger.info(f"[CACHE] Pre-fetched {len(timeframe_cache)} timeframes: {list(timeframe_cache.keys())}")
+
+    # Now process indicators using cached data
     for name, params in ind_cfg.items():
         key = str(name).lower()
         tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
         for tf in tfs:
-            tmp = df.copy()
-            logger.debug(f"Processing indicator {key} for TF {tf}, tmp shape before fetch/resample: {tmp.shape}")
-            if tf != base_tf:
-                # NEW STRATEGY: Query DB directly for this timeframe instead of resampling
-                # This avoids data quality issues with gaps in resampled data
-                try:
-                    if symbol and days_history:
-                        logger.info(f"Fetching {tf} candles directly from DB for indicator {key} (no resampling)")
-                        tmp = fetch_candles_from_db(symbol, tf, days_history)
-                        logger.debug(f"After DB fetch for {tf}, tmp shape: {tmp.shape}")
-                    else:
-                        # Fallback to resample if symbol/days_history not provided (backward compatibility)
-                        logger.warning(f"Symbol/days_history not provided, falling back to resample for {tf}")
-                        tmp = _resample(tmp, tf)
-                        logger.debug(f"After resample to {tf}, tmp shape: {tmp.shape}")
-                except Exception as e:
-                    logger.exception(f"Failed to fetch {tf} candles from DB for indicator {key}: {e}")
-                    continue
+            logger.debug(f"Processing indicator {key} for TF {tf}")
+
+            # Use cached data instead of fetching again
+            if tf in timeframe_cache:
+                tmp = timeframe_cache[tf].copy()
+                logger.debug(f"[CACHE HIT] Using cached {tf} data for {key}")
+            else:
+                logger.warning(f"[CACHE MISS] TF {tf} not in cache, skipping indicator {key}_{tf}")
+                continue
+
             tmp = _ensure_dt_index(tmp)
             logger.debug(f"Indicator {key}_{tf}: final tmp shape = {tmp.shape} (need ≥14 for ATR/RSI)")
             cols: Dict[str, pd.Series] = {}
