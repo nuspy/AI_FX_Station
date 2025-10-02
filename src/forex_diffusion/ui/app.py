@@ -96,13 +96,13 @@ def setup_ui(
     # Keep other tabs disabled for now to isolate any issues
     from PySide6.QtWidgets import QLabel
     signals_tab = QLabel("Signals tab temporarily disabled")
-    backtesting_tab = QLabel("Backtesting tab temporarily disabled")
+    backtesting_tab = BacktestingTab(main_window)  # Reactivated main Backtesting tab
     reports_3d_tab = QLabel("3D Reports tab temporarily disabled")
 
     tab_widget.addTab(chart_tab, "Chart")
     tab_widget.addTab(training_tab, "Training")
     tab_widget.addTab(signals_tab, "Signals (Temp)")
-    tab_widget.addTab(backtesting_tab, "Backtesting (Temp)")
+    tab_widget.addTab(backtesting_tab, "Backtesting")
     tab_widget.addTab(reports_3d_tab, "3D Reports (Temp)")
     layout.addWidget(tab_widget)
 

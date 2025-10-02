@@ -787,10 +787,8 @@ class ForecastWorker(QRunnable):
                             "scaling_mode": result["scaling_mode"]
                         }
                     else:
-                        # Fallback to linear scaling
-                        bars = horizons_bars[i]
-                        scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
-                        scaled_preds.append(base_pred * scale_factor)
+                        # Fallback: replicate base prediction (NO linear scaling - that's wrong!)
+                        scaled_preds.append(base_pred)
 
                 preds = np.array(scaled_preds)
 

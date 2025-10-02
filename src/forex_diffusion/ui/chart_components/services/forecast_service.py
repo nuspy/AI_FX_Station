@@ -219,6 +219,41 @@ class ForecastService(ChartServiceBase):
             )
             artists = [line50]
 
+            # Add precision index badge if forecast was requested with Alt+Click
+            anchor_price = quantiles.get("anchor_price")
+            if anchor_price is not None:
+                # This forecast was requested with Alt+Click, show precision badge
+                try:
+                    from ..services.performance_registry import get_performance_registry
+                    registry = get_performance_registry()
+
+                    # Get model performance stats
+                    stats = registry.get_model_performance(model_name, days_back=30)
+                    accuracy = stats.accuracy
+
+                    # Create badge at the end of the forecast line
+                    last_x = x_numeric[-1]
+                    last_y = q50_arr[-1]
+
+                    # Create text with accuracy percentage
+                    accuracy_text = f"{accuracy*100:.1f}%"
+
+                    # Create TextItem for the badge
+                    text_item = pg.TextItem(
+                        text=accuracy_text,
+                        color=color,  # Border color = main line color
+                        fill=pg.mkBrush(color + '40'),  # Background = secondary line color (with alpha)
+                        anchor=(0, 0.5),  # Anchor to left-center
+                        border=pg.mkPen(color, width=2)  # Border
+                    )
+                    text_item.setPos(last_x, last_y)
+                    self.ax.addItem(text_item)
+                    artists.append(text_item)
+
+                    logger.debug(f"Added precision badge: {accuracy_text} for {model_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to add precision badge: {e}")
+
             # Se abilitato, calcola/disegna indicatori anche sulla porzione di forecast
             try:
                 cfg = self._get_indicator_settings() or {}
@@ -616,15 +651,32 @@ class ForecastService(ChartServiceBase):
             logger.exception(f"Error handling forecast result: {e}")
 
     def clear_all_forecasts(self):
-        """Remove all forecast artists from axes and clear internal list."""
+        """Remove all forecast artists from axes and clear internal list.
+        Also clears all drawings on the chart."""
         try:
+            # Clear forecasts
             for f in self._forecasts:
                 for art in f.get("artists", []):
                     try:
-                        art.remove()
+                        # PyQtGraph: use removeItem instead of remove()
+                        if hasattr(art, 'scene') and art.scene():
+                            self.ax.removeItem(art)
+                        else:
+                            art.remove()  # Fallback for matplotlib-style artists
                     except Exception:
                         pass
             self._forecasts = []
+
+            # Clear drawings (TODO: implement drawing service)
+            # When drawing tools are implemented, clear them here
+            if hasattr(self, '_drawings'):
+                for drawing in getattr(self, '_drawings', []):
+                    try:
+                        if hasattr(drawing, 'scene') and drawing.scene():
+                            self.ax.removeItem(drawing)
+                    except Exception:
+                        pass
+                self._drawings = []
 
             # Clear draggable legend
             if hasattr(self, '_forecast_legend') and self._forecast_legend:
