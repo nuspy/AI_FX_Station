@@ -800,23 +800,21 @@ class ForecastWorker(QRunnable):
                 logger.info(f"Enhanced multi-horizon scaling completed for {len(horizons_time_labels)} horizons using {scaling_mode}")
 
             except Exception as e:
-                logger.warning(f"Enhanced scaling failed, using linear fallback: {e}")
-                # Fallback to linear scaling
+                logger.warning(f"Enhanced scaling failed, using simple replication: {e}")
+                # Fallback: replicate the single prediction for all horizons
+                # The model was trained for a specific horizon H, so we can't scale it linearly
+                # We simply repeat the same return prediction for each horizon
                 base_pred = preds[0]
-                scaled_preds = []
-                for i, bars in enumerate(horizons_bars):
-                    scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
-                    scaled_preds.append(base_pred * scale_factor)
-                preds = np.array(scaled_preds)
+                preds = np.full(len(horizons_bars), base_pred)
+                logger.debug(f"Replicated single prediction {base_pred:.6f} to {len(horizons_bars)} horizons")
 
         elif len(preds) == 1 and len(horizons_bars) > 1:
-            # Legacy linear scaling
+            # Simple replication: the model predicted a return for horizon H
+            # We cannot scale it linearly - that's mathematically wrong
+            # Instead, we replicate it and let the compound conversion handle the trajectory
             base_pred = preds[0]
-            scaled_preds = []
-            for i, bars in enumerate(horizons_bars):
-                scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
-                scaled_preds.append(base_pred * scale_factor)
-            preds = np.array(scaled_preds)
+            preds = np.full(len(horizons_bars), base_pred)
+            logger.info(f"Model predicted single horizon return {base_pred:.6f}, replicated to {len(horizons_bars)} horizons")
         elif len(preds) < len(horizons_bars):
             # Estendi la predizione per coprire tutti gli horizons
             preds = np.pad(preds, (0, len(horizons_bars) - len(preds)), mode='edge')
@@ -824,14 +822,29 @@ class ForecastWorker(QRunnable):
         # 7) prezzi e quantili usando conversione horizon corretta
         last_close = float(df_candles["close"].iat[-1])
 
-        # Usa le predizioni convertite
+        # Convert returns to prices
+        # IMPORTANT: The model was trained with y = (future_price / current_price) - 1 for horizon H
+        # Each prediction r_i in the seq represents "expected return for the i-th horizon"
+        #
+        # If we have multiple predictions (one per horizon), use them directly
+        # If we replicated a single prediction, we need compound accumulation:
+        #   - First horizon: p_1 = last_close * (1 + r)
+        #   - Second horizon: p_2 = p_1 * (1 + r) = last_close * (1 + r)^2
+        #   - This creates a geometric progression (compound growth)
+        #
+        # This is correct because if the model predicts "return r per H bars",
+        # then for 2H bars we expect approximately (1+r)^2 - 1 return
         seq = preds[:len(horizons_bars)]
         prices = []
         p = last_close
         for r in seq:
+            # Compound accumulation: each step multiplies by (1 + return)
             p *= (1.0 + float(r))
             prices.append(p)
         q50 = np.asarray(prices, dtype=float)
+
+        logger.debug(f"Converted {len(seq)} returns to prices: last_close={last_close:.5f}, "
+                    f"returns=[{seq[0]:.6f}...{seq[-1]:.6f}], prices=[{prices[0]:.5f}...{prices[-1]:.5f}]")
 
         # Volatilità realizzata per bande
         logret = pd.Series(df_candles["close"], dtype=float).pipe(lambda s: np.log(s).diff()).dropna()
@@ -1267,17 +1280,15 @@ class ForecastWorker(QRunnable):
             # Scale to match horizon count
             if len(mean_returns) != len(horizons_bars):
                 if len(mean_returns) == 1:
-                    # Single prediction, scale for each horizon
+                    # Single prediction, replicate for each horizon
+                    # We CANNOT scale linearly - that's mathematically wrong
+                    # The compound accumulation will create the proper trajectory
                     base_return = mean_returns[0]
                     base_std = std_returns[0]
-                    mean_returns = []
-                    std_returns = []
-                    for bars in horizons_bars:
-                        scale_factor = bars / horizons_bars[0] if horizons_bars[0] > 0 else 1.0
-                        mean_returns.append(base_return * scale_factor)
-                        std_returns.append(base_std * np.sqrt(scale_factor))
-                    mean_returns = np.array(mean_returns)
-                    std_returns = np.array(std_returns)
+                    mean_returns = np.full(len(horizons_bars), base_return)
+                    # For std, we scale by sqrt(time) as variance scales linearly with time
+                    std_returns = np.array([base_std * np.sqrt(i+1) for i in range(len(horizons_bars))])
+                    logger.debug(f"Parallel ensemble: replicated single return {base_return:.6f} to {len(horizons_bars)} horizons")
                 else:
                     # Extend or truncate to match
                     target_len = len(horizons_bars)
