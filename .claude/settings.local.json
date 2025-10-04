@@ -18,7 +18,9 @@
       "Bash(cd:*)",
       "Bash(pip install:*)",
       "Bash(awk:*)",
-      "Bash(pip uninstall:*)"
+      "Bash(pip uninstall:*)",
+      "Bash(tee:*)",
+      "Bash(timeout 30 tail -f training_output.log)"
     ],
     "deny": [],
     "ask": []

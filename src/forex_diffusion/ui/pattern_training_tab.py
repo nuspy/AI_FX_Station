@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
     QGroupBox, QScrollArea, QTextEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
     QRadioButton, QButtonGroup, QComboBox, QProgressBar, QTabWidget,
-    QDateEdit, QFrame, QSlider, QMessageBox
+    QDateEdit, QFrame, QSlider, QMessageBox, QGridLayout
 )
 from PySide6.QtCore import Qt, QDate, QTimer
 from PySide6.QtGui import QTextCursor
@@ -96,14 +96,75 @@ class PatternTrainingTab(QWidget):
 
     def _create_study_setup_section(self, layout: QVBoxLayout) -> None:
         """Create study setup section with separate chart/candlestick pattern training"""
-        # Implementation will be added in next step
         group = QGroupBox("Training Setup")
         group_layout = QVBoxLayout(group)
 
-        # Placeholder
-        placeholder = QLabel("Pattern Training Setup - Implementation in progress...")
-        placeholder.setStyleSheet("color: #666; font-style: italic;")
-        group_layout.addWidget(placeholder)
+        # Training Type Selection
+        training_type_frame = QFrame()
+        training_type_layout = QHBoxLayout(training_type_frame)
+
+        self.training_type_group = QButtonGroup()
+        self.chart_patterns_radio = QRadioButton("Train Chart Patterns")
+        self.candlestick_patterns_radio = QRadioButton("Train Candlestick Patterns")
+        self.chart_patterns_radio.setChecked(True)
+
+        self.training_type_group.addButton(self.chart_patterns_radio, 0)
+        self.training_type_group.addButton(self.candlestick_patterns_radio, 1)
+
+        training_type_layout.addWidget(self.chart_patterns_radio)
+        training_type_layout.addWidget(self.candlestick_patterns_radio)
+        training_type_layout.addStretch()
+
+        group_layout.addWidget(QLabel("Training Type:"))
+        group_layout.addWidget(training_type_frame)
+
+        # Training Period
+        period_frame = QFrame()
+        period_frame.setFrameStyle(QFrame.StyledPanel)
+        period_layout = QFormLayout(period_frame)
+
+        self.training_start_date = QDateEdit()
+        self.training_start_date.setDate(QDate(2020, 1, 1))
+        self.training_start_date.setCalendarPopup(True)
+        self.training_start_date.setToolTip("Inizio periodo di addestramento")
+        period_layout.addRow("Training Start Date:", self.training_start_date)
+
+        self.training_end_date = QDateEdit()
+        self.training_end_date.setDate(QDate(2024, 12, 31))
+        self.training_end_date.setCalendarPopup(True)
+        self.training_end_date.setToolTip("Fine periodo di addestramento")
+        period_layout.addRow("Training End Date:", self.training_end_date)
+
+        group_layout.addWidget(QLabel("Training Data Period:"))
+        group_layout.addWidget(period_frame)
+
+        # Asset selection
+        self.assets_edit = QTextEdit()
+        self.assets_edit.setMaximumHeight(60)
+        self.assets_edit.setPlainText("EUR/USD, GBP/USD, USD/JPY")
+        self.assets_edit.setToolTip("Assets to train (comma separated)")
+        group_layout.addWidget(QLabel("Assets (comma separated):"))
+        group_layout.addWidget(self.assets_edit)
+
+        # Timeframe selection
+        self.timeframes_edit = QTextEdit()
+        self.timeframes_edit.setMaximumHeight(60)
+        self.timeframes_edit.setPlainText("1h, 4h, 1d")
+        self.timeframes_edit.setToolTip("Timeframes to optimize")
+        group_layout.addWidget(QLabel("Timeframes (comma separated):"))
+        group_layout.addWidget(self.timeframes_edit)
+
+        # Info
+        info_label = QLabel(
+            "Training will automatically include:\n"
+            "• Both BULL and BEAR directions\n"
+            "• ALL regime filter combinations\n"
+            "• ALL patterns in selected family\n"
+            "• Genetic algorithm optimization"
+        )
+        info_label.setStyleSheet("color: #666; font-style: italic; padding: 10px; background: #f0f0f0; border-radius: 5px;")
+        info_label.setWordWrap(True)
+        group_layout.addWidget(info_label)
 
         layout.addWidget(group)
 

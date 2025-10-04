@@ -75,54 +75,118 @@ class ForexDiffusionLit(pl.LightningModule):
     def __init__(self, cfg: Optional[Any] = None):
         super().__init__()
         self.cfg = cfg or get_config()
-        # model hyperparams from config
-        model_cfg = getattr(self.cfg, "model", {})
-        vae_cfg = getattr(self.cfg, "vae", {}) if hasattr(self.cfg, "vae") else {}
-        diff_cfg = getattr(self.cfg, "diffusion", {}) if hasattr(self.cfg, "diffusion") else {}
-        training_cfg = getattr(self.cfg, "training", {})
 
-        in_channels = len(getattr(self.cfg, "features", {}).get("standardization", {}).get("cols", [])) if False else vae_cfg.get("channels", ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos"])
-        in_ch = len(in_channels) if isinstance(in_channels, list) else int(vae_cfg.get("in_channels", len(vae_cfg.get("channels", ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos"]))))
-        patch_len = int(vae_cfg.get("patch_len", model_cfg.get("patch_len", 64)))
-        z_dim = int(vae_cfg.get("z_dim", model_cfg.get("z_dim", 128)))
+        # Helper function to safely extract nested config values
+        def safe_get(obj, *keys, default=None):
+            """Safely navigate nested config attributes/dicts, including Pydantic extra fields"""
+            for key in keys:
+                if obj is None:
+                    return default
+                # Try attribute access first (Pydantic models)
+                if hasattr(obj, key):
+                    obj = getattr(obj, key)
+                # Try Pydantic model_dump for extra fields
+                elif hasattr(obj, 'model_dump'):
+                    try:
+                        obj_dict = obj.model_dump()
+                        obj = obj_dict.get(key)
+                        if obj is None:
+                            return default
+                    except Exception:
+                        return default
+                # Fall back to dict access
+                elif isinstance(obj, dict):
+                    obj = obj.get(key)
+                else:
+                    return default
+            return obj if obj is not None else default
+
+        # Extract config sections safely
+        model_cfg = getattr(self.cfg, "model", None)
+        vae_cfg = getattr(self.cfg, "vae", None) if hasattr(self.cfg, "vae") else None
+        diff_cfg = getattr(self.cfg, "diffusion", None) if hasattr(self.cfg, "diffusion") else None
+        training_cfg = getattr(self.cfg, "training", None)
+
+        # Default channels
+        default_channels = ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos"]
+        channels = safe_get(vae_cfg, "channels", default=default_channels) or default_channels
+        in_ch = len(channels) if isinstance(channels, list) else safe_get(vae_cfg, "in_channels", default=len(default_channels))
+        in_ch = int(in_ch)  # Ensure it's an integer
+
+        logger.debug(f"[ForexDiffusionLit] Channels: {channels}, in_ch: {in_ch}")
+
+        patch_len = int(safe_get(vae_cfg, "patch_len", default=None) or safe_get(model_cfg, "patch_len", default=64))
+        z_dim = int(safe_get(vae_cfg, "z_dim", default=None) or safe_get(model_cfg, "z_dim", default=128))
 
         # instantiate VAE and DiffusionModel (simple MLP predictor)
-        self.vae = VAE(in_channels=in_ch, patch_len=patch_len, z_dim=z_dim, hidden_channels=int(vae_cfg.get("encoder", {}).get("hidden_channels", 256)), n_down=int(vae_cfg.get("encoder", {}).get("n_layers", 6)))
+        hidden_channels = int(safe_get(vae_cfg, "encoder", "hidden_channels", default=256))
+        n_down = int(safe_get(vae_cfg, "encoder", "n_layers", default=6))
+
+        logger.debug(f"[ForexDiffusionLit] Initializing VAE with: in_ch={in_ch}, patch_len={patch_len}, z_dim={z_dim}, hidden_channels={hidden_channels}, n_down={n_down}")
+
+        self.vae = VAE(in_channels=in_ch, patch_len=patch_len, z_dim=z_dim, hidden_channels=hidden_channels, n_down=n_down)
+
+        logger.debug(f"[ForexDiffusionLit] VAE encoder flattened size: {self.vae._enc_flat}")
+
         # Build a simple diffusion model (z_dim -> v)
         from ..models.diffusion import DiffusionModel
-        time_emb_dim = int(diff_cfg.get("conditioning", {}).get("horizon_embedding_dim", 64))
-        cond_dim = int(diff_cfg.get("conditioning", {}).get("symbol_embedding_dim", 32)) if diff_cfg.get("conditioning", {}).get("symbol_embedding_dim", None) else None
+        time_emb_dim = int(safe_get(diff_cfg, "conditioning", "horizon_embedding_dim", default=64))
+        # Only use conditioning if dataset provides it (cond_* columns exist)
+        # For now, disable conditioning since dataset doesn't include it
+        # TODO: Add multi-scale pooling and symbol embeddings to dataset
+        cond_dim = None  # Disable conditioning for now
         self.diffusion_model = DiffusionModel(z_dim=z_dim, time_emb_dim=time_emb_dim, cond_dim=cond_dim, hidden_dim=512)
 
+        logger.debug(f"[ForexDiffusionLit] DiffusionModel input_dim: z_dim={z_dim} + time_emb={time_emb_dim} + cond={0 if cond_dim is None else time_emb_dim} = {z_dim + time_emb_dim + (0 if cond_dim is None else time_emb_dim)}")
+
         # schedule
-        T = int(diff_cfg.get("T", 1000))
-        s = float(diff_cfg.get("schedule", {}).get("s", 0.008))
+        T = int(safe_get(diff_cfg, "T", default=1000))
+        s = float(safe_get(diff_cfg, "schedule", "s", default=0.008))
         self.schedule = cosine_alphas(T=T, s=s)
 
         # training weights
-        self.lambda_v = float(diff_cfg.get("training", {}).get("lambda_v", 1.0))
-        self.lambda_crps = float(diff_cfg.get("training", {}).get("lambda_crps", 1.0))
-        self.lambda_kl = float(diff_cfg.get("training", {}).get("lambda_kl", 0.01))
+        self.lambda_v = float(safe_get(diff_cfg, "training", "lambda_v", default=1.0))
+        self.lambda_crps = float(safe_get(diff_cfg, "training", "lambda_crps", default=1.0))
+        self.lambda_kl = float(safe_get(diff_cfg, "training", "lambda_kl", default=0.01))
 
         # number of samples to compute CRPS
-        self.crps_samples = int(getattr(self.cfg, "inference", {}).get("n_samples", 100))
+        inference_cfg = getattr(self.cfg, "inference", None) if hasattr(self.cfg, "inference") else None
+        self.crps_samples = int(safe_get(inference_cfg, "n_samples", default=100))
         # small safety cap
         self.crps_samples = min(max(8, self.crps_samples), 512)
 
         # beta scheduler for KL (VAE)
         from ..models.vae import BetaScheduler
-        kl_anneal_cfg = vae_cfg.get("loss", {}).get("kl_anneal", {})
-        self.beta_scheduler = BetaScheduler(kind=kl_anneal_cfg.get("type", "logistic"), warmup_steps=int(kl_anneal_cfg.get("warmup_steps", 10000)), k=float(kl_anneal_cfg.get("k", 0.002)), beta_max=float(vae_cfg.get("loss", {}).get("kl_weight_max", 1.0)))
+        kl_anneal_type = safe_get(vae_cfg, "loss", "kl_anneal", "type", default="logistic")
+        kl_warmup = int(safe_get(vae_cfg, "loss", "kl_anneal", "warmup_steps", default=10000))
+        kl_k = float(safe_get(vae_cfg, "loss", "kl_anneal", "k", default=0.002))
+        kl_beta_max = float(safe_get(vae_cfg, "loss", "kl_weight_max", default=1.0))
+        self.beta_scheduler = BetaScheduler(kind=kl_anneal_type, warmup_steps=kl_warmup, k=kl_k, beta_max=kl_beta_max)
 
         # optimizer params
-        self.lr = float(training_cfg.get("learning_rate", 2e-4))
-        self.weight_decay = float(training_cfg.get("weight_decay", 1e-6))
+        self.lr = float(safe_get(training_cfg, "learning_rate", default=2e-4))
+        self.weight_decay = float(safe_get(training_cfg, "weight_decay", default=1e-6))
 
         # example inputs for logging shapes
         self.example_input_array = torch.randn(2, in_ch, patch_len)
 
-    def forward(self, *args, **kwargs):
-        raise NotImplementedError("Use training_step/validation_step")
+    def forward(self, x: torch.Tensor, cond: Optional[torch.Tensor] = None):
+        """
+        Forward pass for inference/summary.
+        Encodes input to latent space and returns VAE reconstruction.
+
+        Args:
+            x: (B, C, L) input patch
+            cond: optional conditioning tensor
+
+        Returns:
+            Reconstructed input tensor (B, C, L)
+        """
+        mu, logvar = self.vae.encode(x)
+        std = torch.exp(0.5 * logvar)
+        z = mu  # Use mean for deterministic forward (no sampling)
+        x_rec = self.vae.decode(z)
+        return x_rec
 
     def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         """

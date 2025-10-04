@@ -28,17 +28,26 @@ class TrainingController(QObject):
 
             def run(self):
                 import subprocess
+                import os
                 ok = False
                 try:
                     # indeterminate progress while running
                     self.outer.signals.progress.emit(-1)
+
+                    # Set PYTHONIOENCODING to handle PyTorch progress bar characters on Windows
+                    env = os.environ.copy()
+                    env['PYTHONIOENCODING'] = 'utf-8'
+
                     p = subprocess.Popen(
                         self.args,
                         cwd=self.cwd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",  # Replace problematic bytes with � to avoid crash
                         bufsize=1,
+                        env=env,
                     )
                     for line in iter(p.stdout.readline, ""):
                         if not line:

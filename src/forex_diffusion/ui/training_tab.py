@@ -1371,7 +1371,8 @@ class TrainingTab(QWidget):
                 'volume_profile': self.volume_profile_check.isChecked(),
             }
 
-            if model == 'lightning':
+            # Lightning and diffusion models use train.py
+            if model in ['lightning', 'diffusion-ddpm', 'diffusion-ddim']:
                 module = 'src.forex_diffusion.training.train'
                 args = [
                     sys.executable, '-m', module,

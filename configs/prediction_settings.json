@@ -1,13 +1,14 @@
 {
   "model_paths": [
-    "D:/Projects/ForexGPT/artifacts/models/EURUSD_1m_d500_h180_rf_vae16.pkl"
+    "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=01-val/loss=1.8001.ckpt"
   ],
   "type_basic": true,
   "type_advanced": true,
   "type_rw": false,
   "combine_models": true,
-  "horizons": "1-30m, 30m-1h/5m, 1-3h/10m",
-  "n_samples": 99,
+  "use_gpu_inference": false,
+  "horizons": "1-300m",
+  "n_samples": 130,
   "quantiles": "0.05, 0.50, 0.95",
   "indicators": {
     "atr": {
