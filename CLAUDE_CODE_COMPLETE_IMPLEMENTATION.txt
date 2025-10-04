@@ -1,0 +1,1497 @@
+════════════════════════════════════════════════════════════════════════════
+FOREXGPT - COMPLETE IMPLEMENTATION GUIDE FOR CLAUDE CODE
+════════════════════════════════════════════════════════════════════════════
+
+Target: Claude Sonnet 4.5 via Claude Code CLI
+Project: ForexGPT Professional Trading System
+Location: D:\Projects\ForexGPT
+Hardware: 4x RTX 5090 Desktop (primary) / RTX 4090 Laptop (secondary)
+
+This document contains LOGICAL implementation instructions (NO code examples)
+for completing the ForexGPT system with full NVIDIA acceleration stack
+and optimized training/backtesting pipeline.
+
+════════════════════════════════════════════════════════════════════════════
+📊 PROJECT CONTEXT & CURRENT STATUS
+════════════════════════════════════════════════════════════════════════════
+
+WHAT WORKS (✅ Complete):
+- Multi-provider data pipeline (Tiingo, cTrader, AlphaVantage)
+- Database schema with Alembic migrations (7 migrations complete)
+- Sklearn training pipeline (Ridge/Lasso/ElasticNet/RF with PCA)
+- Professional charting with finplot
+- PyQt6 UI (Chart, Training, Backtesting, News, Calendar tabs)
+- CLI commands for data management
+- 21 unit tests + comprehensive documentation
+
+CRITICAL GAPS (🔴 Must Implement):
+1. Conformal prediction calibration (forecast intervals not calibrated)
+2. Broker integration for live trading (all methods raise NotImplementedError)
+3. Multi-horizon model validation (type dispatch placeholder)
+4. ML-based pattern detection (simulation/fake logic)
+5. Temporal UNet for diffusion models (placeholder architecture)
+6. Model artifact loading system (not implemented)
+7. Backtest adherence metrics (trivial placeholder data)
+
+NEW STRATEGIC REQUIREMENTS (🚀 From Analysis):
+8. NVIDIA optimization stack for training acceleration
+9. Multi-GPU distributed training with automatic configuration
+10. Genetic Algorithm optimization for strategy parameters
+11. Integration with kernc's backtesting.py library
+12. GUI-driven hardware selection and configuration
+13. Comprehensive performance monitoring and profiling
+
+════════════════════════════════════════════════════════════════════════════
+🎯 PERFORMANCE TARGETS
+════════════════════════════════════════════════════════════════════════════
+
+CURRENT BASELINE (Without Optimizations):
+- EUR/USD training: ~62 hours (single GPU, 4090)
+- 4 symbols sequential: ~248 hours (10+ days)
+- GPU utilization: 45-60% (inefficient)
+
+TARGET WITH OPTIMIZATIONS:
+- EUR/USD training: 7.4 hours (4x 5090, all optimizations)
+- 4 symbols parallel: <8 hours (with DDP multi-GPU)
+- GPU utilization: >95% (maximum efficiency)
+
+OPTIMIZATION MULTIPLIERS:
+- Mixed Precision (FP16): 2.5x speedup
+- torch.compile: 1.8x speedup
+- Flash Attention: 1.5x speedup
+- Multi-GPU DDP: 3.5x speedup (4 GPUs)
+- DALI DataLoader: 1.3x speedup
+- Combined: ~8.4x total speedup
+
+════════════════════════════════════════════════════════════════════════════
+📋 PHASE 1: NVIDIA OPTIMIZATION STACK (Week 1 Priority)
+════════════════════════════════════════════════════════════════════════════
+
+OVERVIEW:
+Implement full NVIDIA CUDA acceleration stack to maximize training speed
+on RTX 5090/4090 hardware. All optimizations must gracefully degrade to
+single GPU or CPU if multi-GPU not available.
+
+────────────────────────────────────────────────────────────────────────────
+1.1 MIXED PRECISION TRAINING (AMP)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Use FP16 for forward/backward passes (2.5x faster)
+- Keep FP32 for critical operations (loss computation, optimizer state)
+- Automatically handle loss scaling to prevent gradient underflow
+
+IMPLEMENTATION STRATEGY:
+- Wrap model forward pass with autocast context
+- Use GradScaler to scale loss before backward pass
+- Unscale gradients before optimizer step
+- Update scaler state after each batch
+
+HARDWARE DETECTION:
+- Check if CUDA available and supports FP16 (compute capability >= 7.0)
+- RTX 5090/4090 both have compute capability 8.9 (full support)
+- Fallback to FP32 if hardware doesn't support mixed precision
+
+INTEGRATION POINTS:
+- Modify training loop in train_diffusion.py
+- Add configuration option in training_config.py
+- Display precision mode in GUI training dialog
+
+────────────────────────────────────────────────────────────────────────────
+1.2 TORCH.COMPILE (KERNEL FUSION)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Use PyTorch 2.0+ compiler to fuse operations into optimized CUDA kernels
+- Automatically optimize graph for target hardware
+- Reduces kernel launch overhead and memory transfers
+
+IMPLEMENTATION STRATEGY:
+- Compile model ONCE after initialization, before training
+- Use "reduce-overhead" mode for maximum speed on short sequences
+- Use "max-autotune" mode for longer training runs
+- Cache compiled model to avoid recompilation
+
+DECISION LOGIC:
+- If PyTorch >= 2.0 and CUDA available: enable compilation
+- If model has dynamic control flow: disable (not compatible)
+- If model architecture changes: recompile
+
+INTEGRATION POINTS:
+- Wrap model with torch.compile before training starts
+- Add toggle in training configuration
+- Display compilation status in logs
+
+────────────────────────────────────────────────────────────────────────────
+1.3 FUSED OPTIMIZERS (NVIDIA APEX)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Replace standard PyTorch optimizers with CUDA-fused versions
+- Combine multiple operations (grad clipping, weight decay, momentum) into single kernel
+- Reduces memory transfers and improves throughput
+
+IMPLEMENTATION STRATEGY:
+- Import FusedAdam or FusedSGD from apex.optimizers
+- Replace torch.optim.Adam with FusedAdam in trainer
+- Maintain same hyperparameters (lr, betas, eps, weight_decay)
+- Fallback to standard optimizer if apex not available
+
+COMPATIBILITY:
+- Check if apex installed (try import, catch ImportError)
+- Apex requires source compilation on installation
+- Works only with CUDA (no CPU fallback)
+
+INTEGRATION POINTS:
+- Modify optimizer creation in training module
+- Add conditional import with fallback
+- Log which optimizer is being used
+
+────────────────────────────────────────────────────────────────────────────
+1.4 FLASH ATTENTION 2 (MEMORY EFFICIENT)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Replace standard attention mechanism with Flash Attention 2
+- Reduces memory complexity from O(N²) to O(N)
+- Enables longer context windows without OOM
+
+IMPLEMENTATION STRATEGY:
+- Replace nn.MultiheadAttention with FlashMHA from flash_attn
+- Keep same interface (query, key, value, mask parameters)
+- Only applies to Transformer-based models (TemporalUNet)
+
+REQUIREMENTS:
+- flash-attn library (requires CUDA 11.6+)
+- Works only on Ampere+ GPUs (RTX 30xx, 40xx, 50xx)
+- Requires specific tensor layouts (batch_first=True)
+
+FALLBACK LOGIC:
+- If flash_attn not available: use standard attention
+- If GPU not Ampere+: use standard attention
+- Log which attention mechanism is being used
+
+INTEGRATION POINTS:
+- Modify attention layers in TemporalUNet architecture
+- Add configuration flag in model config
+- Display attention type in model summary
+
+────────────────────────────────────────────────────────────────────────────
+1.5 CUDNN BENCHMARK AUTO-TUNING
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Enable cuDNN auto-tuner to find fastest convolution algorithms
+- Benchmark multiple algorithms on first batch, cache best one
+- Small overhead on first epoch, significant speedup on subsequent epochs
+
+IMPLEMENTATION STRATEGY:
+- Set torch.backends.cudnn.benchmark = True at training start
+- Only enable if input sizes are fixed (no dynamic shapes)
+- Disable if shapes change between batches (performance penalty)
+
+DECISION LOGIC:
+- Check if input shapes are constant across dataset
+- If yes: enable benchmark (typical for forex data)
+- If no: disable benchmark (rare case)
+
+INTEGRATION POINTS:
+- Set flag in training initialization
+- Add option in configuration
+- Log benchmark status
+
+────────────────────────────────────────────────────────────────────────────
+1.6 GRADIENT ACCUMULATION (EFFECTIVE BATCH SIZE)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Accumulate gradients over multiple mini-batches before optimizer step
+- Enables large effective batch sizes on limited GPU memory
+- Maintains same convergence properties as large batch training
+
+IMPLEMENTATION STRATEGY:
+- Accumulate gradients for N steps without zeroing
+- Call optimizer.step() every N steps instead of every step
+- Scale learning rate by accumulation factor
+
+CALCULATION:
+- Desired batch size: 512
+- GPU memory allows: 128
+- Accumulation steps: 512 / 128 = 4
+
+INTEGRATION POINTS:
+- Modify training loop to track accumulation counter
+- Add gradient accumulation steps to configuration
+- Display effective batch size in GUI
+
+────────────────────────────────────────────────────────────────────────────
+1.7 DISTRIBUTED DATA PARALLEL (MULTI-GPU)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Distribute training across multiple GPUs using PyTorch DDP
+- Each GPU processes different batch, gradients averaged via NCCL
+- Linear scaling: 4 GPUs = ~3.5x speedup (communication overhead)
+
+IMPLEMENTATION STRATEGY:
+- Detect available GPUs via torch.cuda.device_count()
+- Initialize process group with nccl backend
+- Wrap model with DistributedDataParallel
+- Use DistributedSampler for data loading
+- Synchronize metrics across processes
+
+PROCESS MANAGEMENT:
+- Spawn N processes (one per GPU)
+- Each process gets rank (0 to N-1)
+- Process 0 is master (logging, checkpointing)
+- Other processes are workers (training only)
+
+GRADIENT SYNCHRONIZATION:
+- Automatic gradient all-reduce after backward pass
+- Gradients averaged across all GPUs
+- Ensures all GPUs have same model state
+
+ERROR HANDLING:
+- Detect GPU failures and restart training
+- Save checkpoint on each epoch (recovery point)
+- Graceful degradation to fewer GPUs if one fails
+
+INTEGRATION POINTS:
+- Create distributed training launcher
+- Modify training loop for multi-process coordination
+- Add GPU selection in GUI configuration
+
+────────────────────────────────────────────────────────────────────────────
+1.8 CHANNELS LAST MEMORY FORMAT
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Reorder tensor memory layout from NCHW to NHWC
+- Enables faster convolution operations on modern GPUs
+- Reduces memory fragmentation and improves cache locality
+
+IMPLEMENTATION STRATEGY:
+- Convert input tensors to channels_last format
+- Convert model weights to channels_last format
+- Maintain same layout throughout forward/backward pass
+
+APPLICABILITY:
+- Only for models with Conv2d layers (TemporalUNet)
+- Not applicable to fully connected models (current sklearn pipeline)
+- Benefits most visible on newer GPUs (Ampere+)
+
+INTEGRATION POINTS:
+- Add format conversion in data preprocessing
+- Convert model on initialization
+- Add configuration flag
+
+────────────────────────────────────────────────────────────────────────────
+1.9 NVIDIA DALI DATA LOADING
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Move data preprocessing to GPU using NVIDIA DALI
+- Overlap data loading with GPU computation (zero CPU bottleneck)
+- Custom operators for common forex transformations
+
+IMPLEMENTATION STRATEGY:
+- Replace DataLoader with DALIGenericIterator
+- Define pipeline with DALI operators (normalize, augment, batch)
+- Run preprocessing on GPU while model trains
+
+OPERATIONS TO GPU-ACCELERATE:
+- Normalization (mean/std scaling)
+- Technical indicator calculation (moving averages, RSI)
+- Data augmentation (noise injection, time warping)
+- Batching and shuffling
+
+DECISION LOGIC:
+- If data preprocessing is CPU bottleneck: use DALI
+- If GPU utilization < 90%: data loading is likely bottleneck
+- Profile to confirm before implementing
+
+INTEGRATION POINTS:
+- Create DALI pipeline definition
+- Replace PyTorch DataLoader
+- Add DALI toggle in configuration
+
+────────────────────────────────────────────────────────────────────────────
+1.10 GRADIENT CHECKPOINTING (MEMORY TRADE-OFF)
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+- Trade compute for memory by recomputing activations during backward pass
+- Enables training larger models or longer sequences
+- ~30% slower but allows 2-3x larger batch sizes
+
+IMPLEMENTATION STRATEGY:
+- Wrap specific layers (e.g., attention blocks) with checkpoint function
+- Store only layer inputs, recompute outputs during backward
+- Automatically handled by PyTorch checkpoint API
+
+DECISION LOGIC:
+- Enable if hitting OOM with current batch size
+- Enable if want to increase batch size beyond GPU memory
+- Disable if memory is not a constraint (faster training)
+
+INTEGRATION POINTS:
+- Modify model architecture to use checkpoint wrapper
+- Add configuration flag
+- Display memory usage in GUI
+
+────────────────────────────────────────────────────────────────────────────
+1.11 OPTIMIZED TRAINING ORCHESTRATOR
+────────────────────────────────────────────────────────────────────────────
+
+LOGIC:
+Create unified training orchestrator that automatically configures all
+optimizations based on available hardware and user preferences.
+
+HARDWARE DETECTION ALGORITHM:
+1. Detect number of GPUs via torch.cuda.device_count()
+2. Check GPU compute capability (need >= 7.0 for mixed precision)
+3. Detect GPU memory per device
+4. Check if NVLink available (faster multi-GPU communication)
+5. Verify NCCL/GLOO available for DDP
+
+CONFIGURATION STRATEGY:
+- Single GPU: Enable AMP + compile + fused optimizer + channels_last
+- Multi-GPU (2-4): Enable DDP + all single GPU optimizations
+- Low Memory: Enable gradient accumulation + checkpointing
+- High Memory: Use larger batch sizes, disable checkpointing
+
+OPTIMIZATION SELECTION LOGIC:
+IF multi_gpu_available AND user_selected_multi_gpu:
+    - Use DDP with NCCL backend
+    - Spawn N processes (one per GPU)
+    - Distribute batches across GPUs
+    - Use DistributedSampler
+ELSE:
+    - Use single GPU (CUDA:0)
+    - No process spawning
+    - Regular DataLoader
+
+IF gpu_memory < 16GB:
+    - Enable gradient checkpointing
+    - Reduce batch size
+    - Increase gradient accumulation steps
+ELSE:
+    - Disable checkpointing (faster)
+    - Use larger batch size
+
+IF gpu_compute_capability >= 8.0:
+    - Enable mixed precision (FP16)
+    - Enable tensor cores
+    - Use Flash Attention if available
+ELSE:
+    - Use FP32 only
+    - Standard attention
+
+GRACEFUL DEGRADATION:
+- If optimization fails (e.g., flash_attn not installed): disable and continue
+- If GPU OOM: reduce batch size automatically and retry
+- If DDP initialization fails: fallback to single GPU
+- Log all optimization states for debugging
+
+INTEGRATION POINTS:
+- Create OptimizedTrainer class
+- Wrap existing train_diffusion.py logic
+- Add configuration UI for optimization selection
+- Display optimization status in real-time
+
+════════════════════════════════════════════════════════════════════════════
+📋 PHASE 2: BACKTESTING FRAMEWORK (Week 1 Priority)
+════════════════════════════════════════════════════════════════════════════
+
+OVERVIEW:
+Integrate kernc's backtesting.py library for realistic strategy evaluation
+and parameter optimization using Genetic Algorithms.
+
+────────────────────────────────────────────────────────────────────────────
+2.1 BACKTESTING.PY INTEGRATION
+────────────────────────────────────────────────────────────────────────────
+
+LIBRARY OVERVIEW:
+- kernc/backtesting.py: Pure Python, pandas-based backtesting
+- Event-driven architecture (realistic order execution)
+- Built-in performance metrics (Sharpe, max DD, win rate)
+- Support for multiple strategies and position sizing
+
+INTEGRATION STRATEGY:
+
+1. CREATE ML STRATEGY CLASS:
+   - Inherit from backtesting.Strategy base class
+   - Implement init() method: load trained model, set indicators
+   - Implement next() method: generate signals from model predictions
+   - Use self.buy() and self.sell() for position management
+
+2. MODEL PREDICTION LOGIC:
+   - Load saved model artifact (joblib/pickle)
+   - Extract features from historical data
+   - Generate prediction (up/down/neutral)
+   - Convert prediction to trading signal (buy/sell/hold)
+
+3. POSITION SIZING:
+   - Fixed size: always buy N units
+   - Percentage: buy with X% of capital
+   - Volatility-based: scale position by inverse volatility
+   - Kelly criterion: optimal position size based on win rate
+
+4. STOP LOSS / TAKE PROFIT:
+   - Set stop loss at entry_price * (1 - stop_loss_pct)
+   - Set take profit at entry_price * (1 + take_profit_pct)
+   - Trail stop loss as price moves in favor
+   - Exit on opposite signal or risk limit
+
+5. PERFORMANCE METRICS:
+   - Total return
+   - Sharpe ratio (risk-adjusted return)
+   - Maximum drawdown
+   - Win rate (% winning trades)
+   - Profit factor (gross profit / gross loss)
+   - Average win vs average loss
+
+EXECUTION LOGIC:
+- Backtest runs bar-by-bar (vectorized for speed)
+- Each bar: update indicators → model prediction → trading logic
+- Track positions, equity, trades
+- Calculate metrics at end
+
+INTEGRATION POINTS:
+- Create MLStrategy class in strategies/ module
+- Wrap backtesting.Backtest in BacktestRunner
+- Store results in database (optimization_results table)
+- Display results in GUI backtesting tab
+
+────────────────────────────────────────────────────────────────────────────
+2.2 GENETIC ALGORITHM OPTIMIZATION
+────────────────────────────────────────────────────────────────────────────
+
+OVERVIEW:
+Use Genetic Algorithm (GA) to find optimal hyperparameters for trading strategy.
+Multi-objective optimization: maximize return while minimizing drawdown.
+
+GA COMPONENTS:
+
+1. INDIVIDUAL (CHROMOSOME):
+   - Represents one strategy configuration
+   - Genes: model_threshold, stop_loss, take_profit, position_size, indicators
+   - Encoding: real-valued vector [0.55, 0.02, 0.04, 0.1, ...]
+
+2. POPULATION:
+   - Collection of N individuals (typically 50-100)
+   - Initial population: random or seed with known good configs
+   - Population size vs convergence speed tradeoff
+
+3. FITNESS EVALUATION:
+   - Run backtest for each individual
+   - Multi-objective fitness: (return, -drawdown, sharpe)
+   - Higher fitness = better performance
+   - Normalize metrics to [0, 1] range
+
+4. SELECTION:
+   - Tournament selection: pick K random, choose best
+   - Elitism: always keep top X% individuals
+   - Roulette wheel: probability proportional to fitness
+
+5. CROSSOVER:
+   - Combine two parents to create two offspring
+   - Single-point: split at random gene, swap tails
+   - Uniform: each gene from random parent
+   - Arithmetic: offspring = alpha * parent1 + (1-alpha) * parent2
+
+6. MUTATION:
+   - Randomly perturb genes with small probability
+   - Gaussian noise: gene += N(0, sigma)
+   - Ensures exploration of search space
+   - Mutation rate: typically 0.01-0.1
+
+7. PARETO RANKING (NSGA-II):
+   - Non-dominated sorting: find Pareto frontier
+   - Crowding distance: maintain diversity
+   - Select next generation from fronts
+
+ALGORITHM FLOW:
+1. Generate initial population (random configs)
+2. FOR each generation (50-200 iterations):
+   a. Evaluate fitness (run backtest for each individual)
+   b. Sort by Pareto dominance
+   c. Select parents (tournament)
+   d. Create offspring (crossover + mutation)
+   e. Combine parents + offspring
+   f. Select next generation (elitism + Pareto ranking)
+   g. Check convergence (fitness plateau)
+3. Return Pareto optimal solutions
+
+MULTI-OBJECTIVE OPTIMIZATION:
+- Objective 1: Maximize total return
+- Objective 2: Minimize maximum drawdown
+- Objective 3: Maximize Sharpe ratio
+- Objective 4: Maximize win rate
+
+PARETO DOMINANCE:
+- Config A dominates B if: A better on all objectives
+- Pareto frontier: configs not dominated by any other
+- User chooses from frontier based on risk preference
+
+PARAMETER RANGES (SEARCH SPACE):
+- model_threshold: [0.50, 0.70] (prediction confidence)
+- stop_loss: [0.01, 0.05] (1-5% loss limit)
+- take_profit: [0.02, 0.10] (2-10% profit target)
+- position_size: [0.05, 0.20] (5-20% of capital)
+- holding_period: [1, 48] hours (max trade duration)
+
+CONVERGENCE CRITERIA:
+- Stop if fitness improvement < 0.01% for 10 generations
+- Stop after max generations (200)
+- Stop if computation time > 2 hours
+
+INTEGRATION POINTS:
+- Create GeneticOptimizer class
+- Use backtesting.optimize() or custom GA implementation
+- Store optimization history in database
+- Display Pareto front in GUI
+
+────────────────────────────────────────────────────────────────────────────
+2.3 HYBRID OPTIMIZATION APPROACH
+────────────────────────────────────────────────────────────────────────────
+
+STRATEGY:
+Combine grid search (exploration) with genetic algorithm (exploitation)
+for faster convergence to optimal parameters.
+
+PHASE 1 - COARSE GRID SEARCH (30 minutes):
+- Define parameter grid with 5-10 values per parameter
+- Total combinations: ~1000 configs
+- Run fast backtest (1 year data, daily bars)
+- Identify promising regions of parameter space
+
+GRID DEFINITION:
+- model_threshold: [0.50, 0.55, 0.60, 0.65, 0.70]
+- stop_loss: [0.01, 0.02, 0.03, 0.04, 0.05]
+- take_profit: [0.02, 0.04, 0.06, 0.08, 0.10]
+- position_size: [0.05, 0.10, 0.15, 0.20]
+Total: 5 * 5 * 5 * 4 = 500 configs
+
+SPEEDUP TRICKS:
+- Use shorter data period (1 year vs 5 years)
+- Use daily bars instead of hourly
+- Parallelize across CPU cores
+- Cache indicator calculations
+
+PHASE 2 - GENETIC ALGORITHM REFINEMENT (1.5 hours):
+- Seed GA population with top 20 grid search results
+- Add 30 random individuals for diversity
+- Run full GA with detailed backtest (5 years, hourly)
+- Converge to optimal parameters
+
+GA PARAMETERS:
+- Population: 50 (20 seeded + 30 random)
+- Generations: 100
+- Mutation rate: 0.05
+- Crossover rate: 0.8
+- Elitism: top 10%
+
+TOTAL TIME:
+- Grid search: 30 minutes
+- GA optimization: 90 minutes
+- Total per symbol: 2 hours
+- 4 symbols parallel: 2 hours (using multi-GPU)
+
+INTEGRATION POINTS:
+- Create HybridOptimizer class
+- Orchestrate grid search → GA transition
+- Display progress in GUI
+- Save best configs to database
+
+────────────────────────────────────────────────────────────────────────────
+2.4 DATABASE INTEGRATION
+────────────────────────────────────────────────────────────────────────────
+
+SCHEMA:
+Use existing optimization_studies and optimization_trials tables:
+- studies: tracks optimization runs (symbol, date range, method)
+- trials: stores individual parameter configurations and results
+
+OPTIMIZATION WORKFLOW:
+1. Create study record (study_id, symbol, start_date, end_date, method)
+2. For each configuration tested:
+   - Create trial record (study_id, params, metrics)
+   - Store backtest results (return, sharpe, drawdown, trades)
+3. Mark study as completed
+4. Query best trials for deployment
+
+IDEMPOTENCY:
+- Check if study already exists (symbol + date range)
+- If exists: resume from last trial
+- If completed: return cached results
+- Prevents duplicate optimization runs
+
+QUERY OPTIMIZATION:
+- Index on (study_id, metric_name) for fast sorting
+- Index on (symbol, date_created) for recent results
+- Partition trials by study_id for large datasets
+
+INTEGRATION POINTS:
+- Modify optimization module to use database
+- Add queries in db_manager.py
+- Display optimization history in GUI
+
+────────────────────────────────────────────────────────────────────────────
+2.5 GUI INTEGRATION FOR OPTIMIZATION
+────────────────────────────────────────────────────────────────────────────
+
+NEW GUI COMPONENTS:
+
+1. OPTIMIZATION TAB:
+   - Symbol selector (multi-select)
+   - Date range picker (start, end)
+   - Optimization method dropdown (Grid, GA, Hybrid)
+   - Parameter ranges (sliders for min/max)
+   - Run button → launches optimization
+
+2. PROGRESS DIALOG:
+   - Current generation / total generations
+   - Best fitness so far
+   - Estimated time remaining
+   - Live plot: fitness over generations
+   - Stop button (graceful cancellation)
+
+3. RESULTS DISPLAY:
+   - Pareto front scatter plot (return vs drawdown)
+   - Table of top 10 configurations
+   - Detailed metrics for selected config
+   - Deploy button → save to live trading configs
+
+4. LIVE TRADING DEPLOYMENT:
+   - Select optimized config from results
+   - Confirm deployment (symbol, broker, position size)
+   - Start live trading with selected parameters
+   - Monitor tab shows active strategies
+
+INTERACTION FLOW:
+User: Select EUR/USD → Set date range → Choose Hybrid optimization → Click Run
+System: Create study → Run grid search → Display progress → Run GA → Show results
+User: Review Pareto front → Select balanced config (high return, moderate risk)
+User: Click Deploy → Confirm parameters → Strategy starts live trading
+
+INTEGRATION POINTS:
+- Create OptimizationTab widget
+- Connect to HybridOptimizer backend
+- Update live trading tab to display deployed strategies
+- Add notifications for optimization completion
+
+════════════════════════════════════════════════════════════════════════════
+📋 PHASE 3: MISSING FEATURES COMPLETION (Week 2)
+════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────
+3.1 CONFORMAL PREDICTION CALIBRATION
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+Forecast intervals not properly calibrated (coverage not at 95% level).
+
+SOLUTION - SPLIT CONFORMAL PREDICTION:
+
+1. CALIBRATION SET SPLIT:
+   - Split data: 60% train, 20% calibration, 20% test
+   - Train model on training set
+   - Compute nonconformity scores on calibration set
+
+2. NONCONFORMITY SCORE CALCULATION:
+   - For each sample in calibration set:
+     * Get model prediction: pred_i
+     * Compute absolute error: score_i = |y_i - pred_i|
+   - Store all scores: [score_1, score_2, ..., score_n]
+
+3. QUANTILE CALCULATION:
+   - Sort scores in ascending order
+   - For 95% prediction interval: quantile = 0.95
+   - Find threshold: q = scores[int(0.95 * n)]
+
+4. PREDICTION INTERVAL CONSTRUCTION:
+   - For new prediction pred_new:
+     * Lower bound: pred_new - q
+     * Upper bound: pred_new + q
+   - Guaranteed 95% coverage (theoretical property)
+
+5. ADAPTIVE INTERVALS:
+   - If uncertainty high (e.g., high volatility): wider interval
+   - If uncertainty low (e.g., stable trend): narrower interval
+   - Use model confidence or residual magnitude
+
+OFFLINE CALIBRATION STRATEGY:
+- Calibrate ONCE per model after training
+- Store quantile threshold in model metadata
+- Reuse threshold for all predictions
+- Recalibrate only if model retrained
+
+INTEGRATION POINTS:
+- Modify train_diffusion.py to include calibration step
+- Store calibration metadata with model artifact
+- Update prediction pipeline to apply intervals
+- Display intervals in GUI charts
+
+────────────────────────────────────────────────────────────────────────────
+3.2 BROKER INTEGRATION FOR LIVE TRADING
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+All broker methods raise NotImplementedError.
+
+SUPPORTED BROKERS:
+1. Interactive Brokers (via ib_insync)
+2. MetaTrader 5 (via MetaTrader5 library)
+
+BROKER ABSTRACTION LAYER:
+
+1. COMMON INTERFACE:
+   - connect(credentials) → bool
+   - disconnect() → None
+   - place_order(symbol, side, quantity, order_type) → order_id
+   - cancel_order(order_id) → bool
+   - get_positions() → List[Position]
+   - get_account_info() → Account
+   - subscribe_quotes(symbol, callback) → None
+
+2. POSITION MANAGEMENT:
+   - Track open positions per symbol
+   - Monitor P&L in real-time
+   - Enforce position limits (max exposure per symbol)
+
+3. ORDER EXECUTION:
+   - Market orders (immediate execution at current price)
+   - Limit orders (execute only at specified price or better)
+   - Stop loss orders (automatic exit at loss limit)
+   - Take profit orders (automatic exit at profit target)
+
+4. RISK MANAGEMENT:
+   - Pre-trade validation (sufficient margin, position limits)
+   - Post-trade confirmation (order filled, position updated)
+   - Emergency stop (kill all orders, close all positions)
+
+INTERACTIVE BROKERS IMPLEMENTATION:
+
+1. CONNECTION:
+   - Use ib_insync.IB() client
+   - Connect to TWS or IB Gateway (localhost:7497 or 4001)
+   - Authenticate with credentials
+   - Request market data permissions
+
+2. ORDER PLACEMENT:
+   - Create contract (symbol, currency, exchange)
+   - Create order (action, quantity, type, limit_price)
+   - Submit order via ib.placeOrder()
+   - Wait for fill confirmation
+
+3. POSITION TRACKING:
+   - Subscribe to position updates via ib.positions()
+   - Update internal position cache on events
+   - Calculate P&L from position + market data
+
+4. ERROR HANDLING:
+   - Connection loss → reconnect with exponential backoff
+   - Order rejection → log error, notify user, don't retry
+   - Insufficient margin → reduce position size, retry
+
+METATRADER 5 IMPLEMENTATION:
+
+1. CONNECTION:
+   - Import MetaTrader5 as mt5
+   - Call mt5.initialize()
+   - Login with account credentials
+   - Check terminal info (version, server)
+
+2. ORDER PLACEMENT:
+   - Create trade request dict (symbol, volume, action, type, price)
+   - Send via mt5.order_send()
+   - Check result code (success, rejection reason)
+
+3. POSITION TRACKING:
+   - Query positions via mt5.positions_get()
+   - Filter by symbol or magic number (strategy ID)
+   - Calculate P&L from position + current price
+
+4. ERROR HANDLING:
+   - Terminal not running → prompt user to start MT5
+   - Trade context busy → wait 1 second, retry
+   - Invalid volume → round to valid lot size, retry
+
+INTEGRATION POINTS:
+- Implement IBBroker and MT5Broker classes
+- Create BrokerFactory for instantiation
+- Connect to broker in live trading tab
+- Display connection status in GUI
+
+────────────────────────────────────────────────────────────────────────────
+3.3 MULTI-HORIZON MODEL VALIDATION
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+Type dispatch placeholder, no actual validation.
+
+SOLUTION - EXPANDING WINDOW VALIDATION:
+
+1. MULTI-HORIZON SETUP:
+   - Train models for multiple forecast horizons: 1h, 4h, 1d, 1w
+   - Each horizon has separate model (different feature importance)
+   - Validate all horizons consistently
+
+2. EXPANDING WINDOW LOGIC:
+   - Start with initial window (e.g., 1 year of data)
+   - Train model on window, test on next period
+   - Expand window by test period, retrain, test again
+   - Repeat until end of data
+
+3. EXAMPLE TIMELINE:
+   Window 1: Train [2020-01 to 2020-12], Test [2021-01 to 2021-03]
+   Window 2: Train [2020-01 to 2021-03], Test [2021-04 to 2021-06]
+   Window 3: Train [2020-01 to 2021-06], Test [2021-07 to 2021-09]
+   ...
+
+4. METRICS PER HORIZON:
+   - Accuracy (directional correctness)
+   - RMSE (magnitude of error)
+   - Sharpe ratio (risk-adjusted return)
+   - Max drawdown (worst peak-to-trough loss)
+
+5. CROSS-HORIZON CONSISTENCY:
+   - Check if longer horizons have lower accuracy (expected)
+   - Check if trends consistent across horizons
+   - Flag discrepancies (e.g., 1h bullish but 1d bearish)
+
+INTEGRATION POINTS:
+- Modify validate_model() function
+- Loop over horizons, call expanding window for each
+- Store results per horizon in database
+- Display multi-horizon metrics in GUI
+
+────────────────────────────────────────────────────────────────────────────
+3.4 ML-BASED PATTERN DETECTION
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+Simulation/fake logic, not actual ML detection.
+
+SOLUTION - AUTOENCODER ANOMALY DETECTION:
+
+1. AUTOENCODER ARCHITECTURE:
+   - Encoder: compress candlestick sequence to latent vector
+   - Decoder: reconstruct sequence from latent vector
+   - Train to minimize reconstruction error on normal patterns
+
+2. TRAINING DATA:
+   - Use all historical candlestick data (5+ years)
+   - No labels needed (unsupervised learning)
+   - Model learns normal market structure
+
+3. PATTERN DETECTION:
+   - Feed new sequence through autoencoder
+   - Calculate reconstruction error: L = ||input - output||
+   - If L > threshold: anomaly (unusual pattern)
+   - If L < threshold: normal (typical behavior)
+
+4. PATTERN TYPES:
+   - Head and shoulders: peak followed by higher peak, then lower peak
+   - Double top/bottom: two peaks at similar price level
+   - Engulfing candles: large candle covers previous candle
+   - Breakouts: price exceeds recent high/low with volume
+
+5. THRESHOLD CALIBRATION:
+   - Compute reconstruction error on validation set
+   - Set threshold at 95th percentile (top 5% are anomalies)
+   - Tune threshold based on desired sensitivity
+
+6. REAL-TIME DETECTION:
+   - Sliding window over recent candlesticks (e.g., last 50)
+   - Compute reconstruction error for current window
+   - Compare to threshold, flag if anomaly
+   - Emit pattern event to strategy layer
+
+INTEGRATION POINTS:
+- Implement Autoencoder model in pattern_detection.py
+- Train offline, save model artifact
+- Load in production, run inference on new data
+- Display detected patterns on chart (annotations)
+
+────────────────────────────────────────────────────────────────────────────
+3.5 TEMPORAL UNET FOR DIFFUSION MODELS
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+Placeholder architecture, not functional.
+
+SOLUTION - IMPLEMENT TEMPORAL UNET:
+
+1. UNET ARCHITECTURE:
+   - Encoder path: downsample time dimension via strided convolutions
+   - Bottleneck: lowest resolution, highest channel count
+   - Decoder path: upsample via transposed convolutions
+   - Skip connections: concatenate encoder features to decoder
+
+2. TEMPORAL ADAPTATIONS:
+   - Use 1D convolutions (temporal axis)
+   - Temporal positional encodings (sinusoidal)
+   - Self-attention at bottleneck (capture long-range dependencies)
+   - GroupNorm instead of BatchNorm (stable for small batches)
+
+3. ENCODER BLOCKS:
+   - Input: (batch, channels, time_steps)
+   - Conv1D + GroupNorm + SiLU activation
+   - Conv1D + GroupNorm + SiLU
+   - Downsample: MaxPool1D or strided Conv1D
+   - Output: (batch, channels*2, time_steps/2)
+
+4. DECODER BLOCKS:
+   - Input: (batch, channels, time_steps)
+   - Upsample: TransposedConv1D
+   - Concatenate skip connection from encoder
+   - Conv1D + GroupNorm + SiLU
+   - Conv1D + GroupNorm + SiLU
+   - Output: (batch, channels/2, time_steps*2)
+
+5. ATTENTION MECHANISM:
+   - Apply at bottleneck (lowest resolution)
+   - Multi-head self-attention
+   - Use Flash Attention 2 if available (faster)
+
+6. OUTPUT HEAD:
+   - Final Conv1D to project to target dimension
+   - No activation (linear output)
+
+DIFFUSION TRAINING:
+
+1. NOISE SCHEDULE:
+   - Define beta schedule (linear or cosine)
+   - Compute alpha, alpha_bar for each timestep
+
+2. FORWARD DIFFUSION:
+   - Add Gaussian noise to clean data
+   - x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon
+   - epsilon ~ N(0, I)
+
+3. LOSS CALCULATION:
+   - Predict noise: epsilon_pred = model(x_t, t)
+   - Loss: L = ||epsilon - epsilon_pred||^2
+   - Minimize loss over all timesteps
+
+4. SAMPLING (INFERENCE):
+   - Start from pure noise: x_T ~ N(0, I)
+   - Iteratively denoise: x_{t-1} = denoise_step(x_t, t)
+   - Final output: x_0 (clean prediction)
+
+INTEGRATION POINTS:
+- Implement TemporalUNet in models/temporal_unet.py
+- Implement diffusion trainer in train_diffusion.py
+- Test on toy data (sine wave) before forex data
+- Display generated forecasts in GUI
+
+────────────────────────────────────────────────────────────────────────────
+3.6 MODEL ARTIFACT LOADING SYSTEM
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+Model loading not implemented.
+
+SOLUTION - ARTIFACT MANAGEMENT SYSTEM:
+
+1. ARTIFACT STRUCTURE:
+   models/
+   └── EUR_USD_1h/
+       ├── config.json          # Model hyperparameters
+       ├── model.pth            # PyTorch state dict
+       ├── scaler.pkl           # Feature scaler
+       ├── feature_names.txt    # Expected features
+       ├── metrics.json         # Training metrics
+       └── metadata.json        # Training date, data source, version
+
+2. SAVING ARTIFACTS:
+   - After training completes successfully
+   - Create directory: models/{symbol}_{interval}/
+   - Save all components (model, scaler, config, metadata)
+   - Atomic write (write to temp, then rename)
+
+3. LOADING ARTIFACTS:
+   - Read config.json to get model architecture
+   - Instantiate model from config
+   - Load state dict from model.pth
+   - Load scaler from scaler.pkl
+   - Verify feature names match expected
+
+4. VERSION CONTROL:
+   - Tag each artifact with version (v1, v2, ...)
+   - Keep latest 5 versions (delete older)
+   - Allow loading specific version for backtesting
+
+5. VALIDATION ON LOAD:
+   - Check file integrity (checksums)
+   - Verify all required files present
+   - Test inference on sample data
+   - Raise error if validation fails
+
+INTEGRATION POINTS:
+- Implement save_model() in train_diffusion.py
+- Implement load_model() in inference pipeline
+- Add model selection dropdown in GUI
+- Display model metadata in info panel
+
+────────────────────────────────────────────────────────────────────────────
+3.7 BACKTEST ADHERENCE METRICS
+────────────────────────────────────────────────────────────────────────────
+
+CURRENT ISSUE:
+Trivial placeholder data, not real metrics.
+
+SOLUTION - DETAILED ADHERENCE TRACKING:
+
+1. METRICS TO TRACK:
+   - Strategy signal vs actual execution (slippage)
+   - Intended position size vs filled size
+   - Expected P&L vs actual P&L (cost impact)
+   - Stop loss trigger accuracy (false triggers)
+   - Take profit trigger accuracy
+
+2. SLIPPAGE ANALYSIS:
+   - Signal price: price when strategy generates signal
+   - Execution price: price when order filled
+   - Slippage: execution_price - signal_price
+   - Track slippage distribution (mean, std, max)
+
+3. COST IMPACT:
+   - Commission: fixed per trade or percentage
+   - Spread: bid-ask spread at execution time
+   - Market impact: price moves due to order size
+   - Total cost: commission + spread + impact
+
+4. SIGNAL ACCURACY:
+   - Intended: strategy wants to open position
+   - Executed: broker confirms fill
+   - Rejection rate: orders rejected by broker
+   - Partial fill rate: only part of order filled
+
+5. RISK ADHERENCE:
+   - Max position size limit: check if exceeded
+   - Daily loss limit: check if breached
+   - Correlation limit: check if portfolio too correlated
+   - Leverage limit: check if over-leveraged
+
+REAL-TIME MONITORING:
+- Log every signal generated
+- Log every order placed
+- Log every fill confirmation
+- Calculate adherence metrics per trade
+- Aggregate metrics per day/week/month
+
+ALERTING:
+- If slippage > 0.1%: notify trader
+- If rejection rate > 5%: investigate broker issue
+- If cost impact > expected: reduce order size
+- If risk limits breached: stop trading
+
+INTEGRATION POINTS:
+- Implement adherence tracking in live trading module
+- Store metrics in database (trades table)
+- Display adherence dashboard in GUI
+- Generate daily adherence report
+
+════════════════════════════════════════════════════════════════════════════
+📋 PHASE 4: GUI ENHANCEMENTS (Week 2)
+════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────
+4.1 TRAINING CONFIGURATION DIALOG
+────────────────────────────────────────────────────────────────────────────
+
+PURPOSE:
+Allow users to configure training hardware and optimization settings.
+
+UI COMPONENTS:
+
+1. HARDWARE SELECTION:
+   - Radio buttons: Single GPU / Multi-GPU / CPU Only
+   - If Multi-GPU selected: spinner for number of GPUs (1-4)
+   - GPU dropdown: select which GPU to use (CUDA:0, CUDA:1, ...)
+   - Memory indicator: show available memory per GPU
+
+2. OPTIMIZATION TOGGLES:
+   - Checkbox: Enable Mixed Precision (FP16)
+   - Checkbox: Enable torch.compile
+   - Checkbox: Enable Fused Optimizers
+   - Checkbox: Enable Flash Attention
+   - Checkbox: Enable Gradient Checkpointing
+   - Info icon: tooltip explaining each optimization
+
+3. BATCH SIZE CONFIGURATION:
+   - Slider: Batch size (8 to 512)
+   - Auto button: automatically select based on GPU memory
+   - Effective batch size display (batch_size * num_gpus * grad_accum)
+
+4. GRADIENT ACCUMULATION:
+   - Spinner: Accumulation steps (1 to 16)
+   - Formula display: effective_batch_size = batch_size * steps
+   - Recommended: adjust to reach effective batch size of 256-512
+
+5. TRAINING DURATION:
+   - Spinner: Number of epochs (10 to 1000)
+   - Estimated time: calculate based on hardware and data size
+   - Early stopping: checkbox to enable, patience spinner
+
+6. PREVIEW PANEL:
+   - Display selected configuration summary
+   - Show estimated training time
+   - Show estimated GPU memory usage
+   - Warning if configuration may cause OOM
+
+INTEGRATION LOGIC:
+- Read available GPUs from torch.cuda.device_count()
+- Query GPU memory from torch.cuda.get_device_properties()
+- Calculate memory usage estimate from model size and batch size
+- Warn if memory usage > 90% of available memory
+- Save configuration to config file for reproducibility
+
+────────────────────────────────────────────────────────────────────────────
+4.2 TRAINING PROGRESS DIALOG
+────────────────────────────────────────────────────────────────────────────
+
+PURPOSE:
+Real-time monitoring of training progress with live metrics and plots.
+
+UI COMPONENTS:
+
+1. PROGRESS BARS:
+   - Overall progress: epochs completed / total epochs
+   - Current epoch progress: batches completed / total batches
+   - Estimated time remaining: hours:minutes:seconds
+
+2. METRICS DISPLAY:
+   - Current loss: update every batch
+   - Current accuracy: update every batch
+   - Best validation loss: highlight if new best
+   - Learning rate: show current LR (if using scheduler)
+
+3. LIVE PLOTS:
+   - Loss curve: train loss and validation loss over epochs
+   - Accuracy curve: train accuracy and validation accuracy
+   - Learning rate curve: if using scheduler
+   - GPU utilization: % GPU usage over time
+
+4. HARDWARE MONITORING:
+   - GPU temperature: current temp, max safe temp
+   - GPU memory usage: used / total (GB)
+   - Power consumption: current watts / max watts
+   - Fan speed: % (if available)
+
+5. CONTROL BUTTONS:
+   - Pause: temporarily halt training (save checkpoint)
+   - Resume: continue from paused state
+   - Stop: gracefully terminate training
+   - Save: force save checkpoint now
+
+6. LOG VIEWER:
+   - Text area: display training logs
+   - Auto-scroll: keep latest log visible
+   - Filter: show only warnings/errors
+   - Export: save logs to file
+
+INTEGRATION LOGIC:
+- Trainer emits events (batch_end, epoch_end, etc.)
+- Dialog listens to events, updates UI
+- Use QThreadPool for non-blocking updates
+- Buffer metrics (don't update UI every batch, too slow)
+- Update plot every 10 batches, full metrics every epoch
+
+────────────────────────────────────────────────────────────────────────────
+4.3 PARETO FRONT VISUALIZATION
+────────────────────────────────────────────────────────────────────────────
+
+PURPOSE:
+Display multi-objective optimization results as interactive Pareto front.
+
+UI COMPONENTS:
+
+1. SCATTER PLOT:
+   - X-axis: Total return (%)
+   - Y-axis: Maximum drawdown (%)
+   - Points: each configuration tested
+   - Color: Sharpe ratio (gradient from red to green)
+   - Size: Win rate (larger = higher win rate)
+
+2. PARETO FRONTIER:
+   - Highlight points on Pareto frontier (bold, outlined)
+   - Connect frontier points with line
+   - Non-dominated solutions (no other config better on all metrics)
+
+3. INTERACTIVE SELECTION:
+   - Click point: show detailed metrics in side panel
+   - Hover: tooltip with key metrics
+   - Select multiple: compare side-by-side
+   - Filter: show only configs meeting criteria (e.g., drawdown < 10%)
+
+4. AXIS CUSTOMIZATION:
+   - Dropdown: choose X-axis metric (return, sharpe, win rate, ...)
+   - Dropdown: choose Y-axis metric (drawdown, profit factor, ...)
+   - Swap axes button: quick flip X and Y
+
+5. DETAIL PANEL:
+   - Show all metrics for selected config
+   - Show hyperparameters (model_threshold, stop_loss, ...)
+   - Show equity curve plot
+   - Show trade list (entry, exit, profit/loss)
+
+6. ACTION BUTTONS:
+   - Deploy: use this config for live trading
+   - Backtest: run detailed backtest with this config
+   - Save: export config to JSON file
+   - Compare: open comparison view with multiple configs
+
+INTEGRATION LOGIC:
+- Load optimization results from database
+- Calculate Pareto dominance using NSGA-II algorithm
+- Render plot using matplotlib or pyqtgraph
+- Embed plot in Qt widget (FigureCanvas)
+- Connect signals for interactive selection
+
+════════════════════════════════════════════════════════════════════════════
+📊 EXPECTED PERFORMANCE AFTER IMPLEMENTATION
+════════════════════════════════════════════════════════════════════════════
+
+TRAINING SPEEDUP (EUR/USD, 5 years hourly data):
+
+Baseline (No Optimizations):
+- Hardware: Single RTX 4090
+- Time: 62 hours
+- GPU Utilization: 45-60%
+
+With All Optimizations:
+- Hardware: 4x RTX 5090
+- Optimizations: Mixed Precision + torch.compile + DDP + Flash Attention
+- Time: 7.4 hours (8.4x speedup)
+- GPU Utilization: >95%
+
+OPTIMIZATION BREAKDOWN:
+- Mixed Precision (FP16): 2.5x faster
+- torch.compile: 1.8x faster
+- Flash Attention: 1.5x faster
+- DDP (4 GPUs): 3.5x faster
+- Combined: 2.5 * 1.8 * 1.5 * 3.5 = 23.6x theoretical
+- Actual: ~8.4x (due to overheads, memory transfers, etc.)
+
+MULTI-SYMBOL TRAINING (4 Major Pairs):
+- Sequential (no optimization): 248 hours (10+ days)
+- Parallel (4x 5090, all optimizations): <8 hours
+- Speedup: 31x improvement
+
+BACKTESTING OPTIMIZATION:
+- Baseline: 15 seconds per config (slow)
+- With kernc/backtesting.py: 3 seconds per config (5x faster)
+- Grid search (1000 configs): 50 minutes
+- GA optimization (300 configs): 15 minutes
+- Total optimization time per symbol: <2 hours
+
+MEMORY EFFICIENCY:
+- Baseline: 11GB per model (limited batch size)
+- With gradient checkpointing: 6GB per model (2x batch size)
+- Enables longer sequences without OOM
+
+PRODUCTION INFERENCE:
+- Single prediction latency: <10ms
+- Throughput: >100 predictions/second
+- Multi-model ensemble: 5 models in <50ms
+
+════════════════════════════════════════════════════════════════════════════
+🔧 IMPLEMENTATION PRIORITIES
+════════════════════════════════════════════════════════════════════════════
+
+WEEK 1 (CRITICAL PATH):
+Priority 1: NVIDIA Optimization Stack (Phase 1)
+- Day 1-2: Mixed Precision + torch.compile + Fused Optimizers
+- Day 3-4: DDP Multi-GPU + DALI DataLoader
+- Day 5: Integration and testing
+Expected outcome: 8x training speedup, enables production timeline
+
+Priority 2: Backtesting Framework (Phase 2)
+- Day 1-2: kernc/backtesting.py integration
+- Day 3-4: Genetic Algorithm optimizer
+- Day 5: GUI integration
+Expected outcome: Fast strategy optimization, realistic backtests
+
+WEEK 2 (COMPLETION):
+Priority 3: Missing Features (Phase 3)
+- Day 1: Conformal prediction calibration
+- Day 2: Broker integration (IB + MT5)
+- Day 3: Multi-horizon validation
+- Day 4: ML pattern detection + TemporalUNet
+- Day 5: Model artifacts + adherence metrics
+Expected outcome: Production-ready system, all features functional
+
+Priority 4: GUI Enhancements (Phase 4)
+- Day 1: Training configuration dialog
+- Day 2: Training progress monitoring
+- Day 3: Pareto front visualization
+- Day 4: Live trading dashboard
+- Day 5: Final testing and polish
+Expected outcome: Professional UI, easy to use
+
+════════════════════════════════════════════════════════════════════════════
+✅ SUCCESS CRITERIA
+════════════════════════════════════════════════════════════════════════════
+
+FUNCTIONAL REQUIREMENTS:
+- [ ] EUR/USD training completes in <8 hours (4x 5090)
+- [ ] All 7 missing features implemented and tested
+- [ ] Backtesting produces realistic results (matches live trading)
+- [ ] Genetic algorithm finds optimal parameters in <2 hours per symbol
+- [ ] GUI allows full training configuration (GPU selection, optimizations)
+- [ ] Live trading executes orders successfully on IB and MT5
+- [ ] Model artifacts load/save correctly
+- [ ] Conformal prediction intervals have 95% coverage
+
+PERFORMANCE REQUIREMENTS:
+- [ ] GPU utilization >95% during training
+- [ ] Training speedup: 8x vs baseline (single GPU, no optimizations)
+- [ ] Backtest runtime: <3 seconds per configuration
+- [ ] Prediction latency: <10ms per inference
+- [ ] Memory usage: <90% of available GPU memory
+
+QUALITY REQUIREMENTS:
+- [ ] All existing tests pass (21 unit tests)
+- [ ] New tests added for new features (target: 50+ tests)
+- [ ] No regressions in existing functionality
+- [ ] Documentation updated for new features
+- [ ] Code review completed (check for best practices)
+
+════════════════════════════════════════════════════════════════════════════
+📚 DEPENDENCIES & INSTALLATION
+════════════════════════════════════════════════════════════════════════════
+
+REQUIRED PACKAGES:
+- torch >= 2.1.0 (for torch.compile and latest CUDA support)
+- pytorch-lightning (training framework)
+- backtesting (kernc/backtesting.py for strategy backtesting)
+- ib_insync (Interactive Brokers integration)
+- MetaTrader5 (MetaTrader 5 integration)
+
+OPTIONAL (NVIDIA OPTIMIZATION):
+- nvidia-apex (fused optimizers, requires source compilation)
+- flash-attn (Flash Attention 2, requires source compilation)
+- nvidia-dali (GPU data loading, requires CUDA 11+)
+
+INSTALLATION COMMANDS:
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install pytorch-lightning
+pip install backtesting
+pip install ib_insync MetaTrader5
+pip install apex --no-build-isolation --global-option="--cpp_ext" --global-option="--cuda_ext"
+pip install flash-attn --no-build-isolation
+pip install nvidia-dali-cuda120
+
+HARDWARE REQUIREMENTS:
+- GPU: RTX 3090 or newer (Ampere+ architecture)
+- VRAM: 16GB minimum (24GB recommended for 4h/1d horizons)
+- RAM: 32GB minimum (64GB recommended for multi-GPU)
+- Storage: 500GB SSD (for historical data and model artifacts)
+- Multi-GPU: NVLink recommended (not required)
+
+SYSTEM SETUP:
+- CUDA Toolkit 12.1 or newer
+- cuDNN 8.9 or newer
+- NVIDIA Driver 530+ (for RTX 5090, use latest driver)
+- Ubuntu 20.04+ or Windows 10+ (WSL2 supported)
+
+════════════════════════════════════════════════════════════════════════════
+🐛 COMMON ISSUES & SOLUTIONS
+════════════════════════════════════════════════════════════════════════════
+
+ISSUE: OOM (Out of Memory) during training
+SOLUTION:
+1. Reduce batch size (e.g., 128 → 64)
+2. Enable gradient checkpointing (trade compute for memory)
+3. Use gradient accumulation (smaller batches, same effective size)
+4. Use mixed precision (FP16 uses 50% less memory)
+5. Check for memory leaks (unused tensors not deleted)
+
+ISSUE: Slow training despite GPU optimizations
+SOLUTION:
+1. Profile with nsys or PyTorch profiler to find bottleneck
+2. Check GPU utilization (should be >90%)
+3. Check data loading (use DALI if CPU bottleneck)
+4. Verify all optimizations enabled (check logs)
+5. Ensure no synchronization points in training loop
+
+ISSUE: DDP hangs or initialization fails
+SOLUTION:
+1. Check firewall: open ports for NCCL (default: all ports)
+2. Set environment variable: NCCL_DEBUG=INFO for detailed logs
+3. Try gloo backend instead of nccl (slower but more stable)
+4. Verify all GPUs visible: torch.cuda.device_count() == expected
+5. Check GPU interconnect: nvidia-smi topo -m
+
+ISSUE: Flash Attention installation fails
+SOLUTION:
+1. Ensure CUDA Toolkit installed (nvcc --version)
+2. Ensure GCC version compatible (gcc --version, need <12)
+3. Install from source: git clone + pip install -e .
+4. If still fails: skip Flash Attention, use standard attention (slower)
+
+ISSUE: Backtesting results don't match live trading
+SOLUTION:
+1. Check slippage model (add realistic slippage to backtest)
+2. Check commission model (include all costs in backtest)
+3. Check data quality (backtest and live using same data source)
+4. Check execution logic (orders filled at same price in both)
+5. Log and compare: every signal, every order, every fill
+
+ISSUE: Conformal intervals too wide or too narrow
+SOLUTION:
+1. Check calibration set size (need at least 1000 samples)
+2. Check if model predictions centered (mean residual ~0)
+3. Check if residuals i.i.d. (plot ACF of residuals)
+4. Consider adaptive intervals (adjust by volatility)
+5. Recalibrate if model retrained or data distribution changed
+
+════════════════════════════════════════════════════════════════════════════
+🎯 FINAL NOTES FOR CLAUDE CODE
+════════════════════════════════════════════════════════════════════════════
+
+KEY PRINCIPLES:
+1. Test Incrementally - Don't implement everything at once, test each component
+2. Graceful Degradation - If optimization fails, fallback to slower but stable version
+3. Hardware Detection - Automatically configure based on available hardware
+4. Idempotent Operations - Can restart without duplicating work (use database flags)
+5. Comprehensive Logging - Log every decision for debugging and monitoring
+
+PRIORITY ORDER:
+1. Week 1: NVIDIA optimizations + Backtesting (CRITICAL PATH)
+2. Week 2: Missing features + GUI enhancements (COMPLETION)
+3. Optional: Advanced features (online learning, ensemble models, etc.)
+
+TESTING STRATEGY:
+- Unit tests for each new function
+- Integration tests for full training pipeline
+- Benchmark tests for performance validation
+- Manual GUI testing for user experience
+
+WHEN IN DOUBT:
+- Simplicity > Complexity (start with working version, optimize later)
+- Performance > Flexibility (optimize for common case, special case can be slower)
+- Testing > Features (working code > perfect code)
+
+HARDWARE NOTE:
+All optimizations designed for 4x RTX 5090 but gracefully degrade:
+- 4x 5090: Full performance (~8h for 4 symbols)
+- 1x 5090: Good performance (~28h for 4 symbols)
+- 1x 4090: Acceptable performance (~60h for 4 symbols)
+- CPU only: Very slow but functional (~weeks for 4 symbols)
+
+EXPECTED OUTCOME:
+- Professional-grade forex trading system
+- Production-ready: live trading on IB and MT5
+- Fast training: 4 major pairs in <8 hours
+- Optimized strategies: genetic algorithm finds best parameters
+- Realistic backtests: accurate performance estimates
+- User-friendly GUI: configure hardware, monitor training, deploy strategies
+
+════════════════════════════════════════════════════════════════════════════
+Good luck! Read carefully, implement methodically, test thoroughly. 🚀
+════════════════════════════════════════════════════════════════════════════
