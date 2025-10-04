@@ -93,6 +93,12 @@ GENERAL_KEYS = [
     "mt_server",
     "mt_login",
     "mt_password",
+    # Multi-provider settings
+    "primary_data_provider",
+    "secondary_data_provider",
+    "ctrader_client_id",
+    "ctrader_client_secret",
+    "ctrader_environment",
 ]
 
 
@@ -181,6 +187,43 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(form_group)
 
+        # Multi-Provider Configuration
+        provider_group = QGroupBox("Data Provider Configuration")
+        provider_form = QGridLayout(provider_group)
+
+        self.primary_provider = QComboBox()
+        self.primary_provider.addItems(["tiingo", "ctrader", "alphavantage"])
+        self.secondary_provider = QComboBox()
+        self.secondary_provider.addItems(["none", "tiingo", "ctrader", "alphavantage"])
+
+        self.ctrader_client_id = QLineEdit()
+        self.ctrader_client_id.setPlaceholderText("cTrader Client ID")
+        self.ctrader_client_secret = QLineEdit()
+        self.ctrader_client_secret.setPlaceholderText("cTrader Client Secret")
+        self.ctrader_client_secret.setEchoMode(QLineEdit.Password)
+        self.ctrader_environment = QComboBox()
+        self.ctrader_environment.addItems(["demo", "live"])
+
+        self.btn_ctrader_oauth = QPushButton("Authorize cTrader (OAuth)")
+        self.btn_ctrader_test = QPushButton("Test Connection")
+
+        provider_form.addWidget(QLabel("Primary Provider:"), 0, 0)
+        provider_form.addWidget(self.primary_provider, 0, 1)
+        provider_form.addWidget(QLabel("Fallback Provider:"), 0, 2)
+        provider_form.addWidget(self.secondary_provider, 0, 3)
+
+        provider_form.addWidget(QLabel("cTrader Client ID:"), 1, 0)
+        provider_form.addWidget(self.ctrader_client_id, 1, 1)
+        provider_form.addWidget(QLabel("cTrader Client Secret:"), 1, 2)
+        provider_form.addWidget(self.ctrader_client_secret, 1, 3)
+
+        provider_form.addWidget(QLabel("cTrader Environment:"), 2, 0)
+        provider_form.addWidget(self.ctrader_environment, 2, 1)
+        provider_form.addWidget(self.btn_ctrader_oauth, 2, 2)
+        provider_form.addWidget(self.btn_ctrader_test, 2, 3)
+
+        layout.addWidget(provider_group)
+
         # Accounts list + controls
         accounts_group = QGroupBox("Accounts")
         acc_layout = QVBoxLayout(accounts_group)
@@ -250,6 +293,8 @@ class SettingsDialog(QDialog):
         self.accounts_list.currentItemChanged.connect(self._on_account_selected)
         self.btn_load_json.clicked.connect(self._load_from_json)
         self.btn_save_json.clicked.connect(self._save_to_json)
+        self.btn_ctrader_oauth.clicked.connect(self._on_ctrader_oauth)
+        self.btn_ctrader_test.clicked.connect(self._on_ctrader_test)
 
         self.load_values()
 
@@ -286,6 +331,13 @@ class SettingsDialog(QDialog):
             default = COLOR_DEFAULTS.get(key, "#000000")
             value = str(get_setting(key, default))
             self.color_edits[key].setText(value)
+
+        # Load provider settings
+        self.primary_provider.setCurrentText(str(get_setting("primary_data_provider", "tiingo")))
+        self.secondary_provider.setCurrentText(str(get_setting("secondary_data_provider", "none")))
+        self.ctrader_client_id.setText(str(get_setting("ctrader_client_id", "")))
+        self.ctrader_client_secret.setText(str(get_setting("ctrader_client_secret", "")))
+        self.ctrader_environment.setCurrentText(str(get_setting("ctrader_environment", "demo")))
 
         self._accounts = self._load_accounts_dict()
         self._populate_accounts_list()
@@ -520,7 +572,129 @@ class SettingsDialog(QDialog):
             for key, _ in COLOR_FIELDS:
                 set_setting(key, self.color_edits[key].text().strip())
 
+            # Save provider settings
+            set_setting("primary_data_provider", self.primary_provider.currentText())
+            set_setting("secondary_data_provider", self.secondary_provider.currentText())
+            set_setting("ctrader_client_id", self.ctrader_client_id.text().strip())
+            set_setting("ctrader_client_secret", self.ctrader_client_secret.text().strip())
+            set_setting("ctrader_environment", self.ctrader_environment.currentText())
+
             QMessageBox.information(self, "Settings", "Settings saved")
             self.accept()
         except Exception as exc:
             QMessageBox.warning(self, "Save failed", str(exc))
+
+    # ------------------------------------------------------------------
+    # Provider-specific handlers
+    # ------------------------------------------------------------------
+    def _on_ctrader_oauth(self) -> None:
+        """Run cTrader OAuth flow."""
+        try:
+            import asyncio
+            from ...credentials import OAuth2Flow, CredentialsManager, ProviderCredentials
+
+            client_id = self.ctrader_client_id.text().strip()
+            client_secret = self.ctrader_client_secret.text().strip()
+
+            if not client_id or not client_secret:
+                QMessageBox.warning(
+                    self,
+                    "OAuth Error",
+                    "Please enter cTrader Client ID and Client Secret first"
+                )
+                return
+
+            # Run OAuth flow in event loop
+            async def run_oauth():
+                oauth = OAuth2Flow(client_id=client_id, client_secret=client_secret)
+                token_data = await oauth.authorize()
+
+                creds = ProviderCredentials(
+                    provider_name='ctrader',
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    access_token=token_data['access_token'],
+                    refresh_token=token_data.get('refresh_token'),
+                    environment=self.ctrader_environment.currentText()
+                )
+
+                CredentialsManager().save(creds)
+                return True
+
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            success = loop.run_until_complete(run_oauth())
+
+            if success:
+                QMessageBox.information(
+                    self,
+                    "OAuth Success",
+                    "cTrader authorization successful! Credentials saved securely."
+                )
+
+        except Exception as exc:
+            QMessageBox.warning(self, "OAuth Failed", f"Authorization failed: {exc}")
+
+    def _on_ctrader_test(self) -> None:
+        """Test cTrader connection."""
+        try:
+            import asyncio
+            from ...providers import get_provider_manager
+
+            # Get provider manager
+            manager = get_provider_manager()
+
+            # Get credentials
+            from ...credentials import get_credentials_manager
+            creds_manager = get_credentials_manager()
+            creds = creds_manager.load('ctrader')
+
+            if not creds:
+                QMessageBox.warning(
+                    self,
+                    "Test Failed",
+                    "No cTrader credentials found. Please run OAuth authorization first."
+                )
+                return
+
+            # Create and test provider
+            async def test_connection():
+                provider = manager.create_provider('ctrader', config={
+                    'client_id': creds.client_id,
+                    'client_secret': creds.client_secret,
+                    'access_token': creds.access_token,
+                    'environment': creds.environment
+                })
+
+                connected = await provider.connect()
+                if connected:
+                    # Try to get a price quote
+                    price = await provider.get_current_price("EUR/USD")
+                    await provider.disconnect()
+                    return connected, price
+                return False, None
+
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            connected, price = loop.run_until_complete(test_connection())
+
+            if connected:
+                msg = "Connection successful!"
+                if price:
+                    msg += f"\n\nTest quote for EUR/USD: {price.get('price', 'N/A')}"
+                QMessageBox.information(self, "Test Success", msg)
+            else:
+                QMessageBox.warning(self, "Test Failed", "Failed to connect to cTrader")
+
+        except Exception as exc:
+            QMessageBox.warning(self, "Test Failed", f"Connection test failed: {exc}")

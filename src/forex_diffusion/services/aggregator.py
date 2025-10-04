@@ -102,9 +102,12 @@ class AggregatorService:
 
         with self.engine.connect() as conn:
             # Corrected query to fetch ticks with the right timeframe
+            # Extended to support tick_volume and real_volume from multi-provider data
             query = text(
-                "SELECT ts_utc, price, bid, ask, volume FROM market_data_ticks "
-                "WHERE symbol = :symbol AND timeframe = 'tick' AND ts_utc > :start AND ts_utc <= :end ORDER BY ts_utc ASC"
+                "SELECT ts_utc, price, bid, ask, volume, tick_volume, real_volume, provider_source "
+                "FROM market_data_ticks "
+                "WHERE symbol = :symbol AND timeframe = 'tick' AND ts_utc > :start AND ts_utc <= :end "
+                "ORDER BY ts_utc ASC"
             )
             rows = conn.execute(query, {"symbol": symbol, "start": start_ms, "end": end_ms}).fetchall()
 
@@ -112,7 +115,7 @@ class AggregatorService:
             return
 
         # logger.info(f"Found {len(rows)} new ticks for {symbol} to aggregate into {timeframe}.")
-        df_ticks = pd.DataFrame(rows, columns=["ts_utc", "price", "bid", "ask", "volume"])
+        df_ticks = pd.DataFrame(rows, columns=["ts_utc", "price", "bid", "ask", "volume", "tick_volume", "real_volume", "provider_source"])
         df_ticks['price'] = df_ticks['price'].fillna((df_ticks['bid'] + df_ticks['ask']) / 2).ffill()
         if df_ticks.empty or df_ticks['price'].isnull().all():
             return
@@ -125,15 +128,29 @@ class AggregatorService:
         if ohlc.empty:
             return
 
+        # Aggregate volumes (sum for all volume types)
         vol = df_ticks["volume"].resample(rule, label="right", closed="right").sum() if "volume" in df_ticks.columns else None
+        tick_vol = df_ticks["tick_volume"].resample(rule, label="right", closed="right").sum() if "tick_volume" in df_ticks.columns else None
+        real_vol = df_ticks["real_volume"].resample(rule, label="right", closed="right").sum() if "real_volume" in df_ticks.columns else None
+
+        # Track provider source (use most recent)
+        provider = df_ticks["provider_source"].resample(rule, label="right", closed="right").last() if "provider_source" in df_ticks.columns else None
+
         candles = []
         for idx, row in ohlc.iterrows():
             if row.isnull().all(): continue
-            candles.append({
+            candle = {
                 "ts_utc": int(idx.timestamp() * 1000),
-                "open": row["first"], "high": row["max"], "low": row["min"], "close": row["last"],
-                "volume": vol.get(idx) if vol is not None else None
-            })
+                "open": row["first"],
+                "high": row["max"],
+                "low": row["min"],
+                "close": row["last"],
+                "volume": vol.get(idx) if vol is not None else None,
+                "tick_volume": tick_vol.get(idx) if tick_vol is not None else None,
+                "real_volume": real_vol.get(idx) if real_vol is not None else None,
+                "provider_source": provider.get(idx) if provider is not None else "tiingo",
+            }
+            candles.append(candle)
 
         if not candles:
             return

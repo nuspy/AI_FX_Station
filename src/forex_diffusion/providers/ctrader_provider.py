@@ -237,51 +237,208 @@ class CTraderProvider(BaseProvider):
 
     async def _get_current_price_impl(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get current spot price from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_current_price not yet implemented")
-        return None
+        try:
+            await self._rate_limit_wait()
+
+            if not self.client or not self.health.is_connected:
+                await self.connect()
+
+            # Request spot quote
+            request = Messages.ProtoOASymbolByIdReq()
+            request.ctidTraderAccountId = self._account_id
+            request.symbolId = await self._get_symbol_id(symbol)
+
+            # Send request and wait for response
+            response = await self._send_and_wait(request, Messages.ProtoOASymbolByIdRes)
+
+            if response:
+                tick = response.tick
+                return {
+                    "symbol": symbol,
+                    "bid": tick.bid / 100000,  # cTrader uses 100000 multiplier
+                    "ask": tick.ask / 100000,
+                    "price": (tick.bid + tick.ask) / 200000,
+                    "timestamp": int(tick.timestamp / 1000),  # Convert to ms
+                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get current price for {symbol}: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _get_historical_bars_impl(
         self, symbol: str, timeframe: str, start_ts_ms: int, end_ts_ms: int
     ) -> Optional[pd.DataFrame]:
         """Get historical trendbars from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_historical_bars not yet implemented")
-        return None
+        try:
+            await self._rate_limit_wait()
+
+            # Convert timeframe to cTrader format
+            ct_timeframe = self._convert_timeframe(timeframe)
+            if ct_timeframe is None:
+                logger.error(f"[{self.name}] Unsupported timeframe: {timeframe}")
+                return None
+
+            symbol_id = await self._get_symbol_id(symbol)
+
+            # cTrader uses microseconds for timestamps
+            start_us = start_ts_ms * 1000
+            end_us = end_ts_ms * 1000
+
+            # Request historical trendbars
+            request = Messages.ProtoOAGetTrendbarsReq()
+            request.ctidTraderAccountId = self._account_id
+            request.symbolId = symbol_id
+            request.period = ct_timeframe
+            request.fromTimestamp = start_us
+            request.toTimestamp = end_us
+
+            response = await self._send_and_wait(request, Messages.ProtoOAGetTrendbarsRes)
+
+            if not response or not response.trendbar:
+                return None
+
+            # Parse trendbars into DataFrame
+            bars = []
+            for bar in response.trendbar:
+                bars.append({
+                    "ts_utc": int(bar.utcTimestamp / 1000),  # Convert to ms
+                    "open": bar.open / 100000,
+                    "high": bar.high / 100000,
+                    "low": bar.low / 100000,
+                    "close": bar.close / 100000,
+                    "volume": bar.volume if hasattr(bar, "volume") else None,
+                    "tick_volume": bar.tickVolume if hasattr(bar, "tickVolume") else None,
+                    "real_volume": bar.volume if hasattr(bar, "volume") else None,
+                })
+
+            df = pd.DataFrame(bars)
+            df = df.sort_values("ts_utc").reset_index(drop=True)
+
+            logger.info(f"[{self.name}] Retrieved {len(df)} bars for {symbol} {timeframe}")
+            return df
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get historical bars for {symbol}: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _get_historical_ticks_impl(
         self, symbol: str, start_ts_ms: int, end_ts_ms: int
     ) -> Optional[pd.DataFrame]:
         """Get historical tick data from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_historical_ticks not yet implemented")
-        return None
+        try:
+            await self._rate_limit_wait()
+
+            symbol_id = await self._get_symbol_id(symbol)
+            start_us = start_ts_ms * 1000
+            end_us = end_ts_ms * 1000
+
+            # Request tick data
+            request = Messages.ProtoOAGetTickDataReq()
+            request.ctidTraderAccountId = self._account_id
+            request.symbolId = symbol_id
+            request.fromTimestamp = start_us
+            request.toTimestamp = end_us
+            request.type = Messages.ProtoOAQuoteType.BID_ASK  # Get both bid and ask
+
+            response = await self._send_and_wait(request, Messages.ProtoOAGetTickDataRes)
+
+            if not response or not response.tickData:
+                return None
+
+            # Parse tick data
+            ticks = []
+            for tick in response.tickData:
+                ticks.append({
+                    "ts_utc": int(tick.timestamp / 1000),
+                    "bid": tick.bid / 100000 if hasattr(tick, "bid") else None,
+                    "ask": tick.ask / 100000 if hasattr(tick, "ask") else None,
+                    "price": ((tick.bid + tick.ask) / 2) / 100000 if hasattr(tick, "bid") and hasattr(tick, "ask") else None,
+                })
+
+            df = pd.DataFrame(ticks)
+            df = df.sort_values("ts_utc").reset_index(drop=True)
+
+            logger.info(f"[{self.name}] Retrieved {len(df)} ticks for {symbol}")
+            return df
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get historical ticks for {symbol}: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _get_market_depth_impl(self, symbol: str, levels: int) -> Optional[Dict[str, Any]]:
         """Get market depth (DOM) from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_market_depth not yet implemented")
-        return None
+        try:
+            await self._rate_limit_wait()
+
+            symbol_id = await self._get_symbol_id(symbol)
+
+            # Subscribe to depth of market
+            request = Messages.ProtoOASubscribeLiveTrendbarReq()
+            request.ctidTraderAccountId = self._account_id
+            request.symbolId = symbol_id
+
+            # In cTrader, DOM is streamed via subscriptions
+            # For a snapshot, we'd need to get the latest from the stream
+            # This is a simplified implementation
+            logger.warning(f"[{self.name}] Market depth requires WebSocket subscription - returning None")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get market depth for {symbol}: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _get_sentiment_impl(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get trader sentiment from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_sentiment not yet implemented")
-        return None
+        try:
+            # cTrader doesn't have a direct sentiment API
+            # This would need to be calculated from trader positions if available
+            # Or sourced from a third-party provider
+
+            logger.info(f"[{self.name}] Sentiment data not available from cTrader API")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get sentiment for {symbol}: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _get_news_impl(self, currency: Optional[str], limit: int) -> Optional[List[Dict[str, Any]]]:
         """Get news feed from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_news not yet implemented")
-        return None
+        try:
+            # cTrader doesn't provide news feed via Open API
+            # This would need integration with external news provider
+            # (e.g., Forex Factory, Trading Economics)
+
+            logger.info(f"[{self.name}] News feed not available from cTrader API - use external provider")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get news: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _get_economic_calendar_impl(
         self, start_date: Optional[datetime], end_date: Optional[datetime], currency: Optional[str]
     ) -> Optional[List[Dict[str, Any]]]:
         """Get economic calendar from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] get_economic_calendar not yet implemented")
-        return None
+        try:
+            # cTrader doesn't provide economic calendar via Open API
+            # This would need integration with external calendar provider
+            # (e.g., Forex Factory API, Trading Economics API)
+
+            logger.info(f"[{self.name}] Economic calendar not available from cTrader API - use external provider")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get economic calendar: {e}")
+            self.health.errors.append(str(e))
+            return None
 
     async def _stream_quotes_impl(self, symbols: List[str]) -> AsyncIterator[Dict[str, Any]]:
         """Stream real-time quotes from cTrader."""
@@ -311,3 +468,63 @@ class CTraderProvider(BaseProvider):
         # Implementation placeholder
         logger.warning(f"[{self.name}] stream_market_depth not yet implemented")
         yield {}
+
+    # Helper methods for cTrader protocol
+
+    async def _get_symbol_id(self, symbol: str) -> int:
+        """Get cTrader symbol ID from symbol name."""
+        # This would need to query symbols list - placeholder implementation
+        # In production, cache symbol mappings
+        symbol_map = {
+            "EUR/USD": 1,
+            "GBP/USD": 2,
+            "USD/JPY": 3,
+            # Add more mappings
+        }
+        return symbol_map.get(symbol, 1)
+
+    def _convert_timeframe(self, timeframe: str) -> Optional[int]:
+        """Convert standard timeframe to cTrader period enum."""
+        # cTrader ProtoOATimeframe enum values
+        tf_map = {
+            "1m": 1,   # M1
+            "2m": 2,   # M2
+            "3m": 3,   # M3
+            "4m": 4,   # M4
+            "5m": 5,   # M5
+            "10m": 6,  # M10
+            "15m": 7,  # M15
+            "30m": 8,  # M30
+            "1h": 9,   # H1
+            "4h": 10,  # H4
+            "12h": 11, # H12
+            "1d": 12,  # D1
+            "1w": 13,  # W1
+            "1M": 14,  # MN1
+        }
+        return tf_map.get(timeframe)
+
+    async def _send_and_wait(self, request: Any, response_type: Any, timeout: float = 10.0) -> Optional[Any]:
+        """Send request to cTrader and wait for response."""
+        # This is a simplified placeholder - full implementation would:
+        # 1. Send protobuf message via client
+        # 2. Wait for response in message queue
+        # 3. Match response by clientMsgId
+        # 4. Return matched response or timeout
+
+        try:
+            if not self.client:
+                raise RuntimeError("Client not connected")
+
+            # In a real implementation, this would:
+            # - Generate unique clientMsgId
+            # - Send request via self.client.send(request)
+            # - Poll self._message_queue for response matching clientMsgId
+            # - Return response or raise TimeoutError
+
+            logger.warning(f"[{self.name}] _send_and_wait placeholder - needs full Twisted integration")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Send/wait error: {e}")
+            return None
