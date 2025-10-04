@@ -52,6 +52,14 @@ dependencies = [
   # Optimization Libraries
   "pymoo>=0.6.0",  # NSGA-II multi-objective optimization
   "autograd>=1.4",  # Required by pymoo
+
+  # Multi-Provider Integration (Phase 1-4)
+  "ctrader-open-api>=1.0.0",  # cTrader Open API client
+  "twisted>=23.0.0",           # Async framework for cTrader
+  "protobuf>=4.0.0",          # Protocol buffers for cTrader
+  "keyring>=24.0.0",          # Secure credential storage
+  "cryptography>=41.0.0",     # Fernet encryption
+  "httpx>=0.25.0",            # Async HTTP for OAuth
 ]
 
 [project.scripts]
