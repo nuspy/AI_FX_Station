@@ -217,6 +217,12 @@ class PatternTrainingTab(QWidget):
         self.start_training_btn.clicked.connect(self._start_optimization)
         control_buttons_layout.addWidget(self.start_training_btn)
 
+        self.train_vae_btn = QPushButton("🧠 Train Pattern VAE")
+        self.train_vae_btn.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 10px; }")
+        self.train_vae_btn.clicked.connect(self._train_pattern_vae)
+        self.train_vae_btn.setToolTip("Train ML-based pattern detection (Variational Autoencoder)")
+        control_buttons_layout.addWidget(self.train_vae_btn)
+
         self.pause_training_btn = QPushButton("⏸️ Pause")
         self.pause_training_btn.setEnabled(False)
         self.pause_training_btn.clicked.connect(self._pause_optimization)
@@ -385,3 +391,188 @@ class PatternTrainingTab(QWidget):
         """Rollback to previous parameters"""
         logger.info("Rollback parameters requested")
         QMessageBox.information(self, "Rollback", "Parameter rollback will restore previous production config")
+
+    def _train_pattern_vae(self):
+        """Train ML-based pattern detection using VAE"""
+        from PySide6.QtWidgets import QInputDialog, QFileDialog
+        from pathlib import Path
+        import threading
+
+        try:
+            # Get dataset parameters
+            symbol_text = self.dataset_symbols_edit.text()
+            if not symbol_text:
+                QMessageBox.warning(self, "Missing Input", "Please specify trading symbols")
+                return
+
+            symbols = [s.strip() for s in symbol_text.split(',')]
+
+            timeframe = self.dataset_timeframe_combo.currentText()
+            days_history = self.dataset_days_spin.value()
+
+            # Ask for VAE training parameters
+            latent_dim, ok1 = QInputDialog.getInt(
+                self,
+                "VAE Configuration",
+                "Latent dimension (size of pattern encoding):",
+                32, 8, 128, 8
+            )
+            if not ok1:
+                return
+
+            epochs, ok2 = QInputDialog.getInt(
+                self,
+                "VAE Configuration",
+                "Training epochs:",
+                50, 10, 200, 10
+            )
+            if not ok2:
+                return
+
+            batch_size, ok3 = QInputDialog.getInt(
+                self,
+                "VAE Configuration",
+                "Batch size:",
+                128, 32, 512, 32
+            )
+            if not ok3:
+                return
+
+            # Ask where to save model
+            save_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Pattern VAE Model",
+                str(Path.home() / "pattern_vae.pt"),
+                "PyTorch Models (*.pt *.pth);;All Files (*.*)"
+            )
+
+            if not save_path:
+                return
+
+            save_path = Path(save_path)
+
+            # Clear status text
+            self.study_status_text.clear()
+            self.study_status_text.append("[VAE] Starting pattern VAE training...")
+            self.study_status_text.append(f"[VAE] Symbols: {symbols}")
+            self.study_status_text.append(f"[VAE] Timeframe: {timeframe}, Days: {days_history}")
+            self.study_status_text.append(f"[VAE] Latent dim: {latent_dim}, Epochs: {epochs}, Batch size: {batch_size}")
+
+            def run_vae_training():
+                try:
+                    import torch
+                    import numpy as np
+                    from ..training.train_sklearn import fetch_candles_from_db
+                    from ..training.train import _add_time_features, CHANNEL_ORDER
+                    from ..models.pattern_autoencoder import train_pattern_vae, PatternDetector
+
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    self.study_status_text.append(f"[VAE] Using device: {device}")
+
+                    # Collect data from all symbols
+                    all_sequences = []
+
+                    for symbol in symbols:
+                        self.study_status_text.append(f"[VAE] Loading data for {symbol}...")
+
+                        df = fetch_candles_from_db(symbol, timeframe, days_history)
+                        df = _add_time_features(df)
+
+                        # Extract features (normalized)
+                        values = df[CHANNEL_ORDER].values  # (N, C)
+
+                        # Calculate normalization stats
+                        mu = values.mean(axis=0)
+                        sigma = values.std(axis=0)
+
+                        # Create sliding windows (64-bar sequences)
+                        sequence_length = 64
+                        for i in range(sequence_length, len(values)):
+                            seq = values[i - sequence_length:i].T  # (C, L)
+                            seq_norm = (seq - mu[:, None]) / (sigma[:, None] + 1e-8)
+                            all_sequences.append(seq_norm)
+
+                    if not all_sequences:
+                        self.study_status_text.append("[VAE] ERROR: No data collected")
+                        return
+
+                    # Convert to tensor
+                    data = torch.from_numpy(np.array(all_sequences, dtype=np.float32))
+                    self.study_status_text.append(f"[VAE] Collected {len(data)} sequences")
+
+                    # Split train/val
+                    val_size = int(len(data) * 0.2)
+                    train_data = data[:-val_size]
+                    val_data = data[-val_size:]
+
+                    self.study_status_text.append(f"[VAE] Training: {len(train_data)}, Validation: {len(val_data)}")
+
+                    # Train model
+                    self.study_status_text.append("[VAE] Starting training...")
+
+                    model = train_pattern_vae(
+                        train_data=train_data,
+                        val_data=val_data,
+                        input_channels=len(CHANNEL_ORDER),
+                        sequence_length=64,
+                        latent_dim=latent_dim,
+                        epochs=epochs,
+                        batch_size=batch_size,
+                        device=device
+                    )
+
+                    # Save model
+                    torch.save(model.state_dict(), save_path)
+                    self.study_status_text.append(f"[VAE] Model saved to: {save_path}")
+
+                    # Calibrate detector on validation data
+                    self.study_status_text.append("[VAE] Calibrating anomaly detector...")
+                    detector = PatternDetector(model, device=device)
+                    detector.calibrate(val_data[:500])  # Use first 500 validation samples
+
+                    # Test pattern detection
+                    self.study_status_text.append("[VAE] Testing pattern detection...")
+                    result = detector.detect_patterns(val_data[500:600])
+
+                    self.study_status_text.append(f"[VAE] Detected {result.n_anomalies} anomalies in 100 test samples")
+                    self.study_status_text.append(f"[VAE] Anomaly rate: {result.n_anomalies/100*100:.1f}%")
+
+                    # Cluster patterns
+                    self.study_status_text.append("[VAE] Clustering patterns...")
+                    labels = detector.cluster_patterns(val_data[:200], n_clusters=10)
+
+                    cluster_counts = {}
+                    for label in labels:
+                        cluster_counts[label] = cluster_counts.get(label, 0) + 1
+
+                    self.study_status_text.append(f"[VAE] Found {len(cluster_counts)} pattern clusters")
+                    for cluster_id, count in sorted(cluster_counts.items()):
+                        self.study_status_text.append(f"[VAE]   Cluster {cluster_id}: {count} patterns")
+
+                    self.study_status_text.append("\n[VAE] ✅ Training complete!")
+
+                    QMessageBox.information(
+                        self,
+                        "VAE Training Complete",
+                        f"Pattern VAE training completed successfully!\n\n"
+                        f"Model saved to:\n{save_path}\n\n"
+                        f"Detected {result.n_anomalies} anomalies in test set\n"
+                        f"Identified {len(cluster_counts)} distinct pattern clusters"
+                    )
+
+                except Exception as e:
+                    logger.exception(f"VAE training failed: {e}")
+                    self.study_status_text.append(f"\n[VAE] ❌ ERROR: {e}")
+                    QMessageBox.critical(
+                        self,
+                        "VAE Training Error",
+                        f"Training failed:\n{e}"
+                    )
+
+            # Start training thread
+            thread = threading.Thread(target=run_vae_training, daemon=True)
+            thread.start()
+
+        except Exception as e:
+            logger.exception(f"Failed to start VAE training: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to start training:\n{e}")

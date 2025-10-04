@@ -22,6 +22,7 @@ from .backtesting_tab import BacktestingTab
 from .forecast_settings_tab import ForecastSettingsTab
 from .logs_tab import LogsTab
 from .patterns_tab import PatternsTab
+from .live_trading_tab import LiveTradingTab
 
 
 def setup_ui(
@@ -101,11 +102,13 @@ def setup_ui(
     training_tab = TrainingTab(main_window)
     forecast_settings_tab = ForecastSettingsTab(main_window)
     backtesting_tab = BacktestingTab(main_window)
+    live_trading_tab = LiveTradingTab(main_window)
 
     # Add nested tabs to UNO
     uno_tab.addTab(training_tab, "Training")
     uno_tab.addTab(forecast_settings_tab, "Forecast Settings")
     uno_tab.addTab(backtesting_tab, "Backtesting")
+    uno_tab.addTab(live_trading_tab, "Live Trading")
 
     # Create Tab DUE with Patterns as nested tab
     due_tab = QTabWidget()
@@ -136,6 +139,7 @@ def setup_ui(
     result["training_tab"] = training_tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
+    result["live_trading_tab"] = live_trading_tab
     result["patterns_tab"] = patterns_tab
     result["logs_tab"] = logs_tab
     result["reports_3d_tab"] = reports_3d_tab

@@ -1301,7 +1301,15 @@ class TrainingTab(QWidget):
         self.train_btn = QPushButton("Start Training")
         self.train_btn.clicked.connect(self._start_training)
 
+        self.validate_btn = QPushButton("Multi-Horizon Validation")
+        self.validate_btn.clicked.connect(self._start_multi_horizon_validation)
+        self.validate_btn.setToolTip(
+            "Validate trained model across multiple forecast horizons\n"
+            "to identify optimal prediction window and assess performance degradation"
+        )
+
         actions.addWidget(self.train_btn)
+        actions.addWidget(self.validate_btn)
         self.layout.addLayout(actions)
 
     def _browse_out(self):
@@ -1814,3 +1822,139 @@ class TrainingTab(QWidget):
         except Exception as e:
             logger.exception(f"Failed to save config: {e}")
             QMessageBox.critical(self, "Save Config Error", f"Errore nel salvataggio configurazione:\n{e}")
+
+    def _start_multi_horizon_validation(self):
+        """Start multi-horizon validation on trained model"""
+        try:
+            from PySide6.QtWidgets import QInputDialog
+
+            # Ask user to select checkpoint file
+            checkpoint_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Model Checkpoint",
+                str(Path(self.out_dir.text()) / "lightning"),
+                "Checkpoint Files (*.ckpt *.pt *.pth);;All Files (*.*)"
+            )
+
+            if not checkpoint_path:
+                return
+
+            checkpoint_path = Path(checkpoint_path)
+
+            # Get validation parameters from current UI settings
+            sym = self.symbol_combo.currentText()
+            tf = self.tf_combo.currentText()
+            days = int(self.days_spin.value())
+
+            # Ask for horizons to test
+            horizons_text, ok = QInputDialog.getText(
+                self,
+                "Multi-Horizon Validation",
+                "Enter forecast horizons to test (comma-separated, in bars):",
+                text="1,4,12,24,48"
+            )
+
+            if not ok or not horizons_text:
+                return
+
+            try:
+                horizons = [int(h.strip()) for h in horizons_text.split(',')]
+            except ValueError:
+                QMessageBox.warning(self, "Invalid Input", "Please enter valid comma-separated integers.")
+                return
+
+            # Clear log
+            self.log_view.clear()
+            self._append_log(f"[validation] Starting multi-horizon validation")
+            self._append_log(f"[validation] Checkpoint: {checkpoint_path.name}")
+            self._append_log(f"[validation] Horizons: {horizons}")
+            self._append_log(f"[validation] Symbol: {sym}, Timeframe: {tf}, Days: {days}")
+
+            # Run validation in background thread
+            import threading
+            from ..validation import validate_model_across_horizons
+
+            def run_validation():
+                try:
+                    self._append_log("[validation] Loading model...")
+
+                    # Determine device
+                    import torch
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    self._append_log(f"[validation] Using device: {device}")
+
+                    # Run validation
+                    results = validate_model_across_horizons(
+                        checkpoint_path=checkpoint_path,
+                        symbol=sym,
+                        timeframe=tf,
+                        days_history=days,
+                        horizons=horizons,
+                        device=device
+                    )
+
+                    # Display results
+                    self._append_log("\n" + "=" * 60)
+                    self._append_log("Multi-Horizon Validation Results")
+                    self._append_log("=" * 60)
+
+                    for horizon, result in results.items():
+                        self._append_log(f"\nHorizon {horizon}h:")
+                        self._append_log(f"  MAE: {result.mae:.6f}")
+                        self._append_log(f"  RMSE: {result.rmse:.6f}")
+                        self._append_log(f"  MAPE: {result.mape:.2f}%")
+                        self._append_log(f"  Directional Accuracy: {result.directional_accuracy:.1f}%")
+                        self._append_log(f"  Sharpe Ratio: {result.sharpe_ratio:.2f}")
+                        self._append_log(f"  Max Drawdown: {result.max_drawdown:.1f}%")
+                        self._append_log(f"  Coverage (95%): {result.coverage_95:.3f}")
+                        self._append_log(f"  Interval Width: {result.interval_width:.6f}")
+                        self._append_log(f"  Samples: {result.n_samples}")
+
+                    self._append_log("\n" + "=" * 60)
+
+                    # Export results to CSV
+                    output_csv = checkpoint_path.parent / f"validation_{checkpoint_path.stem}_horizons.csv"
+
+                    import pandas as pd
+                    rows = []
+                    for horizon, result in results.items():
+                        rows.append({
+                            'horizon': horizon,
+                            'mae': result.mae,
+                            'rmse': result.rmse,
+                            'mape': result.mape,
+                            'directional_accuracy': result.directional_accuracy,
+                            'sharpe_ratio': result.sharpe_ratio,
+                            'max_drawdown': result.max_drawdown,
+                            'coverage_95': result.coverage_95,
+                            'interval_width': result.interval_width,
+                            'n_samples': result.n_samples
+                        })
+
+                    df = pd.DataFrame(rows)
+                    df.to_csv(output_csv, index=False)
+                    self._append_log(f"\n[validation] Results exported to: {output_csv}")
+
+                    # Show completion message
+                    QMessageBox.information(
+                        self,
+                        "Validation Complete",
+                        f"Multi-horizon validation completed successfully.\n\nResults saved to:\n{output_csv}"
+                    )
+
+                except Exception as e:
+                    logger.exception(f"Validation failed: {e}")
+                    self._append_log(f"\n[validation] ERROR: {e}")
+                    QMessageBox.critical(
+                        self,
+                        "Validation Error",
+                        f"Validation failed:\n{e}"
+                    )
+
+            # Start validation thread
+            thread = threading.Thread(target=run_validation, daemon=True)
+            thread.start()
+
+        except Exception as e:
+            logger.exception(f"Failed to start validation: {e}")
+            QMessageBox.critical(self, "Validation Error", f"Failed to start validation:\n{e}")
