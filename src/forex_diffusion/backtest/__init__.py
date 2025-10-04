@@ -1,7 +1,34 @@
 # backtest package initializer
 from .engine import BacktestEngine
-# backtest package initializer
-from .engine import BacktestEngine
 
-__all__ = ["BacktestEngine"]
-__all__ = ["BacktestEngine"]
+# kernc/backtesting.py integration
+from .kernc_integration import (
+    ForexDiffusionStrategy,
+    run_backtest,
+    optimize_strategy,
+    generate_predictions_from_model,
+    prepare_ohlcv_dataframe
+)
+
+# Optimization engines
+from .genetic_optimizer import GeneticOptimizer, ParameterSpace, create_parameter_space_from_ranges
+from .hybrid_optimizer import HybridOptimizer
+from .optimization_db import OptimizationDB
+
+__all__ = [
+    # Original backtest engine
+    "BacktestEngine",
+    # kernc integration
+    "ForexDiffusionStrategy",
+    "run_backtest",
+    "optimize_strategy",
+    "generate_predictions_from_model",
+    "prepare_ohlcv_dataframe",
+    # Optimizers
+    "GeneticOptimizer",
+    "HybridOptimizer",
+    "ParameterSpace",
+    "create_parameter_space_from_ranges",
+    # Database
+    "OptimizationDB"
+]

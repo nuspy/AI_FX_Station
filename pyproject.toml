@@ -49,9 +49,10 @@ dependencies = [
   # Note: Remove CPU-only versions first: pip uninstall torch torchvision torchaudio
   "scipy>=1.10.0",
 
-  # Optimization Libraries
+  # Optimization & Backtesting Libraries
   "pymoo>=0.6.0",  # NSGA-II multi-objective optimization
   "autograd>=1.4",  # Required by pymoo
+  "backtesting>=0.3.3",  # kernc/backtesting.py strategy backtesting
 
   # Multi-Provider Integration (Phase 1-4)
   "ctrader-open-api>=1.0.0",  # cTrader Open API client
