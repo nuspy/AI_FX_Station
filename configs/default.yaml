@@ -30,11 +30,24 @@ alembic:
 
 providers:
   default: "tiingo"
+  secondary: "ctrader"  # Failover provider
+
   tiingo:
+    enabled: true
     key: "${TIINGO_API_KEY:d867b4314010495a5fa40593610eb3deae5e2dcd}"
     base_url: "https://api.tiingo.com"
+    ws_uri: "wss://api.tiingo.com/fx"
     # Tiingo rate limits and other options can be configured here if needed
+
+  ctrader:
+    enabled: false
+    environment: "demo"  # "demo" or "live"
+    client_id: "${CTRADER_CLIENT_ID:-}"
+    client_secret: "${CTRADER_CLIENT_SECRET:-}"
+    # OAuth tokens stored in keyring (managed by CredentialsManager)
+
   alpha_vantage:
+    enabled: true
     key: "${ALPHAVANTAGE_KEY:-YOUR_ALPHA_VANTAGE_KEY}"
     base_url: "https://www.alphavantage.co/query"
     rate_limit_per_minute: 5
@@ -42,6 +55,7 @@ providers:
       attempts: 8
       backoff_base_seconds: 1.0
       max_backoff_seconds: 60.0
+
   dukascopy:
     enabled: false
     key: "${DUKASCOPY_KEY:-}"
@@ -521,3 +535,54 @@ advanced_timeframes:
       detection_sensitivity: "low"
       min_pattern_duration: 2880  # 2 giorni
       max_lookback: 2000
+
+# =============================================================================
+# PROVIDER REFRESH RATES & DATA SOURCES
+# =============================================================================
+
+refresh_rates:
+  # REST API polling intervals (seconds)
+  rest:
+    news_feed: 300           # 5 minutes
+    economic_calendar: 21600 # 6 hours
+    sentiment: 30            # 30 seconds
+    dom_snapshot: 1          # 1 second (for REST DOM if available)
+
+  # WebSocket settings
+  websocket:
+    reconnect_backoff: [1, 2, 4, 8, 16]  # Exponential backoff (max 16 sec)
+    heartbeat_interval: 30     # Heartbeat every 30 seconds
+    message_queue_size: 10000  # Max queued messages
+    timeout: 120               # Connection timeout (seconds)
+
+  # Database commit settings
+  database:
+    commit_interval: 60        # Commit every 60 seconds
+    commit_batch_size: 1000    # Or every 1000 records
+    vacuum_interval_days: 7    # Vacuum database every 7 days
+    archive_after_days: 365    # Archive old data after 1 year
+
+# Data source priority configuration
+data_sources:
+  # Which provider to use for which data type
+  quotes:
+    primary: "ctrader"
+    fallback: "tiingo"
+  historical_bars:
+    primary: "tiingo"
+    fallback: "ctrader"
+  ticks:
+    primary: "ctrader"
+    fallback: "tiingo"
+  dom:
+    primary: "ctrader"
+    fallback: null  # No fallback for DOM
+  sentiment:
+    primary: "ctrader"
+    fallback: null
+  news:
+    primary: "ctrader"
+    fallback: null
+  calendar:
+    primary: "ctrader"
+    fallback: null
