@@ -141,6 +141,9 @@ class UnifiedPredictionSettingsDialog(QDialog):
         # Load saved settings
         self.load_settings()
 
+        # Initialize GPU info label
+        self._update_gpu_info_label()
+
     def _create_base_tab(self) -> QWidget:
         """Create the Base settings tab"""
         tab = QWidget()
@@ -226,11 +229,16 @@ class UnifiedPredictionSettingsDialog(QDialog):
                 self.use_gpu_inference_cb.setToolTip(
                     f"Usa GPU per inference dei modelli PyTorch.\n\n"
                     f"GPU rilevata: {gpu_name}\n\n"
-                    f"Speedup atteso:\n"
-                    f"• Singolo modello: 5x più veloce\n"
-                    f"• Ensemble 10 modelli: 5-8x più veloce\n\n"
-                    f"IMPORTANTE: solo modelli PyTorch usano GPU.\n"
-                    f"Modelli sklearn rimangono su CPU."
+                    f"⚠️ LIMITAZIONE GPU:\n"
+                    f"• Con GPU attiva: usa SOLO il primo modello\n"
+                    f"• Con GPU disattiva: usa TUTTI i modelli in parallelo (CPU)\n\n"
+                    f"Speedup singolo modello GPU: ~5x vs CPU\n"
+                    f"Ma ensemble multi-modello CPU può essere più accurato\n\n"
+                    f"Raccomandazioni:\n"
+                    f"• GPU ON: predizioni veloci, singolo modello\n"
+                    f"• GPU OFF: predizioni ensemble, più accurato ma lento\n\n"
+                    f"NOTA: solo modelli PyTorch/Diffusion usano GPU.\n"
+                    f"Modelli sklearn rimangono sempre su CPU."
                 )
             else:
                 self.use_gpu_inference_cb.setToolTip(
@@ -244,6 +252,14 @@ class UnifiedPredictionSettingsDialog(QDialog):
             self.use_gpu_inference_cb.setToolTip("PyTorch non disponibile")
 
         combination_layout.addWidget(self.use_gpu_inference_cb)
+
+        # Add info label for GPU/parallel limitation
+        self.gpu_info_label = QLabel()
+        self.gpu_info_label.setStyleSheet("color: #888; font-style: italic; padding: 5px;")
+        combination_layout.addWidget(self.gpu_info_label)
+
+        # Connect checkbox to update info label
+        self.use_gpu_inference_cb.toggled.connect(self._update_gpu_info_label)
 
         layout.addWidget(combination_box)
 
@@ -445,6 +461,9 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
             # Update text edit
             self.models_edit.setPlainText("\n".join(files))
+
+            # Update GPU info label
+            self._update_gpu_info_label()
 
             logger.info(f"Selected {len(files)} model file(s)")
 
@@ -781,6 +800,32 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         except Exception as e:
             logger.exception("Failed to load settings")
+
+    def _update_gpu_info_label(self):
+        """Update info label based on GPU checkbox state"""
+        num_models = len(self._model_paths)
+        use_gpu = self.use_gpu_inference_cb.isChecked()
+
+        if num_models == 0:
+            self.gpu_info_label.setText("⚠️ Nessun modello selezionato")
+            self.gpu_info_label.setStyleSheet("color: #ff6b6b; font-style: italic; padding: 5px;")
+        elif use_gpu and num_models > 1:
+            self.gpu_info_label.setText(
+                f"⚠️ GPU attiva: userà solo il primo modello di {num_models} selezionati. "
+                f"Disattiva GPU per usare tutti i modelli in parallelo."
+            )
+            self.gpu_info_label.setStyleSheet("color: #ffa500; font-style: italic; padding: 5px;")
+        elif use_gpu and num_models == 1:
+            self.gpu_info_label.setText("✓ GPU attiva: inference veloce con 1 modello")
+            self.gpu_info_label.setStyleSheet("color: #51cf66; font-style: italic; padding: 5px;")
+        elif not use_gpu and num_models > 1:
+            self.gpu_info_label.setText(
+                f"✓ CPU parallela: userà tutti i {num_models} modelli in ensemble"
+            )
+            self.gpu_info_label.setStyleSheet("color: #51cf66; font-style: italic; padding: 5px;")
+        elif not use_gpu and num_models == 1:
+            self.gpu_info_label.setText("✓ CPU: inference con 1 modello")
+            self.gpu_info_label.setStyleSheet("color: #888; font-style: italic; padding: 5px;")
 
     @staticmethod
     def get_model_paths() -> List[str]:

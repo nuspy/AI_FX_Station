@@ -64,12 +64,13 @@ class ModelExecutor:
             logger.error(f"Failed to load model {self.model_path}: {e}")
             raise
 
-    def predict(self, features_df: pd.DataFrame) -> Dict[str, Any]:
+    def predict(self, features_df: pd.DataFrame, candles_df: pd.DataFrame = None) -> Dict[str, Any]:
         """
         Make prediction using the loaded model.
 
         Args:
             features_df: Prepared features dataframe
+            candles_df: Raw OHLCV candles dataframe (optional, required for diffusion models)
 
         Returns:
             Dictionary with prediction results
@@ -122,20 +123,34 @@ class ModelExecutor:
             X_last = X[-1:] if len(X) > 0 else np.zeros((1, X.shape[1] if X.ndim > 1 else 1))
 
             predictions = None
-            try:
-                # Try PyTorch model
-                import torch
-                if hasattr(model, 'eval'):
-                    model = model.to(self.device)  # Move model to GPU if available
-                    model.eval()
-                with torch.no_grad():
-                    t_in = torch.tensor(X_last, dtype=torch.float32).to(self.device)
-                    out = model(t_in)
-                    predictions = np.ravel(out.detach().cpu().numpy())
-            except Exception:
-                # Try sklearn model
-                if hasattr(model, "predict"):
+
+            # Check if model has custom predict method that accepts candles_df
+            if hasattr(model, "predict"):
+                # Try to pass candles_df if model supports it (for diffusion models)
+                try:
+                    import inspect
+                    sig = inspect.signature(model.predict)
+                    if 'candles_df' in sig.parameters:
+                        predictions = np.ravel(model.predict(X_last, candles_df=candles_df))
+                    else:
+                        predictions = np.ravel(model.predict(X_last))
+                except Exception as e:
+                    logger.debug(f"Predict with signature inspection failed: {e}, trying direct call")
                     predictions = np.ravel(model.predict(X_last))
+
+            if predictions is None:
+                try:
+                    # Try PyTorch forward pass
+                    import torch
+                    if hasattr(model, 'eval'):
+                        model = model.to(self.device)  # Move model to GPU if available
+                        model.eval()
+                    with torch.no_grad():
+                        t_in = torch.tensor(X_last, dtype=torch.float32).to(self.device)
+                        out = model(t_in)
+                        predictions = np.ravel(out.detach().cpu().numpy())
+                except Exception:
+                    pass
 
             if predictions is None:
                 # NO FALLBACK! Model must have predict method or fail
@@ -187,7 +202,8 @@ class ParallelInferenceEngine:
         symbol: str,
         timeframe: str,
         horizons: List[str],
-        use_gpu: bool = False
+        use_gpu: bool = False,
+        candles_df: pd.DataFrame = None
     ) -> Dict[str, Any]:
         """
         Run parallel inference with multiple models.
@@ -199,6 +215,7 @@ class ParallelInferenceEngine:
             timeframe: Data timeframe
             horizons: Prediction horizons
             use_gpu: Use GPU for inference (default: False)
+            candles_df: Raw OHLCV candles dataframe (optional, for diffusion models)
 
         Returns:
             Dictionary with aggregated results from all models
@@ -229,7 +246,7 @@ class ParallelInferenceEngine:
 
         # Run parallel inference
         start_time = time.time()
-        results = self._execute_parallel(executors, features_df)
+        results = self._execute_parallel(executors, features_df, candles_df)
         total_time = time.time() - start_time
 
         # Aggregate results
@@ -244,14 +261,14 @@ class ParallelInferenceEngine:
 
         return aggregated
 
-    def _execute_parallel(self, executors: List[ModelExecutor], features_df: pd.DataFrame) -> List[Dict[str, Any]]:
+    def _execute_parallel(self, executors: List[ModelExecutor], features_df: pd.DataFrame, candles_df: pd.DataFrame = None) -> List[Dict[str, Any]]:
         """Execute model predictions in parallel using thread pool."""
         results = []
 
         def load_and_predict(executor):
             try:
                 executor.load_model()
-                return executor.predict(features_df)
+                return executor.predict(features_df, candles_df)
             except Exception as e:
                 return {
                     'model_path': executor.model_path,

@@ -1,0 +1,499 @@
+🎯 PROMPT PER SISTEMA AGENTICO - INTEGRAZIONE CTRADER
+CONTESTO
+Sistema trading Python esistente con:
+
+GUI per visualizzazione dati real-time
+Provider attuale: Tiingo
+WebSocket streaming
+Backfill storico automatico
+Database SQLAlchemy + Alembic
+Aggregatori candlesticks da tick data
+
+
+TASK PRINCIPALE
+Integrare cTrader Open API come provider aggiuntivo mantenendo retrocompatibilità totale.
+
+1. ARCHITETTURA MULTI-PROVIDER
+1.1 Pattern Strategy per Provider
+
+Crea interfaccia base BaseProvider con metodi astratti per tutte le operazioni comuni
+Definisci enum ProviderCapability con tutte le feature possibili (quotes, bars, ticks, volumes, DOM, sentiment, news, calendar, websocket)
+Ogni provider dichiara quali capabilities supporta
+Metodi opzionali ritornano None se feature non disponibile
+Implementa CTraderProvider che estende BaseProvider
+Implementa TiingoProvider che wrappa codice esistente
+Crea ProviderManager (factory pattern) per istanziare provider by name
+
+1.2 Gestione Asincrona Unificata
+
+Tutti i provider usano async/await
+WebSocket di cTrader usa Twisted → converti a asyncio con asyncio.Queue
+Callbacks cTrader pushano dati in queue asincrona
+Stream unificato AsyncIterator per tutti i provider
+Gestisci event loop condiviso tra GUI Qt e asyncio
+
+
+2. SISTEMA CREDENTIALS
+2.1 Storage Sicuro
+
+Usa keyring OS-level per salvare credentials
+Cifra con cryptography.fernet prima di salvare
+Dataclass ProviderCredentials con campi: provider_name, api_key, api_secret, client_id, access_token, environment (demo/live)
+CredentialsManager con metodi: save/load/delete/list
+Nessun file plaintext, tutto in keyring sistema operativo
+
+2.2 OAuth Flow per cTrader
+
+Implementa OAuth 2.0 authorization code flow
+Genera URL autorizzazione con redirect a localhost
+Avvia server HTTP temporaneo su localhost:5000/callback per catturare code
+Scambia code per access_token
+Salva token con auto-refresh quando scade
+Gestisci re-autorizzazione automatica se token invalido
+
+
+3. ACQUISIZIONE DATI CTRADER
+3.1 WebSocket Real-Time
+
+Subscribe a spot prices (bid/ask/timestamp)
+Subscribe a market depth (DOM bids/asks multilevel)
+Subscribe a tick volumes (se disponibili)
+Converti tutti i callback Twisted in eventi asyncio
+Normalizza formato dati in struttura comune tra provider
+Gestisci reconnection automatica con exponential backoff
+Implementa heartbeat per detection disconnessione
+
+3.2 Dati Storici (Backfill)
+
+Usa get_trendbars() per OHLCV storici
+Usa get_tickdata() per tick storici
+Richiedi market depth snapshot su richiesta (non storico)
+Implementa paginazione per richieste grandi (rispetta rate limit 5 req/sec historical)
+Gestisci timezone conversion UTC → locale
+Riempi buchi dati automaticamente rilevando gap temporali
+
+3.3 Dati Extra (News, Calendar, Sentiment)
+
+News feed: polling ogni 5 minuti (configurabile) tramite REST
+Economic calendar: fetch giornaliero all'avvio + refresh ogni 6 ore
+Sentiment: polling ogni 30 secondi per simbolo corrente
+DOM: snapshot ogni secondo + updates WebSocket
+Real volumes: estrai da tick data se disponibili
+
+
+4. DATABASE MIGRATION
+4.1 Schema Evolution con Alembic
+
+Crea migration per aggiungere colonne: real_volume, tick_volume, provider_source
+Nuova tabella market_depth con: symbol, timestamp, side (bid/ask), price, volume, level
+Nuova tabella sentiment_data con: symbol, timestamp, long_pct, short_pct, total_traders, provider
+Nuova tabella news_events con: timestamp, title, content, impact, currency, provider
+Nuova tabella economic_calendar con: event_id, timestamp, event_name, currency, forecast, actual, previous, impact
+Aggiungi indici compositi su (symbol, timestamp, provider)
+Mantieni backward compatibility: colonne esistenti non modificate, solo aggiunte
+
+4.2 Alembic Migration Script
+
+Genera con alembic revision --autogenerate -m "add_ctrader_features"
+Implementa upgrade() con creazione tabelle + colonne
+Implementa downgrade() con drop sicuro (solo se tabelle vuote)
+Aggiungi migration data: popola provider_source='tiingo' per dati esistenti
+Test migration su database vuoto e database con dati
+
+
+5. DATA PIPELINE & STORAGE
+5.1 Aggregatori Estesi
+
+Estendi aggregatore candlestick per includere real_volume e tick_volume separati
+Aggiungi aggregatore DOM: calcola mid-price, spread, imbalance da book
+Crea aggregatore sentiment: calcola media mobile sentiment ultimi 5 minuti
+Tutti gli aggregatori gestiscono dati mancanti (None) gracefully
+
+5.2 Strategia Storage
+DA SALVARE IN DB:
+
+OHLCV bars (con real_volume e tick_volume)
+Tick data (solo se configurato, altrimenti solo aggregati)
+Market depth snapshot ogni 10 secondi
+Sentiment snapshot ogni minuto
+Economic calendar events completi
+
+SOLO IN RAM (Cache LRU):
+
+News feed (ultimi 100 items, expiry 24h)
+DOM real-time updates (buffer circolare ultimi 1000)
+Sentiment tick-by-tick (buffer ultimi 500)
+WebSocket messages raw (buffer ultimi 1000 per debug)
+
+5.3 Worker Threads
+
+Thread WebSocket: riceve stream, pusha in queue
+Thread Aggregator: consuma queue, crea candlesticks, salva DB
+Thread Backfill: rileva gap, richiede dati storici, riempie DB
+Thread Housekeeping: pulisce cache RAM, archivia vecchi dati
+Usa concurrent.futures.ThreadPoolExecutor con 4 worker
+Comunicazione via asyncio.Queue thread-safe
+
+
+6. GUI INTEGRATION
+6.1 Settings Window Refactor
+
+Converti singola finestra in QTabWidget con tabs:
+
+General: lingua, tema, startup behavior
+Providers: lista provider disponibili, credentials, selezione attivo
+Data Sources: quali dati usare da quale provider (priorità)
+Performance: cache size, threads, rate limits
+Advanced: logging, debug mode, database maintenance
+
+
+Tab Providers:
+
+ComboBox selezione provider
+Form credentials dinamico basato su provider selezionato
+Bottone "Test Connection" con feedback visivo
+Checkbox "Use as default"
+Lista provider configurati con status (✓ connected, ✗ disconnected, ⚠ error)
+
+
+
+6.2 Main Window Extensions
+Nuovo Tab "News":
+
+TableView con colonne: Time, Impact, Currency, Event, Content
+Filtri: currency selector, impact level (high/med/low)
+Auto-refresh ogni 5 min con indicator
+Click su row apre dialog dettagli completi
+Color coding: red=high impact, yellow=medium, gray=low
+
+Nuovo Tab "Calendar":
+
+Calendar widget con dots su giorni con eventi
+TableView eventi del giorno selezionato
+Colonne: Time, Currency, Event, Forecast, Previous, Actual, Impact
+Filtro currency multi-select
+Export CSV functionality
+
+Sentiment Widget:
+
+Badge circolare sul chart 
+linea spessa intorno al badge del sentiment che indichi la percentuale in forma grafica (es. barra circolare intorno a icona che si riempie (la barra ha colori fissi, ma rossa fino a 40& gialla da 40 a 60 e verde sopra i 69%) a seconda del livello .
+Colori sfondo: verde (>60% long), rosso (>60% short), giallo (neutrale)
+Icona per bear, neutra e bull al centro del badge e Percentuale visibile sotto di esso
+Tooltip mostra: Long/Short/Total traders
+Click apre dialog popup con:
+
+Gauge chart sentiment corrente
+Line chart storico sentiment (ultima ora)
+Tabella breakdown per timeframe
+
+
+
+6.3 Chart Enhancements
+Volume Bars:
+
+Subplot sotto chart principale
+Bar verdi (tick_volume) + overlay bar blu semitrasparente (real_volume)
+Toggle visibility in chart menu
+Scala dinamica auto-adjust
+
+DOM Ladder (Opzionale):
+
+Panel laterale destra chart
+Ladder prezzi: bid column (sinistra) | price | ask column (destra)
+Colore intensity basato su volume
+Aggiornamento real-time da WebSocket
+Toggle show/hide
+Depth levels configurabile (5/10/20)
+
+
+7. CONFIGURAZIONE REFRESH RATES
+7.1 Default Values (Settings)
+REST API Polling:
+
+News feed: 300 secondi (5 min)
+Economic calendar: 21600 secondi (6 ore)
+Sentiment: 30 secondi
+DOM snapshot: 1 secondo
+
+WebSocket:
+
+Reconnect delay: exponential backoff 1/2/4/8/16 sec max
+Heartbeat interval: 30 secondi
+Message queue max size: 10000
+
+Database:
+
+Commit interval: 60 secondi o 1000 records (whichever first)
+Vacuum interval: 7 giorni
+Archive old data: dopo 365 giorni (configurable)
+
+7.2 Settings Persistence
+
+Salva in config.toml con sezioni:
+
+  [providers.ctrader]
+  enabled = true
+  environment = "demo"
+  
+  [refresh_rates]
+  news = 300
+  calendar = 21600
+  sentiment = 30
+  
+  [database]
+  commit_interval = 60
+  archive_after_days = 365
+
+Validazione valori all'avvio
+Reset to defaults button
+Import/Export settings file
+
+
+8. FEATURES AGGIUNTIVE
+8.1 Provider Health Monitoring
+
+Dashboard widget mostra status ogni provider:
+
+Latency (ping time)
+Data rate (msg/sec)
+Error rate (%)
+Uptime
+
+
+Alert sistema se provider down > 30 sec
+Automatic failover a provider secondario se configurato
+
+8.2 Data Quality Checks
+
+Validator rileva: duplicate timestamps, gap temporali, outliers (prezzo spike), volumi negativi
+Notifica utente con dialog se anomalie rilevate
+Opzione auto-fix (rimuovi duplicates, interpola gap piccoli)
+Log anomalie in file separato per audit
+
+8.3 Historical Data Viewer
+
+Nuovo window: select symbol, timeframe, date range
+Mostra dati disponibili per provider
+Identifica gap con highlight rosso
+Bottone "Fill Gaps" avvia backfill mirato
+Export selezione a CSV/Parquet
+
+8.4 Backtesting Integration
+
+Replay mode: riproduci tick data storici con velocità configurabile
+Supporta DOM replay se disponibile
+Simula latency reale tra richiesta e risposta
+Confronta performance tra provider (quale avrebbe dato segnali migliori)
+
+
+9. INSTALLAZIONE & SETUP
+9.1 pyproject.toml
+Aggiungi dipendenze:
+tomldependencies = [
+    "ctrader-open-api>=1.0.0",
+    "twisted>=23.0.0",
+    "protobuf>=4.0.0",
+    "keyring>=24.0.0",
+    "cryptography>=41.0.0",
+]
+9.2 Setup Wizard
+
+Al primo avvio rileva assenza configurazione
+Wizard multi-step:
+
+Select providers to configure
+Enter credentials per provider selezionato
+Test connections
+Select default provider
+Choose data retention policy
+Done
+
+
+Salva tutto in keyring + config.toml
+Genera database schema con Alembic
+
+9.3 CLI Commands
+Aggiungi comandi:
+bashpython -m app providers list              # Lista provider disponibili
+python -m app providers add ctrader       # Wizard aggiungi provider
+python -m app providers test ctrader      # Test connessione
+python -m app data backfill --provider ctrader --symbol EURUSD --days 30
+python -m app db migrate                  # Alembic upgrade head
+python -m app db vacuum                   # Ottimizza database
+
+10. TESTING STRATEGY
+10.1 Unit Tests
+Provider Tests:
+
+Mock cTrader client, verifica parsing responses
+Test ogni capability singolarmente
+Test error handling (network error, invalid credentials, rate limit)
+Test data normalization (cTrader format → internal format)
+
+Database Tests:
+
+Test migrations up/down
+Test concurrent writes (race conditions)
+Test query performance con dataset grande (1M+ rows)
+Test integrità referenziale
+
+Aggregator Tests:
+
+Test candlestick building con tick incompleti
+Test volume aggregation (tick + real)
+Test DOM aggregation (imbalance calculation)
+Test handling missing data
+
+10.2 Integration Tests
+
+Test full pipeline: WebSocket → Aggregator → DB → GUI
+Test provider failover scenario
+Test backfill su database esistente (no duplicates)
+Test OAuth flow completo (mock server)
+
+10.3 GUI Tests
+
+Test con pytest-qt:
+
+Settings window save/load
+Provider selection changes
+News/Calendar filtering
+Sentiment widget updates
+
+
+Visual regression con screenshot comparison
+
+10.4 Performance Tests
+
+Benchmark throughput: quanti tick/sec gestisce
+Memory leak detection (esegui 24h, monitora RAM)
+Database growth rate (stima spazio disco necessario)
+GUI responsiveness sotto carico (10k msg/sec)
+
+10.5 Automated Test Suite
+
+Pre-commit hooks: run linter + type checker
+CI pipeline GitHub Actions:
+
+Run all unit tests
+Run integration tests con database test
+Build GUI, test startup
+Generate coverage report (target >80%)
+
+
+Nightly: performance tests + memory leak detection
+
+
+11. TASK TRACKING SYSTEM
+11.1 Task Definition File
+Crea TASKS.md con struttura:
+markdown## Phase 1: Core Infrastructure
+- [ ] 1.1 Create BaseProvider interface
+- [ ] 1.2 Implement CTraderProvider
+- [ ] 1.3 Implement ProviderManager
+- [ ] 1.4 Unit tests providers
+
+## Phase 2: Credentials & Config
+- [ ] 2.1 CredentialsManager with keyring
+- [ ] 2.2 OAuth flow implementation
+- [ ] 2.3 Config.toml structure
+- [ ] 2.4 Settings GUI tabs
+
+... (tutte le task)
+11.2 Progress Tracking
+
+Task divisi in 4 fasi: Infrastructure, Data Pipeline, GUI, Testing
+Ogni task ha: ID, description, estimated time, dependencies, status
+Status: TODO, IN_PROGRESS, BLOCKED, TESTING, DONE
+Aggiorna TASKS.md dopo ogni sessione coding
+Generate progress report automatico (script Python conta checkbox)
+
+11.3 Commit Strategy
+
+Ogni task = 1+ commits
+Commit message format: [TASK-1.2] Implement CTraderProvider - Add WebSocket streaming
+Branch per fase: feature/phase-1-infrastructure
+PR review checklist: tests pass, docs updated, TASKS.md updated
+
+11.4 Blockers & Dependencies
+
+File BLOCKERS.md per issue aperti:
+
+Descri problema
+Task bloccato
+Soluzioni tentate
+Help needed
+
+
+Review blockers ogni giorno, priority alta
+
+
+12. IMPLEMENTATION GUIDELINES
+12.1 Code Quality
+
+NO PLACEHOLDER CODE: Ogni funzione implementata completamente
+NO TODO COMMENTS: Se serve fare qualcosa, crea task in TASKS.md
+Type hints ovunque: usa mypy --strict
+Docstrings Google style per tutte le classi/metodi pubblici
+Error handling: ogni operazione I/O ha try/except con logging
+Logging strutturato: usa structlog con context
+
+12.2 Performance
+
+Async I/O per tutte le network calls
+Database: bulk insert con SQLAlchemy bulk_insert_mappings
+Cache: usa functools.lru_cache per function pure
+Profiling: cProfile su hot paths, ottimizza se >100ms
+Memory: usa __slots__ per dataclass con molte istanze
+
+12.3 Error Recovery
+
+Network errors: retry con exponential backoff (max 5 tentativi)
+Database errors: rollback transaction, log error, notifica utente
+GUI errors: dialog user-friendly, log stacktrace, continua esecuzione
+Graceful degradation: se feature opzionale fallisce, disabilitala ma continua
+Health checks: ogni componente espone metodo is_healthy() → dashboard
+
+12.4 Documentation
+
+README.md: setup instructions, quick start, architecture overview
+docs/ARCHITECTURE.md: diagrammi componenti, data flow
+docs/PROVIDERS.md: come aggiungere nuovo provider
+docs/DATABASE.md: schema ER diagram, migration guide
+docs/GUI.md: screenshot features, user manual
+Inline docs: commenti solo per logica complessa, codice self-documenting
+
+12.5 Security
+
+Never log credentials (use *** mask)
+Validate all user inputs (prevent SQL injection anche se SQLAlchemy)
+Rate limiting su API calls (rispetta TOS provider)
+Keyring fallback: se OS keyring fail, chiedi password master → cifra in file locale
+Audit log: chi ha modificato settings quando
+
+
+DELIVERABLES FINALI
+
+✅ Codebase completo con tutte le feature
+✅ Database migrato con Alembic
+✅ Test suite >80% coverage
+✅ Documentazione completa
+✅ TASKS.md con tutte checkbox checked
+✅ Demo video funzionalità (opzionale)
+
+SUCCESS CRITERIA
+
+ Applicazione avvia senza errori
+ Utente può configurare provider cTrader da GUI
+ WebSocket cTrader riceve dati real-time
+ Backfill storico funziona senza duplicati
+ News/Calendar tabs mostrano dati corretti
+ Sentiment badge aggiorna in real-time
+ Volume bars mostrano tick + real volumes
+ Tutti i test passano
+ Zero placeholder code
+ Database migration reversibile
+
+
+NOTA PER AGENTE: Sei autorizzato a prendere decisioni di design autonome se ragionevoli. Documenta scelte importanti in docs/DECISIONS.md. Priorità: funzionalità completa > performance > eleganza codice.

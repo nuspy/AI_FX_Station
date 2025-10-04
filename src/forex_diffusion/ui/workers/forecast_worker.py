@@ -617,8 +617,19 @@ class ForecastWorker(QRunnable):
             # Get GPU setting from payload
             use_gpu = self.payload.get("use_gpu_inference", False)
 
+            # GPU inference limitation: cannot run multiple models in parallel on single GPU
+            # If GPU is enabled, use only the first model for inference
+            if use_gpu and len(model_paths) > 1:
+                logger.warning(
+                    f"GPU inference enabled with {len(model_paths)} models. "
+                    f"Using only first model (GPU cannot run multiple models in parallel). "
+                    f"Disable GPU to use all models in parallel on CPU."
+                )
+                parallel_settings["model_paths"] = [model_paths[0]]
+                max_workers = 1
+
             parallel_results = parallel_engine.run_parallel_inference(
-                parallel_settings, feats_df, symbol, tf, horizons_raw, use_gpu=use_gpu
+                parallel_settings, feats_df, symbol, tf, horizons_raw, use_gpu=use_gpu, candles_df=df_candles_full
             )
 
             # Check if we should combine models or keep them separate
