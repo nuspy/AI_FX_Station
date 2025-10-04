@@ -79,8 +79,38 @@ dependencies = [
 ]
 
 [project.scripts]
+# Training scripts
 fx-train-sklearn = "forex_diffusion.training.train_sklearn:main"
 fx-train-lightning = "forex_diffusion.training.train:main"
+
+# Optional dependency installation scripts
+# Run with: pip run <script-name>
+[project.optional-dependencies]
+# NVIDIA GPU acceleration stack (requires CUDA 12.x)
+# Install with: pip install -e ".[nvidia]"
+# Or use automated installer: python install_nvidia_stack.py --all
+nvidia = [
+  "nvidia-ml-py>=12.0.0",  # NVIDIA ML Python bindings for GPU monitoring
+]
+
+# Development and testing dependencies
+# Install with: pip install -e ".[dev]"
+dev = [
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "black>=23.0.0",
+  "ruff>=0.1.0",
+]
+
+# Install everything (recommended for full development setup)
+# Install with: pip install -e ".[all]"
+all = [
+  "nvidia-ml-py>=12.0.0",
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "black>=23.0.0",
+  "ruff>=0.1.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
