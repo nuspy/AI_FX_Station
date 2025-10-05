@@ -77,20 +77,66 @@ def _build_arrays(df: pd.DataFrame, patch_len: int, horizon: int, warmup: int) -
     return patches, y, cond
 
 
-def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+    """
+    Standardize patches ensuring NO look-ahead bias.
+
+    CRITICAL: Computes mean/std ONLY on training set, then applies to validation.
+    This prevents information leakage from future data.
+
+    Returns:
+        Tuple of (train_norm, val_norm, mu, sigma, scaler_metadata)
+    """
+    from scipy import stats
+
     n = patches.shape[0]
     val_size = max(1, int(n * val_frac))
     train_size = n - val_size
+
     if train_size <= 1:
         raise RuntimeError("Split training/validation troppo piccolo: riduci val_frac o aumenta dati")
+
+    # Temporal split: train first, val last (NO shuffling)
     train = patches[:train_size]
     val = patches[train_size:]
+
+    # Compute statistics ONLY on training set (NO look-ahead bias)
     mu = train.mean(axis=(0, 2), keepdims=True)
     sigma = train.std(axis=(0, 2), keepdims=True)
     sigma[sigma == 0] = 1.0
+
+    # Apply standardization
     train_norm = (train - mu) / sigma
     val_norm = (val - mu) / sigma
-    return train_norm, val_norm, mu.squeeze(), sigma.squeeze(), np.array([train_size, val_size])
+
+    # VERIFICATION: Statistical test for look-ahead bias detection
+    # Test first channel (close price) across samples
+    train_flat = train_norm[:, 0, :].flatten()  # Channel 0 (open), all samples
+    val_flat = val_norm[:, 0, :].flatten()
+
+    p_value = None
+    if len(train_flat) > 20 and len(val_flat) > 20:
+        # Kolmogorov-Smirnov test: different distributions should have low p-value
+        _, p_value = stats.ks_2samp(train_flat, val_flat)
+
+    # Metadata for debugging
+    scaler_metadata = {
+        "train_size": int(train_size),
+        "val_size": int(val_size),
+        "train_mean_shape": list(mu.shape),
+        "train_std_shape": list(sigma.shape),
+        "ks_test_p_value": float(p_value) if p_value is not None else None,
+    }
+
+    # WARNING: If distributions too similar, potential look-ahead bias
+    if p_value is not None and p_value > 0.8:
+        logger.warning(
+            f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED!\n"
+            f"Train/Val distributions suspiciously similar (KS p-value={p_value:.3f}).\n"
+            f"Expected p < 0.5 for different time periods."
+        )
+
+    return train_norm, val_norm, mu.squeeze(), sigma.squeeze(), scaler_metadata
 
 
 def parse_args() -> argparse.Namespace:
@@ -148,11 +194,19 @@ def main() -> None:
     candles = _add_time_features(candles)
 
     patches, targets, cond = _build_arrays(candles, args.patch_len, int(args.horizon), args.warmup_bars)
-    train_x, val_x, mu, sigma, split_sizes = _standardize_train_val(patches, args.val_frac)
-    train_y = targets[: split_sizes[0]]
-    val_y = targets[split_sizes[0] :]
-    cond_train = cond[: split_sizes[0]] if cond is not None else None
-    cond_val = cond[split_sizes[0] :] if cond is not None else None
+    train_x, val_x, mu, sigma, scaler_metadata = _standardize_train_val(patches, args.val_frac)
+
+    # Log scaler metadata for debugging
+    logger.info(f"[Scaler] Train size: {scaler_metadata['train_size']}, Val size: {scaler_metadata['val_size']}")
+    if scaler_metadata.get('ks_test_p_value') is not None:
+        logger.info(f"[Scaler] KS test p-value: {scaler_metadata['ks_test_p_value']:.4f} (< 0.5 expected for no bias)")
+
+    # Split targets and conditions based on train_size
+    train_size = scaler_metadata['train_size']
+    train_y = targets[:train_size]
+    val_y = targets[train_size:]
+    cond_train = cond[:train_size] if cond is not None else None
+    cond_val = cond[train_size:] if cond is not None else None
 
     train_ds = CandlePatchDataset(train_x, train_y, cond_train)
     val_ds = CandlePatchDataset(val_x, val_y, cond_val)
@@ -165,6 +219,7 @@ def main() -> None:
         "channel_order": CHANNEL_ORDER,
         "mu": mu.tolist(),
         "sigma": sigma.tolist(),
+        "scaler_metadata": scaler_metadata,  # NEW: metadata for bias verification
     }
     try:
         model.save_hyperparameters({

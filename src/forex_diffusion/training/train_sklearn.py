@@ -352,6 +352,13 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
 
 
 def _build_features(candles: pd.DataFrame, args):
+    """
+    Build feature matrix from candles.
+
+    CRITICAL (TASK 1.3): Validates ALL features are saved, no silent dropping.
+    """
+    from loguru import logger
+
     H = int(args.horizon)
     if H <= 0:
         raise ValueError("horizon deve essere > 0")
@@ -359,14 +366,30 @@ def _build_features(candles: pd.DataFrame, args):
     if len(c) <= H:
         raise ValueError(f"Non abbastanza barre ({len(c)}) per orizzonte {H}")
     y = (c.shift(-H) / c) - 1.0
+
+    # Track all feature groups for validation
+    feature_groups = {}
     feats: List[pd.DataFrame] = []
+
     if getattr(args, "use_relative_ohlc", True):
-        feats.append(_relative_ohlc(candles))
+        rel_ohlc = _relative_ohlc(candles)
+        feats.append(rel_ohlc)
+        feature_groups["relative_ohlc"] = list(rel_ohlc.columns)
+        logger.debug(f"[Features] Relative OHLC: {list(rel_ohlc.columns)}")
+
     if getattr(args, "use_temporal_features", True):
-        feats.append(_temporal_feats(candles))
+        temp_feats = _temporal_feats(candles)
+        feats.append(temp_feats)
+        feature_groups["temporal"] = list(temp_feats.columns)
+        logger.debug(f"[Features] Temporal: {list(temp_feats.columns)}")
+
     rv_window = int(getattr(args, "rv_window", 0) or 0)
     if rv_window > 1:
-        feats.append(_realized_vol_feature(candles, rv_window))
+        rv_feats = _realized_vol_feature(candles, rv_window)
+        feats.append(rv_feats)
+        feature_groups["realized_vol"] = list(rv_feats.columns)
+        logger.debug(f"[Features] Realized Vol: {list(rv_feats.columns)}")
+
     indicator_tfs = _coerce_indicator_tfs(getattr(args, "indicator_tfs", {}))
     ind_cfg: Dict[str, Dict[str, Any]] = {}
     if "atr" in indicator_tfs:
@@ -384,9 +407,18 @@ def _build_features(candles: pd.DataFrame, args):
     if "hurst" in indicator_tfs:
         ind_cfg["hurst"] = {"window": int(args.hurst_window)}
     if ind_cfg:
-        feats.append(_indicators(candles, ind_cfg, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days_history))
+        ind_feats = _indicators(candles, ind_cfg, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days_history)
+        feats.append(ind_feats)
+        feature_groups["indicators"] = list(ind_feats.columns)
+        logger.debug(f"[Features] Indicators: {list(ind_feats.columns)}")
+
     if not feats:
         raise RuntimeError("Nessuna feature disponibile per il training")
+
+    # Log total features before concatenation
+    total_features_expected = sum(len(cols) for cols in feature_groups.values())
+    logger.info(f"[Features] Total expected: {total_features_expected} features from {len(feature_groups)} groups")
+
     X = pd.concat(feats, axis=1)
     X = X.replace([np.inf, -np.inf], np.nan)
 
@@ -412,14 +444,96 @@ def _build_features(candles: pd.DataFrame, args):
         y = y.iloc[int(args.warmup_bars):]
     if X.empty or y.empty:
         raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
-    meta = {"features": list(X.columns), "indicator_tfs": indicator_tfs, "dropped_features": dropped_feats, "args_used": vars(args)}
+
+    # VALIDATION (TASK 1.3): Verify all expected features survived
+    final_features = set(X.columns)
+    expected_features = set()
+    for group_feats in feature_groups.values():
+        expected_features.update(group_feats)
+
+    # Features that were expected but missing after processing
+    missing_features = expected_features - final_features - set(dropped_feats)
+
+    if missing_features:
+        # CRITICAL: Some features were silently dropped
+        logger.error(f"❌ FEATURE LOSS DETECTED! {len(missing_features)} features missing:")
+        logger.error(f"   Missing: {sorted(missing_features)}")
+        logger.error(f"   Expected groups: {list(feature_groups.keys())}")
+        logger.error(f"   Dropped (low coverage): {dropped_feats}")
+        raise RuntimeError(
+            f"Feature loss bug: {len(missing_features)} features silently dropped! "
+            f"Missing: {sorted(missing_features)}"
+        )
+
+    logger.info(f"[Features] ✓ Validation passed: {len(X.columns)} features saved")
+    logger.info(f"[Features] Final feature list: {list(X.columns)}")
+
+    meta = {
+        "features": list(X.columns),
+        "feature_groups": feature_groups,
+        "indicator_tfs": indicator_tfs,
+        "dropped_features": dropped_feats,
+        "total_expected": total_features_expected,
+        "total_saved": len(X.columns),
+        "args_used": vars(args)
+    }
     return X, y, meta
 
 
 def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
+    """
+    Standardize features ensuring NO look-ahead bias.
+
+    CRITICAL: Computes mean/std ONLY on training set, then applies to validation.
+    This prevents information leakage from future data.
+
+    Returns:
+        Tuple of ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
+    """
+    from scipy import stats
+
+    # Split WITHOUT shuffling to maintain temporal order
     Xtr, Xva, ytr, yva = train_test_split(X.values, y.values, test_size=val_frac, shuffle=False)
-    mu = Xtr.mean(axis=0); sigma = Xtr.std(axis=0); sigma[sigma==0] = 1.0
-    return ( (Xtr - mu)/sigma, ytr ), ( (Xva - mu)/sigma, yva ), (mu, sigma)
+
+    # Compute statistics ONLY on training set (NO look-ahead bias)
+    mu = Xtr.mean(axis=0)
+    sigma = Xtr.std(axis=0)
+    sigma[sigma == 0] = 1.0  # Prevent division by zero
+
+    # Apply standardization
+    Xtr_scaled = (Xtr - mu) / sigma
+    Xva_scaled = (Xva - mu) / sigma
+
+    # VERIFICATION: Statistical test for look-ahead bias detection
+    # If train and test distributions are too similar, likely bias present
+    p_values = []
+    for i in range(min(10, Xtr_scaled.shape[1])):  # Test first 10 features
+        if Xtr_scaled.shape[0] > 20 and Xva_scaled.shape[0] > 20:
+            # Kolmogorov-Smirnov test: different distributions should have low p-value
+            _, p_val = stats.ks_2samp(Xtr_scaled[:, i], Xva_scaled[:, i])
+            p_values.append(p_val)
+
+    # Metadata for debugging
+    scaler_metadata = {
+        "train_size": Xtr.shape[0],
+        "val_size": Xva.shape[0],
+        "train_mean": mu.tolist(),
+        "train_std": sigma.tolist(),
+        "ks_test_p_values": p_values,
+        "ks_test_median_p": float(np.median(p_values)) if p_values else None,
+    }
+
+    # WARNING: If distributions too similar, potential look-ahead bias
+    if scaler_metadata["ks_test_median_p"] is not None:
+        if scaler_metadata["ks_test_median_p"] > 0.8:
+            warnings.warn(
+                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED!\n"
+                f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p']:.3f}).\n"
+                f"Expected p < 0.5 for different time periods. Verify train_test_split has shuffle=False.",
+                RuntimeWarning
+            )
+
+    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
 
 def _fit_model(algo: str, Xtr, ytr, args):
     if   algo == "ridge":      return Ridge(alpha=float(args.alpha), random_state=args.random_state)
@@ -726,7 +840,12 @@ def main():
         raise ValueError(f"Candles mancanti colonne: {req}")
 
     X, y, meta = _build_features(candles, args)
-    (Xtr, ytr), (Xva, yva), (mu, sigma) = _standardize_train_val(X, y, args.val_frac)
+    (Xtr, ytr), (Xva, yva), (mu, sigma, scaler_metadata) = _standardize_train_val(X, y, args.val_frac)
+
+    # Log scaler metadata for debugging
+    print(f"[Scaler] Train size: {scaler_metadata['train_size']}, Val size: {scaler_metadata['val_size']}")
+    if scaler_metadata.get('ks_test_median_p') is not None:
+        print(f"[Scaler] KS test median p-value: {scaler_metadata['ks_test_median_p']:.4f} (< 0.5 expected for no bias)")
 
     # Ensure numpy arrays
     Xtr = np.asarray(Xtr, dtype=float)
@@ -875,12 +994,13 @@ def main():
 
     run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{args.horizon}_{args.algo}{encoder_suffix}"
 
-    # Save payload with encoder and optimization info
+    # Save payload with encoder, optimization info, and scaler metadata
     payload = {
         "model_type": args.algo,
         "model": model,
         "scaler_mu": mu,
         "scaler_sigma": sigma,
+        "scaler_metadata": scaler_metadata,  # NEW: metadata for bias verification
         "encoder": encoder_model,  # Generic 'encoder' key instead of just 'pca'
         "pca": encoder_model if encoder_type == "pca" else None,  # Keep 'pca' for backward compatibility
         "encoder_type": encoder_type,

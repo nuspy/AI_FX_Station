@@ -276,13 +276,20 @@ def resample_causal(df: pd.DataFrame, src_tf: str, tgt_tf: str) -> pd.DataFrame:
 
     res = res.dropna(subset=["open", "close"]).reset_index()
     res["ts_utc"] = (res["ts_dt"].view("int64") // 1_000_000).astype("int64")
+
+    # CRITICAL FIX (TASK 1.3): Calculate relative OHLC features on res, not tmp
+    # These features were being calculated but then lost because we returned res[cols]
+    res["hrel"] = (res["high"] - res["open"]) / res["open"].replace(0, np.nan).fillna(0.0)
+    res["lrel"] = (res["low"] - res["open"]) / res["open"].replace(0, np.nan).fillna(0.0)
+    res["crel"] = (res["close"] - res["open"]) / res["open"].replace(0, np.nan).fillna(0.0)
+
     cols = ["ts_utc", "open", "high", "low", "close"]
     if "volume" in res.columns:
         cols.append("volume")
-        # dopo il resample causale, aggiungi
-        tmp["hrel"] = (tmp["high"] - tmp["open"]) / tmp["open"].replace(0, np.nan)
-        tmp["lrel"] = (tmp["low"] - tmp["open"]) / tmp["open"].replace(0, np.nan)
-        tmp["crel"] = (tmp["close"] - tmp["open"]) / tmp["open"].replace(0, np.nan)
+
+    # Add relative features to output columns
+    cols.extend(["hrel", "lrel", "crel"])
+
     return res[cols]
 
 

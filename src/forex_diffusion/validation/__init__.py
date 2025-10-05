@@ -1,16 +1,21 @@
 """
-Model validation utilities.
+Time Series Validation Module
 
-Multi-horizon validation, walk-forward analysis, and performance metrics.
+Provides validation strategies for time series models:
+- Walk-Forward Validation (expanding/rolling windows)
+- Combinatorial Purged Cross-Validation (CPCV)
+- Purge and Embargo utilities
 """
-from .multi_horizon import (
-    MultiHorizonValidator,
-    HorizonResult,
-    validate_model_across_horizons
+from .walk_forward import (
+    WalkForwardValidator,
+    WalkForwardSplit,
+    CombinatorialPurgedCV,
+    purge_embargo_split,
 )
 
 __all__ = [
-    "MultiHorizonValidator",
-    "HorizonResult",
-    "validate_model_across_horizons"
+    "WalkForwardValidator",
+    "WalkForwardSplit",
+    "CombinatorialPurgedCV",
+    "purge_embargo_split",
 ]
