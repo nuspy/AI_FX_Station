@@ -401,6 +401,49 @@ def _build_features(candles: pd.DataFrame, args):
         feature_groups["volume_profile"] = list(vp_feats.columns)
         logger.debug(f"[Features] Volume Profile: {list(vp_feats.columns)}")
 
+    # VSA features (TASK 2.2)
+    use_vsa = getattr(args, "use_vsa", False)
+    if use_vsa and "volume" in candles.columns:
+        from forex_diffusion.features.vsa import VSAAnalyzer
+        vsa_analyzer = VSAAnalyzer(
+            volume_ma_period=int(getattr(args, "vsa_volume_ma", 20)),
+            spread_ma_period=int(getattr(args, "vsa_spread_ma", 20)),
+        )
+        vsa_feats = vsa_analyzer.analyze_dataframe(candles)
+        feats.append(vsa_feats)
+        feature_groups["vsa"] = list(vsa_feats.columns)
+        logger.debug(f"[Features] VSA: {list(vsa_feats.columns)}")
+
+    # Smart Money Detection (TASK 2.3)
+    use_smart_money = getattr(args, "use_smart_money", False)
+    if use_smart_money and "volume" in candles.columns:
+        from forex_diffusion.features.smart_money import SmartMoneyDetector
+        sm_detector = SmartMoneyDetector(
+            volume_ma_period=int(getattr(args, "sm_volume_ma", 20)),
+            volume_std_threshold=float(getattr(args, "sm_volume_threshold", 2.0)),
+        )
+        sm_feats = sm_detector.analyze_dataframe(candles)
+        feats.append(sm_feats)
+        feature_groups["smart_money"] = list(sm_feats.columns)
+        logger.debug(f"[Features] Smart Money: {list(sm_feats.columns)}")
+
+    # HMM Regime Detection (TASK 4.1)
+    use_regime = getattr(args, "use_regime_detection", False)
+    if use_regime:
+        from forex_diffusion.regime import HMMRegimeDetector
+        regime_detector = HMMRegimeDetector(
+            n_regimes=int(getattr(args, "n_regimes", 4)),
+            min_history=int(getattr(args, "regime_min_history", 100)),
+        )
+        if len(candles) >= regime_detector.min_history:
+            regime_detector.fit(candles)
+            regime_feats = regime_detector.predict(candles)
+            feats.append(regime_feats)
+            feature_groups["regime"] = list(regime_feats.columns)
+            logger.debug(f"[Features] Regime Detection: {list(regime_feats.columns)}")
+        else:
+            logger.warning(f"Not enough data for regime detection ({len(candles)} < {regime_detector.min_history})")
+
     indicator_tfs = _coerce_indicator_tfs(getattr(args, "indicator_tfs", {}))
     ind_cfg: Dict[str, Dict[str, Any]] = {}
     if "atr" in indicator_tfs:
@@ -835,6 +878,15 @@ def main():
     ap.add_argument("--higher_tf", type=str, default="15m", help="Higher timeframe for candlestick patterns")
     ap.add_argument("--vp_bins", type=int, default=50, help="Number of bins for volume profile")
     ap.add_argument("--vp_window", type=int, default=100, help="Window size for volume profile calculation")
+    ap.add_argument("--use_vsa", action="store_true", help="Enable Volume Spread Analysis (VSA)")
+    ap.add_argument("--vsa_volume_ma", type=int, default=20, help="Volume MA period for VSA")
+    ap.add_argument("--vsa_spread_ma", type=int, default=20, help="Spread MA period for VSA")
+    ap.add_argument("--use_smart_money", action="store_true", help="Enable Smart Money Detection")
+    ap.add_argument("--sm_volume_ma", type=int, default=20, help="Volume MA period for smart money")
+    ap.add_argument("--sm_volume_threshold", type=float, default=2.0, help="Volume z-score threshold")
+    ap.add_argument("--use_regime_detection", action="store_true", help="Enable HMM Regime Detection")
+    ap.add_argument("--n_regimes", type=int, default=4, help="Number of market regimes")
+    ap.add_argument("--regime_min_history", type=int, default=100, help="Min bars for regime training")
 
     # Optimization parameters
     ap.add_argument("--optimization", type=str, choices=["none", "genetic-basic", "nsga2"], default="none", help="Hyperparameter optimization strategy")

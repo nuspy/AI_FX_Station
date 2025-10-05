@@ -1,7 +1,4 @@
-"""
-ForexGPT API Module
-REST API endpoints for Phase 3 advanced features
-"""
+"""Real-time inference API"""
+from .inference_service import create_app, InferenceService
 
-__version__ = "3.0.0"
-__author__ = "ForexGPT Development Team"
+__all__ = ["create_app", "InferenceService"]

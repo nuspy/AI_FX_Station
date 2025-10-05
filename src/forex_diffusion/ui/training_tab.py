@@ -326,6 +326,9 @@ class TrainingTab(QWidget):
                 'volume_profile_enabled': self.volume_profile_check.isChecked(),
                 'vp_bins': self.vp_bins.value(),
                 'vp_window': self.vp_window.value(),
+                'use_vsa': self.vsa_check.isChecked(),
+                'vsa_volume_ma': self.vsa_volume_ma.value(),
+                'vsa_spread_ma': self.vsa_spread_ma.value(),
 
                 # Advanced parameters
                 'warmup_bars': self.warmup.value(),
@@ -436,6 +439,12 @@ class TrainingTab(QWidget):
                 self.vp_bins.setValue(settings['vp_bins'])
             if 'vp_window' in settings:
                 self.vp_window.setValue(settings['vp_window'])
+            if 'use_vsa' in settings:
+                self.vsa_check.setChecked(settings['use_vsa'])
+            if 'vsa_volume_ma' in settings:
+                self.vsa_volume_ma.setValue(settings['vsa_volume_ma'])
+            if 'vsa_spread_ma' in settings:
+                self.vsa_spread_ma.setValue(settings['vsa_spread_ma'])
 
             # Advanced parameters
             if 'warmup_bars' in settings:
@@ -970,6 +979,30 @@ class TrainingTab(QWidget):
         self.vp_window.setValue(100)
         self.vp_window.setToolTip("Quante candele considerare per il volume profile (default: 100).")
         feat_layout.addWidget(self.vp_window, 3, 4)
+
+        # VSA (Volume Spread Analysis)
+        self.vsa_check = QCheckBox("VSA (Volume Spread Analysis)")
+        self.vsa_check.setChecked(False)
+        self.vsa_check.setToolTip("Analizza relazione volume/spread per identificare accumulo/distribuzione")
+        feat_layout.addWidget(self.vsa_check, 4, 0)
+
+        lbl_vsa_vol_ma = QLabel("Vol MA:")
+        lbl_vsa_vol_ma.setToolTip("Periodo moving average per volume VSA")
+        feat_layout.addWidget(lbl_vsa_vol_ma, 4, 1)
+        self.vsa_volume_ma = QSpinBox()
+        self.vsa_volume_ma.setRange(5, 100)
+        self.vsa_volume_ma.setValue(20)
+        self.vsa_volume_ma.setToolTip("Periodo MA per volume (default: 20)")
+        feat_layout.addWidget(self.vsa_volume_ma, 4, 2)
+
+        lbl_vsa_spread_ma = QLabel("Spread MA:")
+        lbl_vsa_spread_ma.setToolTip("Periodo moving average per spread VSA")
+        feat_layout.addWidget(lbl_vsa_spread_ma, 4, 3)
+        self.vsa_spread_ma = QSpinBox()
+        self.vsa_spread_ma.setRange(5, 100)
+        self.vsa_spread_ma.setValue(20)
+        self.vsa_spread_ma.setToolTip("Periodo MA per spread (default: 20)")
+        feat_layout.addWidget(self.vsa_spread_ma, 4, 4)
 
         self.layout.addWidget(feat_box)
 
@@ -1574,6 +1607,13 @@ class TrainingTab(QWidget):
                     '--vp_window', str(int(self.vp_window.value())),
                 ]
 
+                if self.vsa_check.isChecked():
+                    cmd.extend([
+                        '--use_vsa',
+                        '--vsa_volume_ma', str(int(self.vsa_volume_ma.value())),
+                        '--vsa_spread_ma', str(int(self.vsa_spread_ma.value())),
+                    ])
+
                 # Add NVIDIA Optimization Stack arguments if enabled
                 if self.nvidia_enable.isChecked() or self.use_amp.isChecked():
                     args.append('--use_nvidia_opts')
@@ -1625,6 +1665,9 @@ class TrainingTab(QWidget):
                         'higher_tf': self.higher_tf_combo.currentText(),
                         'vp_bins': int(self.vp_bins.value()),
                         'vp_window': int(self.vp_window.value()),
+                        'use_vsa': self.vsa_check.isChecked(),
+                        'vsa_volume_ma': int(self.vsa_volume_ma.value()),
+                        'vsa_spread_ma': int(self.vsa_spread_ma.value()),
                     },
                     'created_at': datetime.now(timezone.utc).isoformat(),
                     'ui_run_name': name,
@@ -1692,6 +1735,9 @@ class TrainingTab(QWidget):
                         'higher_tf': self.higher_tf_combo.currentText(),
                         'vp_bins': int(self.vp_bins.value()),
                         'vp_window': int(self.vp_window.value()),
+                        'use_vsa': self.vsa_check.isChecked(),
+                        'vsa_volume_ma': int(self.vsa_volume_ma.value()),
+                        'vsa_spread_ma': int(self.vsa_spread_ma.value()),
                     },
                     'optimization': strategy,
                     'created_at': datetime.now(timezone.utc).isoformat(),
@@ -1980,6 +2026,9 @@ class TrainingTab(QWidget):
                 'volume_profile_enabled': self.volume_profile_check.isChecked(),
                 'vp_bins': self.vp_bins.value(),
                 'vp_window': self.vp_window.value(),
+                'use_vsa': self.vsa_check.isChecked(),
+                'vsa_volume_ma': self.vsa_volume_ma.value(),
+                'vsa_spread_ma': self.vsa_spread_ma.value(),
 
                 # Advanced parameters
                 'warmup_bars': self.warmup.value(),
