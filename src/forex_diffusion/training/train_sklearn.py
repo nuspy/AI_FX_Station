@@ -390,6 +390,17 @@ def _build_features(candles: pd.DataFrame, args):
         feature_groups["realized_vol"] = list(rv_feats.columns)
         logger.debug(f"[Features] Realized Vol: {list(rv_feats.columns)}")
 
+    # Volume Profile features (TASK 2.1)
+    vp_window = int(getattr(args, "vp_window", 0) or 0)
+    vp_bins = int(getattr(args, "vp_bins", 50))
+    if vp_window > 1 and "volume" in candles.columns:
+        from forex_diffusion.features.volume_profile import VolumeProfile
+        vp_calculator = VolumeProfile(n_bins=vp_bins)
+        vp_feats = vp_calculator.calculate_rolling(candles, window=vp_window, step=1)
+        feats.append(vp_feats)
+        feature_groups["volume_profile"] = list(vp_feats.columns)
+        logger.debug(f"[Features] Volume Profile: {list(vp_feats.columns)}")
+
     indicator_tfs = _coerce_indicator_tfs(getattr(args, "indicator_tfs", {}))
     ind_cfg: Dict[str, Dict[str, Any]] = {}
     if "atr" in indicator_tfs:
@@ -823,6 +834,7 @@ def main():
     ap.add_argument("--session_overlap", type=int, default=30, help="Session overlap in minutes")
     ap.add_argument("--higher_tf", type=str, default="15m", help="Higher timeframe for candlestick patterns")
     ap.add_argument("--vp_bins", type=int, default=50, help="Number of bins for volume profile")
+    ap.add_argument("--vp_window", type=int, default=100, help="Window size for volume profile calculation")
 
     # Optimization parameters
     ap.add_argument("--optimization", type=str, choices=["none", "genetic-basic", "nsga2"], default="none", help="Hyperparameter optimization strategy")

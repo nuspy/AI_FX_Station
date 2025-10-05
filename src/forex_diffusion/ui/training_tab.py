@@ -325,6 +325,7 @@ class TrainingTab(QWidget):
                 'higher_tf': self.higher_tf_combo.currentText(),
                 'volume_profile_enabled': self.volume_profile_check.isChecked(),
                 'vp_bins': self.vp_bins.value(),
+                'vp_window': self.vp_window.value(),
 
                 # Advanced parameters
                 'warmup_bars': self.warmup.value(),
@@ -433,6 +434,8 @@ class TrainingTab(QWidget):
                 self.volume_profile_check.setChecked(settings['volume_profile_enabled'])
             if 'vp_bins' in settings:
                 self.vp_bins.setValue(settings['vp_bins'])
+            if 'vp_window' in settings:
+                self.vp_window.setValue(settings['vp_window'])
 
             # Advanced parameters
             if 'warmup_bars' in settings:
@@ -958,6 +961,15 @@ class TrainingTab(QWidget):
         self.vp_bins.setValue(50)
         self.vp_bins.setToolTip("Quanti livelli di prezzo considerare per il volume profile.")
         feat_layout.addWidget(self.vp_bins, 3, 2)
+
+        lbl_vp_window = QLabel("Window:")
+        lbl_vp_window.setToolTip("Dimensione della finestra per calcolo volume profile (numero di candele).")
+        feat_layout.addWidget(lbl_vp_window, 3, 3)
+        self.vp_window = QSpinBox()
+        self.vp_window.setRange(20, 500)
+        self.vp_window.setValue(100)
+        self.vp_window.setToolTip("Quante candele considerare per il volume profile (default: 100).")
+        feat_layout.addWidget(self.vp_window, 3, 4)
 
         self.layout.addWidget(feat_box)
 
@@ -1559,6 +1571,7 @@ class TrainingTab(QWidget):
                     '--session_overlap', str(int(self.session_overlap.value())),
                     '--higher_tf', self.higher_tf_combo.currentText(),
                     '--vp_bins', str(int(self.vp_bins.value())),
+                    '--vp_window', str(int(self.vp_window.value())),
                 ]
 
                 # Add NVIDIA Optimization Stack arguments if enabled
@@ -1611,6 +1624,7 @@ class TrainingTab(QWidget):
                         'session_overlap': int(self.session_overlap.value()),
                         'higher_tf': self.higher_tf_combo.currentText(),
                         'vp_bins': int(self.vp_bins.value()),
+                        'vp_window': int(self.vp_window.value()),
                     },
                     'created_at': datetime.now(timezone.utc).isoformat(),
                     'ui_run_name': name,
@@ -1677,6 +1691,7 @@ class TrainingTab(QWidget):
                         'session_overlap': int(self.session_overlap.value()),
                         'higher_tf': self.higher_tf_combo.currentText(),
                         'vp_bins': int(self.vp_bins.value()),
+                        'vp_window': int(self.vp_window.value()),
                     },
                     'optimization': strategy,
                     'created_at': datetime.now(timezone.utc).isoformat(),
@@ -1964,6 +1979,7 @@ class TrainingTab(QWidget):
                 'higher_tf': self.higher_tf_combo.currentText(),
                 'volume_profile_enabled': self.volume_profile_check.isChecked(),
                 'vp_bins': self.vp_bins.value(),
+                'vp_window': self.vp_window.value(),
 
                 # Advanced parameters
                 'warmup_bars': self.warmup.value(),
