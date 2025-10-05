@@ -349,6 +349,15 @@ class TrainingTab(QWidget):
                 'dropout': self.dropout.value(),
                 'num_heads': self.num_heads.value(),
 
+                # NVIDIA Optimization Stack
+                'nvidia_enable': self.nvidia_enable.isChecked(),
+                'use_amp': self.use_amp.isChecked(),
+                'precision': self.precision_combo.currentText(),
+                'compile_model': self.compile_model.isChecked(),
+                'use_fused_optimizer': self.use_fused_optimizer.isChecked(),
+                'use_flash_attention': self.use_flash_attention.isChecked(),
+                'grad_accumulation_steps': self.grad_accumulation_steps.value(),
+
                 # Output directory
                 'output_dir': self.out_dir.text(),
             }
@@ -466,6 +475,22 @@ class TrainingTab(QWidget):
                 self.dropout.setValue(settings['dropout'])
             if 'num_heads' in settings:
                 self.num_heads.setValue(settings['num_heads'])
+
+            # NVIDIA Optimization Stack
+            if 'nvidia_enable' in settings:
+                self.nvidia_enable.setChecked(settings['nvidia_enable'])
+            if 'use_amp' in settings:
+                self.use_amp.setChecked(settings['use_amp'])
+            if 'precision' in settings:
+                self.precision_combo.setCurrentText(settings['precision'])
+            if 'compile_model' in settings:
+                self.compile_model.setChecked(settings['compile_model'])
+            if 'use_fused_optimizer' in settings:
+                self.use_fused_optimizer.setChecked(settings['use_fused_optimizer'])
+            if 'use_flash_attention' in settings:
+                self.use_flash_attention.setChecked(settings['use_flash_attention'])
+            if 'grad_accumulation_steps' in settings:
+                self.grad_accumulation_steps.setValue(settings['grad_accumulation_steps'])
 
             # Output directory
             if 'output_dir' in settings:
@@ -1252,6 +1277,135 @@ class TrainingTab(QWidget):
 
         self.layout.addWidget(adv_box)
 
+        # NVIDIA Optimization Stack section
+        self._build_nvidia_optimizations()
+
+    def _build_nvidia_optimizations(self):
+        """Build NVIDIA GPU Optimization Stack section"""
+        nvidia_box = QGroupBox("🚀 NVIDIA Optimization Stack (GPU Acceleration)")
+        nvidia_box.setToolTip(
+            "Ottimizzazioni NVIDIA per accelerare il training su GPU.\n"
+            "Richiede GPU NVIDIA con CUDA. Speedup fino a 30x!\n"
+            "Automatic Mixed Precision (AMP), torch.compile, fused optimizers, Flash Attention."
+        )
+        nvidia_layout = QGridLayout(nvidia_box)
+
+        row = 0
+
+        # Master enable checkbox
+        self.nvidia_enable = QCheckBox("Abilita NVIDIA Optimization Stack")
+        self.nvidia_enable.setToolTip(
+            "Abilita tutte le ottimizzazioni NVIDIA disponibili:\n"
+            "- Automatic Mixed Precision (AMP)\n"
+            "- torch.compile per model optimization\n"
+            "- Fused optimizers (APEX)\n"
+            "- Channels last memory format\n"
+            "Speedup: 2-30x più veloce su GPU NVIDIA"
+        )
+        self.nvidia_enable.setChecked(False)
+        nvidia_layout.addWidget(self.nvidia_enable, row, 0, 1, 6)
+        row += 1
+
+        # AMP checkbox
+        lbl_amp = QLabel("Mixed Precision (AMP):")
+        lbl_amp.setToolTip(
+            "Automatic Mixed Precision - usa FP16/BF16 invece di FP32.\n"
+            "Speedup: 2-3x più veloce, 50% meno memoria."
+        )
+        nvidia_layout.addWidget(lbl_amp, row, 0)
+
+        self.use_amp = QCheckBox("Enable")
+        self.use_amp.setChecked(True)
+        self.use_amp.setToolTip("Abilita AMP (raccomandato)")
+        nvidia_layout.addWidget(self.use_amp, row, 1)
+
+        # Precision combo
+        lbl_precision = QLabel("Precision:")
+        nvidia_layout.addWidget(lbl_precision, row, 2)
+
+        self.precision_combo = QComboBox()
+        self.precision_combo.addItems(["fp16", "bf16", "fp32"])
+        self.precision_combo.setCurrentText("fp16")
+        self.precision_combo.setToolTip(
+            "Tipo di precisione:\n"
+            "fp16: FP16 (raccomandato, GPU >= GTX 10xx)\n"
+            "bf16: BrainFloat16 (GPU Ampere+: RTX 30xx/40xx)\n"
+            "fp32: Full precision (no speedup)"
+        )
+        nvidia_layout.addWidget(self.precision_combo, row, 3)
+        row += 1
+
+        # torch.compile checkbox
+        lbl_compile = QLabel("torch.compile:")
+        lbl_compile.setToolTip(
+            "Compila il modello con PyTorch 2.0+ compiler.\n"
+            "Speedup: 1.5-2x più veloce.\n"
+            "Richiede PyTorch >= 2.0"
+        )
+        nvidia_layout.addWidget(lbl_compile, row, 0)
+
+        self.compile_model = QCheckBox("Enable")
+        self.compile_model.setChecked(True)
+        self.compile_model.setToolTip("Abilita torch.compile (PyTorch 2.0+)")
+        nvidia_layout.addWidget(self.compile_model, row, 1)
+        row += 1
+
+        # Fused optimizer checkbox
+        lbl_fused = QLabel("Fused Optimizer:")
+        lbl_fused.setToolTip(
+            "Usa NVIDIA APEX fused optimizer.\n"
+            "Speedup: 1.2-1.5x più veloce.\n"
+            "Richiede: pip install apex (vedi NVIDIA_INSTALLATION.md)"
+        )
+        nvidia_layout.addWidget(lbl_fused, row, 0)
+
+        self.use_fused_optimizer = QCheckBox("Enable (requires APEX)")
+        self.use_fused_optimizer.setChecked(False)  # Default off (requires APEX)
+        self.use_fused_optimizer.setToolTip("Richiede NVIDIA APEX installato")
+        nvidia_layout.addWidget(self.use_fused_optimizer, row, 1)
+        row += 1
+
+        # Flash Attention checkbox
+        lbl_flash = QLabel("Flash Attention 2:")
+        lbl_flash.setToolTip(
+            "Flash Attention 2 - attenzione ultra-veloce.\n"
+            "Speedup: 2-4x più veloce per transformer.\n"
+            "Richiede: GPU Ampere+ (RTX 30xx/40xx, A100)"
+        )
+        nvidia_layout.addWidget(lbl_flash, row, 0)
+
+        self.use_flash_attention = QCheckBox("Enable (requires Ampere+ GPU)")
+        self.use_flash_attention.setChecked(False)  # Default off (requires Ampere+)
+        self.use_flash_attention.setToolTip("Solo GPU Ampere+: RTX 30xx/40xx")
+        nvidia_layout.addWidget(self.use_flash_attention, row, 1)
+        row += 1
+
+        # Gradient accumulation
+        lbl_grad_accum = QLabel("Gradient Accumulation:")
+        lbl_grad_accum.setToolTip(
+            "Accumula gradienti su N steps prima di update.\n"
+            "Simula batch size più grandi senza usare più memoria."
+        )
+        nvidia_layout.addWidget(lbl_grad_accum, row, 0)
+
+        self.grad_accumulation_steps = QSpinBox()
+        self.grad_accumulation_steps.setRange(1, 32)
+        self.grad_accumulation_steps.setValue(1)
+        self.grad_accumulation_steps.setToolTip("1 = no accumulation, >1 = accumulate gradients")
+        nvidia_layout.addWidget(self.grad_accumulation_steps, row, 1)
+        row += 1
+
+        # Info label
+        info_label = QLabel(
+            "ℹ️ Per installare APEX e Flash Attention:\n"
+            "   python install_nvidia_stack.py --all\n"
+            "   Vedi NVIDIA_INSTALLATION.md per dettagli."
+        )
+        info_label.setStyleSheet("color: #666; font-size: 10px;")
+        nvidia_layout.addWidget(info_label, row, 0, 1, 6)
+
+        self.layout.addWidget(nvidia_box)
+
     def _build_output_section(self):
         """Build output directory section"""
         out_h = QHBoxLayout()
@@ -1406,6 +1560,22 @@ class TrainingTab(QWidget):
                     '--higher_tf', self.higher_tf_combo.currentText(),
                     '--vp_bins', str(int(self.vp_bins.value())),
                 ]
+
+                # Add NVIDIA Optimization Stack arguments if enabled
+                if self.nvidia_enable.isChecked() or self.use_amp.isChecked():
+                    args.append('--use_nvidia_opts')
+                if self.use_amp.isChecked():
+                    args.append('--use_amp')
+                    args.extend(['--precision', self.precision_combo.currentText()])
+                if self.compile_model.isChecked():
+                    args.append('--compile_model')
+                if self.use_fused_optimizer.isChecked():
+                    args.append('--use_fused_optimizer')
+                if self.use_flash_attention.isChecked():
+                    args.append('--use_flash_attention')
+                if self.grad_accumulation_steps.value() > 1:
+                    args.extend(['--gradient_accumulation_steps', str(self.grad_accumulation_steps.value())])
+
                 meta = {
                     'symbol': sym,
                     'base_timeframe': tf,
@@ -1417,6 +1587,15 @@ class TrainingTab(QWidget):
                         'batch_size': int(self.light_batch.value()),
                         'val_frac': float(self.light_val_frac.value()),
                         'patch_len': int(self.patch_len.value()),
+                    },
+                    'nvidia_optimizations': {
+                        'enabled': self.nvidia_enable.isChecked(),
+                        'use_amp': self.use_amp.isChecked(),
+                        'precision': self.precision_combo.currentText(),
+                        'compile_model': self.compile_model.isChecked(),
+                        'use_fused_optimizer': self.use_fused_optimizer.isChecked(),
+                        'use_flash_attention': self.use_flash_attention.isChecked(),
+                        'gradient_accumulation_steps': int(self.grad_accumulation_steps.value()),
                     },
                     'indicator_tfs': ind_tfs,
                     'additional_features': additional_features,

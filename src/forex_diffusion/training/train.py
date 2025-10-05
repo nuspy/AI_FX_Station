@@ -119,6 +119,23 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--vp_bins", type=int, default=50)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fast_dev_run", action="store_true")
+
+    # NVIDIA Optimization Stack parameters
+    ap.add_argument("--use_nvidia_opts", action="store_true",
+                   help="Enable NVIDIA optimization stack (AMP, compile, fused optimizers)")
+    ap.add_argument("--use_amp", action="store_true",
+                   help="Enable Automatic Mixed Precision (AMP)")
+    ap.add_argument("--precision", type=str, default="fp16", choices=["fp16", "bf16", "fp32"],
+                   help="Training precision (fp16, bf16, or fp32)")
+    ap.add_argument("--compile_model", action="store_true",
+                   help="Use torch.compile for model optimization (PyTorch 2.0+)")
+    ap.add_argument("--use_fused_optimizer", action="store_true",
+                   help="Use NVIDIA APEX fused optimizer (if available)")
+    ap.add_argument("--use_flash_attention", action="store_true",
+                   help="Use Flash Attention 2 (if available and GPU supports it)")
+    ap.add_argument("--gradient_accumulation_steps", type=int, default=1,
+                   help="Number of gradient accumulation steps")
+
     return ap.parse_args()
 
 
@@ -165,10 +182,53 @@ def main() -> None:
     early = EarlyStopping(monitor="val/loss", patience=10, mode="min", verbose=True)
     lr_mon = LearningRateMonitor(logging_interval="epoch")
 
+    # Build callbacks list
+    callbacks = [monitor, early, lr_mon]
+
+    # Add NVIDIA optimization callback if requested
+    if args.use_nvidia_opts or args.use_amp or args.compile_model:
+        from .optimized_trainer import OptimizedTrainingCallback
+        from .optimization_config import OptimizationConfig, HardwareInfo, PrecisionMode, CompileMode
+
+        # Detect hardware capabilities
+        hw_info = HardwareInfo.detect()
+
+        # Map precision string to enum
+        precision_map = {
+            "fp16": PrecisionMode.FP16,
+            "bf16": PrecisionMode.BF16,
+            "fp32": PrecisionMode.FP32
+        }
+
+        # Create optimization config
+        opt_config = OptimizationConfig(
+            hardware_info=hw_info,
+            use_amp=args.use_amp or args.use_nvidia_opts,
+            precision=precision_map.get(args.precision, PrecisionMode.FP16),
+            compile_model=args.compile_model or args.use_nvidia_opts,
+            compile_mode=CompileMode.DEFAULT,
+            use_fused_optimizer=args.use_fused_optimizer or args.use_nvidia_opts,
+            use_flash_attention=args.use_flash_attention,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            use_channels_last=True,  # Generally beneficial for CNNs
+            use_gradient_checkpointing=False,  # Can be enabled for very large models
+        )
+
+        # Create and add optimization callback
+        opt_callback = OptimizedTrainingCallback(opt_config)
+        callbacks.append(opt_callback)
+
+        logger.info("🚀 NVIDIA Optimization Stack ENABLED")
+        logger.info(f"   - GPU: {hw_info.gpu_name if hw_info.has_cuda else 'None'}")
+        logger.info(f"   - AMP: {opt_config.use_amp} ({opt_config.precision.value})")
+        logger.info(f"   - torch.compile: {opt_config.compile_model}")
+        logger.info(f"   - Fused optimizer: {opt_config.use_fused_optimizer}")
+        logger.info(f"   - Flash Attention: {opt_config.use_flash_attention}")
+
     trainer = pl.Trainer(
         max_epochs=args.epochs,
         default_root_dir=str(out_dir),
-        callbacks=[monitor, early, lr_mon],
+        callbacks=callbacks,
         accelerator="auto",
         devices="auto",
         log_every_n_steps=10,
