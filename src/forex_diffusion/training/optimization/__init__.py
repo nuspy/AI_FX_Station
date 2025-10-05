@@ -12,6 +12,11 @@ from .backtest_runner import BacktestRunner, BacktestResult
 from .regime_classifier import RegimeClassifier
 from .task_manager import TaskManager, TaskStatus
 from .logging_reporter import LoggingReporter
+from .regime_aware_optimizer import (
+    RegimeAwareOptimizer,
+    RegimeAwareOptimizationResult,
+    RegimeParameters
+)
 
 __all__ = [
     'OptimizationEngine',
@@ -24,5 +29,8 @@ __all__ = [
     'RegimeClassifier',
     'TaskManager',
     'TaskStatus',
-    'LoggingReporter'
+    'LoggingReporter',
+    'RegimeAwareOptimizer',
+    'RegimeAwareOptimizationResult',
+    'RegimeParameters',
 ]
