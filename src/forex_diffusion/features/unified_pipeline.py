@@ -301,8 +301,9 @@ def unified_feature_pipeline(
     config: FeatureConfig,
     timeframe: str = "1m",
     standardizer: Optional[Standardizer] = None,
-    fit_standardizer: bool = True
-) -> Tuple[pd.DataFrame, Standardizer, List[str]]:
+    fit_standardizer: bool = True,
+    output_format: str = "flat"
+) -> Union[Tuple[pd.DataFrame, Standardizer, List[str]], Tuple[Dict[str, pd.DataFrame], Standardizer, List[str]]]:
     """
     Unified feature engineering pipeline for both training and inference.
 
@@ -312,9 +313,15 @@ def unified_feature_pipeline(
         timeframe: Base timeframe for the data
         standardizer: Pre-fitted standardizer (for inference)
         fit_standardizer: Whether to fit standardizer (training) or use existing (inference)
+        output_format: Output format - "flat" (single DataFrame), "sequence" (temporal ordering preserved),
+                      "multi_timeframe" (dict of DataFrames per timeframe for SSSD)
 
     Returns:
-        Tuple of (features_df, standardizer, feature_names)
+        If output_format="multi_timeframe":
+            Tuple of (features_dict, standardizer, feature_names)
+            where features_dict = {"5m": df_5m, "15m": df_15m, ...}
+        Otherwise:
+            Tuple of (features_df, standardizer, feature_names)
     """
     tmp = df.copy().sort_values("ts_utc").reset_index(drop=True)
 
@@ -400,7 +407,112 @@ def unified_feature_pipeline(
         if standardizer is None:
             standardizer = Standardizer(cols=[], mu={}, sigma={})
 
-    return features_df.reset_index(drop=True), standardizer, available_features
+    features_df = features_df.reset_index(drop=True)
+
+    # Step 9: Handle output format
+    if output_format == "multi_timeframe":
+        # For SSSD: split features by timeframe into separate DataFrames
+        features_dict = _split_features_by_timeframe(tmp, features_df, config, available_features)
+        return features_dict, standardizer, available_features
+    elif output_format == "sequence":
+        # Preserve temporal ordering (already sorted)
+        return features_df, standardizer, available_features
+    else:
+        # Default flat format
+        return features_df, standardizer, available_features
+
+
+def _split_features_by_timeframe(
+    tmp: pd.DataFrame,
+    features_df: pd.DataFrame,
+    config: FeatureConfig,
+    available_features: List[str]
+) -> Dict[str, pd.DataFrame]:
+    """
+    Split features into separate DataFrames per timeframe for SSSD.
+
+    Args:
+        tmp: Full DataFrame with timestamps
+        features_df: Computed features DataFrame
+        config: Feature configuration
+        available_features: List of feature names
+
+    Returns:
+        Dict mapping timeframe to features DataFrame
+        Format: {"5m": df_5m, "15m": df_15m, "1h": df_1h, "4h": df_4h}
+        Each df has columns: [timestamp, feature_0, feature_1, ...]
+    """
+    # Get timeframes from config (default SSSD timeframes)
+    if config.is_multi_timeframe_enabled():
+        mtf_config = config.get_multi_timeframe_config()
+        timeframes = mtf_config.get("timeframes", ["5m", "15m", "1h", "4h"])
+    else:
+        # Default SSSD timeframes
+        timeframes = ["5m", "15m", "1h", "4h"]
+
+    # Add timestamp column to features_df
+    features_with_ts = features_df.copy()
+
+    # Get timestamps from original dataframe (after warmup)
+    warmup = config.config["warmup_bars"]
+    if warmup > 0 and len(tmp) > warmup:
+        timestamps = tmp.iloc[warmup:]["ts_utc"].values
+    else:
+        timestamps = tmp["ts_utc"].values
+
+    features_with_ts.insert(0, "timestamp", pd.to_datetime(timestamps, unit="ms", utc=True))
+
+    # Create dict of DataFrames per timeframe
+    features_dict = {}
+
+    for tf in timeframes:
+        # Resample features to target timeframe
+        tf_df = _resample_features_to_timeframe(features_with_ts, tf, available_features)
+
+        # Rename timestamp column
+        tf_df = tf_df.rename(columns={"timestamp": "timestamp"})
+
+        features_dict[tf] = tf_df
+
+    return features_dict
+
+
+def _resample_features_to_timeframe(
+    df: pd.DataFrame,
+    timeframe: str,
+    feature_columns: List[str]
+) -> pd.DataFrame:
+    """
+    Resample features to target timeframe.
+
+    Args:
+        df: DataFrame with timestamp and features
+        timeframe: Target timeframe (e.g., "5m", "15m", "1h", "4h")
+        feature_columns: List of feature columns to resample
+
+    Returns:
+        Resampled DataFrame
+    """
+    # Parse timeframe
+    if timeframe.endswith("m"):
+        rule = f"{int(timeframe[:-1])}T"
+    elif timeframe.endswith("h"):
+        rule = f"{int(timeframe[:-1])}H"
+    elif timeframe.endswith("d"):
+        rule = f"{int(timeframe[:-1])}D"
+    else:
+        raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+    # Set index to timestamp
+    df_indexed = df.set_index("timestamp")
+
+    # Resample features (use last value for each period)
+    resampled = df_indexed[feature_columns].resample(rule, label="right").last().dropna()
+
+    # Reset index to get timestamp column
+    resampled = resampled.reset_index()
+
+    return resampled
 
 
 def _get_feature_names(df: pd.DataFrame, config: FeatureConfig) -> List[str]:
