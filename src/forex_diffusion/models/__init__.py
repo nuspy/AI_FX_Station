@@ -3,6 +3,7 @@ from .vae import VAE, kl_divergence, BetaScheduler
 from .diffusion import DiffusionModel, cosine_alphas, sampler_ddim, sampler_dpmpp_heun
 from .ensemble import StackingEnsemble, EnsembleConfig, BaseModelSpec, create_stacking_ensemble
 from .multi_timeframe_ensemble import MultiTimeframeEnsemble, Timeframe, TimeframeModelPrediction
+from .ml_stacked_ensemble import StackedMLEnsemble
 
 __all__ = [
     "VAE",
@@ -19,4 +20,5 @@ __all__ = [
     "MultiTimeframeEnsemble",
     "Timeframe",
     "TimeframeModelPrediction",
+    "StackedMLEnsemble",
 ]
