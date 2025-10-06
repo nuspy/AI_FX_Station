@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import torch
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin, clone
 from sklearn.model_selection import KFold
 from sklearn.linear_model import Ridge, Lasso
@@ -110,6 +111,10 @@ class StackingEnsemble(BaseEstimator, RegressorMixin):
                     min_samples_split=20,
                     random_state=42,
                 )
+            elif model_type == "sssd_diffusion" or model_type.startswith("sssd_"):
+                # SSSD model - skip default creation, must be added manually
+                logger.info("SSSD model detected, skipping default creation")
+                continue
             else:
                 logger.warning(f"Unknown model type: {model_type}, skipping")
                 continue
@@ -467,10 +472,13 @@ class StackingEnsemble(BaseEstimator, RegressorMixin):
         return results
 
 
-# Convenience function
+# Convenience functions
 def create_stacking_ensemble(
     n_base_models: int = 3,
     include_original_features: bool = False,
+    include_sssd: bool = False,
+    sssd_asset: str = "EURUSD",
+    sssd_horizon: int = 5,
 ) -> StackingEnsemble:
     """
     Create stacking ensemble with default configuration.
@@ -478,6 +486,9 @@ def create_stacking_ensemble(
     Args:
         n_base_models: Number of base models to create
         include_original_features: Include original features in meta-learner
+        include_sssd: Include SSSD diffusion model in ensemble
+        sssd_asset: Asset for SSSD model
+        sssd_horizon: Forecast horizon for SSSD (minutes)
 
     Returns:
         Configured StackingEnsemble
@@ -512,4 +523,65 @@ def create_stacking_ensemble(
             estimator=estimator,
         ))
 
+    # Add SSSD model if requested
+    if include_sssd:
+        try:
+            from .sssd_wrapper import create_sssd_base_model_spec
+            sssd_spec = create_sssd_base_model_spec(
+                asset=sssd_asset,
+                horizon=sssd_horizon,
+                device="cuda" if torch.cuda.is_available() else "cpu"
+            )
+            base_models.append(sssd_spec)
+            logger.info(f"Added SSSD model to ensemble: {sssd_spec.model_id}")
+        except Exception as e:
+            logger.warning(f"Failed to add SSSD to ensemble: {e}")
+
     return StackingEnsemble(base_models=base_models, config=config)
+
+
+def add_sssd_to_ensemble(
+    ensemble: StackingEnsemble,
+    asset: str = "EURUSD",
+    horizon: int = 5,
+    checkpoint_path: Optional[str] = None,
+    device: Optional[str] = None
+) -> StackingEnsemble:
+    """
+    Add SSSD model to existing ensemble.
+
+    Args:
+        ensemble: Existing StackingEnsemble
+        asset: Asset symbol
+        horizon: Forecast horizon in minutes
+        checkpoint_path: Optional checkpoint path
+        device: Device to run on (default: cuda if available)
+
+    Returns:
+        Updated ensemble with SSSD added
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    try:
+        from .sssd_wrapper import create_sssd_base_model_spec
+
+        sssd_spec = create_sssd_base_model_spec(
+            asset=asset,
+            horizon=horizon,
+            checkpoint_path=checkpoint_path,
+            device=device
+        )
+
+        ensemble.base_models.append(sssd_spec)
+
+        logger.info(
+            f"Added SSSD to ensemble: {sssd_spec.model_id}, "
+            f"total base models: {len(ensemble.base_models)}"
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to add SSSD to ensemble: {e}")
+        raise
+
+    return ensemble

@@ -673,7 +673,7 @@ class TrainingTab(QWidget):
         )
         top.addWidget(lbl_m)
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["ridge", "lasso", "elasticnet", "rf", "lightning", "diffusion-ddpm", "diffusion-ddim"])
+        self.model_combo.addItems(["ridge", "lasso", "elasticnet", "rf", "lightning", "diffusion-ddpm", "diffusion-ddim", "sssd"])
         self.model_combo.setToolTip(
             "Algoritmi disponibili:\n\n"
             "SUPERVISED (veloce, interpretabile, short-term):\n"
@@ -683,6 +683,8 @@ class TrainingTab(QWidget):
             "• rf: Random Forest, cattura non-linearità, robusto, lento.\n"
             "• lightning: neural network (MLP/LSTM), molto flessibile, richiede GPU.\n\n"
             "DIFFUSION (lento, generativo, long-term, incertezza):\n"
+            "• sssd: Structured State Space Diffusion, multi-timeframe S4+diffusion, richiede GPU.\n"
+            "  Previsioni multi-orizzonte [5,15,60,240]min con incertezza quantificata.\n\n"
             "• diffusion-ddpm: Denoising Diffusion Probabilistic Model, alta qualità.\n"
             "• diffusion-ddim: DDIM (deterministic), 10x più veloce di DDPM.\n\n"
             "Raccomandazioni:\n"
