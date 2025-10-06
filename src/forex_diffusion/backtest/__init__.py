@@ -15,6 +15,14 @@ from .genetic_optimizer import GeneticOptimizer, ParameterSpace, create_paramete
 from .hybrid_optimizer import HybridOptimizer
 from .optimization_db import OptimizationDB
 
+# Integrated backtest system
+from .integrated_backtest import (
+    IntegratedBacktester,
+    BacktestConfig,
+    BacktestResult,
+    Trade
+)
+
 __all__ = [
     # Original backtest engine
     "BacktestEngine",
@@ -30,5 +38,10 @@ __all__ = [
     "ParameterSpace",
     "create_parameter_space_from_ranges",
     # Database
-    "OptimizationDB"
+    "OptimizationDB",
+    # Integrated backtest
+    "IntegratedBacktester",
+    "BacktestConfig",
+    "BacktestResult",
+    "Trade"
 ]
