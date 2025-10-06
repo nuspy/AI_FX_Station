@@ -76,6 +76,24 @@ dependencies = [
   # SQLAlchemy for optimization database
   "sqlalchemy>=2.0.0",        # ORM for optimization results database
   "alembic>=1.12.0",          # Database migrations (already used in project)
+
+  # S4D/SSSD Dependencies (Phase 2)
+  "einops>=0.6.0",            # Tensor rearrangement for S4 layers
+  "opt-einsum>=3.3.0",        # Optimized Einstein summation
+  "torchdiffeq>=0.2.0",       # ODE solvers for diffusion models
+  "hydra-core>=1.3.0",        # Configuration management for SSSD
+  "omegaconf>=2.3.0",         # Configuration validation and merging
+
+  # Advanced ML & Optimization (SSSD)
+  "optuna>=3.4.0",            # Bayesian hyperparameter optimization
+  "deap>=1.4.0",              # Genetic algorithm framework
+  "alibi-detect>=0.11.0",     # Model drift detection
+  "river>=0.18.0",            # Online learning utilities
+  "evidently>=0.4.0",         # ML model monitoring and testing
+
+  # Experiment Tracking (Optional for SSSD)
+  "wandb>=0.15.0",            # Weights & Biases experiment tracking
+  "tensorboard>=2.14.0",      # TensorBoard logging
 ]
 
 [project.scripts]

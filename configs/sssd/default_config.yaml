@@ -1,0 +1,207 @@
+# SSSD (Structured State Space Diffusion) Default Configuration
+# This configuration applies to all assets unless overridden by asset-specific configs
+
+model:
+  name: "sssd_v1"
+  model_type: "sssd_diffusion"
+
+  # Asset Configuration (override in per-asset configs)
+  asset: "EURUSD"  # Default asset
+
+  # S4 Architecture
+  s4:
+    state_dim: 128          # State dimension (N) - controls memory capacity
+    n_layers: 4             # Number of stacked S4 blocks
+    dropout: 0.1            # Dropout probability
+    kernel_init: "hippo"    # Initialization method (hippo or random)
+    ffn_expansion: 4        # FFN hidden dim = d_model * ffn_expansion
+
+  # Multi-Scale Encoder
+  encoder:
+    timeframes: ["5m", "15m", "1h", "4h"]  # Timeframes to encode
+    feature_dim: 200        # Input feature dimension per timeframe
+    context_dim: 512        # Output context dimension
+    attention_heads: 8      # Number of attention heads for cross-timeframe
+    attention_dropout: 0.1  # Attention dropout
+
+  # Diffusion Settings
+  diffusion:
+    steps_train: 1000       # Diffusion steps during training
+    steps_inference: 20     # Diffusion steps during inference (faster)
+    schedule: "cosine"      # Noise schedule type (cosine or linear)
+    schedule_offset: 0.008  # Offset 's' for cosine schedule
+    sampler_train: "ddpm"   # Training sampler (ddpm)
+    sampler_inference: "ddim"  # Inference sampler (ddim, ddpm, or dpmpp)
+    clip_min: 1.0e-12       # Minimum alpha_bar value
+
+  # Diffusion Head
+  head:
+    latent_dim: 256         # Latent dimension for diffusion
+    timestep_emb_dim: 128   # Timestep embedding dimension
+    conditioning_dim: 640   # Conditioning dimension (context + horizon)
+    mlp_hidden_dims: [512, 256, 128]  # MLP hidden layers
+    dropout: 0.1            # Dropout in MLP
+
+  # Horizon Configuration
+  horizons:
+    minutes: [5, 15, 60, 240]     # Forecast horizons in minutes
+    weights: [0.4, 0.3, 0.2, 0.1] # Loss weights per horizon
+    embedding_dim: 128             # Learned horizon embedding dimension
+    consistency_weight: 0.1        # Weight for consistency regularization
+
+# Training Configuration
+training:
+  # Optimization
+  optimizer: "AdamW"
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  # Learning Rate Schedule
+  scheduler: "cosine_annealing"
+  lr_warmup_steps: 1000    # Warmup steps at start of training
+  lr_min: 1.0e-6           # Minimum learning rate
+
+  # Training Loop
+  epochs: 100
+  batch_size: 64
+  gradient_clip_norm: 1.0  # Gradient clipping for stability
+  gradient_accumulation_steps: 1  # Accumulate gradients (for larger effective batch)
+
+  # Early Stopping
+  early_stopping:
+    enabled: true
+    patience: 15           # Stop if no improvement for N epochs
+    min_delta: 0.0001      # Minimum change to qualify as improvement
+    monitor: "val_loss"    # Metric to monitor
+
+  # Checkpointing
+  checkpoint:
+    save_every_n_epochs: 10    # Save checkpoint every N epochs
+    keep_best_only: false       # Keep all checkpoints or only best
+    save_optimizer_state: true  # Save optimizer state for resumable training
+
+  # Mixed Precision Training
+  mixed_precision:
+    enabled: true          # Use FP16 for faster training
+    opt_level: "O1"        # NVIDIA Apex optimization level
+
+  # Logging
+  logging:
+    log_every_n_steps: 10  # Log training metrics every N steps
+    tensorboard: true      # Enable TensorBoard logging
+    wandb: false           # Enable Weights & Biases (requires wandb login)
+
+# Data Configuration
+data:
+  # Date Ranges
+  train_start: "2019-01-01"
+  train_end: "2023-06-30"
+  val_start: "2023-07-01"
+  val_end: "2023-12-31"
+  test_start: "2024-01-01"
+  test_end: "2024-12-31"
+
+  # Feature Engineering
+  feature_pipeline: "unified_pipeline_v2"
+
+  # Lookback Bars (per timeframe)
+  lookback_bars:
+    5m: 500    # 500 bars = ~41 hours of 5m data
+    15m: 166   # 166 bars = ~41 hours of 15m data
+    1h: 41     # 41 bars = ~41 hours of 1h data
+    4h: 10     # 10 bars = ~40 hours of 4h data
+
+  # Data Augmentation (optional)
+  augmentation:
+    enabled: false
+    noise_injection: 0.01  # Add Gaussian noise to features
+    time_warping: false    # Apply time warping augmentation
+
+  # Data Loading
+  num_workers: 4           # DataLoader workers (0 = main process only)
+  pin_memory: true         # Pin memory for faster GPU transfer
+  prefetch_factor: 2       # Prefetch batches per worker
+
+# Inference Configuration
+inference:
+  # Sampling
+  num_samples: 100         # Number of samples for uncertainty quantification
+  sampler: "ddim"          # Sampler to use (ddim, ddpm, dpmpp)
+  ddim_eta: 0.0            # DDIM stochasticity (0 = deterministic, 1 = DDPM)
+
+  # Uncertainty
+  confidence_threshold: 0.7  # Minimum confidence to accept prediction
+  uncertainty_mode: "std"    # How to compute uncertainty (std, iqr, entropy)
+
+  # Caching
+  cache_predictions: true
+  cache_ttl_seconds: 300   # Cache TTL (5 minutes)
+
+  # Performance
+  batch_size: 1            # Inference batch size (usually 1 for real-time)
+  compile_model: false     # Use torch.compile for faster inference (PyTorch 2.0+)
+
+# System Configuration
+system:
+  # Device
+  device: "cuda"           # Device (cuda, cpu, or cuda:0, cuda:1, etc.)
+  deterministic: false     # Enable deterministic mode (slower but reproducible)
+  seed: 42                 # Random seed for reproducibility
+
+  # Memory Management
+  empty_cache_every_n_epochs: 5  # Clear CUDA cache every N epochs
+  max_memory_allocated_gb: 8     # Maximum GPU memory to use
+
+  # Checkpoints & Artifacts
+  checkpoint_dir: "artifacts/sssd/checkpoints"
+  log_dir: "artifacts/sssd/logs"
+  tensorboard_dir: "artifacts/sssd/tensorboard"
+  plot_dir: "artifacts/sssd/plots"
+
+  # Database
+  database_url: "sqlite:///data/forex.db"  # Database connection string
+
+# Hyperparameter Optimization (for hyperopt scripts)
+hyperopt:
+  # Search Space
+  search_space:
+    s4_state_dim: [64, 128, 256]
+    s4_n_layers: [2, 3, 4, 5]
+    learning_rate: [1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4]
+    batch_size: [32, 64, 128]
+    diffusion_steps_inference: [10, 15, 20, 25]
+
+  # Optimization
+  method: "optuna"         # Optimization method (optuna, grid, random)
+  n_trials: 50             # Number of trials
+  timeout_hours: 120       # Maximum time for optimization (5 days)
+
+  # Objective
+  objective: "val_rmse"    # Metric to optimize (minimize)
+  direction: "minimize"    # minimize or maximize
+
+  # Pruning
+  pruner: "median"         # Pruner (median, percentile, or none)
+  pruner_warmup_steps: 10  # Warmup steps before pruning
+
+# Production Configuration Overrides
+production:
+  # Use fewer inference steps for faster response
+  diffusion_steps_inference: 15
+
+  # Disable expensive logging
+  tensorboard: false
+  wandb: false
+
+  # Enable compilation for faster inference
+  compile_model: true
+
+  # Stricter caching
+  cache_ttl_seconds: 60    # 1 minute cache (fresher predictions)
+
+  # Error handling
+  retry_on_error: true
+  max_retries: 3
+  retry_delay_seconds: 1
