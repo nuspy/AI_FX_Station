@@ -273,3 +273,273 @@ class TrainingQueue(Base):
             'priority': self.priority,
             'max_parallel': self.max_parallel
         }
+
+
+class OptimizedParameters(Base):
+    """Stores backtesting-optimized parameters per pattern/symbol/regime."""
+
+    __tablename__ = 'optimized_parameters'
+
+    # Primary Key
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Identification
+    pattern_type = Column(String(50), nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    timeframe = Column(String(10), nullable=False, index=True)
+    market_regime = Column(String(50), nullable=True, index=True)
+
+    # Parameters (JSON format)
+    form_params = Column(Text, nullable=False)  # Pattern-specific form parameters
+    action_params = Column(Text, nullable=False)  # Entry/exit parameters
+    performance_metrics = Column(Text, nullable=False)  # Performance from optimization
+
+    # Optimization metadata
+    optimization_timestamp = Column(DateTime, nullable=False, index=True)
+    data_range_start = Column(DateTime, nullable=False)
+    data_range_end = Column(DateTime, nullable=False)
+    sample_count = Column(Integer, nullable=False)
+
+    # Validation
+    validation_status = Column(String(20), nullable=False, server_default='pending', index=True)
+    validation_metrics = Column(Text, nullable=True)
+    deployment_date = Column(DateTime, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    __table_args__ = (
+        Index('idx_opt_params_pattern_symbol_tf', 'pattern_type', 'symbol', 'timeframe'),
+        Index('idx_opt_params_regime', 'market_regime'),
+        Index('idx_opt_params_validation', 'validation_status'),
+        Index('idx_opt_params_timestamp', 'optimization_timestamp'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            'id': self.id,
+            'pattern_type': self.pattern_type,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'market_regime': self.market_regime,
+            'form_params': json.loads(self.form_params) if self.form_params else None,
+            'action_params': json.loads(self.action_params) if self.action_params else None,
+            'performance_metrics': json.loads(self.performance_metrics) if self.performance_metrics else None,
+            'optimization_timestamp': self.optimization_timestamp.isoformat() if self.optimization_timestamp else None,
+            'data_range_start': self.data_range_start.isoformat() if self.data_range_start else None,
+            'data_range_end': self.data_range_end.isoformat() if self.data_range_end else None,
+            'sample_count': self.sample_count,
+            'validation_status': self.validation_status,
+            'validation_metrics': json.loads(self.validation_metrics) if self.validation_metrics else None,
+            'deployment_date': self.deployment_date.isoformat() if self.deployment_date else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class RiskProfile(Base):
+    """Defines risk management profiles (predefined and custom)."""
+
+    __tablename__ = 'risk_profiles'
+
+    # Primary Key
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Identification
+    profile_name = Column(String(50), nullable=False, unique=True, index=True)
+    profile_type = Column(String(20), nullable=False)  # predefined or custom
+    is_active = Column(Boolean, nullable=False, server_default='0', index=True)
+
+    # Position sizing
+    max_risk_per_trade_pct = Column(Float, nullable=False)
+    max_portfolio_risk_pct = Column(Float, nullable=False)
+    position_sizing_method = Column(String(20), nullable=False)  # fixed_fractional, kelly, optimal_f, volatility_adjusted
+    kelly_fraction = Column(Float, nullable=True)
+
+    # Stop loss/Take profit
+    base_sl_atr_multiplier = Column(Float, nullable=False)
+    base_tp_atr_multiplier = Column(Float, nullable=False)
+    use_trailing_stop = Column(Boolean, nullable=False, server_default='1')
+    trailing_activation_pct = Column(Float, nullable=True)
+
+    # Adaptive adjustments
+    regime_adjustment_enabled = Column(Boolean, nullable=False, server_default='1')
+    volatility_adjustment_enabled = Column(Boolean, nullable=False, server_default='1')
+    news_awareness_enabled = Column(Boolean, nullable=False, server_default='1')
+
+    # Diversification
+    max_correlated_positions = Column(Integer, nullable=False)
+    correlation_threshold = Column(Float, nullable=False)
+    max_positions_per_symbol = Column(Integer, nullable=False)
+    max_total_positions = Column(Integer, nullable=False)
+
+    # Drawdown protection
+    max_daily_loss_pct = Column(Float, nullable=False)
+    max_drawdown_pct = Column(Float, nullable=False)
+    recovery_mode_threshold_pct = Column(Float, nullable=False)
+    recovery_risk_multiplier = Column(Float, nullable=False)
+
+    # Metadata
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    __table_args__ = (
+        Index('idx_risk_profile_name', 'profile_name'),
+        Index('idx_risk_profile_active', 'is_active'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            'id': self.id,
+            'profile_name': self.profile_name,
+            'profile_type': self.profile_type,
+            'is_active': self.is_active,
+            'max_risk_per_trade_pct': self.max_risk_per_trade_pct,
+            'max_portfolio_risk_pct': self.max_portfolio_risk_pct,
+            'position_sizing_method': self.position_sizing_method,
+            'kelly_fraction': self.kelly_fraction,
+            'base_sl_atr_multiplier': self.base_sl_atr_multiplier,
+            'base_tp_atr_multiplier': self.base_tp_atr_multiplier,
+            'use_trailing_stop': self.use_trailing_stop,
+            'trailing_activation_pct': self.trailing_activation_pct,
+            'regime_adjustment_enabled': self.regime_adjustment_enabled,
+            'volatility_adjustment_enabled': self.volatility_adjustment_enabled,
+            'news_awareness_enabled': self.news_awareness_enabled,
+            'max_correlated_positions': self.max_correlated_positions,
+            'correlation_threshold': self.correlation_threshold,
+            'max_positions_per_symbol': self.max_positions_per_symbol,
+            'max_total_positions': self.max_total_positions,
+            'max_daily_loss_pct': self.max_daily_loss_pct,
+            'max_drawdown_pct': self.max_drawdown_pct,
+            'recovery_mode_threshold_pct': self.recovery_mode_threshold_pct,
+            'recovery_risk_multiplier': self.recovery_risk_multiplier,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AdvancedMetrics(Base):
+    """Stores advanced performance metrics beyond basic backtest results."""
+
+    __tablename__ = 'advanced_metrics'
+
+    # Primary Key
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Type and reference
+    metric_type = Column(String(20), nullable=False, index=True)  # backtest, live, paper, validation
+    reference_id = Column(Integer, nullable=True, index=True)  # ID of related backtest/optimization
+    symbol = Column(String(20), nullable=True, index=True)
+    timeframe = Column(String(10), nullable=True, index=True)
+    market_regime = Column(String(50), nullable=True)
+
+    # Time period
+    period_start = Column(DateTime, nullable=False, index=True)
+    period_end = Column(DateTime, nullable=False, index=True)
+
+    # Basic metrics (for reference)
+    total_return_pct = Column(Float, nullable=True)
+    total_trades = Column(Integer, nullable=True)
+    win_rate_pct = Column(Float, nullable=True)
+    sharpe_ratio = Column(Float, nullable=True)
+
+    # Advanced risk-adjusted metrics
+    sortino_ratio = Column(Float, nullable=True)
+    calmar_ratio = Column(Float, nullable=True)
+    mar_ratio = Column(Float, nullable=True)
+    omega_ratio = Column(Float, nullable=True)
+    gain_to_pain_ratio = Column(Float, nullable=True)
+
+    # Drawdown metrics
+    max_drawdown_pct = Column(Float, nullable=True)
+    max_drawdown_duration_days = Column(Integer, nullable=True)
+    avg_drawdown_pct = Column(Float, nullable=True)
+    recovery_time_days = Column(Integer, nullable=True)
+    ulcer_index = Column(Float, nullable=True)
+
+    # Return distribution
+    return_skewness = Column(Float, nullable=True)
+    return_kurtosis = Column(Float, nullable=True)
+    var_95_pct = Column(Float, nullable=True)
+    cvar_95_pct = Column(Float, nullable=True)
+
+    # Win/Loss analysis
+    avg_win_pct = Column(Float, nullable=True)
+    avg_loss_pct = Column(Float, nullable=True)
+    largest_win_pct = Column(Float, nullable=True)
+    largest_loss_pct = Column(Float, nullable=True)
+    win_loss_ratio = Column(Float, nullable=True)
+    profit_factor = Column(Float, nullable=True)
+
+    # Consistency metrics
+    win_streak_max = Column(Integer, nullable=True)
+    loss_streak_max = Column(Integer, nullable=True)
+    monthly_win_rate_pct = Column(Float, nullable=True)
+    expectancy_per_trade = Column(Float, nullable=True)
+
+    # System quality
+    system_quality_number = Column(Float, nullable=True)
+    k_ratio = Column(Float, nullable=True)
+
+    # Additional data
+    extra_metrics = Column(Text, nullable=True)  # JSON for custom metrics
+
+    # Metadata
+    calculated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+
+    __table_args__ = (
+        Index('idx_adv_metrics_type', 'metric_type'),
+        Index('idx_adv_metrics_reference', 'reference_id'),
+        Index('idx_adv_metrics_symbol_tf', 'symbol', 'timeframe'),
+        Index('idx_adv_metrics_period', 'period_start', 'period_end'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            'id': self.id,
+            'metric_type': self.metric_type,
+            'reference_id': self.reference_id,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'market_regime': self.market_regime,
+            'period_start': self.period_start.isoformat() if self.period_start else None,
+            'period_end': self.period_end.isoformat() if self.period_end else None,
+            'total_return_pct': self.total_return_pct,
+            'total_trades': self.total_trades,
+            'win_rate_pct': self.win_rate_pct,
+            'sharpe_ratio': self.sharpe_ratio,
+            'sortino_ratio': self.sortino_ratio,
+            'calmar_ratio': self.calmar_ratio,
+            'mar_ratio': self.mar_ratio,
+            'omega_ratio': self.omega_ratio,
+            'gain_to_pain_ratio': self.gain_to_pain_ratio,
+            'max_drawdown_pct': self.max_drawdown_pct,
+            'max_drawdown_duration_days': self.max_drawdown_duration_days,
+            'avg_drawdown_pct': self.avg_drawdown_pct,
+            'recovery_time_days': self.recovery_time_days,
+            'ulcer_index': self.ulcer_index,
+            'return_skewness': self.return_skewness,
+            'return_kurtosis': self.return_kurtosis,
+            'var_95_pct': self.var_95_pct,
+            'cvar_95_pct': self.cvar_95_pct,
+            'avg_win_pct': self.avg_win_pct,
+            'avg_loss_pct': self.avg_loss_pct,
+            'largest_win_pct': self.largest_win_pct,
+            'largest_loss_pct': self.largest_loss_pct,
+            'win_loss_ratio': self.win_loss_ratio,
+            'profit_factor': self.profit_factor,
+            'win_streak_max': self.win_streak_max,
+            'loss_streak_max': self.loss_streak_max,
+            'monthly_win_rate_pct': self.monthly_win_rate_pct,
+            'expectancy_per_trade': self.expectancy_per_trade,
+            'system_quality_number': self.system_quality_number,
+            'k_ratio': self.k_ratio,
+            'extra_metrics': json.loads(self.extra_metrics) if self.extra_metrics else None,
+            'calculated_at': self.calculated_at.isoformat() if self.calculated_at else None,
+        }
