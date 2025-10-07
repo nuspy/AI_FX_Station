@@ -133,6 +133,16 @@ class TrainingHistoryTab(QWidget):
         self.view_details_btn.setEnabled(False)
         action_layout.addWidget(self.view_details_btn)
 
+        self.delete_btn = QPushButton("Delete Selected")
+        self.delete_btn.clicked.connect(self.delete_selected)
+        self.delete_btn.setEnabled(False)
+        action_layout.addWidget(self.delete_btn)
+
+        self.delete_all_failed_btn = QPushButton("Delete All Failed")
+        self.delete_all_failed_btn.clicked.connect(self.delete_all_failed)
+        self.delete_all_failed_btn.setEnabled(False)
+        action_layout.addWidget(self.delete_all_failed_btn)
+
         action_layout.addStretch()
 
         self.export_btn = QPushButton("Export Results")
@@ -239,10 +249,14 @@ class TrainingHistoryTab(QWidget):
         # Enable actions if we have results
         self.export_btn.setEnabled(len(results) > 0)
 
+        # Check if there are failed runs
+        failed_count = sum(1 for r in results if r.get('status') == 'failed')
+        self.delete_all_failed_btn.setEnabled(failed_count > 0)
+
         # Enable view details when row selected
         self.results_table.itemSelectionChanged.connect(self.on_selection_changed)
 
-        logger.info(f"Loaded {len(results)} training runs")
+        logger.info(f"Loaded {len(results)} training runs ({failed_count} failed)")
 
     def on_load_error(self, error_msg: str):
         """Handle history load error."""
@@ -260,6 +274,7 @@ class TrainingHistoryTab(QWidget):
         """Handle table selection change."""
         has_selection = len(self.results_table.selectionModel().selectedRows()) > 0
         self.view_details_btn.setEnabled(has_selection)
+        self.delete_btn.setEnabled(has_selection)
 
     def on_row_double_clicked(self, index):
         """Handle row double-click."""
@@ -341,3 +356,121 @@ class TrainingHistoryTab(QWidget):
                 "Export Error",
                 f"Failed to export results:\n{e}"
             )
+
+    def delete_selected(self):
+        """Delete selected training runs."""
+        selected_rows = self.results_table.selectionModel().selectedRows()
+
+        if not selected_rows:
+            return
+
+        selected_ids = []
+        selected_names = []
+
+        for row_index in selected_rows:
+            row = row_index.row()
+            if row < len(self.current_results):
+                run_id = self.current_results[row].get('id')
+                model_type = self.current_results[row].get('model_type', 'Unknown')
+                symbol = self.current_results[row].get('symbol', 'Unknown')
+                selected_ids.append(run_id)
+                selected_names.append(f"{model_type} ({symbol})")
+
+        if not selected_ids:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Are you sure you want to delete {len(selected_ids)} training run(s)?\n\n"
+            f"Runs to delete:\n" + "\n".join(f"- {name}" for name in selected_names[:5]) +
+            (f"\n... and {len(selected_names) - 5} more" if len(selected_names) > 5 else "") + "\n\n"
+            f"This will delete:\n"
+            f"- Training run records\n"
+            f"- Associated inference backtests\n"
+            f"- Model files (if kept)\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                from ..training.training_pipeline.database import session_scope, delete_training_run
+
+                deleted_count = 0
+                with session_scope() as session:
+                    for run_id in selected_ids:
+                        if delete_training_run(session, run_id):
+                            deleted_count += 1
+
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Deleted {deleted_count} training run(s) successfully."
+                )
+
+                # Reload history
+                self.load_history()
+
+            except Exception as e:
+                logger.error(f"Failed to delete training runs: {e}")
+                QMessageBox.critical(
+                    self,
+                    "Delete Error",
+                    f"Failed to delete training runs:\n{e}"
+                )
+
+    def delete_all_failed(self):
+        """Delete all failed training runs."""
+        if not self.current_results:
+            return
+
+        failed_runs = [r for r in self.current_results if r.get('status') == 'failed']
+
+        if not failed_runs:
+            QMessageBox.information(
+                self,
+                "No Failed Runs",
+                "There are no failed training runs to delete."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete All Failed",
+            f"Are you sure you want to delete ALL {len(failed_runs)} failed training runs?\n\n"
+            f"This will delete:\n"
+            f"- Training run records\n"
+            f"- Associated inference backtests\n"
+            f"- Model files (if any)\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                from ..training.training_pipeline.database import session_scope, delete_training_run
+
+                deleted_count = 0
+                with session_scope() as session:
+                    for run in failed_runs:
+                        run_id = run.get('id')
+                        if delete_training_run(session, run_id):
+                            deleted_count += 1
+
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Deleted {deleted_count} failed training run(s) successfully."
+                )
+
+                # Reload history
+                self.load_history()
+
+            except Exception as e:
+                logger.error(f"Failed to delete failed runs: {e}")
+                QMessageBox.critical(
+                    self,
+                    "Delete Error",
+                    f"Failed to delete failed training runs:\n{e}"
+                )

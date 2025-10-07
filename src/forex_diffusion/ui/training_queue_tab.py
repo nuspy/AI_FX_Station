@@ -213,6 +213,10 @@ class TrainingQueueTab(QWidget):
 
         control_layout.addStretch()
 
+        self.load_checkpoint_btn = QPushButton("Load Checkpoint")
+        self.load_checkpoint_btn.clicked.connect(self.load_checkpoint)
+        control_layout.addWidget(self.load_checkpoint_btn)
+
         self.queue_status_label = QLabel("Status: No queue")
         control_layout.addWidget(self.queue_status_label)
 
@@ -654,4 +658,74 @@ class TrainingQueueTab(QWidget):
                 self,
                 "Resume Failed",
                 f"Failed to resume queue:\n{e}"
+            )
+
+    def load_checkpoint(self):
+        """Load training queue from checkpoint file."""
+        try:
+            from .checkpoint_selector_dialog import CheckpointSelectorDialog
+
+            # Open checkpoint selector dialog
+            dialog = CheckpointSelectorDialog(self, checkpoint_dir=self.orchestrator.checkpoints_dir)
+
+            if dialog.exec() == CheckpointSelectorDialog.DialogCode.Accepted:
+                checkpoint_info = dialog.get_selected_checkpoint()
+
+                if not checkpoint_info:
+                    return
+
+                checkpoint_file = checkpoint_info['file_path']
+                checkpoint_data = checkpoint_info['data']
+
+                # Load checkpoint using checkpoint manager
+                from ..training.training_pipeline.checkpoint_manager import CheckpointManager
+
+                checkpoint_manager = CheckpointManager(str(self.orchestrator.checkpoints_dir))
+
+                try:
+                    # Load checkpoint
+                    loaded_data = checkpoint_manager.load_checkpoint(checkpoint_file)
+
+                    # Set current queue ID
+                    self.current_queue_id = loaded_data['queue_id']
+
+                    # Update UI
+                    self.queue_status_label.setText(
+                        f"Queue ID: {self.current_queue_id} "
+                        f"({loaded_data['current_index']}/{loaded_data['total_configs']} configs)"
+                    )
+
+                    # Enable start button
+                    self.start_btn.setEnabled(True)
+
+                    # Log status
+                    self.log_status(
+                        f"Checkpoint loaded: {checkpoint_data.get('queue_name', 'Unknown')}\n"
+                        f"Progress: {checkpoint_data.get('current_index', 0)}/{checkpoint_data.get('total_configs', 0)}\n"
+                        f"Ready to resume training"
+                    )
+
+                    QMessageBox.information(
+                        self,
+                        "Checkpoint Loaded",
+                        f"Checkpoint loaded successfully:\n\n"
+                        f"Queue: {checkpoint_data.get('queue_name', 'Unknown')}\n"
+                        f"Progress: {checkpoint_data.get('current_index', 0)}/{checkpoint_data.get('total_configs', 0)}\n\n"
+                        f"Click 'Start Training' to resume."
+                    )
+
+                except Exception as e:
+                    logger.error(f"Failed to load checkpoint: {e}")
+                    QMessageBox.critical(
+                        self,
+                        "Load Failed",
+                        f"Failed to load checkpoint:\n{e}"
+                    )
+
+        except Exception as e:
+            logger.error(f"Error opening checkpoint selector: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open checkpoint selector:\n{e}"
             )
