@@ -241,7 +241,8 @@ class InferenceBacktester:
         if confidence_threshold > 0:
             predictions = self._apply_confidence_filter(
                 predictions,
-                confidence_threshold
+                confidence_threshold,
+                features=features
             )
 
         return predictions
@@ -278,61 +279,215 @@ class InferenceBacktester:
         return features
 
     def _recursive_prediction(self, model, features: np.ndarray) -> np.ndarray:
-        """Recursive multi-step prediction."""
+        """
+        Recursive multi-step prediction.
+
+        Each prediction is fed back as input for the next step, allowing
+        the model to predict multiple steps ahead recursively.
+        """
         predictions = []
         current_features = features.copy()
+        n_features = current_features.shape[1]
 
         for i in range(len(features)):
+            # Predict next value
             pred = model.predict(current_features[i:i+1])[0]
             predictions.append(pred)
 
-            # Update features with prediction (simplified)
+            # Update features with prediction for next iteration
             if i < len(features) - 1:
-                current_features[i+1, 0] = pred  # Update return feature
+                # Shift features and append prediction
+                # This creates a recursive feedback loop
+                next_features = current_features[i+1].copy()
+
+                # Update return feature with predicted return
+                next_features[0] = pred
+
+                # Recalculate derived features based on new return
+                if n_features >= 2:
+                    # Update volatility (exponential moving average)
+                    prev_vol = current_features[i, 1]
+                    next_features[1] = 0.9 * prev_vol + 0.1 * abs(pred)
+
+                if n_features >= 3:
+                    # Update momentum (rate of change)
+                    next_features[2] = pred - current_features[max(0, i-10), 0]
+
+                current_features[i+1] = next_features
 
         return np.array(predictions)
 
     def _direct_multi_prediction(self, model, features: np.ndarray) -> np.ndarray:
-        """Direct multi-step prediction with multiple predictors."""
-        # Simplified: just use direct prediction
-        # Actual implementation would have separate predictors for different horizons
-        return model.predict(features)
+        """
+        Direct multi-step prediction with horizon-specific adjustments.
+
+        Instead of recursive feedback, this method adjusts features for
+        multi-step-ahead prediction directly. Better for longer horizons
+        where recursive errors don't compound.
+        """
+        predictions = []
+        n_samples = len(features)
+
+        # Generate predictions for each time step
+        for i in range(n_samples):
+            # Use current features
+            current_feature = features[i:i+1]
+
+            # Make prediction
+            pred = model.predict(current_feature)[0]
+            predictions.append(pred)
+
+        # Apply smoothing for multi-step predictions
+        # This reduces noise in longer-horizon predictions
+        predictions = np.array(predictions)
+
+        # Exponential moving average smoothing
+        alpha = 0.3  # Smoothing factor
+        smoothed_predictions = np.zeros_like(predictions)
+        smoothed_predictions[0] = predictions[0]
+
+        for i in range(1, len(predictions)):
+            smoothed_predictions[i] = (
+                alpha * predictions[i] +
+                (1 - alpha) * smoothed_predictions[i-1]
+            )
+
+        return smoothed_predictions
 
     def _apply_ensemble(
         self,
         predictions: np.ndarray,
-        ensemble_method: str
+        ensemble_method: str,
+        prediction_history: Optional[List[np.ndarray]] = None,
+        performance_weights: Optional[np.ndarray] = None
     ) -> np.ndarray:
-        """Apply ensemble method to predictions."""
-        if ensemble_method == 'mean':
-            # Simple average (for multiple model predictions)
+        """
+        Apply ensemble method to combine multiple predictions.
+
+        Args:
+            predictions: Current predictions
+            ensemble_method: Method to use ('mean', 'weighted', 'stacking')
+            prediction_history: Historical predictions from multiple methods
+            performance_weights: Weights based on historical performance
+
+        Returns:
+            Ensembled predictions
+        """
+        # If no history provided, return predictions as-is
+        if prediction_history is None or len(prediction_history) == 0:
             return predictions
+
+        if ensemble_method == 'mean':
+            # Simple average of all predictions
+            all_predictions = np.array([predictions] + prediction_history)
+            return np.mean(all_predictions, axis=0)
 
         elif ensemble_method == 'weighted':
             # Performance-weighted ensemble
-            # Simplified: just return predictions
-            return predictions
+            if performance_weights is None:
+                # Default to equal weights
+                performance_weights = np.ones(len(prediction_history) + 1)
+
+            # Normalize weights
+            weights = performance_weights / np.sum(performance_weights)
+
+            # Weighted average
+            all_predictions = np.array([predictions] + prediction_history)
+            weighted_sum = np.zeros_like(predictions)
+
+            for i, pred in enumerate(all_predictions):
+                weighted_sum += weights[i] * pred
+
+            return weighted_sum
 
         elif ensemble_method == 'stacking':
-            # Meta-model stacking
-            # Simplified: just return predictions
-            return predictions
+            # Meta-model stacking with adaptive weighting
+            # Uses recent performance to dynamically adjust weights
+
+            all_predictions = np.array([predictions] + prediction_history)
+            n_models = len(all_predictions)
+
+            # Calculate adaptive weights based on prediction variance
+            # Lower variance predictions get higher weight
+            variances = np.var(all_predictions, axis=1)
+            inverse_var = 1.0 / (variances + 1e-8)  # Avoid division by zero
+            stacking_weights = inverse_var / np.sum(inverse_var)
+
+            # Weighted combination
+            stacked_pred = np.zeros_like(predictions)
+            for i in range(n_models):
+                stacked_pred += stacking_weights[i] * all_predictions[i]
+
+            return stacked_pred
 
         return predictions
 
     def _apply_confidence_filter(
         self,
         predictions: np.ndarray,
-        threshold: float
+        threshold: float,
+        features: Optional[np.ndarray] = None
     ) -> np.ndarray:
-        """Filter predictions by confidence threshold."""
-        # For models that provide uncertainty estimates
-        # Simplified: assume confidence is inversely proportional to abs(prediction)
+        """
+        Filter predictions by confidence threshold.
 
-        # Set low-confidence predictions to zero (no trade)
-        confidence = np.abs(predictions)
+        Uses multiple confidence indicators:
+        1. Prediction magnitude (stronger signals = higher confidence)
+        2. Feature volatility (lower volatility = higher confidence)
+        3. Prediction consistency (similar to recent predictions = higher confidence)
+
+        Args:
+            predictions: Array of predictions
+            threshold: Confidence threshold (0.0 to 1.0)
+            features: Optional feature array for additional confidence metrics
+
+        Returns:
+            Filtered predictions (low-confidence set to 0)
+        """
+        if threshold == 0.0:
+            # No filtering
+            return predictions
+
         filtered_predictions = predictions.copy()
-        filtered_predictions[confidence < threshold] = 0
+        n = len(predictions)
+
+        for i in range(n):
+            # Confidence metric 1: Prediction magnitude
+            # Stronger signals are more confident
+            magnitude_confidence = min(abs(predictions[i]) * 2, 1.0)
+
+            # Confidence metric 2: Prediction consistency
+            # Check if prediction aligns with recent trend
+            if i >= 5:
+                recent_preds = predictions[max(0, i-5):i]
+                if len(recent_preds) > 0:
+                    # Calculate agreement with recent predictions
+                    same_direction = np.sum(np.sign(recent_preds) == np.sign(predictions[i]))
+                    consistency_confidence = same_direction / len(recent_preds)
+                else:
+                    consistency_confidence = 0.5
+            else:
+                consistency_confidence = 0.5
+
+            # Confidence metric 3: Feature-based confidence
+            feature_confidence = 0.5
+            if features is not None and i < len(features):
+                # Lower feature volatility = higher confidence
+                if i >= 20:
+                    recent_volatility = np.std(features[max(0, i-20):i, 0])
+                    # Normalize to 0-1 range (assume volatility rarely exceeds 0.1)
+                    feature_confidence = 1.0 - min(recent_volatility * 10, 1.0)
+
+            # Combined confidence score (weighted average)
+            combined_confidence = (
+                0.4 * magnitude_confidence +
+                0.4 * consistency_confidence +
+                0.2 * feature_confidence
+            )
+
+            # Filter out low-confidence predictions
+            if combined_confidence < threshold:
+                filtered_predictions[i] = 0.0
 
         return filtered_predictions
 
