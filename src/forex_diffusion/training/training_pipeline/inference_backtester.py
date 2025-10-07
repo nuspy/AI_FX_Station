@@ -18,6 +18,7 @@ from .database import (
     update_inference_backtest_results
 )
 from .regime_manager import RegimeManager
+from .config_loader import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class InferenceBacktester:
         self,
         session: Session,
         regime_manager: RegimeManager,
-        max_parallel_workers: int = 4
+        max_parallel_workers: Optional[int] = None
     ):
         """
         Initialize InferenceBacktester.
@@ -42,11 +43,12 @@ class InferenceBacktester:
         Args:
             session: SQLAlchemy session
             regime_manager: RegimeManager instance for regime classification
-            max_parallel_workers: Maximum parallel backtest workers
+            max_parallel_workers: Maximum parallel backtest workers (default: from config)
         """
+        self.config = get_config()
         self.session = session
         self.regime_manager = regime_manager
-        self.max_parallel_workers = max_parallel_workers
+        self.max_parallel_workers = max_parallel_workers or self.config.max_inference_workers
 
     def generate_inference_grid(
         self,
@@ -69,16 +71,16 @@ class InferenceBacktester:
         """
         # Defaults from config
         if prediction_methods is None:
-            prediction_methods = ['direct', 'recursive', 'direct_multi']
+            prediction_methods = self.config.prediction_methods
 
         if ensemble_methods is None:
-            ensemble_methods = ['mean', 'weighted', 'stacking']
+            ensemble_methods = self.config.ensemble_methods
 
         if confidence_thresholds is None:
-            confidence_thresholds = [0.0, 0.3, 0.5, 0.7, 0.9]
+            confidence_thresholds = self.config.confidence_thresholds
 
         if lookback_windows is None:
-            lookback_windows = [50, 100, 200]
+            lookback_windows = self.config.lookback_windows
 
         # Generate all combinations
         configs = []

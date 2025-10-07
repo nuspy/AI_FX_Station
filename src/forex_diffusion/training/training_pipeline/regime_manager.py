@@ -17,6 +17,7 @@ from .database import (
     get_all_active_regimes, get_best_model_for_regime,
     update_best_model_for_regime
 )
+from .config_loader import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -42,26 +43,27 @@ class RegimeManager:
     def __init__(
         self,
         session: Session,
-        trend_window: int = 50,
-        volatility_window: int = 20,
-        returns_window: int = 10,
-        min_regime_duration: int = 10
+        trend_window: Optional[int] = None,
+        volatility_window: Optional[int] = None,
+        returns_window: Optional[int] = None,
+        min_regime_duration: Optional[int] = None
     ):
         """
         Initialize RegimeManager.
 
         Args:
             session: SQLAlchemy session
-            trend_window: Number of bars for trend calculation
-            volatility_window: Number of bars for volatility calculation
-            returns_window: Number of bars for returns calculation
-            min_regime_duration: Minimum bars to classify as a regime
+            trend_window: Number of bars for trend calculation (default: from config)
+            volatility_window: Number of bars for volatility calculation (default: from config)
+            returns_window: Number of bars for returns calculation (default: from config)
+            min_regime_duration: Minimum bars to classify as a regime (default: from config)
         """
+        self.config = get_config()
         self.session = session
-        self.trend_window = trend_window
-        self.volatility_window = volatility_window
-        self.returns_window = returns_window
-        self.min_regime_duration = min_regime_duration
+        self.trend_window = trend_window or self.config.trend_window
+        self.volatility_window = volatility_window or self.config.volatility_window
+        self.returns_window = returns_window or self.config.returns_window
+        self.min_regime_duration = min_regime_duration or self.config.min_regime_duration
 
         # Load regime definitions
         self.regime_definitions = self._load_regime_definitions()

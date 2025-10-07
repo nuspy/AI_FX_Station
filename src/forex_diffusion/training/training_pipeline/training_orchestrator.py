@@ -29,6 +29,7 @@ from .regime_manager import RegimeManager
 from .checkpoint_manager import CheckpointManager
 from .model_file_manager import ModelFileManager
 from .inference_backtester import InferenceBacktester
+from .config_loader import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -44,26 +45,30 @@ class TrainingOrchestrator:
 
     def __init__(
         self,
-        artifacts_dir: str = "./artifacts",
-        checkpoints_dir: str = "./checkpoints/training_pipeline",
-        auto_checkpoint_interval: int = 10,
-        max_inference_workers: int = 4,
-        delete_non_best_models: bool = True
+        artifacts_dir: Optional[str] = None,
+        checkpoints_dir: Optional[str] = None,
+        auto_checkpoint_interval: Optional[int] = None,
+        max_inference_workers: Optional[int] = None,
+        delete_non_best_models: Optional[bool] = None
     ):
         """
         Initialize TrainingOrchestrator.
 
         Args:
-            artifacts_dir: Directory for model artifacts
-            checkpoints_dir: Directory for queue checkpoints
-            auto_checkpoint_interval: Save checkpoint every N models
-            max_inference_workers: Max parallel inference backtests
-            delete_non_best_models: Auto-delete non-best models
+            artifacts_dir: Directory for model artifacts (default: from config)
+            checkpoints_dir: Directory for queue checkpoints (default: from config)
+            auto_checkpoint_interval: Save checkpoint every N models (default: from config)
+            max_inference_workers: Max parallel inference backtests (default: from config)
+            delete_non_best_models: Auto-delete non-best models (default: from config)
         """
-        self.artifacts_dir = Path(artifacts_dir)
-        self.checkpoints_dir = Path(checkpoints_dir)
-        self.auto_checkpoint_interval = auto_checkpoint_interval
-        self.max_inference_workers = max_inference_workers
+        # Load configuration
+        self.config = get_config()
+
+        # Use config values if not explicitly provided
+        self.artifacts_dir = Path(artifacts_dir or self.config.artifacts_dir)
+        self.checkpoints_dir = Path(checkpoints_dir or self.config.checkpoints_dir)
+        self.auto_checkpoint_interval = auto_checkpoint_interval or self.config.auto_checkpoint_interval
+        self.max_inference_workers = max_inference_workers or self.config.max_inference_workers
 
         # Create directories
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -71,9 +76,11 @@ class TrainingOrchestrator:
 
         # Managers
         self.checkpoint_manager = CheckpointManager(str(self.checkpoints_dir))
+
+        delete_non_best = delete_non_best_models if delete_non_best_models is not None else self.config.delete_non_best_models
         self.model_file_manager = ModelFileManager(
             str(self.artifacts_dir),
-            delete_non_best_models=delete_non_best_models
+            delete_non_best_models=delete_non_best
         )
 
         # Cancellation flag

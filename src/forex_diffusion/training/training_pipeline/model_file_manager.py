@@ -15,6 +15,7 @@ from .database import (
     TrainingRun, get_training_run_by_id, get_models_to_delete,
     get_storage_stats, mark_model_as_kept
 )
+from .config_loader import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +30,19 @@ class ModelFileManager:
 
     def __init__(
         self,
-        artifacts_dir: str = "./artifacts",
-        delete_non_best_models: bool = True
+        artifacts_dir: Optional[str] = None,
+        delete_non_best_models: Optional[bool] = None
     ):
         """
         Initialize ModelFileManager.
 
         Args:
-            artifacts_dir: Directory where model files are stored
-            delete_non_best_models: If True, automatically delete non-best models
+            artifacts_dir: Directory where model files are stored (default: from config)
+            delete_non_best_models: If True, automatically delete non-best models (default: from config)
         """
-        self.artifacts_dir = Path(artifacts_dir)
-        self.delete_non_best_models = delete_non_best_models
+        self.config = get_config()
+        self.artifacts_dir = Path(artifacts_dir or self.config.artifacts_dir)
+        self.delete_non_best_models = delete_non_best_models if delete_non_best_models is not None else self.config.delete_non_best_models
 
         # Ensure artifacts directory exists
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
