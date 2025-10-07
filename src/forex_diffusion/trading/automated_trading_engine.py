@@ -29,6 +29,7 @@ try:
     from ..regime.hmm_detector import HMMRegimeDetector
     from ..risk.multi_level_stop_loss import MultiLevelStopLoss
     from ..risk.regime_position_sizer import RegimePositionSizer, MarketRegime
+    from ..risk.adaptive_stop_loss_manager import AdaptiveStopLossManager, AdaptationFactors
     from ..execution.smart_execution import SmartExecutionOptimizer
     from ..services.parameter_loader import ParameterLoaderService
 except ImportError:
@@ -73,6 +74,7 @@ class TradingConfig:
     use_smart_execution: bool = True
     database_path: str = "forex_data.db"  # Path to database for parameter loading
     use_optimized_parameters: bool = True  # Use optimized parameters from database
+    use_adaptive_stops: bool = True  # Use adaptive stop loss manager
 
 
 class AutomatedTradingEngine:
@@ -126,6 +128,17 @@ class AutomatedTradingEngine:
             base_risk_per_trade_pct=config.risk_per_trade_pct
         )
         self.execution_optimizer = SmartExecutionOptimizer()
+
+        # Adaptive Stop Loss Manager
+        self.adaptive_sl_manager: Optional[AdaptiveStopLossManager] = None
+        if config.use_adaptive_stops:
+            self.adaptive_sl_manager = AdaptiveStopLossManager(
+                base_sl_atr_multiplier=2.0,
+                base_tp_atr_multiplier=3.0,
+                trailing_enabled=True,
+                trailing_activation_pct=50.0
+            )
+            logger.info("✅ Adaptive Stop Loss Manager initialized")
 
         # Parameter Loader Service
         self.parameter_loader: Optional[ParameterLoaderService] = None
@@ -508,8 +521,7 @@ class AutomatedTradingEngine:
             except Exception as e:
                 logger.warning(f"Could not load optimized params: {e}. Using defaults.")
 
-        # Calculate stops using ATR-based approach with optimized multipliers
-        # First try to get ATR from data
+        # Calculate stops using adaptive SL manager if available
         atr = 0.001  # Fallback
         if hasattr(self, '_last_atr') and symbol in getattr(self, '_last_atr', {}):
             atr = self._last_atr[symbol]
@@ -517,10 +529,32 @@ class AutomatedTradingEngine:
             # Use percentage-based fallback
             atr = price * 0.01
 
-        # Calculate stop loss and take profit
-        stop_distance = atr * sl_multiplier
-        stop_loss = price - stop_distance if signal > 0 else price + stop_distance
-        take_profit = price + (atr * tp_multiplier) if signal > 0 else price - (atr * tp_multiplier)
+        # Get current spread (simulated for now - should come from broker)
+        current_spread = price * 0.0001  # 1 pip
+        avg_spread = current_spread  # Would be calculated from historical data
+
+        if self.adaptive_sl_manager:
+            # Use adaptive stop loss manager
+            stop_loss, take_profit, stop_levels = self.adaptive_sl_manager.calculate_initial_stops(
+                symbol=symbol,
+                direction=direction,
+                entry_price=price,
+                atr=atr,
+                current_spread=current_spread,
+                avg_spread=avg_spread,
+                regime=regime,
+                sl_multiplier_override=sl_multiplier,
+                tp_multiplier_override=tp_multiplier,
+            )
+            logger.info(
+                f"Adaptive SL calculated: {len(stop_levels)} levels, "
+                f"SL={stop_loss:.5f}, TP={take_profit:.5f}"
+            )
+        else:
+            # Fallback to simple calculation
+            stop_distance = atr * sl_multiplier
+            stop_loss = price - stop_distance if signal > 0 else price + stop_distance
+            take_profit = price + (atr * tp_multiplier) if signal > 0 else price - (atr * tp_multiplier)
 
         # Create position
         position = Position(
