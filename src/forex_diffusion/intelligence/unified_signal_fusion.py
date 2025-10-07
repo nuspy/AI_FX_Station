@@ -24,6 +24,7 @@ from .signal_quality_scorer import (
 )
 from .enhanced_calibration import EnhancedConformalCalibrator
 from .event_signal_processor import EventSignalProcessor, EventSignal
+from .adaptive_parameter_system import AdaptiveParameterSystem
 from ..analysis.order_flow_analyzer import OrderFlowAnalyzer, OrderFlowSignal
 from ..analysis.correlation_analyzer import CrossAssetCorrelationAnalyzer, CorrelationSignal
 from ..regime.enhanced_regime_detector import EnhancedRegimeDetector, RegimeState
@@ -81,6 +82,7 @@ class UnifiedSignalFusion:
         event_processor: Optional[EventSignalProcessor] = None,
         orderflow_analyzer: Optional[OrderFlowAnalyzer] = None,
         correlation_analyzer: Optional[CrossAssetCorrelationAnalyzer] = None,
+        adaptive_params: Optional[AdaptiveParameterSystem] = None,
         default_quality_threshold: float = 0.65,
         max_signals_per_regime: int = 5
     ):
@@ -94,6 +96,7 @@ class UnifiedSignalFusion:
             event_processor: Event signal processor
             orderflow_analyzer: Order flow analyzer
             correlation_analyzer: Correlation analyzer
+            adaptive_params: Adaptive parameter system
             default_quality_threshold: Default quality threshold
             max_signals_per_regime: Maximum signals per regime
         """
@@ -103,6 +106,7 @@ class UnifiedSignalFusion:
         self.event_processor = event_processor
         self.orderflow_analyzer = orderflow_analyzer
         self.correlation_analyzer = correlation_analyzer
+        self.adaptive_params = adaptive_params
 
         self.default_quality_threshold = default_quality_threshold
         self.max_signals_per_regime = max_signals_per_regime
@@ -120,6 +124,72 @@ class UnifiedSignalFusion:
     def set_open_positions(self, positions: List[str]):
         """Update list of open positions"""
         self.open_positions = positions
+
+    def get_active_parameters(self) -> Dict[str, float]:
+        """
+        Get currently active parameters (from adaptive system if available).
+
+        Returns:
+            Dictionary of parameter values
+        """
+        if self.adaptive_params:
+            params = self.adaptive_params.get_current_parameters()
+            # Use adaptive parameters if available, otherwise use defaults
+            return {
+                'quality_threshold': params.get('quality_threshold', self.default_quality_threshold),
+                'max_signals_per_regime': params.get('max_signals_per_regime', self.max_signals_per_regime),
+                'position_size_multiplier': params.get('position_size_multiplier', 1.0),
+                'stop_loss_distance': params.get('stop_loss_distance', 1.5),
+                'take_profit_distance': params.get('take_profit_distance', 2.0),
+            }
+        else:
+            return {
+                'quality_threshold': self.default_quality_threshold,
+                'max_signals_per_regime': self.max_signals_per_regime,
+                'position_size_multiplier': 1.0,
+                'stop_loss_distance': 1.5,
+                'take_profit_distance': 2.0,
+            }
+
+    def record_signal_outcome(
+        self,
+        signal_id: str,
+        symbol: str,
+        pnl: float,
+        outcome: str,
+        timestamp: int
+    ):
+        """
+        Record signal outcome for adaptive parameter system.
+
+        Args:
+            signal_id: Signal identifier
+            symbol: Trading symbol
+            pnl: Profit/loss
+            outcome: 'win', 'loss', or 'breakeven'
+            timestamp: Timestamp of outcome
+        """
+        if self.adaptive_params:
+            params = self.get_active_parameters()
+            self.adaptive_params.record_trade(
+                timestamp=timestamp,
+                symbol=symbol,
+                regime=self.current_regime or 'unknown',
+                pnl=pnl,
+                outcome=outcome,
+                parameters_used=params
+            )
+
+            # Check if adaptation should be triggered
+            should_trigger, trigger_reason, metrics = self.adaptive_params.should_trigger_adaptation()
+            if should_trigger:
+                # Run adaptation cycle
+                adaptations = self.adaptive_params.run_adaptation_cycle()
+                if adaptations:
+                    # Update quality threshold if adapted
+                    for adaptation in adaptations:
+                        if adaptation.parameter_name == 'quality_threshold' and adaptation.deployed:
+                            self.default_quality_threshold = adaptation.new_value
 
     def fuse_signals(
         self,
@@ -191,8 +261,10 @@ class UnifiedSignalFusion:
             reverse=True
         )
 
-        # Limit to max signals per regime
-        return ranked_signals[:self.max_signals_per_regime]
+        # Limit to max signals per regime (use adaptive parameter if available)
+        active_params = self.get_active_parameters()
+        max_signals = int(active_params.get('max_signals_per_regime', self.max_signals_per_regime))
+        return ranked_signals[:max_signals]
 
     def _process_pattern_signals(
         self,
@@ -401,8 +473,12 @@ class UnifiedSignalFusion:
         self,
         signals: List[FusedSignal]
     ) -> List[FusedSignal]:
-        """Filter signals by regime and quality threshold"""
+        """Filter signals by regime and quality threshold (using adaptive params if available)"""
         filtered = []
+
+        # Get active parameters (may be adapted)
+        active_params = self.get_active_parameters()
+        quality_threshold = active_params['quality_threshold']
 
         for signal in signals:
             # Check regime action
@@ -411,8 +487,8 @@ class UnifiedSignalFusion:
                 if self.regime_detector.current_regime == RegimeState.TRANSITION:
                     continue
 
-            # Check quality threshold
-            if signal.quality_score.passed:
+            # Check quality threshold (use adaptive threshold)
+            if signal.quality_score.composite_score >= quality_threshold:
                 filtered.append(signal)
 
         return filtered
