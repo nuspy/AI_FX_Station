@@ -101,6 +101,14 @@ dependencies = [
   # Experiment Tracking (Optional for SSSD)
   "wandb>=0.15.0",            # Weights & Biases experiment tracking
   "tensorboard>=2.14.0",      # TensorBoard logging
+
+  # Enhanced Trading System Dependencies (New Trading Specs)
+  "transformers>=4.30.0",     # Transformer models for sequence prediction
+  "tokenizers>=0.13.0",       # Fast tokenization for transformers
+  "sentencepiece>=0.1.99",    # Tokenizer for some transformer models
+  "statsmodels>=0.14.0",      # Statistical models and tests (cointegration, etc.)
+  "arch>=6.2.0",              # ARCH/GARCH models for volatility
+  "ta-lib>=0.4.28",           # Technical Analysis Library (optional, requires separate install)
 ]
 
 [project.scripts]
