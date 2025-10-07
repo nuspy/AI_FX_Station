@@ -42,11 +42,17 @@ class RegimeAnalysisTab(QWidget):
         title = QLabel("<h2>Regime Analysis</h2>")
         layout.addWidget(title)
 
-        # Refresh button
+        # Refresh button and charts button
         refresh_layout = QHBoxLayout()
         self.refresh_btn = QPushButton("Refresh Data")
         self.refresh_btn.clicked.connect(self.load_regime_summary)
         refresh_layout.addWidget(self.refresh_btn)
+
+        self.charts_btn = QPushButton("View Performance Charts")
+        self.charts_btn.clicked.connect(self.show_performance_charts)
+        self.charts_btn.setEnabled(False)
+        refresh_layout.addWidget(self.charts_btn)
+
         refresh_layout.addStretch()
         layout.addLayout(refresh_layout)
 
@@ -191,6 +197,9 @@ class RegimeAnalysisTab(QWidget):
         # Resize columns
         self.regime_table.resizeColumnsToContents()
 
+        # Enable charts button if we have data
+        self.charts_btn.setEnabled(len(regimes) > 0)
+
         logger.info(f"Loaded {len(regimes)} regimes")
 
     def on_load_error(self, error_msg: str):
@@ -257,3 +266,152 @@ class RegimeAnalysisTab(QWidget):
         else:
             self.model_details_label.setText("No best model for this regime yet")
             self.metrics_label.setText("Train models to establish best performers")
+
+    def show_performance_charts(self):
+        """Show performance charts dialog."""
+        if not self.regime_data or not self.regime_data.get('regimes'):
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "No regime data available for charting.\nLoad data first."
+            )
+            return
+
+        try:
+            from PySide6.QtWidgets import QDialog
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+            from matplotlib.figure import Figure
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Regime Performance Charts")
+            dialog.resize(1000, 700)
+
+            layout = QVBoxLayout(dialog)
+
+            # Create matplotlib figure with subplots
+            fig = Figure(figsize=(10, 8))
+
+            regimes = self.regime_data.get('regimes', {})
+            regime_names = list(regimes.keys())
+            n_regimes = len(regime_names)
+
+            # Extract metrics for each regime
+            sharpe_ratios = []
+            max_drawdowns = []
+            win_rates = []
+            has_model = []
+
+            for regime_name in regime_names:
+                regime_info = regimes[regime_name]
+
+                if regime_info.get('has_best_model') and regime_info.get('best_model'):
+                    best_model = regime_info['best_model']
+                    secondary = best_model.get('secondary_metrics', {})
+
+                    sharpe_ratios.append(best_model.get('performance_score', 0))
+                    max_drawdowns.append(abs(secondary.get('max_drawdown', 0)))
+                    win_rates.append(secondary.get('win_rate', 0) * 100)  # Convert to percentage
+                    has_model.append(True)
+                else:
+                    sharpe_ratios.append(0)
+                    max_drawdowns.append(0)
+                    win_rates.append(0)
+                    has_model.append(False)
+
+            # Clean regime names for display
+            display_names = [name.replace('_', ' ').title() for name in regime_names]
+
+            # Chart 1: Sharpe Ratio Comparison
+            ax1 = fig.add_subplot(2, 2, 1)
+            colors = ['green' if has else 'lightgray' for has in has_model]
+            bars1 = ax1.bar(display_names, sharpe_ratios, color=colors)
+            ax1.set_title('Sharpe Ratio by Regime', fontweight='bold', fontsize=12)
+            ax1.set_ylabel('Sharpe Ratio')
+            ax1.set_xlabel('Market Regime')
+            ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+            ax1.grid(axis='y', alpha=0.3)
+            plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+            # Chart 2: Max Drawdown Comparison
+            ax2 = fig.add_subplot(2, 2, 2)
+            bars2 = ax2.bar(display_names, max_drawdowns, color=colors)
+            ax2.set_title('Max Drawdown by Regime', fontweight='bold', fontsize=12)
+            ax2.set_ylabel('Max Drawdown (abs)')
+            ax2.set_xlabel('Market Regime')
+            ax2.grid(axis='y', alpha=0.3)
+            plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+            # Chart 3: Win Rate Comparison
+            ax3 = fig.add_subplot(2, 2, 3)
+            bars3 = ax3.bar(display_names, win_rates, color=colors)
+            ax3.set_title('Win Rate by Regime', fontweight='bold', fontsize=12)
+            ax3.set_ylabel('Win Rate (%)')
+            ax3.set_xlabel('Market Regime')
+            ax3.axhline(y=50, color='red', linestyle='--', linewidth=1, label='50% Baseline')
+            ax3.legend()
+            ax3.grid(axis='y', alpha=0.3)
+            plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+            # Chart 4: Performance Summary (Radar Chart)
+            ax4 = fig.add_subplot(2, 2, 4, projection='polar')
+
+            # Select regime with best model or first regime
+            selected_regime_idx = 0
+            for i, has in enumerate(has_model):
+                if has:
+                    selected_regime_idx = i
+                    break
+
+            if has_model[selected_regime_idx]:
+                # Normalize metrics to 0-1 scale for radar chart
+                norm_sharpe = min(max(sharpe_ratios[selected_regime_idx] / 3.0, 0), 1)  # Assume 3.0 is excellent
+                norm_dd = 1 - min(max_drawdowns[selected_regime_idx], 1)  # Lower is better, so invert
+                norm_winrate = win_rates[selected_regime_idx] / 100.0
+
+                categories = ['Sharpe\nRatio', 'Drawdown\nControl', 'Win\nRate']
+                values = [norm_sharpe, norm_dd, norm_winrate]
+
+                # Repeat first value to close the circle
+                values += values[:1]
+
+                angles = [n / float(len(categories)) * 2 * 3.14159 for n in range(len(categories))]
+                angles += angles[:1]
+
+                ax4.plot(angles, values, 'o-', linewidth=2, color='blue', label=display_names[selected_regime_idx])
+                ax4.fill(angles, values, alpha=0.25, color='blue')
+                ax4.set_xticks(angles[:-1])
+                ax4.set_xticklabels(categories)
+                ax4.set_ylim(0, 1)
+                ax4.set_title('Best Model Performance Profile', fontweight='bold', fontsize=12, pad=20)
+                ax4.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+                ax4.grid(True)
+            else:
+                ax4.text(0.5, 0.5, 'No model data\navailable',
+                        horizontalalignment='center',
+                        verticalalignment='center',
+                        transform=ax4.transAxes,
+                        fontsize=14)
+                ax4.set_xticks([])
+                ax4.set_yticks([])
+
+            fig.tight_layout()
+
+            # Create canvas and add to dialog
+            canvas = FigureCanvas(fig)
+            layout.addWidget(canvas)
+
+            # Add close button
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(dialog.accept)
+            layout.addWidget(close_btn)
+
+            dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Failed to create charts: {e}")
+            QMessageBox.critical(
+                self,
+                "Chart Error",
+                f"Failed to create performance charts:\n{e}"
+            )
