@@ -19,6 +19,7 @@ from ..training.training_pipeline.workers import (
     TrainingWorker, QueueCreationWorker, QueueStatusWorker
 )
 from ..training.training_pipeline import TrainingOrchestrator
+from ..training.training_pipeline.crash_recovery import auto_recover_on_startup
 
 
 class TrainingQueueTab(QWidget):
@@ -37,8 +38,13 @@ class TrainingQueueTab(QWidget):
     training_completed = Signal(dict)  # results
     training_error = Signal(str)  # error message
 
-    def __init__(self, parent: Optional[QWidget] = None):
-        """Initialize Training Queue Tab."""
+    def __init__(self, parent: Optional[QWidget] = None, check_crash_recovery: bool = True):
+        """Initialize Training Queue Tab.
+
+        Args:
+            parent: Parent widget
+            check_crash_recovery: If True, check for crashed queues on startup
+        """
         super().__init__(parent)
 
         self.orchestrator = TrainingOrchestrator()
@@ -47,6 +53,10 @@ class TrainingQueueTab(QWidget):
         self.current_queue_id: Optional[int] = None
 
         self.init_ui()
+
+        # Check for crashed queues on first init
+        if check_crash_recovery:
+            self.check_crash_recovery()
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -519,3 +529,129 @@ class TrainingQueueTab(QWidget):
         """Load results for a queue."""
         # TODO: Implement results loading from database
         pass
+
+    def check_crash_recovery(self):
+        """Check for crashed queues and prompt user for recovery."""
+        try:
+            recovery_info = auto_recover_on_startup()
+
+            if not recovery_info:
+                # No crashed queues
+                return
+
+            auto_resumed = recovery_info.get('auto_resumed', [])
+            requires_manual = recovery_info.get('requires_manual', [])
+
+            # Show info about auto-resumed queues
+            if auto_resumed:
+                queues_info = "\n".join([
+                    f"- {q['name']} ({q['progress_pct']:.1f}% complete)"
+                    for q in auto_resumed
+                ])
+
+                QMessageBox.information(
+                    self,
+                    "Queues Auto-Resumed",
+                    f"The following training queues were automatically resumed:\n\n{queues_info}\n\n"
+                    f"You can continue training from where it left off."
+                )
+
+            # Prompt for manual recovery
+            if requires_manual:
+                self._show_recovery_dialog(requires_manual)
+
+        except Exception as e:
+            logger.error(f"Error checking crash recovery: {e}")
+            # Don't block startup if crash recovery fails
+
+    def _show_recovery_dialog(self, recommendations: List[Dict[str, Any]]):
+        """Show dialog for manual queue recovery."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recover Interrupted Training")
+        dialog.resize(600, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Title
+        title = QLabel("<h2>Interrupted Training Queues Detected</h2>")
+        layout.addWidget(title)
+
+        info = QLabel(
+            "The following training queues were interrupted and can be resumed:"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # Table of queues
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels([
+            'Queue Name', 'Progress', 'Remaining', 'Recommendation', 'Action'
+        ])
+        table.setRowCount(len(recommendations))
+
+        for row, rec in enumerate(recommendations):
+            # Queue name
+            table.setItem(row, 0, QTableWidgetItem(rec['queue_name']))
+
+            # Progress
+            progress_text = f"{rec['progress_pct']:.1f}%"
+            table.setItem(row, 1, QTableWidgetItem(progress_text))
+
+            # Remaining
+            remaining_text = f"{rec['remaining_configs']} configs"
+            table.setItem(row, 2, QTableWidgetItem(remaining_text))
+
+            # Recommendation
+            table.setItem(row, 3, QTableWidgetItem(rec['recommendation']))
+
+            # Action button
+            action_btn = QPushButton("Resume")
+            action_btn.clicked.connect(
+                lambda checked, qid=rec['queue_id']: self._resume_queue(qid, dialog)
+            )
+            table.setCellWidget(row, 4, action_btn)
+
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.exec()
+
+    def _resume_queue(self, queue_id: int, dialog):
+        """Resume a specific queue."""
+        try:
+            from ..training.training_pipeline.checkpoint_manager import CheckpointManager
+
+            # Load checkpoint and resume
+            checkpoint_manager = CheckpointManager()
+
+            # Set current queue ID
+            self.current_queue_id = queue_id
+
+            # Start training from checkpoint
+            self.start_training()
+
+            # Close dialog
+            dialog.accept()
+
+            QMessageBox.information(
+                self,
+                "Queue Resumed",
+                f"Training queue {queue_id} has been resumed."
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to resume queue {queue_id}: {e}")
+            QMessageBox.critical(
+                self,
+                "Resume Failed",
+                f"Failed to resume queue:\n{e}"
+            )
