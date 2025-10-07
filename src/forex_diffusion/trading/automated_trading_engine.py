@@ -30,6 +30,7 @@ try:
     from ..risk.multi_level_stop_loss import MultiLevelStopLoss
     from ..risk.regime_position_sizer import RegimePositionSizer, MarketRegime
     from ..risk.adaptive_stop_loss_manager import AdaptiveStopLossManager, AdaptationFactors
+    from ..risk.position_sizer import PositionSizer, BacktestTradeHistory
     from ..execution.smart_execution import SmartExecutionOptimizer
     from ..services.parameter_loader import ParameterLoaderService
 except ImportError:
@@ -75,6 +76,8 @@ class TradingConfig:
     database_path: str = "forex_data.db"  # Path to database for parameter loading
     use_optimized_parameters: bool = True  # Use optimized parameters from database
     use_adaptive_stops: bool = True  # Use adaptive stop loss manager
+    position_sizing_method: str = 'kelly'  # Position sizing: fixed_fractional, kelly, optimal_f, volatility_adjusted
+    kelly_fraction: float = 0.25  # Kelly fraction (0.25 = quarter Kelly)
 
 
 class AutomatedTradingEngine:
@@ -124,10 +127,25 @@ class AutomatedTradingEngine:
         self.ml_ensemble: Optional[StackedMLEnsemble] = None
         self.regime_detector: Optional[HMMRegimeDetector] = None
         self.risk_manager = MultiLevelStopLoss()
+
+        # Old position sizer (keeping for backward compatibility)
         self.position_sizer = RegimePositionSizer(
             base_risk_per_trade_pct=config.risk_per_trade_pct
         )
+
+        # New advanced position sizer
+        self.advanced_position_sizer = PositionSizer(
+            base_risk_pct=config.risk_per_trade_pct,
+            kelly_fraction=config.kelly_fraction,
+            max_position_size_pct=5.0,
+            min_position_size_pct=0.1,
+            max_total_exposure_pct=20.0,
+            drawdown_reduction_enabled=True
+        )
+
         self.execution_optimizer = SmartExecutionOptimizer()
+
+        logger.info(f"✅ Advanced Position Sizer initialized: method={config.position_sizing_method}")
 
         # Adaptive Stop Loss Manager
         self.adaptive_sl_manager: Optional[AdaptiveStopLossManager] = None
