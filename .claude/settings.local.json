@@ -29,7 +29,8 @@
       "Bash(sqlite3:*)",
       "Bash(alembic current:*)",
       "Bash(alembic stamp:*)",
-      "Read(//c//**)"
+      "Read(//c//**)",
+      "Bash(timeout 20 python tests/test_ctrader_websocket_mock.py)"
     ],
     "deny": [],
     "ask": []
