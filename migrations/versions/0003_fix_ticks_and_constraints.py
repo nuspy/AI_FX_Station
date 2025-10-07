@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "0003_fix_ticks_and_constraints"
-down_revision = "0002_add_market_data_ticks"
+revision = "0003"
+down_revision = "0002"
 branch_labels = None
 depends_on = None
 

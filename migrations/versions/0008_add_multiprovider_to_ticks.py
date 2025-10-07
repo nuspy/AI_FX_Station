@@ -17,8 +17,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '0008_add_multiprovider_to_ticks'
-down_revision = '0007_add_ctrader_features'
+revision = '0008'
+down_revision = '0007'
 branch_labels = None
 depends_on = None
 

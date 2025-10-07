@@ -13,8 +13,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "0004_add_backtesting_tables"
-down_revision = "0003_fix_ticks_and_constraints"
+revision = "0004"
+down_revision = "0003"
 branch_labels = None
 depends_on = None
 

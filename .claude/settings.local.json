@@ -20,7 +20,16 @@
       "Bash(awk:*)",
       "Bash(pip uninstall:*)",
       "Bash(tee:*)",
-      "Bash(timeout 30 tail -f training_output.log)"
+      "Bash(timeout 30 tail -f training_output.log)",
+      "Bash(alembic revision:*)",
+      "Bash(for:*)",
+      "Bash(do echo \"=== $f ===\")",
+      "Bash(done)",
+      "Bash(alembic upgrade:*)",
+      "Bash(sqlite3:*)",
+      "Bash(alembic current:*)",
+      "Bash(alembic stamp:*)",
+      "Read(//c//**)"
     ],
     "deny": [],
     "ask": []

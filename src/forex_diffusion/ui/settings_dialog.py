@@ -644,7 +644,7 @@ class SettingsDialog(QDialog):
         """Test cTrader connection."""
         try:
             import asyncio
-            from ...providers import get_provider_manager
+            from forex_diffusion.providers import get_provider_manager
 
             # Get provider manager
             manager = get_provider_manager()

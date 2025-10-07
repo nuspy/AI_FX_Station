@@ -12,8 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '0006_add_optimization_system'
-down_revision = '0005_add_pattern_tables'
+revision = '0006'
+down_revision = '0005'
 branch_labels = None
 depends_on = None
 

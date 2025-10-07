@@ -474,9 +474,9 @@ class CTraderBroker:
         """
         return [p for p in self.positions.values() if p.status == PositionStatus.OPEN]
 
-    async def get_total_pnl(self) -> Tuple[float, float]:
+    def _calculate_total_pnl(self) -> Tuple[float, float]:
         """
-        Get total P&L (realized + unrealized).
+        Calculate total P&L (realized + unrealized) - synchronous version.
 
         Returns:
             (realized_pnl, unrealized_pnl)
@@ -485,6 +485,15 @@ class CTraderBroker:
         unrealized = sum(p.unrealized_pnl for p in self.positions.values() if p.status == PositionStatus.OPEN)
 
         return realized, unrealized
+
+    async def get_total_pnl(self) -> Tuple[float, float]:
+        """
+        Get total P&L (realized + unrealized).
+
+        Returns:
+            (realized_pnl, unrealized_pnl)
+        """
+        return self._calculate_total_pnl()
 
     async def _get_symbol_id(self, symbol: str) -> int:
         """Get symbol ID from symbol name."""
@@ -600,5 +609,5 @@ class BrokerSimulator(CTraderBroker):
                 position.update_pnl(price)
 
         # Update equity
-        _, unrealized = await self.get_total_pnl()
+        _, unrealized = self._calculate_total_pnl()
         self.equity = self.balance + unrealized
