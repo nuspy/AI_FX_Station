@@ -1,0 +1,1066 @@
+================================================================================
+SPECIFICHE DI IMPLEMENTAZIONE - SISTEMA TRADING AUTOMATICO FOREXGPT
+Ottimizzazione Integrazione Backtesting → Live Trading
+================================================================================
+
+Data: 7 Ottobre 2025
+Versione: 1.0
+Tipo Documento: Specifiche Funzionali per Implementazione AI-Assisted
+
+
+================================================================================
+1. OBIETTIVI GENERALI
+================================================================================
+
+Il sistema ForexGPT richiede l'integrazione completa tra il motore di 
+ottimizzazione/backtesting e il sistema di trading automatico in produzione.
+
+OBIETTIVO PRIMARIO:
+Eliminare l'uso di parametri hard-coded nel trading automatico, sostituendoli
+con parametri ottimizzati derivati da backtesting storico multi-obiettivo.
+
+OBIETTIVI SECONDARI:
+- Implementare position sizing basato su metriche quantitative (Kelly, Optimal f)
+- Rendere dinamici i livelli di Stop Loss e Take Profit basandosi su volatilità
+  e condizioni di mercato in real-time
+- Fornire visualizzazione completa delle posizioni aperte con P&L real-time
+- Espandere le metriche di backtesting per includere risk-adjusted returns
+- Integrare la selezione di profili di rischio (Conservative/Moderate/Aggressive)
+
+
+================================================================================
+2. REQUISITI TECNICI TRASVERSALI
+================================================================================
+
+2.1 GESTIONE DATABASE
+---------------------
+REQUISITO: Tutte le modifiche allo schema del database devono essere gestite
+tramite Alembic migrations.
+
+DETTAGLI:
+- Creare migration scripts per ogni modifica di schema
+- Includere upgrade() e downgrade() in ogni migration
+- Testare migrations su database di sviluppo prima di applicare
+- Documentare le modifiche nello script di migration
+
+NUOVE ENTITÀ DATABASE RICHIESTE:
+- Tabella per memorizzare parametri ottimizzati per pattern/symbol/timeframe/regime
+- Tabella per storico performance di parametri nel tempo
+- Tabella per configurazioni di profili di rischio
+- Estensione tabelle esistenti per tracciare metriche avanzate di backtest
+
+2.2 GESTIONE DIPENDENZE
+-----------------------
+REQUISITO: Tutte le nuove librerie Python devono essere aggiunte al file
+pyproject.toml con versioning semantico appropriato.
+
+LIBRERIE PROBABILMENTE NECESSARIE:
+- Nessuna libreria esterna aggiuntiva prevista (stack esistente sufficiente)
+- Se necessario per ottimizzazioni avanzate, considerare:
+  * scipy (già presente, verificare versione per Sortino/Calmar)
+  * Eventuale upgrade numpy per performance
+
+2.3 PULIZIA CODICE
+------------------
+REQUISITO: Non devono essere lasciati file, classi o metodi orfani dopo
+le modifiche.
+
+AZIONI:
+- Identificare metodi deprecati e rimuoverli
+- Consolidare logica duplicata
+- Aggiornare import statements dove necessario
+- Rimuovere funzioni di placeholder se sostituite da implementazioni complete
+
+2.4 INTEGRAZIONE WORKFLOWS ESISTENTI
+------------------------------------
+REQUISITO: I nuovi componenti devono integrarsi seamlessly con i workflow
+esistenti senza interrompere funzionalità già operative.
+
+PUNTI DI INTEGRAZIONE:
+- AutomatedTradingEngine deve utilizzare nuovi loader di parametri
+- BacktestEngine deve popolare database con risultati ottimizzazione
+- UI deve visualizzare e permettere configurazione di nuovi parametri
+- Services layer deve orchestrare comunicazione tra componenti
+
+2.5 INTEGRAZIONE GUI
+-------------------
+REQUISITO: Tutti i nuovi parametri configurabili devono essere esposti
+attraverso l'interfaccia grafica esistente.
+
+AREE GUI DA ESTENDERE:
+- Tab Settings: aggiungere sezione Risk Management con profili
+- Tab Chart: modificare layout per posizioni aperte sotto il grafico
+- Tab Training: aggiungere visualizzazione parametri ottimali trovati
+- Dialog Forecast Settings: includere opzione per usare parametri ottimizzati
+- Dialog Trade: mostrare parametri calcolati prima dell'esecuzione
+
+2.6 VERSION CONTROL
+-------------------
+REQUISITO: Dopo ogni task e sottotask completato, eseguire commit Git con
+messaggio descrittivo funzionale.
+
+FORMATO COMMIT MESSAGE:
+[COMPONENT] Breve descrizione funzionale
+
+Esempio:
+"[DATABASE] Aggiunta tabella optimized_parameters per storage parametri pattern"
+"[TRADING] Integrato caricamento parametri ottimizzati in apertura posizioni"
+"[GUI] Aggiunta visualizzazione P&L real-time in Chart Tab"
+
+REGOLA: Commit granulari per ogni unità funzionale completata e testata.
+
+
+================================================================================
+3. AREA 1: INTEGRAZIONE PARAMETRI OTTIMIZZATI DA BACKTESTING
+================================================================================
+
+3.1 OBIETTIVO FUNZIONALE
+------------------------
+Il sistema di trading automatico deve recuperare e utilizzare parametri
+ottimizzati dal database di risultati di backtesting invece di usare
+valori fissi hard-coded.
+
+3.2 COMPONENTI DA IMPLEMENTARE
+------------------------------
+
+COMPONENTE: Parameter Loader Service
+RESPONSABILITÀ:
+- Interfaccia con database optimization results
+- Recupero parametri best-performing per pattern/symbol/timeframe/regime
+- Caching intelligente per ridurre query database
+- Fallback su parametri default conservativi se dati non disponibili
+- Logging di quale set di parametri viene utilizzato per audit
+
+PARAMETRI DA GESTIRE:
+- Stop Loss multiplier (basato su ATR)
+- Take Profit multiplier (basato su ATR)
+- Trailing Stop percentage
+- Maximum holding period (ore/bars)
+- Risk per trade percentage
+- Entry confidence threshold
+
+COMPONENTE: Database Schema Extension
+RESPONSABILITÀ:
+- Modello dati per storage parametri ottimizzati
+- Relazioni: Pattern → Symbol → Timeframe → Regime → Parameters
+- Timestamp di ottimizzazione per tracking freshness
+- Metriche associate (Sharpe, Win Rate, Expectancy) per selezione
+
+SCHEMA LOGICO:
+Tabella: optimized_parameters
+- ID univoco
+- Pattern type
+- Symbol
+- Timeframe
+- Market regime (nullable per parametri generici)
+- Form parameters (JSON o colonne separate)
+- Action parameters (JSON o colonne separate)
+- Performance metrics (JSON)
+- Optimization timestamp
+- Data range utilizzato per ottimizzazione
+- Validation status
+
+3.3 INTEGRAZIONE CON TRADING ENGINE
+-----------------------------------
+REQUISITO: AutomatedTradingEngine deve consultare Parameter Loader prima
+di aprire ogni posizione.
+
+FLUSSO FUNZIONALE:
+1. Trading signal generato
+2. Sistema identifica: pattern type, symbol, timeframe, regime corrente
+3. Parameter Loader interrogato con questi criteri
+4. Parametri ottimizzati recuperati (o default se non disponibili)
+5. Calcolo Stop Loss/Take Profit usando parametri recuperati
+6. Calcolo position size usando parametri recuperati
+7. Apertura posizione con parametri ottimizzati
+8. Logging di parametri utilizzati per tracking performance
+
+3.4 AGGIORNAMENTO PARAMETRI DA BACKTESTING
+------------------------------------------
+REQUISITO: Quando un'ottimizzazione/backtesting viene completato, i risultati
+devono automaticamente aggiornare il database di parametri ottimizzati.
+
+TRIGGER:
+- Completamento run di ottimizzazione
+- Completamento walk-forward backtest
+- Esecuzione manuale di "update optimal parameters"
+
+LOGICA:
+- Confronto performance nuovi parametri vs esistenti
+- Sostituzione se metriche migliorate significativamente
+- Mantenimento storico versioni precedenti
+- Notifica all'utente tramite GUI di parametri aggiornati
+
+3.5 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ Nessuna apertura posizione usa valori hard-coded per SL/TP
+✓ Tutti i parametri tracciabili a specifico risultato di ottimizzazione
+✓ Fallback graceful se parametri non disponibili
+✓ Logging completo di parametri utilizzati per ogni trade
+✓ GUI mostra origine parametri (optimized/default) nel dialogo trade
+
+
+================================================================================
+4. AREA 2: STOP LOSS E TAKE PROFIT DINAMICI E ADATTATIVI
+================================================================================
+
+4.1 OBIETTIVO FUNZIONALE
+------------------------
+I livelli di Stop Loss e Take Profit devono adattarsi dinamicamente alle
+condizioni di mercato in tempo reale, non solo ai parametri ottimizzati statici.
+
+4.2 FATTORI DI ADATTAMENTO
+--------------------------
+
+FATTORE: Volatilità Corrente (ATR Real-Time)
+COMPORTAMENTO:
+- Monitoraggio continuo dell'Average True Range
+- Espansione automatica di SL/TP in fase di alta volatilità
+- Contrazione in fase di bassa volatilità
+- Smooth transitions per evitare cambiamenti bruschi
+
+FATTORE: Regime di Mercato
+COMPORTAMENTO:
+- Regime Trending: TP più ampli, SL più stretti (trailing aggressivo)
+- Regime Ranging: TP più conservativi, SL standard
+- Regime Volatile: TP e SL entrambi ampliati per margine di sicurezza
+- Transizioni di regime: rivalutazione posizioni esistenti
+
+FATTORE: Spread Corrente
+COMPORTAMENTO:
+- Monitoraggio bid-ask spread in real-time
+- Compensazione automatica per spread anomali
+- Ampliamento temporaneo SL/TP durante spike di spread
+- Prevenzione slippage eccessivo
+
+FATTORE: Proximity to News Events
+COMPORTAMENTO:
+- Calendario economico integrato
+- Ampliamento preventivo SL pre-news ad alto impatto
+- Possibile chiusura automatica posizioni prima di eventi major
+- Sospensione temporanea nuove aperture durante news window
+
+FATTORE: Time of Day / Session
+COMPORTAMENTO:
+- Parametri diversi per sessione asiatica/europea/americana
+- Adattamento per orari di bassa liquidità
+- Rollover protection (spread widening)
+
+4.3 COMPONENTE: Adaptive Stop Loss Manager
+------------------------------------------
+RESPONSABILITÀ:
+- Calcolo SL/TP iniziali basati su parametri ottimizzati
+- Monitoraggio continuo fattori di adattamento
+- Recalcolo dinamico SL/TP per posizioni aperte
+- Applicazione modifiche graduale (non shock)
+- Protezione da over-adjustment (limiti di variazione)
+
+LOGICA MULTI-LIVELLO:
+- Technical Stop: invalidazione pattern
+- Volatility Stop: basato su ATR dinamico
+- Time Stop: massimo holding period
+- Correlation Stop: spike di correlazione sistemica
+- Daily Loss Stop: limite perdita giornaliera
+- Trailing Stop: lock-in di profitti progressivi
+
+PRIORITÀ TRIGGER:
+Sistema deve definire quale tipo di stop ha precedenza quando
+multipli trigger attivati simultaneamente.
+
+4.4 INTEGRAZIONE TRAILING STOP
+------------------------------
+REQUISITO: Trailing stop deve utilizzare distanza ottimizzata da backtesting
+e adattarsi a volatilità corrente.
+
+COMPORTAMENTO:
+- Attivazione dopo profitto minimo raggiunto
+- Distanza iniziale da parametri ottimizzati
+- Adattamento distanza basato su ATR corrente
+- Modalità "lock profit incremental" (step-wise trailing)
+- Opzione "breakeven lock" quando profitto > X pips
+
+4.5 NOTIFICHE E LOGGING
+-----------------------
+REQUISITO: Ogni modifica di SL/TP deve essere loggata con ragione.
+
+INFORMAZIONI DA TRACCIARE:
+- Timestamp modifica
+- Valori precedenti e nuovi
+- Fattore scatenante (volatility/regime/spread/news)
+- Calcolo effettuato (formule/multiplier applicati)
+
+4.6 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ SL/TP si adattano a cambiamenti ATR significativi (>20%)
+✓ Ampliamento automatico pre-news ad alto impatto
+✓ Regime transitions triggano rivalutazione posizioni esistenti
+✓ Trailing stop attivo per posizioni in profitto
+✓ Ogni modifica SL/TP documentata in trade history
+✓ GUI mostra SL/TP correnti e ragione ultimo aggiustamento
+
+
+================================================================================
+5. AREA 3: POSITION SIZING OTTIMIZZATO E GESTIONE CAPITALE
+================================================================================
+
+5.1 OBIETTIVO FUNZIONALE
+------------------------
+Il calcolo della dimensione della posizione deve basarsi su principi 
+quantitativi di money management, utilizzando metriche derivate da
+backtesting storico.
+
+5.2 METODI DI POSITION SIZING
+-----------------------------
+
+METODO: Fixed Fractional (% Risk per Trade)
+PARAMETRI:
+- Percentuale fissa del capitale da rischiare
+- Valore ottimizzato da backtesting per pattern/regime
+- Adattamento basato su confidence del segnale
+
+METODO: Kelly Criterion
+CALCOLO:
+- Basato su win rate e avg win/loss da backtesting
+- Applicazione frazione conservativa (es. 25% di Kelly)
+- Ricalcolo periodico basato su performance recente
+
+METODO: Optimal f (Ralph Vince)
+CALCOLO:
+- Frazione ottimale basata su sequenza storica returns
+- Massimizza geometric growth rate
+- Limite superiore per protezione contro outlier losses
+
+METODO: Volatility-Based
+CALCOLO:
+- Inversamente proporzionale a volatilità corrente
+- Posizioni più piccole in mercati volatili
+- Posizioni più grandi in mercati stabili
+
+5.3 COMPONENTE: Position Sizer
+------------------------------
+RESPONSABILITÀ:
+- Calcolo size ottimale per ogni nuovo trade
+- Integrazione con risultati backtesting pattern-specific
+- Applicazione constraints (max position size, max % portfolio)
+- Considerazione capitale disponibile corrente
+- Adattamento per correlation tra posizioni aperte
+
+INPUTS RICHIESTI:
+- Capitale account corrente
+- Parametri ottimizzati per pattern (risk %, kelly %, optimal f)
+- Entry price e Stop Loss price
+- Confidence score del segnale
+- Numero e tipo posizioni già aperte
+- Regime di mercato corrente
+
+OUTPUTS:
+- Position size in lotti/unità
+- Risk amount in valuta
+- Percentuale capitale utilizzato
+- Giustificazione calcolo (quale metodo/parametri)
+
+5.4 INTEGRATION PUNTI DI CONTROLLO
+----------------------------------
+
+CHECKPOINT: Pre-Trade Validation
+VERIFICHE:
+- Position size non eccede limiti account
+- Risk totale portfolio (somma posizioni aperte) entro soglia
+- Correlazione tra nuova posizione e esistenti accettabile
+- Margin requirements soddisfatti
+
+CHECKPOINT: Drawdown Protection
+COMPORTAMENTO:
+- Riduzione automatica position size durante drawdown
+- Scaling down progressivo se perdite consecutive
+- Recovery mode con size ridotto fino a profitti stabilizzati
+- Possibile sospensione trading se drawdown critico
+
+CHECKPOINT: Diversification Rules
+COMPORTAMENTI:
+- Limite massimo per singolo symbol
+- Limite massimo esposizione per asset class
+- Limite numero posizioni correlate (>0.7 correlation)
+
+5.5 BACKTESTING CON POSITION SIZING REALISTICO
+----------------------------------------------
+REQUISITO: Engine di backtesting deve simulare position sizing identico
+al sistema live per accuracy.
+
+IMPLEMENTAZIONE:
+- Ogni trade in backtest usa calcolo position size realistico
+- Considera capitale corrente (compounding effect)
+- Simula margin requirements
+- Simula max positions limit
+- Traccia equity curve con sizing realistico
+
+METRICHE AGGIUNTIVE:
+- Capital Usage Efficiency
+- Max Single Position Risk
+- Average Position Hold Time
+- Correlation-Adjusted Returns
+
+5.6 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ Position size calcolato usando Kelly/Optimal f da backtest
+✓ Nessun trade eccede 3% risk del capitale
+✓ Riduzione automatica size durante drawdown
+✓ Diversification rules applicate automaticamente
+✓ Backtesting simula position sizing identico a live
+✓ GUI mostra calcolo position size pre-trade con breakdown
+
+
+================================================================================
+6. AREA 4: VISUALIZZAZIONE POSIZIONI APERTE NEL CHART TAB
+================================================================================
+
+6.1 OBIETTIVO FUNZIONALE
+------------------------
+L'utente deve visualizzare tutte le posizioni aperte direttamente sotto il
+grafico nella Chart Tab, con informazioni complete e aggiornamento real-time.
+
+6.2 REQUISITI LAYOUT
+--------------------
+
+POSIZIONAMENTO:
+- Tabella posizioni aperte deve essere posizionata verticalmente sotto
+  l'area del grafico principale
+- Layout deve usare splitter verticale regolabile dall'utente
+- Proporzioni suggerite: Grafico 70-80%, Posizioni 20-30%
+- Deve rimanere visibile anche durante scroll/zoom del grafico
+
+SPAZIO DEDICATO:
+- Non deve sovrapporsi al grafico
+- Non deve occupare lateral sidebar (market watch)
+- Deve essere parte integrante della Chart Area
+
+6.3 INFORMAZIONI DA VISUALIZZARE
+--------------------------------
+
+COLONNE ESSENZIALI:
+- ID Posizione (order ID da broker)
+- Timestamp apertura (con timezone)
+- Symbol
+- Direction (Long/Short) con icona visuale
+- Volume/Lots
+- Entry Price
+- Current Price (aggiornato real-time)
+- Stop Loss (con distanza in pips)
+- Take Profit (con distanza in pips)
+- P&L in valuta account (colorato: verde profit, rosso loss)
+- P&L in pips (colorato)
+- Durata posizione (HH:MM:SS, aggiornata ogni secondo)
+- Regime di mercato all'apertura
+- Pattern che ha generato il segnale (se applicabile)
+
+INFORMAZIONI AGGIUNTIVE (tooltip o expandable row):
+- Parametri ottimizzati utilizzati (SL/TP multipliers)
+- Trailing stop status (active/inactive, distance)
+- Highest/Lowest price raggiunto
+- Numero aggiustamenti SL/TP effettuati
+- Risk amount iniziale vs current
+- Confidence score segnale originale
+
+6.4 AGGIORNAMENTO REAL-TIME
+---------------------------
+
+FREQUENZA UPDATE:
+- Current Price: ad ogni tick ricevuto (sub-second)
+- P&L: ricalcolato ad ogni tick
+- Durata: aggiornata ogni secondo
+- Altri campi: on-change basis
+
+OTTIMIZZAZIONE PERFORMANCE:
+- Batch updates per multiple posizioni
+- Throttling se rate di tick molto elevato
+- Update solo righe visibili se tabella scrollata
+- Efficient redraw (solo celle modificate)
+
+INDICATORI VISIVI:
+- Animazione flash su P&L change (verde per increase, rosso per decrease)
+- Barra di progresso per durata vs max hold time
+- Icona warning se position size eccede threshold
+- Icona alert se SL/TP modificati recentemente
+
+6.5 INTERAZIONI UTENTE
+----------------------
+
+AZIONI DISPONIBILI:
+- Click su riga: evidenzia posizione sul grafico con linee
+- Double-click: apre dialog modifica posizione (SL/TP manuale)
+- Right-click menu:
+  * Close Position
+  * Modify SL/TP
+  * Enable/Disable Trailing Stop
+  * Lock to Breakeven
+  * View Full Position Details
+  * Copy Position Info to Clipboard
+
+VISUALIZZAZIONE SU GRAFICO:
+- Linee orizzontali per Entry, SL, TP
+- Area ombreggiata tra Entry e Current Price (verde/rosso)
+- Labels con valori e P&L
+- Linea verticale a timestamp entry
+- Sync highlighting tra tabella e grafico
+
+6.6 STYLING E PRESENTAZIONE
+---------------------------
+
+TEMA INTEGRATO:
+- Rispettare theme corrente (Dark/Light/Custom)
+- Font e dimensioni coerenti con resto GUI
+- Colori standard per profit/loss
+- Alternating row colors per leggibilità
+
+RESPONSIVE:
+- Colonne prioritarie sempre visibili
+- Colonne secondarie nascondibili se spazio limitato
+- Horizontal scroll se necessario
+- Vertical scroll se molte posizioni
+
+6.7 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ Tabella visibile immediatamente sotto grafico in Chart Tab
+✓ P&L aggiornato in real-time (<500ms da tick)
+✓ Tutte le informazioni critiche visibili senza scroll
+✓ Click su posizione evidenzia livelli sul grafico
+✓ Right-click menu permette gestione completa posizione
+✓ Animazioni smooth per cambiamenti valori
+✓ Nessun lag o freeze anche con 10+ posizioni aperte
+
+
+================================================================================
+7. AREA 5: METRICHE AVANZATE DI BACKTESTING
+================================================================================
+
+7.1 OBIETTIVO FUNZIONALE
+------------------------
+Il sistema di backtesting deve calcolare e tracciare metriche risk-adjusted
+e di performance avanzate oltre ai basic metrics attuali.
+
+7.2 METRICHE DA IMPLEMENTARE
+----------------------------
+
+CATEGORIA: Risk-Adjusted Returns
+
+METRICA: Sortino Ratio
+DEFINIZIONE: Return / Downside Deviation
+SCOPO: Penalizza solo volatilità negativa (downside risk)
+UTILIZZO: Preferibile a Sharpe per strategie asimmetriche
+
+METRICA: Calmar Ratio
+DEFINIZIONE: CAGR / Maximum Drawdown
+SCOPO: Return per unità di worst-case risk
+UTILIZZO: Comparazione strategie con drawdown differenti
+
+METRICA: MAR Ratio
+DEFINIZIONE: CAGR / Average Drawdown
+SCOPO: Consistenza dei returns vs drawdown medio
+UTILIZZO: Identificare strategie con drawdown stabili
+
+CATEGORIA: Recovery Analysis
+
+METRICA: Average Recovery Time
+DEFINIZIONE: Tempo medio per recuperare da drawdown
+CALCOLO: Giorni/bars da drawdown peak a nuovo high
+UTILIZZO: Valutare resilienza strategia
+
+METRICA: Maximum Recovery Time
+DEFINIZIONE: Longest periodo per recuperare da drawdown
+UTILIZZO: Worst-case scenario planning
+
+CATEGORIA: Consistency Metrics
+
+METRICA: Monthly Win Rate
+DEFINIZIONE: Percentuale mesi con profitto
+UTILIZZO: Valutare consistenza lungo-termine
+
+METRICA: Quarterly Consistency
+DEFINIZIONE: Std dev of quarterly returns
+UTILIZZO: Identificare strategie smooth vs erratiche
+
+METRICA: Consecutive Wins/Losses (Max)
+DEFINIZIONE: Longest streak di wins o losses
+UTILIZZO: Risk management e psychological preparation
+
+CATEGORIA: Transaction Cost Impact
+
+METRICA: Net Profit After Costs
+DEFINIZIONE: Gross profit - (spreads + commissions + slippage)
+UTILIZZO: Realismo performance
+
+METRICA: Cost-to-Profit Ratio
+DEFINIZIONE: Total costs / Gross profit
+UTILIZZO: Valutare se strategia sopravvive a costi reali
+
+CATEGORIA: Regime-Specific Performance
+
+METRICA: Trending Sharpe / Ranging Sharpe / Volatile Sharpe
+DEFINIZIONE: Sharpe ratio calcolato separatamente per ogni regime
+UTILIZZO: Identificare condizioni ottimali per strategia
+
+7.3 COMPONENTE: Advanced Metrics Calculator
+-------------------------------------------
+RESPONSABILITÀ:
+- Calcolo automatico di tutte le metriche durante backtesting
+- Storage risultati in database
+- Comparazione cross-pattern
+- Generazione report comparativi
+
+INTEGRAZIONE:
+- BacktestEngine deve chiamare calculator al termine di ogni run
+- Risultati devono essere memorizzati in database con link a trial
+- GUI deve visualizzare metriche in formato tabellare e grafico
+
+7.4 REGIME-SPECIFIC ANALYSIS
+----------------------------
+REQUISITO: Performance deve essere analizzata separatamente per ogni
+regime di mercato rilevato.
+
+IMPLEMENTAZIONE:
+- Segmentazione trade history per regime
+- Calcolo metriche per ogni segmento
+- Identificazione regime preferenziale per strategia
+- Suggerimento automatic: "deploy only in trending markets" se
+  performance nettamente migliore in trending
+
+7.5 VISUALIZZAZIONE RISULTATI
+-----------------------------
+
+DASHBOARD BACKTEST:
+- Summary table con tutte le metriche
+- Equity curve con annotazioni drawdown periods
+- Monthly returns heatmap
+- Regime-specific performance charts
+- Recovery time distribution histogram
+
+COMPARAZIONE TRIALS:
+- Side-by-side comparison di multiple configurazioni parametri
+- Radar chart multi-dimensionale delle metriche
+- Pareto frontier visualization per multi-objective optimization
+
+7.6 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ Tutte le metriche avanzate calcolate per ogni backtest
+✓ Regime-specific performance tracciata separatamente
+✓ Dashboard visualizza metriche in formato comprensibile
+✓ Export dati in CSV/Excel per analisi esterna
+✓ Comparazione side-by-side di multipli trials
+
+
+================================================================================
+8. AREA 6: PROFILI DI RISCHIO CONFIGURABILI
+================================================================================
+
+8.1 OBIETTIVO FUNZIONALE
+------------------------
+L'utente deve poter selezionare un profilo di rischio predefinito che
+configura automaticamente i parametri di money management e risk tolerance.
+
+8.2 PROFILI PREDEFINITI
+-----------------------
+
+PROFILO: Conservative
+CARATTERISTICHE:
+- Max Drawdown Target: 10%
+- Min Profit Factor: 2.0
+- Min Win Rate: 60%
+- Risk per Trade: 0.5%
+- Position Sizing: Kelly * 0.15 (molto conservativo)
+- Trailing Stop: Aggressivo (lock profits early)
+- Max Positions Concurrent: 3
+- Regime Preference: Ranging markets
+
+PROFILO: Moderate
+CARATTERISTICHE:
+- Max Drawdown Target: 20%
+- Min Profit Factor: 1.5
+- Min Win Rate: 55%
+- Risk per Trade: 1.0%
+- Position Sizing: Kelly * 0.25 (standard)
+- Trailing Stop: Balanced
+- Max Positions Concurrent: 5
+- Regime Preference: All markets
+
+PROFILO: Aggressive
+CARATTERISTICHE:
+- Max Drawdown Target: 30%
+- Min Profit Factor: 1.2
+- Min Win Rate: 50%
+- Risk per Trade: 2.0%
+- Position Sizing: Kelly * 0.5 (aggressivo)
+- Trailing Stop: Wide (let profits run)
+- Max Positions Concurrent: 8
+- Regime Preference: Trending markets
+
+PROFILO: Custom
+CARATTERISTICHE:
+- Tutti i parametri modificabili manualmente dall'utente
+- Template salvabile per riutilizzo
+- Validazione constraints per evitare configurazioni pericolose
+
+8.3 OTTIMIZZAZIONE PER PROFILO
+------------------------------
+REQUISITO: Sistema di ottimizzazione deve poter target un profilo specifico.
+
+COMPORTAMENTO:
+- Constraints dell'ottimizzazione settati da profilo selezionato
+- Obiettivi pesati in base al profilo (Conservative: max stability,
+  Aggressive: max returns)
+- Risultati filtrati per conformità con risk tolerance
+- Warning se nessun parametro trovato che soddisfa profilo
+
+8.4 SWITCH DINAMICO PROFILO
+---------------------------
+REQUISITO: Utente deve poter cambiare profilo durante trading attivo.
+
+COMPORTAMENTO:
+- Posizioni esistenti: adattamento graduale a nuovi parametri
+- Nuove posizioni: immediata applicazione nuovo profilo
+- Logging cambio profilo per audit
+- Prompt conferma se cambio comporta azioni immediate (es. riduzione size)
+
+8.5 INTEGRAZIONE GUI
+--------------------
+
+SEZIONE SETTINGS:
+- Dropdown selezione profilo (Conservative/Moderate/Aggressive/Custom)
+- Visualizzazione parametri correnti del profilo selezionato
+- Pulsante "Customize" per creare profilo Custom
+- Tooltip con descrizione caratteristiche profilo
+
+DIALOG CUSTOMIZE PROFILE:
+- Sliders per parametri continui (Risk %, Max Drawdown)
+- Checkboxes per features boolean
+- Preview impatto su historical performance (if data available)
+- Save/Load profile templates
+
+8.6 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ Tre profili predefiniti disponibili e funzionanti
+✓ Cambio profilo applica correttamente tutti i parametri
+✓ Custom profile permette configurazione completa
+✓ GUI mostra chiaramente profilo attivo corrente
+✓ Ottimizzazione rispetta constraints del profilo selezionato
+
+
+================================================================================
+9. AREA 7: CONSOLIDAMENTO E PULIZIA CODEBASE
+================================================================================
+
+9.1 OBIETTIVO FUNZIONALE
+------------------------
+Rimuovere codice obsoleto, consolidare logica duplicata, e assicurare
+che tutti i componenti siano attivamente utilizzati.
+
+9.2 IDENTIFICAZIONE CODICE ORFANO
+---------------------------------
+
+CRITERI:
+- Metodi/classi non referenziati in nessun modulo attivo
+- Codice commentato di vecchie implementazioni
+- Import non utilizzati
+- Variabili definite ma mai lette
+
+AZIONI:
+- Scansione automatica con tool di analisi statica
+- Review manuale di aree dubbie
+- Rimozione progressiva con testing di non-regression
+
+9.3 CONSOLIDAMENTO LOGICA DUPLICATA
+-----------------------------------
+
+PATTERN DA CERCARE:
+- Calcolo ATR duplicato in multipli moduli
+- Logica di regime detection ripetuta
+- Database queries simili in servizi diversi
+- Validation logic duplicata
+
+AZIONI:
+- Identificare funzioni comuni e estrarre in utility modules
+- Creare service layers per funzionalità condivise
+- Documentare API pubbliche dei moduli consolidati
+
+9.4 STANDARDIZZAZIONE INTERFACCE
+--------------------------------
+
+REQUISITO: Componenti simili devono avere interfacce consistenti.
+
+ESEMPI:
+- Tutti i "Sizers" (position, risk) devono implementare interface comune
+- Tutti i "Loaders" (params, data) devono avere metodi standard (load/save)
+- Tutte le "Engines" (backtest, optimization) devono avere lifecycle comune
+
+AZIONI:
+- Definire abstract base classes dove appropriato
+- Documentare contracts delle interfacce
+- Refactoring implementazioni per conformità
+
+9.5 TESTING E VALIDAZIONE
+-------------------------
+
+POST-REFACTORING:
+- Unit tests per ogni nuovo componente
+- Integration tests per workflows modificati
+- Regression tests per funzionalità esistenti
+- Performance benchmarks per verificare no degradation
+
+9.6 CRITERI DI ACCETTAZIONE
+---------------------------
+✓ Nessun metodo/classe non utilizzata nel codebase
+✓ Logica duplicata consolidata in moduli comuni
+✓ Interfacce standardizzate per componenti simili
+✓ Test coverage >80% per codice modificato/nuovo
+✓ No regressioni su funzionalità esistenti
+
+
+================================================================================
+10. SEQUENZA IMPLEMENTAZIONE SUGGERITA
+================================================================================
+
+NOTA: Questa è una sequenza logica suggerita, non un piano temporale.
+L'agente AI può decidere di modificare l'ordine se necessario per
+dipendenze o altre considerazioni tecniche.
+
+FASE 1: Database e Infrastruttura Base
+---------------------------------------
+1.1 Creare migrations Alembic per nuove tabelle
+1.2 Implementare modelli database per optimized_parameters
+1.3 Implementare modelli database per risk_profiles
+1.4 Implementare modelli database per advanced_metrics
+1.5 Testing migrations (upgrade/downgrade)
+Commit dopo ogni sottotask completato.
+
+FASE 2: Parameter Loading e Integration
+---------------------------------------
+2.1 Implementare Parameter Loader Service
+2.2 Implementare caching layer per parametri
+2.3 Implementare fallback su default parameters
+2.4 Integrare loader in AutomatedTradingEngine
+2.5 Modificare _open_position per usare parametri ottimizzati
+2.6 Aggiungere logging di parametri utilizzati
+Commit dopo ogni sottotask completato.
+
+FASE 3: Adaptive Stop Loss e Take Profit
+----------------------------------------
+3.1 Implementare Adaptive Stop Loss Manager
+3.2 Implementare monitoring fattori di adattamento (ATR, spread, news)
+3.3 Implementare logica multi-livello stop loss
+3.4 Integrare trailing stop dinamico
+3.5 Aggiungere logging modifiche SL/TP
+3.6 Connettere a trading engine
+Commit dopo ogni sottotask completato.
+
+FASE 4: Position Sizing Ottimizzato
+-----------------------------------
+4.1 Implementare calcolo Kelly Criterion da backtest data
+4.2 Implementare calcolo Optimal f
+4.3 Implementare Position Sizer component
+4.4 Implementare validation e constraints
+4.5 Implementare drawdown protection logic
+4.6 Integrare in trading engine
+4.7 Aggiungere pre-trade validation
+Commit dopo ogni sottotask completato.
+
+FASE 5: GUI - Chart Tab Positions
+---------------------------------
+5.1 Modificare layout Chart Tab (splitter verticale)
+5.2 Implementare tabella posizioni aperte
+5.3 Implementare aggiornamento real-time P&L
+5.4 Implementare highlighting su grafico
+5.5 Implementare context menu azioni
+5.6 Implementare styling e animazioni
+5.7 Testing interazioni utente
+Commit dopo ogni sottotask completato.
+
+FASE 6: Metriche Avanzate Backtesting
+-------------------------------------
+6.1 Implementare Advanced Metrics Calculator
+6.2 Implementare calcolo Sortino, Calmar, MAR
+6.3 Implementare recovery time analysis
+6.4 Implementare regime-specific metrics
+6.5 Integrare in BacktestEngine
+6.6 Aggiornare database schema per nuove metriche
+6.7 Implementare storage risultati
+Commit dopo ogni sottotask completato.
+
+FASE 7: Backtesting con Position Sizing Realistico
+--------------------------------------------------
+7.1 Modificare simulate_trades per usare position sizing
+7.2 Implementare compounding simulation
+7.3 Implementare margin requirements simulation
+7.4 Implementare diversification rules in backtest
+7.5 Validare accuracy vs expected results
+Commit dopo ogni sottotask completato.
+
+FASE 8: Profili di Rischio
+--------------------------
+8.1 Implementare Risk Profile data models
+8.2 Implementare profili predefiniti (Conservative/Moderate/Aggressive)
+8.3 Implementare Custom profile editor
+8.4 Integrare profili con optimization engine
+8.5 Implementare dynamic profile switching
+8.6 Creare GUI per selezione e configurazione profili
+Commit dopo ogni sottotask completato.
+
+FASE 9: GUI Extensions e Connections
+------------------------------------
+9.1 Aggiungere sezione Risk Management in Settings Tab
+9.2 Modificare Training Tab per mostrare parametri ottimali
+9.3 Modificare Trade Dialog per mostrare calcoli pre-trade
+9.4 Aggiungere indicators di profilo attivo in main window
+9.5 Implementare dashboard metriche avanzate
+9.6 Testing completo UI workflow
+Commit dopo ogni sottotask completato.
+
+FASE 10: Consolidamento e Pulizia
+---------------------------------
+10.1 Identificare e rimuovere codice orfano
+10.2 Consolidare logica duplicata
+10.3 Standardizzare interfacce componenti
+10.4 Aggiornare documentazione codice
+10.5 Aggiungere/aggiornare unit tests
+10.6 Eseguire integration tests completi
+10.7 Performance profiling e optimization
+Commit dopo ogni sottotask completato.
+
+FASE 11: Documentation e Final Testing
+--------------------------------------
+11.1 Aggiornare README con nuove funzionalità
+11.2 Creare user guide per nuove features
+11.3 Documentare API di nuovi componenti
+11.4 Eseguire regression test suite completa
+11.5 Testing su dataset differenti
+11.6 Validazione con stakeholder
+Final commit con tag di versione.
+
+
+================================================================================
+11. VINCOLI E CONSIDERAZIONI SPECIALI
+================================================================================
+
+11.1 BACKWARD COMPATIBILITY
+---------------------------
+REQUISITO: Sistema deve continuare a funzionare con configurazioni legacy
+che non hanno parametri ottimizzati disponibili.
+
+STRATEGIA:
+- Fallback graceful su parametri default
+- Warning ma non errore se optimization data non trovata
+- Modalità "compatibility mode" per transizione graduale
+
+11.2 PERFORMANCE REQUIREMENTS
+-----------------------------
+REQUISITO: Nuove funzionalità non devono degradare performance esistenti.
+
+LIMITI:
+- Caricamento parametri: <50ms
+- Calcolo position size: <10ms
+- Update P&L table: <100ms per aggiornamento tick
+- Adattamento SL/TP: <20ms per posizione
+
+OTTIMIZZAZIONI:
+- Caching aggressivo dove possibile
+- Async operations per non bloccare GUI
+- Batch processing per operazioni multiple
+- Lazy loading di dati non immediatamente necessari
+
+11.3 ERROR HANDLING E RESILIENCE
+--------------------------------
+REQUISITO: Failure di singolo componente non deve causare crash sistema.
+
+STRATEGIE:
+- Try-catch a livello appropriato con logging dettagliato
+- Graceful degradation (es. se adaptive SL fallisce, usa statico)
+- Circuit breaker pattern per servizi esterni
+- Timeout su operazioni lunghe
+- Retry logic con exponential backoff
+
+11.4 SECURITY E DATA INTEGRITY
+------------------------------
+REQUISITO: Parametri critici devono essere validati prima di uso.
+
+VALIDAZIONI:
+- SL/TP non possono essere negativi
+- Position size non può eccedere limiti account
+- Risk percentage entro range 0.1-5%
+- Sanity checks su parametri da database (potrebbero essere corrotti)
+
+11.5 OBSERVABILITY E DEBUGGING
+------------------------------
+REQUISITO: Sistema deve essere facilmente debuggabile in produzione.
+
+IMPLEMENTAZIONI:
+- Logging strutturato con livelli appropriati
+- Metrics export (Prometheus/StatsD compatible)
+- Health check endpoints
+- Debug mode con verbose logging
+- Replay capability per analisi post-mortem
+
+
+================================================================================
+12. SUCCESS CRITERIA (CRITERI DI SUCCESSO COMPLESSIVI)
+================================================================================
+
+L'implementazione sarà considerata completa e di successo quando:
+
+FUNZIONALITÀ:
+✓ Trading automatico usa 100% parametri ottimizzati (0% hard-coded)
+✓ SL/TP si adattano a condizioni mercato in real-time
+✓ Position size calcolato con metodi quantitativi
+✓ Posizioni aperte visibili e aggiornate real-time in Chart Tab
+✓ Backtesting include metriche avanzate e position sizing realistico
+✓ Profili di rischio configurabili e funzionanti
+
+QUALITÀ:
+✓ Test coverage >80% su codice nuovo/modificato
+✓ Zero regressioni su funzionalità esistenti
+✓ Performance requirements rispettati
+✓ No memory leaks o resource leaks
+✓ Codice pulito senza orphan methods/classes
+
+INTEGRAZIONE:
+✓ Tutti i componenti connessi ai workflow esistenti
+✓ GUI espone tutti i parametri configurabili
+✓ Database schema aggiornato via Alembic
+✓ Nuove dipendenze in pyproject.toml
+
+DOCUMENTAZIONE:
+✓ API documentation per nuovi componenti
+✓ User guide aggiornata
+✓ Inline code comments dove necessario
+✓ Commit messages descrittivi per ogni task
+
+VALIDAZIONE:
+✓ Testing manuale completo da parte di stakeholder
+✓ Performance validated su dataset reali
+✓ Edge cases gestiti correttamente
+✓ Failure scenarios testati e gestiti
+
+
+================================================================================
+FINE DOCUMENTO SPECIFICHE
+================================================================================
+
+Questo documento fornisce linee guida concettuali e funzionali per
+l'implementazione. L'agente AI implementatore ha piena libertà di:
+
+- Scegliere nomi specifici per classi, metodi, variabili
+- Decidere struttura interna dei componenti
+- Selezionare pattern di design appropriati
+- Ottimizzare implementazioni per performance
+- Aggiungere helper functions/classes necessarie
+- Riorganizzare codice se tecnicamente preferibile
+
+L'importante è che i requisiti funzionali e gli obiettivi descritti
+vengano raggiunti, rispettando i vincoli tecnici specificati.
+
+Ogni decisione implementativa deve essere guidata da:
+- Best practices Python
+- Principi SOLID
+- Testability
+- Maintainability
+- Performance
+
+L'agente è incoraggiato a suggerire miglioramenti o alternative se
+identifica approcci superiori durante l'implementazione.
