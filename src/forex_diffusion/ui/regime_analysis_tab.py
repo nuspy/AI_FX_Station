@@ -53,6 +53,10 @@ class RegimeAnalysisTab(QWidget):
         self.charts_btn.setEnabled(False)
         refresh_layout.addWidget(self.charts_btn)
 
+        self.manage_btn = QPushButton("Manage Regimes")
+        self.manage_btn.clicked.connect(self.manage_regimes)
+        refresh_layout.addWidget(self.manage_btn)
+
         refresh_layout.addStretch()
         layout.addLayout(refresh_layout)
 
@@ -414,4 +418,23 @@ class RegimeAnalysisTab(QWidget):
                 self,
                 "Chart Error",
                 f"Failed to create performance charts:\n{e}"
+            )
+
+    def manage_regimes(self):
+        """Open regime definition manager."""
+        try:
+            from .regime_definition_dialog import RegimeDefinitionDialog
+
+            dialog = RegimeDefinitionDialog(self)
+            dialog.exec()
+
+            # Reload regime data after dialog closes
+            self.load_regime_summary()
+
+        except Exception as e:
+            logger.error(f"Failed to open regime manager: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open regime manager:\n{e}"
             )

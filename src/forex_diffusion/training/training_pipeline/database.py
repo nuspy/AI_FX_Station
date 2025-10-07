@@ -455,6 +455,77 @@ def get_regime_by_name(session: Session, regime_name: str) -> Optional[RegimeDef
     return session.query(RegimeDefinition).filter(RegimeDefinition.regime_name == regime_name).first()
 
 
+def get_all_regimes(session: Session) -> List[RegimeDefinition]:
+    """Get all regime definitions (active and inactive)."""
+    return session.query(RegimeDefinition).order_by(RegimeDefinition.created_at.desc()).all()
+
+
+def get_regime_by_id(session: Session, regime_id: int) -> Optional[RegimeDefinition]:
+    """Get regime definition by ID."""
+    return session.query(RegimeDefinition).filter(RegimeDefinition.id == regime_id).first()
+
+
+def create_regime_definition(
+    session: Session,
+    regime_name: str,
+    description: str,
+    detection_rules: Dict[str, Any],
+    is_active: bool = True
+) -> RegimeDefinition:
+    """Create a new regime definition."""
+    regime = RegimeDefinition(
+        regime_name=regime_name,
+        description=description,
+        detection_rules=detection_rules,
+        is_active=is_active
+    )
+    session.add(regime)
+    session.flush()
+    return regime
+
+
+def update_regime_definition(
+    session: Session,
+    regime_id: int,
+    description: Optional[str] = None,
+    detection_rules: Optional[Dict[str, Any]] = None,
+    is_active: Optional[bool] = None
+) -> Optional[RegimeDefinition]:
+    """Update an existing regime definition."""
+    regime = session.query(RegimeDefinition).filter(RegimeDefinition.id == regime_id).first()
+
+    if regime:
+        if description is not None:
+            regime.description = description
+        if detection_rules is not None:
+            regime.detection_rules = detection_rules
+        if is_active is not None:
+            regime.is_active = is_active
+
+        session.flush()
+
+    return regime
+
+
+def delete_regime_definition(session: Session, regime_id: int) -> bool:
+    """
+    Delete a regime definition.
+
+    Note: This will cascade delete related RegimeBestModel records.
+
+    Returns:
+        True if deleted, False if not found
+    """
+    regime = session.query(RegimeDefinition).filter(RegimeDefinition.id == regime_id).first()
+
+    if regime:
+        session.delete(regime)
+        session.flush()
+        return True
+
+    return False
+
+
 # --- RegimeBestModel Operations ---
 
 def get_best_model_for_regime(session: Session, regime_name: str) -> Optional[RegimeBestModel]:
