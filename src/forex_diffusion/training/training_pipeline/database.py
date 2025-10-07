@@ -394,6 +394,42 @@ def mark_model_as_kept(session: Session, run_id: int, best_regimes: List[str]) -
         session.flush()
 
 
+def delete_training_run(session: Session, training_run_id: int) -> bool:
+    """
+    Delete a training run and all associated records.
+
+    Cascades to:
+    - InferenceBacktest records
+    - Model file (if exists)
+
+    Args:
+        session: SQLAlchemy session
+        training_run_id: Training run ID to delete
+
+    Returns:
+        True if deleted, False if not found
+    """
+    run = session.query(TrainingRun).filter(TrainingRun.id == training_run_id).first()
+
+    if run:
+        # Delete model file if it exists
+        if run.model_file_path:
+            from pathlib import Path
+            model_path = Path(run.model_file_path)
+            if model_path.exists():
+                try:
+                    model_path.unlink()
+                except Exception as e:
+                    logging.warning(f"Failed to delete model file {model_path}: {e}")
+
+        # Delete the run (cascade will handle related records)
+        session.delete(run)
+        session.flush()
+        return True
+
+    return False
+
+
 # --- InferenceBacktest Operations ---
 
 def create_inference_backtest(
