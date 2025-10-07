@@ -511,7 +511,7 @@ The system is production-ready with all critical features implemented. The **Ada
 
 #### 5.2 GUI Components Status
 
-**Implemented** (2 of 6):
+**Implemented** (3 of 6):
 - ✅ Signal Quality Dashboard (`signal_quality_tab.py` - 359 lines)
   - Real-time signal table with quality scores
   - Quality dimensions breakdown
@@ -528,12 +528,21 @@ The system is production-ready with all critical features implemented. The **Ada
   - Adaptation statistics dashboard
   - Auto-refresh every 10 seconds
 
-**Not Implemented** (4 of 6):
+- ✅ Regime Transition Indicator (`regime_indicator_widget.py` - 371 lines)
+  - Large color-coded regime display (6 regime colors)
+  - Confidence level progress bar with color-coding
+  - Stability indicator (based on entropy)
+  - Duration in current regime (bars)
+  - Transition warning banner
+  - Recent regime history table (last 10 regimes)
+  - Flash animation on regime changes
+  - regime_changed signal emission
+
+**Not Implemented** (3 of 6):
 - ❌ Harmonic Pattern Visualization (chart drawing, Fibonacci ratios)
 - ❌ Order Flow Panel (live order book, imbalance metrics)
 - ❌ Correlation Matrix View (heatmap, correlation alerts)
 - ❌ Ensemble Model Status (per-model performance, agreement indicators)
-- ❌ Regime Transition Indicator (current regime display, probability gauge)
 
 **Reason for Non-Implementation**:
 - Time constraints (priority given to core backend systems)
