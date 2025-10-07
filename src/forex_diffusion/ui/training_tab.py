@@ -1509,8 +1509,17 @@ class TrainingTab(QWidget):
             "to identify optimal prediction window and assess performance degradation"
         )
 
+        self.grid_training_btn = QPushButton("Grid Training Manager")
+        self.grid_training_btn.clicked.connect(self._open_grid_training)
+        self.grid_training_btn.setToolTip(
+            "Open Grid Training Manager to train multiple model configurations\n"
+            "with regime-based selection and automatic performance optimization"
+        )
+        self.grid_training_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+
         actions.addWidget(self.train_btn)
         actions.addWidget(self.validate_btn)
+        actions.addWidget(self.grid_training_btn)
         self.layout.addLayout(actions)
 
     def _browse_out(self):
@@ -2203,4 +2212,42 @@ class TrainingTab(QWidget):
 
         except Exception as e:
             logger.exception(f"Failed to start validation: {e}")
-            QMessageBox.critical(self, "Validation Error", f"Failed to start validation:\n{e}")
+
+    def _open_grid_training(self):
+        """Open Grid Training Manager dialog"""
+        try:
+            from .training_queue_tab import TrainingQueueTab
+            from .regime_analysis_tab import RegimeAnalysisTab
+            from .training_history_tab import TrainingHistoryTab
+            from PySide6.QtWidgets import QDialog, QTabWidget, QVBoxLayout
+
+            # Create dialog with tabs
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Grid Training Manager")
+            dialog.resize(1200, 800)
+
+            layout = QVBoxLayout(dialog)
+
+            # Create tab widget
+            tabs = QTabWidget()
+
+            # Add tabs
+            queue_tab = TrainingQueueTab(dialog)
+            regime_tab = RegimeAnalysisTab(dialog)
+            history_tab = TrainingHistoryTab(dialog)
+
+            tabs.addTab(queue_tab, "Training Queue")
+            tabs.addTab(regime_tab, "Regime Analysis")
+            tabs.addTab(history_tab, "Training History")
+
+            layout.addWidget(tabs)
+
+            dialog.exec()
+
+        except Exception as e:
+            logger.exception(f"Failed to open Grid Training Manager: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open Grid Training Manager:\n{e}"
+            )
