@@ -30,6 +30,7 @@ try:
     from ..risk.multi_level_stop_loss import MultiLevelStopLoss
     from ..risk.regime_position_sizer import RegimePositionSizer, MarketRegime
     from ..execution.smart_execution import SmartExecutionOptimizer
+    from ..services.parameter_loader import ParameterLoaderService
 except ImportError:
     pass
 
@@ -70,6 +71,8 @@ class TradingConfig:
     use_stacked_ensemble: bool = True
     use_regime_detection: bool = True
     use_smart_execution: bool = True
+    database_path: str = "forex_data.db"  # Path to database for parameter loading
+    use_optimized_parameters: bool = True  # Use optimized parameters from database
 
 
 class AutomatedTradingEngine:
@@ -124,6 +127,19 @@ class AutomatedTradingEngine:
         )
         self.execution_optimizer = SmartExecutionOptimizer()
 
+        # Parameter Loader Service
+        self.parameter_loader: Optional[ParameterLoaderService] = None
+        if config.use_optimized_parameters:
+            try:
+                self.parameter_loader = ParameterLoaderService(
+                    db_path=config.database_path,
+                    cache_ttl_seconds=3600,  # 1 hour cache
+                    require_validation=True
+                )
+                logger.info("✅ Parameter Loader Service initialized")
+            except Exception as e:
+                logger.warning(f"Could not initialize Parameter Loader: {e}. Using defaults.")
+
         # Threading
         self.trading_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
@@ -131,6 +147,9 @@ class AutomatedTradingEngine:
         # Performance tracking
         self.trades_history: List[Dict] = []
         self.daily_pnl = 0.0
+
+        # ATR cache for parameter loading
+        self._last_atr: Dict[str, float] = {}
 
         logger.info("Automated Trading Engine initialized")
 
@@ -286,6 +305,9 @@ class AutomatedTradingEngine:
 
             # Calculate ATR for volatility stops
             atr = self._calculate_atr(market_data[symbol])
+
+            # Cache ATR for use in _open_position
+            self._last_atr[symbol] = atr
 
             # Update trailing stops
             position = self.risk_manager.update_trailing_stops(
@@ -444,15 +466,61 @@ class AutomatedTradingEngine:
         signal: int,
         price: float,
         size: float,
-        regime: Optional[str]
+        regime: Optional[str],
+        pattern_type: str = 'pattern',
+        timeframe: str = '5m'
     ):
-        """Open new position."""
+        """
+        Open new position using optimized parameters.
+
+        Args:
+            symbol: Trading symbol
+            signal: Trading signal (>0 long, <0 short)
+            price: Entry price
+            size: Position size
+            regime: Market regime
+            pattern_type: Pattern type for parameter loading
+            timeframe: Timeframe for parameter loading
+        """
         direction = 'long' if signal > 0 else 'short'
 
-        # Calculate stops
-        stop_distance = price * 0.02
+        # Load optimized parameters
+        sl_multiplier = 2.0  # Default
+        tp_multiplier = 3.0  # Default
+        params_source = 'default'
+
+        if self.parameter_loader:
+            try:
+                params = self.parameter_loader.load_parameters(
+                    pattern_type=pattern_type,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    market_regime=regime
+                )
+                sl_multiplier = params.action_params.get('sl_atr_multiplier', 2.0)
+                tp_multiplier = params.action_params.get('tp_atr_multiplier', 3.0)
+                params_source = params.source
+
+                logger.info(
+                    f"📊 Loaded params for {pattern_type}/{symbol}/{timeframe}/{regime}: "
+                    f"SL={sl_multiplier:.1f}x, TP={tp_multiplier:.1f}x (source={params_source})"
+                )
+            except Exception as e:
+                logger.warning(f"Could not load optimized params: {e}. Using defaults.")
+
+        # Calculate stops using ATR-based approach with optimized multipliers
+        # First try to get ATR from data
+        atr = 0.001  # Fallback
+        if hasattr(self, '_last_atr') and symbol in getattr(self, '_last_atr', {}):
+            atr = self._last_atr[symbol]
+        else:
+            # Use percentage-based fallback
+            atr = price * 0.01
+
+        # Calculate stop loss and take profit
+        stop_distance = atr * sl_multiplier
         stop_loss = price - stop_distance if signal > 0 else price + stop_distance
-        take_profit = price + stop_distance * 2 if signal > 0 else price - stop_distance * 2
+        take_profit = price + (atr * tp_multiplier) if signal > 0 else price - (atr * tp_multiplier)
 
         # Create position
         position = Position(
