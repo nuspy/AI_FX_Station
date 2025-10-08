@@ -353,13 +353,31 @@ class ChartTab(QWidget):
         self._chart_area = chart_area
         chart_area.addWidget(self._drawbar)
 
+        # Create vertical splitter for chart and positions table
+        chart_positions_splitter = QSplitter(Qt.Vertical)
+        chart_positions_splitter.setObjectName("chart_positions_splitter")
+        chart_positions_splitter.setHandleWidth(4)
+
+        # Chart container
         chart_wrap = QWidget()
         chart_wrap.setObjectName("chart_container")
         chart_layout = QVBoxLayout(chart_wrap)
         chart_layout.setContentsMargins(0, 0, 0, 0)
         chart_layout.setSpacing(0)
         chart_layout.addWidget(self.canvas)
-        chart_area.addWidget(chart_wrap)
+        chart_positions_splitter.addWidget(chart_wrap)
+
+        # Positions table widget
+        from .positions_table_widget import PositionsTableWidget
+        self.positions_table = PositionsTableWidget()
+        chart_positions_splitter.addWidget(self.positions_table)
+
+        # Set stretch factors (70% chart, 30% positions)
+        chart_positions_splitter.setStretchFactor(0, 7)
+        chart_positions_splitter.setStretchFactor(1, 3)
+
+        # Add to chart area
+        chart_area.addWidget(chart_positions_splitter)
         chart_area.setStretchFactor(0, 0)
         chart_area.setStretchFactor(1, 1)
 
@@ -594,6 +612,14 @@ class ChartTab(QWidget):
         ):
             if isinstance(splitter, QSplitter):
                 splitter.splitterMoved.connect(lambda _pos, _index, k=key, s=splitter: self._persist_splitter_positions(k, s))
+
+        # Connect positions table signals
+        positions_table = getattr(self, "positions_table", None)
+        if positions_table is not None:
+            positions_table.position_selected.connect(self._on_position_selected)
+            positions_table.close_position_requested.connect(self._on_close_position_requested)
+            positions_table.modify_sl_requested.connect(self._on_modify_sl_requested)
+            positions_table.modify_tp_requested.connect(self._on_modify_tp_requested)
 
     def _set_combo_with_items(self, combo: Optional[QComboBox], items: List[str], setting_key: str, default: str) -> str:
         if combo is None:
@@ -1278,6 +1304,122 @@ class ChartTab(QWidget):
                 - Else: read candles from market_data_candles as before.
         """
         return self.chart_controller.load_candles_from_db(symbol=symbol, timeframe=timeframe, limit=limit, start_ms=start_ms, end_ms=end_ms)
+
+    # ========================================
+    # Positions Table Handlers
+    # ========================================
+
+    def set_trading_engine(self, engine):
+        """Set the trading engine for positions table."""
+        if hasattr(self, 'positions_table'):
+            self.positions_table.set_trading_engine(engine)
+            logger.info("Trading engine connected to positions table")
+
+    def _on_position_selected(self, position: Dict):
+        """Handle position selection - highlight on chart."""
+        try:
+            symbol = position.get('symbol', '')
+            entry_price = position.get('entry_price', 0.0)
+
+            # Center chart on entry price
+            if self.ax and entry_price > 0:
+                ylim = self.ax.get_ylim()
+                y_range = ylim[1] - ylim[0]
+                new_ylim = (entry_price - y_range/2, entry_price + y_range/2)
+                self.ax.set_ylim(new_ylim)
+                self.canvas.draw_idle()
+
+            logger.info(f"Position highlighted on chart: {symbol} @ {entry_price}")
+
+        except Exception as e:
+            logger.error(f"Error highlighting position: {e}")
+
+    def _on_close_position_requested(self, position_id: str):
+        """Handle close position request."""
+        try:
+            # Get trading engine from main window or controller
+            trading_engine = None
+            if hasattr(self._main_window, 'trading_engine'):
+                trading_engine = self._main_window.trading_engine
+            elif hasattr(self.controller, 'trading_engine'):
+                trading_engine = self.controller.trading_engine
+
+            if trading_engine and hasattr(trading_engine, 'close_position'):
+                trading_engine.close_position(position_id)
+                logger.info(f"Position closed: {position_id}")
+            else:
+                logger.warning("Trading engine not available or does not support close_position")
+                QMessageBox.warning(
+                    self,
+                    "Close Position",
+                    "Trading engine not available. Cannot close position."
+                )
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to close position: {str(e)}"
+            )
+
+    def _on_modify_sl_requested(self, position_id: str, new_sl: float):
+        """Handle modify stop loss request."""
+        try:
+            # Get trading engine from main window or controller
+            trading_engine = None
+            if hasattr(self._main_window, 'trading_engine'):
+                trading_engine = self._main_window.trading_engine
+            elif hasattr(self.controller, 'trading_engine'):
+                trading_engine = self.controller.trading_engine
+
+            if trading_engine and hasattr(trading_engine, 'modify_stop_loss'):
+                trading_engine.modify_stop_loss(position_id, new_sl)
+                logger.info(f"Stop loss modified: {position_id} -> {new_sl}")
+            else:
+                logger.warning("Trading engine not available or does not support modify_stop_loss")
+                QMessageBox.warning(
+                    self,
+                    "Modify Stop Loss",
+                    "Trading engine not available. Cannot modify stop loss."
+                )
+
+        except Exception as e:
+            logger.error(f"Error modifying stop loss: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to modify stop loss: {str(e)}"
+            )
+
+    def _on_modify_tp_requested(self, position_id: str, new_tp: float):
+        """Handle modify take profit request."""
+        try:
+            # Get trading engine from main window or controller
+            trading_engine = None
+            if hasattr(self._main_window, 'trading_engine'):
+                trading_engine = self._main_window.trading_engine
+            elif hasattr(self.controller, 'trading_engine'):
+                trading_engine = self.controller.trading_engine
+
+            if trading_engine and hasattr(trading_engine, 'modify_take_profit'):
+                trading_engine.modify_take_profit(position_id, new_tp)
+                logger.info(f"Take profit modified: {position_id} -> {new_tp}")
+            else:
+                logger.warning("Trading engine not available or does not support modify_take_profit")
+                QMessageBox.warning(
+                    self,
+                    "Modify Take Profit",
+                    "Trading engine not available. Cannot modify take profit."
+                )
+
+        except Exception as e:
+            logger.error(f"Error modifying take profit: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to modify take profit: {str(e)}"
+            )
 
 
 
