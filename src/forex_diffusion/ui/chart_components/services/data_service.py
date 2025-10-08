@@ -974,10 +974,35 @@ class DataService(ChartServiceBase):
             logger.exception(f"Failed to update market quote for {symbol}: {e}")
 
     def _refresh_orders(self):
-        """Pull open orders from broker and refresh the table."""
+        """
+        Pull open orders from broker and refresh the table.
+
+        TASK 3: Orders Table Integration
+        Enhanced to draw order lines on chart as horizontal price levels.
+        """
         try:
+            # Check if broker is available
+            if not hasattr(self, 'broker') or self.broker is None:
+                logger.debug("Broker not available for orders refresh")
+                return
+
             orders = self.broker.get_open_orders()
             self.orders_table.setRowCount(len(orders))
+
+            # Clear existing order lines
+            if not hasattr(self, '_order_lines'):
+                self._order_lines = []
+
+            # Remove old order lines from chart
+            for line in self._order_lines:
+                try:
+                    if hasattr(self, 'ax') and self.ax and hasattr(line, 'remove'):
+                        line.remove()
+                except Exception:
+                    pass
+            self._order_lines.clear()
+
+            # Populate table and draw order lines
             for r, o in enumerate(orders):
                 vals = [
                     str(o.get("id","")),
@@ -992,5 +1017,75 @@ class DataService(ChartServiceBase):
                 ]
                 for c, v in enumerate(vals):
                     self.orders_table.setItem(r, c, QTableWidgetItem(str(v)))
-        except Exception:
-            pass
+
+                # Draw order line on chart if symbol matches current chart symbol
+                try:
+                    order_symbol = o.get("symbol", "")
+                    order_price = o.get("price")
+                    order_side = o.get("side", "")
+
+                    if order_symbol == getattr(self, 'symbol', None) and order_price:
+                        self._draw_order_line(float(order_price), order_side, o.get("id", ""))
+                except Exception as e:
+                    logger.debug(f"Could not draw order line: {e}")
+
+            logger.debug(f"Refreshed {len(orders)} orders with chart overlays")
+
+        except Exception as e:
+            logger.debug(f"Orders refresh skipped: {e}")
+
+    def _draw_order_line(self, price: float, side: str, order_id: str):
+        """
+        Draw a horizontal line on the chart for an open order.
+
+        TASK 3: Orders Table Integration
+        """
+        try:
+            if not hasattr(self, 'ax') or self.ax is None:
+                return
+
+            # Determine color based on order side
+            color = 'blue' if side.upper() == 'BUY' else 'red'
+
+            # Try finplot/PyQtGraph approach first
+            try:
+                from pyqtgraph import InfiniteLine
+                line = InfiniteLine(pos=price, angle=0, pen={'color': color, 'style': 2}, movable=False)  # style 2 = dashed
+                line.setZValue(5)  # Above candles but below overlays
+                self.ax.addItem(line)
+                self._order_lines.append(line)
+                logger.debug(f"Drew order line at {price} ({side})")
+            except Exception:
+                # Fallback to matplotlib if finplot not available
+                try:
+                    line = self.ax.axhline(y=price, color=color, linestyle='--', linewidth=1, alpha=0.7)
+                    self._order_lines.append(line)
+                except Exception as e:
+                    logger.debug(f"Could not draw order line with matplotlib: {e}")
+
+        except Exception as e:
+            logger.exception(f"Failed to draw order line: {e}")
+
+    def _toggle_orders(self, visible: bool):
+        """
+        Toggle visibility of order lines on chart.
+
+        TASK 3: Orders Table Integration
+        """
+        try:
+            if not hasattr(self, '_order_lines'):
+                return
+
+            for line in self._order_lines:
+                try:
+                    if hasattr(line, 'setVisible'):
+                        line.setVisible(visible)
+                    elif hasattr(line, 'set_visible'):
+                        line.set_visible(visible)
+                except Exception:
+                    pass
+
+            logger.debug(f"Order lines visibility set to {visible}")
+
+        except Exception as e:
+            logger.exception(f"Failed to toggle order lines: {e}")
