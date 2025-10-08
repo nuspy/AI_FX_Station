@@ -538,9 +538,91 @@ class EventHandlersMixin:
         return self.chart_controller.toggle_drawbar(visible=visible)
 
     def _wire_pattern_checkboxes(self) -> None:
-        """Wire pattern checkbox signals."""
-        # This would be implemented by the patterns mixin
-        pass
+        """
+        Wire pattern checkbox signals to enable/disable pattern detection.
+
+        TASK 5: Pattern Checkboxes Integration
+        """
+        try:
+            # Connect chart patterns checkbox
+            if hasattr(self, 'chart_patterns_checkbox'):
+                self.chart_patterns_checkbox.toggled.connect(
+                    lambda enabled: self._toggle_chart_patterns(enabled)
+                )
+                logger.debug("Chart patterns checkbox connected")
+
+            # Connect candle patterns checkbox
+            if hasattr(self, 'candle_patterns_checkbox'):
+                self.candle_patterns_checkbox.toggled.connect(
+                    lambda enabled: self._toggle_candle_patterns(enabled)
+                )
+                logger.debug("Candle patterns checkbox connected")
+
+            # Connect historical patterns checkbox
+            if hasattr(self, 'history_patterns_checkbox'):
+                self.history_patterns_checkbox.toggled.connect(
+                    lambda enabled: self._toggle_history_patterns(enabled)
+                )
+                logger.debug("Historical patterns checkbox connected")
+
+        except Exception as e:
+            logger.exception(f"Failed to wire pattern checkboxes: {e}")
+
+    def _toggle_chart_patterns(self, enabled: bool):
+        """Toggle chart pattern detection (head/shoulders, triangles, etc.)."""
+        try:
+            logger.info(f"Chart patterns {'enabled' if enabled else 'disabled'}")
+
+            # Try to access patterns service through controller
+            if hasattr(self, 'chart_controller') and hasattr(self.chart_controller, 'patterns_service'):
+                patterns_service = self.chart_controller.patterns_service
+                if hasattr(patterns_service, 'set_chart_enabled'):
+                    patterns_service.set_chart_enabled(enabled)
+                elif hasattr(patterns_service, 'chart_patterns_enabled'):
+                    patterns_service.chart_patterns_enabled = enabled
+
+            # Also update chart display if patterns are already detected
+            if hasattr(self, '_redraw_patterns'):
+                self._redraw_patterns()
+
+        except Exception as e:
+            logger.exception(f"Failed to toggle chart patterns: {e}")
+
+    def _toggle_candle_patterns(self, enabled: bool):
+        """Toggle candlestick pattern detection (doji, hammer, engulfing, etc.)."""
+        try:
+            logger.info(f"Candle patterns {'enabled' if enabled else 'disabled'}")
+
+            if hasattr(self, 'chart_controller') and hasattr(self.chart_controller, 'patterns_service'):
+                patterns_service = self.chart_controller.patterns_service
+                if hasattr(patterns_service, 'set_candle_enabled'):
+                    patterns_service.set_candle_enabled(enabled)
+                elif hasattr(patterns_service, 'candle_patterns_enabled'):
+                    patterns_service.candle_patterns_enabled = enabled
+
+            if hasattr(self, '_redraw_patterns'):
+                self._redraw_patterns()
+
+        except Exception as e:
+            logger.exception(f"Failed to toggle candle patterns: {e}")
+
+    def _toggle_history_patterns(self, enabled: bool):
+        """Toggle historical pattern display."""
+        try:
+            logger.info(f"Historical patterns {'enabled' if enabled else 'disabled'}")
+
+            if hasattr(self, 'chart_controller') and hasattr(self.chart_controller, 'patterns_service'):
+                patterns_service = self.chart_controller.patterns_service
+                if hasattr(patterns_service, 'set_history_enabled'):
+                    patterns_service.set_history_enabled(enabled)
+                elif hasattr(patterns_service, 'history_patterns_enabled'):
+                    patterns_service.history_patterns_enabled = enabled
+
+            if hasattr(self, '_redraw_patterns'):
+                self._redraw_patterns()
+
+        except Exception as e:
+            logger.exception(f"Failed to toggle historical patterns: {e}")
 
     def _clear_pattern_artists(self):
         """Clear pattern artists from chart."""

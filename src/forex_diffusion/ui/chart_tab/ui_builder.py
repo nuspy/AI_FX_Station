@@ -322,6 +322,18 @@ class UIBuilderMixin:
         self.follow_checkbox = QCheckBox("Follow")
         row2_layout.addWidget(self.follow_checkbox)
 
+        # Pattern checkboxes (TASK 5)
+        self.chart_patterns_checkbox = QCheckBox("Chart Patterns")
+        self.chart_patterns_checkbox.setChecked(True)  # Default enabled
+        row2_layout.addWidget(self.chart_patterns_checkbox)
+
+        self.candle_patterns_checkbox = QCheckBox("Candle Patterns")
+        self.candle_patterns_checkbox.setChecked(True)  # Default enabled
+        row2_layout.addWidget(self.candle_patterns_checkbox)
+
+        self.history_patterns_checkbox = QCheckBox("Historical")
+        row2_layout.addWidget(self.history_patterns_checkbox)
+
         self.bidask_label = QLabel("Bid: -    Ask: -")
         row2_layout.addWidget(self.bidask_label)
 
