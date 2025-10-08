@@ -239,6 +239,11 @@ class SettingsDialog(QDialog):
         acc_layout.addLayout(acc_btns)
         layout.addWidget(accounts_group)
 
+        # Risk Profile Management
+        from .risk_profile_settings_widget import RiskProfileSettingsWidget
+        self.risk_profile_widget = RiskProfileSettingsWidget()
+        layout.addWidget(self.risk_profile_widget)
+
         # Chart behaviour
         chart_group = QGroupBox("Chart Behaviour")
         chart_form = QFormLayout(chart_group)
