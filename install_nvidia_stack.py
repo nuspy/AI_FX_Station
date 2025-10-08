@@ -51,10 +51,10 @@ def run_command(cmd: str, description: str) -> bool:
             capture_output=False,
             text=True
         )
-        print(f"✅ {description} installed successfully")
+        print(f"[OK] {description} installed successfully")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to install {description}")
+        print(f"[ERROR] Failed to install {description}")
         print(f"Error: {e}")
         return False
 
@@ -69,12 +69,12 @@ def check_gpu_compatibility():
         import torch
 
         if not torch.cuda.is_available():
-            print("❌ No CUDA-capable GPU detected")
+            print("[ERROR] No CUDA-capable GPU detected")
             print("   PyTorch cannot find CUDA. Please install CUDA 12.x first.")
             return False
 
         gpu_count = torch.cuda.device_count()
-        print(f"✅ Found {gpu_count} CUDA GPU(s)")
+        print(f"[OK] Found {gpu_count} CUDA GPU(s)")
 
         for i in range(gpu_count):
             name = torch.cuda.get_device_name(i)
@@ -86,9 +86,9 @@ def check_gpu_compatibility():
 
             # Check for Flash Attention compatibility (requires compute >= 8.0)
             if capability[0] >= 8:
-                print(f"   ✅ Compatible with Flash Attention 2")
+                print(f"   [OK] Compatible with Flash Attention 2")
             else:
-                print(f"   ⚠️  Not compatible with Flash Attention 2 (requires compute >= 8.0)")
+                print(f"   [WARNING] Not compatible with Flash Attention 2 (requires compute >= 8.0)")
 
         cuda_version = torch.version.cuda
         print(f"\n   CUDA Version: {cuda_version}")
@@ -96,12 +96,12 @@ def check_gpu_compatibility():
         return True
 
     except ImportError:
-        print("❌ PyTorch not installed")
+        print("[ERROR] PyTorch not installed")
         print("   Please install PyTorch first:")
-        print("   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121")
+        print("   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128")
         return False
     except Exception as e:
-        print(f"❌ Error checking GPU: {e}")
+        print(f"[ERROR] Error checking GPU: {e}")
         return False
 
 
@@ -118,25 +118,33 @@ def install_apex():
 
 
 def install_flash_attention():
-    """Install Flash Attention 2"""
+    """Install Flash Attention 2 from precompiled wheel"""
     # Check GPU compatibility first
     try:
         import torch
         if torch.cuda.is_available():
             capability = torch.cuda.get_device_capability(0)
             if capability[0] < 8:
-                print("\n⚠️  WARNING: Flash Attention 2 requires Ampere or newer GPU")
+                print("\n[WARNING] Flash Attention 2 requires Ampere or newer GPU")
                 print(f"   Your GPU has compute capability {capability[0]}.{capability[1]}")
                 print("   Flash Attention requires compute capability >= 8.0")
-                response = input("   Continue anyway? (y/N): ")
-                if response.lower() != 'y':
-                    print("   Skipping Flash Attention installation")
-                    return False
+                print("   Skipping Flash Attention installation")
+                return False
     except:
         pass
 
-    cmd = "pip install flash-attn --no-build-isolation"
-    return run_command(cmd, "Flash Attention 2")
+    # Use precompiled wheel for Windows Python 3.12 + PyTorch 2.7.0 + CUDA 12.8
+    # Source: https://github.com/kingbri1/flash-attention/releases/tag/v2.8.3
+    wheel_url = "https://github.com/kingbri1/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu128torch2.7.0cxx11abiFALSE-cp312-cp312-win_amd64.whl"
+
+    cmd = f"pip install {wheel_url}"
+    return run_command(cmd, "Flash Attention 2 (precompiled wheel)")
+
+
+def install_pytorch_270():
+    """Install PyTorch 2.7.0 with CUDA 12.8"""
+    cmd = "pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128"
+    return run_command(cmd, "PyTorch 2.7.0 with CUDA 12.8")
 
 
 def install_xformers():
@@ -147,30 +155,32 @@ def install_xformers():
 
     try:
         import torch
-        torch_version = torch.__version__.split('+')[0]  # Remove +cu121 suffix
+        torch_version = torch.__version__.split('+')[0]  # Remove +cu128 suffix
         print(f"\nDetected PyTorch version: {torch_version}")
 
-        # xformers 0.0.31.post1 requires torch==2.7.1
-        # For older torch versions, we need compatible xformers
+        # xformers 0.0.31.post1 is compatible with torch 2.7.x
+        # Use --no-deps to prevent xformers from downgrading PyTorch
         if torch_version.startswith("2.5"):
             # Use xformers compatible with torch 2.5.x
-            cmd = "pip install xformers==0.0.30"
+            cmd = "pip install --no-deps xformers==0.0.30"
             print(f"Installing xformers 0.0.30 (compatible with PyTorch {torch_version})")
         elif torch_version.startswith("2.7"):
-            cmd = "pip install xformers==0.0.31.post1"
+            # Use --no-deps to keep PyTorch 2.7.0+cu128 instead of downgrading to 2.7.1 CPU
+            cmd = "pip install --no-deps xformers==0.0.31.post1"
             print(f"Installing xformers 0.0.31.post1 (compatible with PyTorch {torch_version})")
+            print("[INFO] Using --no-deps to preserve PyTorch CUDA version")
         else:
-            print(f"⚠️  PyTorch {torch_version} detected - installing latest compatible xformers")
-            cmd = "pip install xformers"
+            print(f"[WARNING] PyTorch {torch_version} detected - installing latest compatible xformers")
+            cmd = "pip install --no-deps xformers"
 
         return run_command(cmd, f"xFormers (for PyTorch {torch_version})")
 
     except ImportError:
-        print("❌ PyTorch not installed - cannot determine compatible xformers version")
+        print("[ERROR] PyTorch not installed - cannot determine compatible xformers version")
         print("   Please install PyTorch first")
         return False
     except Exception as e:
-        print(f"❌ Error determining xformers version: {e}")
+        print(f"[ERROR] Error determining xformers version: {e}")
         return False
 
 
@@ -206,18 +216,29 @@ def main():
     print("ForexGPT - Advanced ML Trading System")
     print("="*60)
 
-    # Always check compatibility first
-    if not check_gpu_compatibility():
-        print("\n❌ GPU compatibility check failed")
-        print("   Please fix GPU/CUDA issues before installing NVIDIA stack")
-        return 1
+    # Always check compatibility first (skip if installing PyTorch)
+    if not args.all:
+        if not check_gpu_compatibility():
+            print("\n[ERROR] GPU compatibility check failed")
+            print("   Please fix GPU/CUDA issues before installing NVIDIA stack")
+            return 1
 
     if args.check:
-        print("\n✅ GPU compatibility check complete")
-        return 0
+        if check_gpu_compatibility():
+            print("\n[OK] GPU compatibility check complete")
+            return 0
+        else:
+            return 1
 
     # Track installation results
     results = {}
+
+    # Install PyTorch 2.7.0 first if --all is specified
+    if args.all:
+        print("\n" + "="*60)
+        print("Step 1: Installing PyTorch 2.7.0 with CUDA 12.8")
+        print("="*60)
+        results['PyTorch 2.7.0'] = install_pytorch_270()
 
     # Install requested components
     if args.all or args.apex:
@@ -229,6 +250,15 @@ def main():
     if args.all or args.xformers:
         results['xFormers'] = install_xformers()
 
+        # If xFormers was installed and we installed PyTorch earlier,
+        # reinstall PyTorch to ensure CUDA version is preserved
+        if args.all and results.get('PyTorch 2.7.0'):
+            print("\n" + "="*60)
+            print("Reinstalling PyTorch 2.7.0+cu128 (xFormers may have downgraded it)")
+            print("="*60)
+            cmd = "pip install --force-reinstall --no-deps torch==2.7.0+cu128 torchvision==0.22.0+cu128 torchaudio==2.7.0+cu128 --index-url https://download.pytorch.org/whl/cu128"
+            run_command(cmd, "PyTorch 2.7.0+cu128 reinstall")
+
     if args.all or args.dali:
         results['DALI'] = install_dali()
 
@@ -238,20 +268,20 @@ def main():
     print("="*60)
 
     for component, success in results.items():
-        status = "✅ Installed" if success else "❌ Failed"
+        status = "[OK] Installed" if success else "[ERROR] Failed"
         print(f"{component}: {status}")
 
     all_success = all(results.values())
 
     if all_success:
-        print("\n✅ All requested components installed successfully!")
+        print("\n[OK] All requested components installed successfully!")
         print("\nNext steps:")
         print("1. Restart your Python kernel/IDE")
         print("2. Test GPU acceleration with: python -c 'import torch; print(torch.cuda.is_available())'")
         print("3. Run training with GPU: fx-train-lightning --device cuda")
         return 0
     else:
-        print("\n⚠️  Some components failed to install")
+        print("\n[WARNING] Some components failed to install")
         print("   Check the error messages above for details")
         return 1
 

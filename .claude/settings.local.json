@@ -33,7 +33,17 @@
       "Bash(timeout 20 python tests/test_ctrader_websocket_mock.py)",
       "Bash(alembic downgrade:*)",
       "Bash(git fetch:*)",
-      "Bash(alembic:*)"
+      "Bash(alembic:*)",
+      "Bash(install_nvidia_stack.bat all)",
+      "Bash(chcp:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(fx-train-lightning:*)",
+      "Bash(timeout 30 tail -f test_quick_wins_output.log)",
+      "Bash(timeout 60 tail -f e2e_test_output.log)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s https://api.github.com/repos/kingbri1/flash-attention/releases/latest)",
+      "Bash(pip show:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
