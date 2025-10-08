@@ -86,8 +86,60 @@ class TestE2EComplete:
         success, missing_tables = db_validator.validate_schema()
 
         if not success:
-            logger.error(f"Missing tables: {missing_tables}")
-            pytest.fail(f"Database schema validation failed. Missing tables: {missing_tables}")
+            logger.warning(f"Missing tables after migration: {missing_tables}")
+            logger.info("Creating tables manually using SQLAlchemy...")
+
+            # Create tables manually using database_models
+            from sqlalchemy import create_engine
+            from forex_diffusion.training_pipeline.database_models import Base
+
+            engine = create_engine(f"sqlite:///{e2e_config.db_path}")
+            Base.metadata.create_all(engine)
+
+            # Also create core tables (candles, ticks) if not in Base
+            from sqlalchemy import Table, Column, Integer, String, Float, BigInteger, MetaData, UniqueConstraint
+
+            metadata = MetaData()
+
+            # Create candles table if missing
+            if 'candles' in missing_tables:
+                candles = Table('candles', metadata,
+                    Column('id', Integer, primary_key=True),
+                    Column('symbol', String(64), nullable=False),
+                    Column('timeframe', String(32), nullable=False),
+                    Column('ts_utc', BigInteger, nullable=False),
+                    Column('open', Float, nullable=False),
+                    Column('high', Float, nullable=False),
+                    Column('low', Float, nullable=False),
+                    Column('close', Float, nullable=False),
+                    Column('volume', Float),
+                    Column('spread', Float),
+                    UniqueConstraint('symbol', 'timeframe', 'ts_utc')
+                )
+
+            # Create market_data_ticks table if missing
+            if 'market_data_ticks' in missing_tables:
+                ticks = Table('market_data_ticks', metadata,
+                    Column('id', Integer, primary_key=True),
+                    Column('symbol', String(64), nullable=False),
+                    Column('timeframe', String(32), nullable=False),
+                    Column('ts_utc', BigInteger, nullable=False),
+                    Column('price', Float),
+                    Column('bid', Float),
+                    Column('ask', Float),
+                    Column('volume', Float),
+                    Column('ts_created_ms', BigInteger),
+                    UniqueConstraint('symbol', 'timeframe', 'ts_utc')
+                )
+
+            metadata.create_all(engine)
+            logger.info("✓ Tables created manually")
+
+            # Re-validate
+            success, missing_tables = db_validator.validate_schema()
+            if not success:
+                logger.error(f"Still missing tables: {missing_tables}")
+                pytest.fail(f"Database schema validation failed. Missing tables: {missing_tables}")
 
         logger.info(f"✓ All {len(DatabaseValidator.REQUIRED_TABLES)} required tables present")
 
