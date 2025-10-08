@@ -40,3 +40,37 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> 
     signal_line = ema(macd_line, signal)
     hist = macd_line - signal_line
     return {"macd": macd_line, "signal": signal_line, "hist": hist}
+
+
+def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
+    """
+    Calculate Average True Range (ATR).
+
+    Consolidated from multiple implementations across the codebase.
+    This is the canonical ATR implementation - use this instead of local copies.
+
+    Args:
+        df: DataFrame with 'high', 'low', 'close' columns
+        n: Period for ATR calculation (default 14)
+
+    Returns:
+        Series of ATR values
+    """
+    high = df["high"].astype(float).to_numpy()
+    low = df["low"].astype(float).to_numpy()
+    close = df["close"].astype(float).to_numpy()
+    prev_close = np.roll(close, 1)
+
+    # True Range: max of (high-low, |high-prev_close|, |low-prev_close|)
+    tr = np.maximum(
+        high - low,
+        np.maximum(
+            np.abs(high - prev_close),
+            np.abs(low - prev_close)
+        )
+    )
+    tr[0] = high[0] - low[0]  # First TR is just high-low
+
+    # ATR is EMA of TR
+    atr_series = pd.Series(tr).ewm(span=n, adjust=False).mean()
+    return atr_series
