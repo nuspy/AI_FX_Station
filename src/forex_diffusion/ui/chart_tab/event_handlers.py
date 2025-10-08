@@ -105,6 +105,17 @@ class EventHandlersMixin:
         # Wire pattern checkboxes
         self._wire_pattern_checkboxes()
 
+        # Connect positions table signals (TASK 4)
+        if hasattr(self, 'positions_table'):
+            try:
+                self.positions_table.position_selected.connect(self._on_position_selected)
+                self.positions_table.close_position_requested.connect(self._on_close_position_requested)
+                self.positions_table.modify_sl_requested.connect(self._on_modify_sl_requested)
+                self.positions_table.modify_tp_requested.connect(self._on_modify_tp_requested)
+                logger.info("Positions table signals connected")
+            except Exception as e:
+                logger.warning(f"Failed to connect positions table signals: {e}")
+
     def _connect_mouse_events(self):
         """Connect mouse events for chart interaction."""
         # Mouse events are handled directly by finplot/PyQtGraph
@@ -303,6 +314,217 @@ class EventHandlersMixin:
         if event:
             self._suspend_follow()
         return self.chart_controller.on_scroll_zoom(event=event)
+
+    # Position table event handlers (TASK 4)
+    def _on_position_selected(self, position: dict):
+        """
+        Highlight position entry price on chart when selected from positions table.
+
+        TASK 4: Position Handlers
+        Centers the chart view on the position's entry price.
+        """
+        try:
+            entry_price = position.get('entry_price')
+            if entry_price is None or entry_price == 0:
+                logger.warning("Position has no entry_price")
+                return
+
+            logger.info(f"Position selected: {position.get('symbol')} @ {entry_price}")
+
+            # Center view on entry price
+            if hasattr(self, 'ax') and self.ax:
+                # Get current view range
+                if hasattr(self.ax, 'viewRange'):
+                    view_range = self.ax.viewRange()
+                    y_range = view_range[1][1] - view_range[1][0]
+
+                    # Center on entry price
+                    new_ylim = (entry_price - y_range/2, entry_price + y_range/2)
+
+                    # Apply new view
+                    self.ax.setYRange(new_ylim[0], new_ylim[1], padding=0)
+
+                    logger.debug(f"Centered view on entry price: {entry_price}")
+
+        except Exception as e:
+            logger.exception(f"Failed to handle position selection: {e}")
+
+    def _on_close_position_requested(self, position_id: str):
+        """
+        Close position via trading engine.
+
+        TASK 4: Position Handlers
+        """
+        try:
+            logger.info(f"Close position requested: {position_id}")
+
+            # Try to get trading engine from main window or controller
+            trading_engine = None
+
+            # Method 1: Check if trading_engine is available as attribute
+            if hasattr(self, 'trading_engine'):
+                trading_engine = self.trading_engine
+            # Method 2: Try to get from parent window
+            elif hasattr(self, 'parent') and self.parent():
+                parent = self.parent()
+                if hasattr(parent, 'trading_engine'):
+                    trading_engine = parent.trading_engine
+            # Method 3: Check controller
+            elif hasattr(self, 'chart_controller') and hasattr(self.chart_controller, 'trading_engine'):
+                trading_engine = self.chart_controller.trading_engine
+
+            if trading_engine is None:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Trading Engine Not Available",
+                    "Trading engine is not connected. Cannot close position."
+                )
+                logger.warning("Trading engine not available for closing position")
+                return
+
+            # Close the position
+            success = trading_engine.close_position(position_id)
+
+            if success:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self,
+                    "Position Closed",
+                    f"Position {position_id} closed successfully."
+                )
+                logger.info(f"Position {position_id} closed successfully")
+            else:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Close Failed",
+                    f"Failed to close position {position_id}."
+                )
+                logger.warning(f"Failed to close position {position_id}")
+
+        except Exception as e:
+            logger.exception(f"Error closing position {position_id}: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error closing position: {str(e)}"
+            )
+
+    def _on_modify_sl_requested(self, position_id: str, new_sl: float):
+        """
+        Modify stop loss for a position.
+
+        TASK 4: Position Handlers
+        """
+        try:
+            logger.info(f"Modify SL requested: {position_id} new_sl={new_sl}")
+
+            # Try to get trading engine
+            trading_engine = None
+            if hasattr(self, 'trading_engine'):
+                trading_engine = self.trading_engine
+            elif hasattr(self, 'parent') and self.parent():
+                parent = self.parent()
+                if hasattr(parent, 'trading_engine'):
+                    trading_engine = parent.trading_engine
+            elif hasattr(self, 'chart_controller') and hasattr(self.chart_controller, 'trading_engine'):
+                trading_engine = self.chart_controller.trading_engine
+
+            if trading_engine is None:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Trading Engine Not Available",
+                    "Trading engine is not connected. Cannot modify stop loss."
+                )
+                return
+
+            # Modify stop loss
+            success = trading_engine.modify_stop_loss(position_id, new_sl)
+
+            if success:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self,
+                    "Stop Loss Modified",
+                    f"Stop loss for position {position_id} updated to {new_sl:.5f}"
+                )
+                logger.info(f"Stop loss modified: {position_id} -> {new_sl}")
+            else:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Modification Failed",
+                    f"Failed to modify stop loss for position {position_id}."
+                )
+
+        except Exception as e:
+            logger.exception(f"Error modifying stop loss for {position_id}: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error modifying stop loss: {str(e)}"
+            )
+
+    def _on_modify_tp_requested(self, position_id: str, new_tp: float):
+        """
+        Modify take profit for a position.
+
+        TASK 4: Position Handlers
+        """
+        try:
+            logger.info(f"Modify TP requested: {position_id} new_tp={new_tp}")
+
+            # Try to get trading engine
+            trading_engine = None
+            if hasattr(self, 'trading_engine'):
+                trading_engine = self.trading_engine
+            elif hasattr(self, 'parent') and self.parent():
+                parent = self.parent()
+                if hasattr(parent, 'trading_engine'):
+                    trading_engine = parent.trading_engine
+            elif hasattr(self, 'chart_controller') and hasattr(self.chart_controller, 'trading_engine'):
+                trading_engine = self.chart_controller.trading_engine
+
+            if trading_engine is None:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Trading Engine Not Available",
+                    "Trading engine is not connected. Cannot modify take profit."
+                )
+                return
+
+            # Modify take profit
+            success = trading_engine.modify_take_profit(position_id, new_tp)
+
+            if success:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self,
+                    "Take Profit Modified",
+                    f"Take profit for position {position_id} updated to {new_tp:.5f}"
+                )
+                logger.info(f"Take profit modified: {position_id} -> {new_tp}")
+            else:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Modification Failed",
+                    f"Failed to modify take profit for position {position_id}."
+                )
+
+        except Exception as e:
+            logger.exception(f"Error modifying take profit for {position_id}: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error modifying take profit: {str(e)}"
+            )
 
     # Pattern event handlers - these need to be implemented based on the patterns mixin
     def _on_pick_pattern_artist(self, event):
