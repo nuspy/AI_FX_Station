@@ -887,6 +887,92 @@ class DataService(ChartServiceBase):
             logger.exception("Load candles failed: {}", e)
             return pd.DataFrame()
 
+    def _update_market_quote(self, symbol: str, bid: float, ask: float, ts_ms: int):
+        """
+        Update market watch with bid/ask prices and spread color coding.
+
+        TASK 1: Market Watch Quote Updates
+        Implements spread tracking with color coding:
+        - Green: Spread widening (compared to 10-tick history)
+        - Red: Spread narrowing
+        - Black: Stable (no significant change in 10+ ticks)
+        """
+        try:
+            if not hasattr(self, 'market_watch') or self.market_watch is None:
+                return
+
+            if bid is None or ask is None:
+                return
+
+            # Calculate spread
+            spread = ask - bid
+            spread_pips = spread * 10000  # Assuming EUR/USD-like pair
+
+            # Initialize spread history if needed
+            if not hasattr(self, '_spread_history'):
+                self._spread_history = {}
+
+            # Get or create spread history for this symbol
+            if symbol not in self._spread_history:
+                self._spread_history[symbol] = []
+
+            history = self._spread_history[symbol]
+            history.append(spread)
+
+            # Keep only last 10 spreads
+            if len(history) > 10:
+                history.pop(0)
+
+            # Determine spread color (need at least 10 ticks for stable detection)
+            spread_color = "black"  # Default: stable
+            if len(history) >= 2:
+                recent_avg = sum(history[-3:]) / min(3, len(history[-3:]))
+                older_avg = sum(history[:len(history)-3]) / max(1, len(history[:len(history)-3]))
+
+                if abs(recent_avg - older_avg) > spread * 0.1:  # 10% threshold
+                    if recent_avg > older_avg:
+                        spread_color = "green"  # Widening
+                    else:
+                        spread_color = "red"  # Narrowing
+
+            # Update market watch list widget
+            # Format: "SYMBOL | Bid: X.XXXXX | Ask: X.XXXXX | Spread: X.X pips"
+            display_text = f"{symbol} | Bid: {bid:.5f} | Ask: {ask:.5f} | Spread: {spread_pips:.1f}"
+
+            # Find existing item for this symbol or add new one
+            found = False
+            for i in range(self.market_watch.count()):
+                item = self.market_watch.item(i)
+                if item and item.text().startswith(f"{symbol} |"):
+                    item.setText(display_text)
+                    # Apply color based on spread state
+                    if spread_color == "green":
+                        item.setForeground(Qt.green)
+                    elif spread_color == "red":
+                        item.setForeground(Qt.red)
+                    else:
+                        item.setForeground(Qt.black)
+                    found = True
+                    break
+
+            if not found:
+                # Add new item
+                from PySide6.QtWidgets import QListWidgetItem
+                from PySide6.QtCore import Qt
+                item = QListWidgetItem(display_text)
+                if spread_color == "green":
+                    item.setForeground(Qt.green)
+                elif spread_color == "red":
+                    item.setForeground(Qt.red)
+                else:
+                    item.setForeground(Qt.black)
+                self.market_watch.addItem(item)
+
+            logger.debug(f"Market watch updated: {symbol} bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.1f} color={spread_color}")
+
+        except Exception as e:
+            logger.exception(f"Failed to update market quote for {symbol}: {e}")
+
     def _refresh_orders(self):
         """Pull open orders from broker and refresh the table."""
         try:
