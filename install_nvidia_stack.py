@@ -5,14 +5,16 @@ NVIDIA GPU Acceleration Stack Installer
 This script installs optional NVIDIA dependencies for GPU acceleration:
 - NVIDIA APEX (fused optimizers)
 - Flash Attention 2 (requires Ampere+ GPU)
+- xFormers (memory efficient transformers with PyTorch version matching)
 - NVIDIA DALI (optional data loading acceleration)
 
 Usage:
-    python install_nvidia_stack.py [--apex] [--flash-attn] [--dali] [--all]
+    python install_nvidia_stack.py [--apex] [--flash-attn] [--xformers] [--dali] [--all]
 
 Options:
     --apex         Install NVIDIA APEX (fused optimizers)
     --flash-attn   Install Flash Attention 2 (requires Ampere+ GPU: RTX 30xx/40xx, A100, etc.)
+    --xformers     Install xFormers with version matching installed PyTorch (auto-detects 2.5.x vs 2.7.x)
     --dali         Install NVIDIA DALI (data loading acceleration)
     --all          Install all NVIDIA dependencies
     --check        Check GPU compatibility without installing
@@ -20,6 +22,12 @@ Options:
 Requirements:
     - CUDA 12.x installed
     - For Flash Attention: Ampere or newer GPU (compute capability >= 8.0)
+    - For xFormers: Compatible PyTorch version (2.5.x → xformers 0.0.30, 2.7.x → xformers 0.0.31.post1)
+
+Note on xFormers compatibility:
+    xformers 0.0.31.post1 requires torch==2.7.1 exactly
+    xformers 0.0.30 is compatible with torch 2.5.x
+    This script auto-detects your PyTorch version and installs the correct xformers version.
 """
 
 import sys
@@ -131,6 +139,41 @@ def install_flash_attention():
     return run_command(cmd, "Flash Attention 2")
 
 
+def install_xformers():
+    """Install xFormers with compatible PyTorch version"""
+    print("\n" + "="*60)
+    print("Installing xFormers")
+    print("="*60)
+
+    try:
+        import torch
+        torch_version = torch.__version__.split('+')[0]  # Remove +cu121 suffix
+        print(f"\nDetected PyTorch version: {torch_version}")
+
+        # xformers 0.0.31.post1 requires torch==2.7.1
+        # For older torch versions, we need compatible xformers
+        if torch_version.startswith("2.5"):
+            # Use xformers compatible with torch 2.5.x
+            cmd = "pip install xformers==0.0.30"
+            print(f"Installing xformers 0.0.30 (compatible with PyTorch {torch_version})")
+        elif torch_version.startswith("2.7"):
+            cmd = "pip install xformers==0.0.31.post1"
+            print(f"Installing xformers 0.0.31.post1 (compatible with PyTorch {torch_version})")
+        else:
+            print(f"⚠️  PyTorch {torch_version} detected - installing latest compatible xformers")
+            cmd = "pip install xformers"
+
+        return run_command(cmd, f"xFormers (for PyTorch {torch_version})")
+
+    except ImportError:
+        print("❌ PyTorch not installed - cannot determine compatible xformers version")
+        print("   Please install PyTorch first")
+        return False
+    except Exception as e:
+        print(f"❌ Error determining xformers version: {e}")
+        return False
+
+
 def install_dali():
     """Install NVIDIA DALI"""
     cmd = "pip install --extra-index-url https://pypi.nvidia.com --upgrade nvidia-dali-cuda120"
@@ -146,6 +189,7 @@ def main():
 
     parser.add_argument('--apex', action='store_true', help='Install NVIDIA APEX')
     parser.add_argument('--flash-attn', action='store_true', help='Install Flash Attention 2')
+    parser.add_argument('--xformers', action='store_true', help='Install xFormers (memory efficient transformers)')
     parser.add_argument('--dali', action='store_true', help='Install NVIDIA DALI')
     parser.add_argument('--all', action='store_true', help='Install all NVIDIA dependencies')
     parser.add_argument('--check', action='store_true', help='Check GPU compatibility only')
@@ -181,6 +225,9 @@ def main():
 
     if args.all or args.flash_attn:
         results['Flash Attention'] = install_flash_attention()
+
+    if args.all or args.xformers:
+        results['xFormers'] = install_xformers()
 
     if args.all or args.dali:
         results['DALI'] = install_dali()

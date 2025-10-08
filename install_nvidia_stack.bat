@@ -4,12 +4,13 @@ REM
 REM This script installs optional NVIDIA dependencies for GPU acceleration.
 REM
 REM Usage:
-REM   install_nvidia_stack.bat [check|apex|flash-attn|dali|all]
+REM   install_nvidia_stack.bat [check|apex|flash-attn|xformers|dali|all]
 REM
 REM Options:
 REM   check      - Check GPU compatibility only
 REM   apex       - Install NVIDIA APEX (fused optimizers)
 REM   flash-attn - Install Flash Attention 2 (requires Ampere+ GPU)
+REM   xformers   - Install xFormers (memory efficient transformers)
 REM   dali       - Install NVIDIA DALI (data loading)
 REM   all        - Install all components (default)
 
@@ -41,6 +42,8 @@ if /i "%ACTION%"=="check" (
     set "ARGS=--apex"
 ) else if /i "%ACTION%"=="flash-attn" (
     set "ARGS=--flash-attn"
+) else if /i "%ACTION%"=="xformers" (
+    set "ARGS=--xformers"
 ) else if /i "%ACTION%"=="dali" (
     set "ARGS=--dali"
 ) else if /i "%ACTION%"=="all" (
@@ -48,7 +51,7 @@ if /i "%ACTION%"=="check" (
 ) else (
     echo ERROR: Unknown action "%ACTION%"
     echo.
-    echo Usage: install_nvidia_stack.bat [check^|apex^|flash-attn^|dali^|all]
+    echo Usage: install_nvidia_stack.bat [check^|apex^|flash-attn^|xformers^|dali^|all]
     pause
     exit /b 1
 )
