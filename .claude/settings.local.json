@@ -32,7 +32,8 @@
       "Read(//c//**)",
       "Bash(timeout 20 python tests/test_ctrader_websocket_mock.py)",
       "Bash(alembic downgrade:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(alembic:*)"
     ],
     "deny": [],
     "ask": []
