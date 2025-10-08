@@ -16,6 +16,42 @@ from ...utils.user_settings import get_setting, set_setting
 
 # Import finplot (required)
 import finplot as fplt
+from datetime import datetime
+import pyqtgraph as pg
+
+
+class DateAxisItem(pg.AxisItem):
+    """Custom axis item for displaying timestamps as dates."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.date_format = "YYYY-MM-DD"
+
+    def set_date_format(self, fmt: str):
+        """Set date format from settings (YYYY-MM-DD, DD-MM-YYYY, etc)."""
+        self.date_format = fmt
+
+    def tickStrings(self, values, scale, spacing):
+        """Override to convert timestamps to formatted dates."""
+        strings = []
+        for v in values:
+            try:
+                dt = datetime.fromtimestamp(v)
+                # Convert format from settings to strftime format
+                if self.date_format == "YYYY-MM-DD":
+                    formatted = dt.strftime("%Y-%m-%d %H:%M")
+                elif self.date_format == "YYYY-DD-MM":
+                    formatted = dt.strftime("%Y-%d-%m %H:%M")
+                elif self.date_format == "DD-MM-YYYY":
+                    formatted = dt.strftime("%d-%m-%Y %H:%M")
+                elif self.date_format == "MM-DD-YYYY":
+                    formatted = dt.strftime("%m-%d-%Y %H:%M")
+                else:
+                    formatted = dt.strftime("%Y-%m-%d %H:%M")
+                strings.append(formatted)
+            except:
+                strings.append("")
+        return strings
 
 
 class UIBuilderMixin:
@@ -42,6 +78,12 @@ class UIBuilderMixin:
 
         # Training/Backtest tab (pattern training - restored from commit 11d3627)
         self._create_training_tab()
+
+        # Signals tab
+        self._create_signals_tab()
+
+        # 3D Reports tab
+        self._create_3d_reports_tab()
 
         # Log Monitoring tab moved to top-level (see logs_tab.py)
 
@@ -89,9 +131,19 @@ class UIBuilderMixin:
         self.use_finplot = True  # Flag to use PyQtGraph-based plotting
         self.finplot_axes = []
 
-        # Create initial plot
-        self.main_plot = self.graphics_layout.addPlot(row=0, col=0)
+        # Create custom date axis
+        date_format = get_setting("chart.date_format", "YYYY-MM-DD")
+        self.date_axis = DateAxisItem(orientation='bottom')
+        self.date_axis.set_date_format(date_format)
+
+        # Create initial plot with custom date axis
+        self.main_plot = self.graphics_layout.addPlot(row=0, col=0, axisItems={'bottom': self.date_axis})
         self.finplot_axes.append(self.main_plot)
+
+        # Add active provider label in top-right corner
+        self.provider_label = pg.TextItem(text="Provider: ...", color=(200, 200, 200), anchor=(1, 0))
+        self.main_plot.addItem(self.provider_label)
+        # Position will be updated when data is loaded
 
         chart_container_layout.addWidget(self.graphics_layout)
         self.chart_container = chart_container  # keep reference for overlays
@@ -131,6 +183,46 @@ class UIBuilderMixin:
         self.pattern_training_tab = training_tab  # Keep reference
 
         self.main_tabs.addTab(training_tab, "Training/Backtest")
+
+    def _create_signals_tab(self) -> None:
+        """Create the Signals tab for trading signals analysis"""
+        signals_tab = QWidget()
+        signals_layout = QVBoxLayout(signals_tab)
+        signals_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Header
+        header_label = QLabel("📊 Trading Signals")
+        header_label.setStyleSheet("QLabel { font-size: 16px; font-weight: bold; color: #2c3e50; }")
+        signals_layout.addWidget(header_label)
+
+        # Placeholder content
+        content_label = QLabel("Signals tab - Coming soon")
+        content_label.setStyleSheet("QLabel { color: #7f8c8d; font-size: 14px; }")
+        signals_layout.addWidget(content_label)
+
+        signals_layout.addStretch()
+
+        self.main_tabs.addTab(signals_tab, "Signals")
+
+    def _create_3d_reports_tab(self) -> None:
+        """Create the 3D Reports tab for advanced visualization"""
+        reports_tab = QWidget()
+        reports_layout = QVBoxLayout(reports_tab)
+        reports_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Header
+        header_label = QLabel("📈 3D Reports & Visualization")
+        header_label.setStyleSheet("QLabel { font-size: 16px; font-weight: bold; color: #2c3e50; }")
+        reports_layout.addWidget(header_label)
+
+        # Placeholder content
+        content_label = QLabel("3D Reports tab - Coming soon")
+        content_label.setStyleSheet("QLabel { color: #7f8c8d; font-size: 14px; }")
+        reports_layout.addWidget(content_label)
+
+        reports_layout.addStretch()
+
+        self.main_tabs.addTab(reports_tab, "3D Reports")
 
     def _create_logs_tab(self) -> None:
         """Create the log monitoring tab for system monitoring and missing parameters"""

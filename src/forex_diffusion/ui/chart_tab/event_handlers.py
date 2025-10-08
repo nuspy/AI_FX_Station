@@ -649,7 +649,7 @@ class EventHandlersMixin:
         TASK 6: Splitter Persistence
         """
         try:
-            from ..utils.user_settings import get_setting
+            from ...utils.user_settings import get_setting
 
             # Restore main splitter (horizontal: market watch | chart+orders)
             if hasattr(self, 'main_splitter'):
@@ -682,7 +682,7 @@ class EventHandlersMixin:
         TASK 6: Splitter Persistence
         """
         try:
-            from ..utils.user_settings import set_setting
+            from ...utils.user_settings import set_setting
 
             # Save main splitter
             if hasattr(self, 'main_splitter'):

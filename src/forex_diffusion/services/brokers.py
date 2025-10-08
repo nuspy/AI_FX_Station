@@ -135,24 +135,35 @@ class MetaTraderBroker(BrokerServiceBase):
     def get_open_orders(self) -> List[Dict[str, Any]]:
         return self._fallback.get_open_orders()
 
+class CTraderBroker(BrokerServiceBase):
+    """cTrader broker stub delegating to PaperBroker for now."""
+    def __init__(self):
+        self._fallback = PaperBroker()
+        # Read cTrader settings
+        self.client_id = get_setting("provider.ctrader.client_id", "")
+        self.client_secret = get_setting("provider.ctrader.client_secret", "")
+        self.environment = get_setting("provider.ctrader.environment", "demo")
+        # TODO: Initialize real cTrader client when credentials are available
+
+    def place_order(self, order: Dict[str, Any]) -> Tuple[bool, str]:
+        # TODO: Implement real cTrader order placement
+        logger.info(f"CTrader order (using paper fallback): {order}")
+        return self._fallback.place_order(order)
+
+    def cancel_order(self, order_id: str) -> bool:
+        # TODO: Implement real cTrader order cancellation
+        return self._fallback.cancel_order(order_id)
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        # TODO: Implement real cTrader open orders retrieval
+        return self._fallback.get_open_orders()
+
 def get_broker_service() -> BrokerServiceBase:
     mode = str(get_setting("broker_mode","paper")).lower()
     if mode == "ib":
         return IBroker()
     if mode in ("mt4","mt5","metatrader"):
         return MetaTraderBroker()
+    if mode == "ctrader":
+        return CTraderBroker()
     return PaperBroker()
-    def get_open_orders(self) -> List[Dict[str, Any]]:
-        return [o for o in self._orders.values() if o.get("status") in ("OPEN","PARTIAL")]
-
-class IBroker(BrokerServiceBase):
-    """Interactive Brokers stub. Requires ibapi/ib_insync in a real deployment."""
-    def __init__(self):
-        self._fallback = PaperBroker()
-        # Read settings if available
-        self.host = get_setting("ib_host", "127.0.0.1")
-        self.port = int(get_setting("ib_port", 7497))
-        self.client_id = int(get_setting("ib_client_id", 1))
-        self.username = get_setting("ib_username", "")
-        self.password = get_setting("ib_password", "")
-        # TODO: initialize real client if libraries available

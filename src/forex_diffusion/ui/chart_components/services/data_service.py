@@ -26,6 +26,10 @@ class DataService(ChartServiceBase):
             if not isinstance(payload, dict):
                 return
             sym = payload.get("symbol") or getattr(self, "symbol", None)
+
+            # Update active provider label (get from settings)
+            self._update_provider_label()
+
             # Market watch update
             try:
                 if sym:
@@ -1087,3 +1091,31 @@ class DataService(ChartServiceBase):
 
         except Exception as e:
             logger.exception(f"Failed to toggle order lines: {e}")
+
+    def _update_provider_label(self):
+        """Update the active provider label on the chart from settings."""
+        try:
+            if hasattr(self, 'provider_label') and self.provider_label is not None:
+                from ...utils.user_settings import get_setting
+
+                # Get active provider from settings (primary, fallback to secondary)
+                primary = get_setting("primary_data_provider", "tiingo")
+                secondary = get_setting("secondary_data_provider", "none")
+
+                # Determine which is actually used (primary if available, else secondary)
+                # For now, show primary (can be enhanced with connection status check)
+                provider_name = primary if primary else secondary
+
+                # Update text
+                self.provider_label.setText(f"Provider: {provider_name.upper()}")
+
+                # Update position to top-right corner
+                if hasattr(self, 'main_plot') and self.main_plot is not None:
+                    view_range = self.main_plot.viewRange()
+                    if view_range and len(view_range) == 2:
+                        x_range, y_range = view_range
+                        # Position at top-right: max_x, max_y
+                        self.provider_label.setPos(x_range[1], y_range[1])
+
+        except Exception as e:
+            logger.debug(f"Failed to update provider label: {e}")

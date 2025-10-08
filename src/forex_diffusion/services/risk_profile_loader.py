@@ -247,3 +247,154 @@ class RiskProfileLoader:
             recovery_mode_threshold_pct=5.0,
             recovery_risk_multiplier=0.5,
         )
+
+    def create_profile(self, profile_data: Dict[str, Any]) -> bool:
+        """
+        Create a new risk profile.
+
+        Args:
+            profile_data: Dict with profile settings
+
+        Returns:
+            True if successful, False otherwise
+        """
+        session: Session = self.SessionLocal()
+        try:
+            # Check if profile already exists
+            existing = session.query(RiskProfile).filter(
+                RiskProfile.profile_name == profile_data['profile_name']
+            ).first()
+
+            if existing:
+                logger.error(f"Profile '{profile_data['profile_name']}' already exists")
+                raise ValueError(f"Profile '{profile_data['profile_name']}' already exists")
+
+            # Create new profile with defaults for missing fields
+            new_profile = RiskProfile(
+                profile_name=profile_data['profile_name'],
+                profile_type=profile_data.get('profile_type', 'custom'),
+                max_risk_per_trade_pct=profile_data.get('risk_per_trade', 1.0),
+                max_portfolio_risk_pct=profile_data.get('max_portfolio_risk', 5.0),
+                position_sizing_method=profile_data.get('position_sizing_method', 'kelly'),
+                kelly_fraction=profile_data.get('kelly_fraction', 0.25),
+                base_sl_atr_multiplier=profile_data.get('stop_loss_atr_multiplier', 2.0),
+                base_tp_atr_multiplier=profile_data.get('take_profit_atr_multiplier', 3.0),
+                use_trailing_stop=profile_data.get('use_trailing_stop', True),
+                trailing_activation_pct=profile_data.get('trailing_activation_pct', 50.0),
+                regime_adjustment_enabled=profile_data.get('regime_adjustment_enabled', True),
+                volatility_adjustment_enabled=profile_data.get('volatility_adjustment_enabled', True),
+                news_awareness_enabled=profile_data.get('news_awareness_enabled', True),
+                max_correlated_positions=profile_data.get('max_correlated_positions', 2),
+                correlation_threshold=profile_data.get('correlation_threshold', 0.7),
+                max_positions_per_symbol=profile_data.get('max_positions_per_symbol', 2),
+                max_total_positions=profile_data.get('max_total_positions', 5),
+                max_daily_loss_pct=profile_data.get('max_daily_loss_pct', 2.0),
+                max_drawdown_pct=profile_data.get('max_drawdown_percent', 10.0),
+                recovery_mode_threshold_pct=profile_data.get('recovery_mode_threshold_pct', 5.0),
+                recovery_risk_multiplier=profile_data.get('recovery_risk_multiplier', 0.5),
+                is_active=False
+            )
+
+            session.add(new_profile)
+            session.commit()
+
+            logger.info(f"✅ Created risk profile: {profile_data['profile_name']}")
+            return True
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to create profile: {e}")
+            raise
+        finally:
+            session.close()
+
+    def update_profile(self, profile_name: str, profile_data: Dict[str, Any]) -> bool:
+        """
+        Update an existing risk profile.
+
+        Args:
+            profile_name: Name of profile to update
+            profile_data: Dict with updated settings
+
+        Returns:
+            True if successful, False otherwise
+        """
+        session: Session = self.SessionLocal()
+        try:
+            profile = session.query(RiskProfile).filter(
+                RiskProfile.profile_name == profile_name
+            ).first()
+
+            if not profile:
+                logger.error(f"Profile '{profile_name}' not found")
+                raise ValueError(f"Profile '{profile_name}' not found")
+
+            # Update fields
+            if 'profile_type' in profile_data:
+                profile.profile_type = profile_data['profile_type']
+            if 'risk_per_trade' in profile_data:
+                profile.max_risk_per_trade_pct = profile_data['risk_per_trade']
+            if 'max_portfolio_risk' in profile_data:
+                profile.max_portfolio_risk_pct = profile_data['max_portfolio_risk']
+            if 'position_sizing_method' in profile_data:
+                profile.position_sizing_method = profile_data['position_sizing_method']
+            if 'kelly_fraction' in profile_data:
+                profile.kelly_fraction = profile_data['kelly_fraction']
+            if 'stop_loss_atr_multiplier' in profile_data:
+                profile.base_sl_atr_multiplier = profile_data['stop_loss_atr_multiplier']
+            if 'take_profit_atr_multiplier' in profile_data:
+                profile.base_tp_atr_multiplier = profile_data['take_profit_atr_multiplier']
+            if 'max_total_positions' in profile_data:
+                profile.max_total_positions = profile_data['max_total_positions']
+            if 'max_drawdown_percent' in profile_data:
+                profile.max_drawdown_pct = profile_data['max_drawdown_percent']
+
+            session.commit()
+
+            logger.info(f"✅ Updated risk profile: {profile_name}")
+            return True
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to update profile: {e}")
+            raise
+        finally:
+            session.close()
+
+    def delete_profile(self, profile_name: str) -> bool:
+        """
+        Delete a risk profile.
+
+        Args:
+            profile_name: Name of profile to delete
+
+        Returns:
+            True if successful, False otherwise
+        """
+        session: Session = self.SessionLocal()
+        try:
+            profile = session.query(RiskProfile).filter(
+                RiskProfile.profile_name == profile_name
+            ).first()
+
+            if not profile:
+                logger.error(f"Profile '{profile_name}' not found")
+                raise ValueError(f"Profile '{profile_name}' not found")
+
+            # Prevent deleting active profile
+            if profile.is_active:
+                logger.error(f"Cannot delete active profile '{profile_name}'")
+                raise ValueError(f"Cannot delete active profile. Please activate another profile first.")
+
+            session.delete(profile)
+            session.commit()
+
+            logger.info(f"✅ Deleted risk profile: {profile_name}")
+            return True
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to delete profile: {e}")
+            raise
+        finally:
+            session.close()
