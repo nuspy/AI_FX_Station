@@ -132,6 +132,123 @@ class TestE2EComplete:
                     UniqueConstraint('symbol', 'timeframe', 'ts_utc')
                 )
 
+            # Create pattern tables if missing
+            if any(t in missing_tables for t in ['pattern_defs', 'pattern_benchmarks', 'pattern_events']):
+                if 'pattern_defs' in missing_tables:
+                    Table('pattern_defs', metadata,
+                        Column('key', String(64), primary_key=True),
+                        Column('family', String(64)),
+                        Column('kind', String(16), nullable=False),
+                        Column('name', String(128), nullable=False),
+                        Column('effect', String(32)),
+                        Column('dsl_json', String),
+                        Column('image_res', String(256)),
+                        Column('links_json', String)
+                    )
+
+                if 'pattern_benchmarks' in missing_tables:
+                    Table('pattern_benchmarks', metadata,
+                        Column('id', Integer, primary_key=True),
+                        Column('key', String(64), nullable=False),
+                        Column('performance_rank', String(64)),
+                        Column('breakeven_failure_rate', String(64)),
+                        Column('average_rise', String(64)),
+                        Column('change_after_trend_ends', String(64)),
+                        Column('volume_trend', String(64)),
+                        Column('throwbacks', String(64)),
+                        Column('pct_meet_target', String(64)),
+                        Column('surprising_findings', String),
+                        Column('bull_notes', String),
+                        Column('bear_notes', String)
+                    )
+
+                if 'pattern_events' in missing_tables:
+                    Table('pattern_events', metadata,
+                        Column('id', Integer, primary_key=True),
+                        Column('key', String(64), nullable=False),
+                        Column('symbol', String(32), nullable=False),
+                        Column('timeframe', String(16), nullable=False),
+                        Column('start_ts', BigInteger, nullable=False),
+                        Column('confirm_ts', BigInteger, nullable=False),
+                        Column('direction', String(8)),
+                        Column('kind', String(16), nullable=False),
+                        Column('state', String(16), nullable=False),
+                        Column('score', Float),
+                        Column('scale_atr', Float),
+                        Column('bars_span', Integer),
+                        Column('target_price', Float),
+                        Column('horizon_bars', Integer),
+                        Column('overlay_json', String)
+                    )
+
+            # Create backtest tables if missing
+            if any(t in missing_tables for t in ['bt_job', 'bt_config', 'bt_result', 'bt_trace']):
+                if 'bt_job' in missing_tables:
+                    Table('bt_job', metadata,
+                        Column('id', Integer, primary_key=True),
+                        Column('created_at', Integer, nullable=False),
+                        Column('status', String(32), nullable=False),
+                        Column('user_id', String(64)),
+                        Column('timezone', String(64)),
+                        Column('market_calendar', String(64))
+                    )
+
+                if 'bt_config' in missing_tables:
+                    Table('bt_config', metadata,
+                        Column('id', Integer, primary_key=True),
+                        Column('job_id', Integer),
+                        Column('fingerprint', String(64), nullable=False, unique=True),
+                        Column('payload_json', String, nullable=False),
+                        Column('dropped', Integer, nullable=False),
+                        Column('drop_reason', String(64)),
+                        Column('started_at', Integer),
+                        Column('ended_at', Integer),
+                        Column('horizons_raw', String),
+                        Column('horizons_sec', String),
+                        Column('start_ts', Integer),
+                        Column('end_ts', Integer),
+                        Column('interval_type', String(16)),
+                        Column('time_filter_json', String),
+                        Column('walkforward_json', String)
+                    )
+
+                if 'bt_result' in missing_tables:
+                    Table('bt_result', metadata,
+                        Column('id', Integer, primary_key=True),
+                        Column('config_id', Integer, nullable=False),
+                        Column('adherence_mean', Float),
+                        Column('adherence_std', Float),
+                        Column('p10', Float),
+                        Column('p25', Float),
+                        Column('p50', Float),
+                        Column('p75', Float),
+                        Column('p90', Float),
+                        Column('win_rate_delta', Float),
+                        Column('delta_used', Float),
+                        Column('skill_rw', Float),
+                        Column('coverage_observed', Float),
+                        Column('coverage_target', Float),
+                        Column('coverage_abs_error', Float),
+                        Column('band_efficiency', Float),
+                        Column('n_points', Integer),
+                        Column('cv_horizons', Float),
+                        Column('cv_time', Float),
+                        Column('robustness_index', Float),
+                        Column('complexity_penalty', Float),
+                        Column('composite_score', Float),
+                        Column('horizon_profile_json', String),
+                        Column('time_profile_json', String),
+                        Column('coverage_ratio', Float)
+                    )
+
+                if 'bt_trace' in missing_tables:
+                    Table('bt_trace', metadata,
+                        Column('id', Integer, primary_key=True),
+                        Column('config_id', Integer, nullable=False),
+                        Column('slice_idx', Integer, nullable=False),
+                        Column('payload_json', String, nullable=False)
+                    )
+
             metadata.create_all(engine)
             logger.info("✓ Tables created manually")
 
