@@ -133,6 +133,16 @@ nvidia = [
                            # PyTorch 2.5.x → xformers==0.0.30
                            # PyTorch 2.7.x → xformers==0.0.31.post1
                            # Use install_nvidia_stack.py --xformers for auto-versioning
+  # NOTE: The following require compilation and are installed via install_nvidia_stack.py
+  # APEX - Install separately (requires C++ compiler):
+  #   python install_nvidia_stack.py --apex
+  #   Manual: pip install -v --no-cache-dir --no-build-isolation git+https://github.com/NVIDIA/apex.git
+  # Flash Attention 2 - Install separately (requires Ampere+ GPU, compute capability >= 8.0):
+  #   python install_nvidia_stack.py --flash-attn
+  #   Manual: pip install flash-attn --no-build-isolation
+  # NVIDIA DALI - Install via WSL on Windows (Linux only package):
+  #   wsl python install_nvidia_stack.py --dali
+  #   Manual (Linux/WSL): pip install --extra-index-url https://pypi.nvidia.com nvidia-dali-cuda120
 ]
 
 # Development and testing dependencies
@@ -143,6 +153,16 @@ dev = [
   "pytest-asyncio>=0.21.0",
   "black>=23.0.0",
   "ruff>=0.1.0",
+]
+
+# Full NVIDIA stack (nvidia + compiled components via installer)
+# Install with: pip install -e ".[nvidia-full]" && python install_nvidia_stack.py --all
+# This installs: nvidia-ml-py, xformers, APEX, Flash Attention, DALI (WSL)
+nvidia-full = [
+  "nvidia-ml-py>=12.0.0",
+  "xformers>=0.0.30",
+  # After pip install, run: python install_nvidia_stack.py --all
+  # This will compile and install: APEX, Flash Attention 2, DALI (WSL)
 ]
 
 # Install everything (recommended for full development setup)
