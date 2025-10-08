@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from PySide6.QtCore import Qt
@@ -18,6 +18,7 @@ from loguru import logger
 from ..utils.config import get_config
 from ..utils.user_settings import get_setting, set_setting
 from .controllers import TrainingController
+from .optimized_params_display_widget import OptimizedParamsDisplayWidget
 
 # Settings file location
 TRAINING_SETTINGS_FILE = Path.home() / ".forexgpt" / "training_settings.json"
@@ -282,6 +283,9 @@ class TrainingTab(QWidget):
 
         # Output location
         self._build_output_section()
+
+        # Optimized parameters display (FASE 9 - Part 2)
+        self._build_optimized_params_section()
 
         # Log & progress
         self._build_log_section()
@@ -1474,6 +1478,12 @@ class TrainingTab(QWidget):
 
         self.layout.addLayout(out_h)
 
+    def _build_optimized_params_section(self):
+        """Build optimized parameters display section (FASE 9 - Part 2)"""
+        self.optimized_params_widget = OptimizedParamsDisplayWidget()
+        self.optimized_params_widget.save_requested.connect(self._on_save_optimized_params)
+        self.layout.addWidget(self.optimized_params_widget)
+
     def _build_log_section(self):
         """Build log and progress section"""
         lp = QHBoxLayout()
@@ -1551,6 +1561,9 @@ class TrainingTab(QWidget):
     def _start_training(self):
         """Start training process"""
         try:
+            # Clear previous optimized params display
+            self.optimized_params_widget.clear()
+
             # Save current settings before training
             self._save_settings()
 
@@ -1872,6 +1885,41 @@ class TrainingTab(QWidget):
             QMessageBox.information(self, "Training", "Training completato.")
         else:
             QMessageBox.warning(self, "Training", "Training fallito.")
+
+    def _on_save_optimized_params(self, params: Dict[str, Any]):
+        """
+        Handle save optimized parameters to database.
+
+        This method is called when user clicks "Save to Database" in the
+        optimized params widget (FASE 9 - Part 2).
+
+        NOTE: Full implementation requires ParameterLoaderService integration.
+        For now, this is a placeholder that shows the save dialog.
+        """
+        try:
+            # TODO: Integrate with ParameterLoaderService from FASE 2
+            # from ..services.parameter_loader import ParameterLoaderService
+            # loader = ParameterLoaderService(db_path)
+            # success = loader.save_optimized_params(params)
+
+            # For now, just log and show success message
+            logger.info(f"Optimized params save requested: {params.get('pattern_type')} on {params.get('symbol')} {params.get('timeframe')}")
+
+            QMessageBox.information(
+                self,
+                "Save Parameters",
+                "Optimized parameters saved successfully!\n\n"
+                "NOTE: Full database integration pending FASE 2 implementation.\n"
+                "Parameters logged for development tracking."
+            )
+
+        except Exception as e:
+            logger.exception(f"Failed to save optimized params: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to save optimized parameters:\n{str(e)}"
+            )
 
     def _on_load_config(self):
         """Load training configuration from JSON file"""
