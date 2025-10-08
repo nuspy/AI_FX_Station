@@ -4,8 +4,8 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 from loguru import logger
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtWidgets import QMessageBox, QTableWidgetItem, QListWidgetItem
 
 from .base import ChartServiceBase
 
@@ -957,8 +957,6 @@ class DataService(ChartServiceBase):
 
             if not found:
                 # Add new item
-                from PySide6.QtWidgets import QListWidgetItem
-                from PySide6.QtCore import Qt
                 item = QListWidgetItem(display_text)
                 if spread_color == "green":
                     item.setForeground(Qt.green)
