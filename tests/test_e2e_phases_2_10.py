@@ -66,10 +66,14 @@ class TestE2EPhasesAdvanced:
 
         # Generate mock ticks
         for i in range(120):  # 1 tick per second for 2 minutes
+            bid = 1.0850 + np.random.uniform(-0.0005, 0.0005)
+            spread = np.random.uniform(0.00015, 0.00025)  # 1.5-2.5 pips
+            ask = bid + spread
+
             tick = {
                 'timestamp': int((datetime.now() + timedelta(seconds=i)).timestamp() * 1000),
-                'bid': 1.0850 + np.random.uniform(-0.0005, 0.0005),
-                'ask': 1.0852 + np.random.uniform(-0.0005, 0.0005),
+                'bid': bid,
+                'ask': ask,
                 'volume': np.random.randint(10, 100)
             }
             collected_ticks.append(tick)
