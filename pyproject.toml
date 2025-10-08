@@ -72,6 +72,11 @@ dependencies = [
   # PyTorch Lightning already included above
   "pytorch-lightning>=2.0.0",  # Training framework
   "pynvml>=11.5.0",           # NVIDIA Management Library for GPU detection
+  # xFormers - install with version matching (OPTIONAL but RECOMMENDED):
+  # pip install xformers>=0.0.30  # For PyTorch 2.5.x → use xformers==0.0.30
+  #                               # For PyTorch 2.7.x → use xformers==0.0.31.post1
+  # Auto-install with: python install_nvidia_stack.py --xformers (detects PyTorch version)
+  # Or install manually: pip install -e ".[nvidia]" (includes xformers)
   # APEX (NVIDIA fused optimizers) - install separately:
   # pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" git+https://github.com/NVIDIA/apex.git
   # Flash Attention 2 - install separately (requires Ampere+ GPU):
@@ -124,12 +129,17 @@ fx-train-lightning = "forex_diffusion.training.train:main"
 # Or use automated installer: python install_nvidia_stack.py --all
 nvidia = [
   "nvidia-ml-py>=12.0.0",  # NVIDIA ML Python bindings for GPU monitoring
+  "xformers>=0.0.30",      # Memory efficient transformers (version depends on PyTorch version)
+                           # PyTorch 2.5.x → xformers==0.0.30
+                           # PyTorch 2.7.x → xformers==0.0.31.post1
+                           # Use install_nvidia_stack.py --xformers for auto-versioning
 ]
 
 # Development and testing dependencies
 # Install with: pip install -e ".[dev]"
 dev = [
   "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
   "pytest-asyncio>=0.21.0",
   "black>=23.0.0",
   "ruff>=0.1.0",
@@ -139,6 +149,7 @@ dev = [
 # Install with: pip install -e ".[all]"
 all = [
   "nvidia-ml-py>=12.0.0",
+  "xformers>=0.0.30",
   "pytest>=7.0.0",
   "pytest-asyncio>=0.21.0",
   "black>=23.0.0",
