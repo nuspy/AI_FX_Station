@@ -10,22 +10,22 @@
 
 This report documents the complete implementation of the Enhanced Trading System as specified in `SPECS\AutoTrading_lacks_impl.txt`. The implementation adds advanced risk management, position sizing, and performance analytics to the ForexGPT trading platform.
 
-**Overall Status**: 9/11 phases complete (81.8%)
+**Overall Status**: 10/11 phases complete (90.9%)
 
-### Completed Components (9)
+### Completed Components (10)
 - ✅ Database schema and migrations (FASE 1)
 - ✅ Parameter loading service (FASE 2)
 - ✅ Adaptive stop loss management (FASE 3)
 - ✅ Advanced position sizing (FASE 4)
+- ✅ GUI positions table (FASE 5) - **NEWLY COMPLETED**
 - ✅ Advanced metrics calculator (FASE 6)
 - ✅ Backtest integration (FASE 7)
 - ✅ Risk profile system (FASE 8)
 - ✅ Code consolidation and testing (FASE 10)
 - ✅ Documentation (FASE 11 - this report)
 
-### Pending Components (2)
-- ⏸️ GUI positions table (FASE 5) - requires GUI expertise
-- ⏸️ GUI extensions (FASE 9) - requires GUI expertise
+### Pending Components (1)
+- ⏸️ GUI extensions (FASE 9) - Settings/Training/Dialog enhancements
 
 All backend systems are **production-ready** and fully integrated with the existing trading engine.
 
@@ -329,42 +329,98 @@ Position size: ($10,000 × 0.10) / $30 = 33.33 units
 
 ---
 
-## FASE 5: GUI Positions Table ⏸️ PENDING
+## FASE 5: GUI Positions Table ✅ COMPLETE
 
-### Status: NOT IMPLEMENTED
+### Implementation Details
 
-**Reason**: Requires PySide6/Qt GUI expertise. All backend systems are ready for integration.
+**Files**:
+1. `src/forex_diffusion/ui/positions_table_widget.py` (399 lines) - New widget
+2. `src/forex_diffusion/ui/chart_tab.py` (modified) - Integration
 
-**Required Implementation**:
+**Core Features**:
 
-1. **Chart Tab Modification** (`src/forex_diffusion/ui/chart_tab.py`):
-   - Add vertical splitter (`QSplitter`) with orientation Qt.Vertical
-   - Upper section: Existing chart (70% height)
-   - Lower section: Positions table (30% height)
+1. **PositionsTableWidget** - Real-time position display
+   - **12 Columns**:
+     - Symbol, Direction (▲ long/▼ short), Size, Entry Price, Current Price
+     - P&L ($), P&L (%), Stop Loss, Take Profit
+     - Duration (formatted: seconds → days/hours), R:R Ratio, Trailing (✓/✗)
 
-2. **PositionsTableWidget** (new class):
-   - Columns (12):
-     - Symbol, Direction (▲/▼), Size, Entry, Current, P&L ($), P&L (%)
-     - Stop Loss, Take Profit, Duration, R:R, Trailing (✓/✗)
-   - Features:
-     - Real-time updates via signals/slots
-     - Color coding: Green (profit >1%), Red (loss <-1%), Yellow (at risk)
-     - Context menu: Close Position, Modify SL/TP, Add to Position, View Details
-     - Double-click: Highlight on chart, center view
-     - Sort by any column
+   - **Color Coding**:
+     - Green (light): Profit >1%
+     - Green (very light): Small profit 0-1%
+     - Red (very light): Small loss 0 to -1%
+     - Red (light): Loss <-1%
 
-3. **Data Pipeline**:
-   - Connect to `AutomatedTradingEngine.get_open_positions()`
-   - Signal: `position_opened`, `position_updated`, `position_closed`
-   - Update frequency: 1 second (configurable)
+   - **Auto-Refresh**: Updates every 1 second via QTimer
 
-**Backend Ready**:
-- ✅ `Position` dataclass includes all required fields
-- ✅ `AutomatedTradingEngine.get_open_positions()` returns list of positions
-- ✅ Real-time P&L calculation available
-- ✅ Position updates tracked in engine
+   - **Data Source**: `AutomatedTradingEngine.get_open_positions()`
 
-**Estimated Effort**: 2-3 days for Qt expert
+2. **Context Menu** (Right-click):
+   - Close Position (with confirmation dialog)
+   - Modify Stop Loss (input dialog with validation)
+   - Modify Take Profit (input dialog with validation)
+   - Add to Position (placeholder)
+   - View Details (shows all position fields)
+
+3. **Chart Integration**:
+   - **Double-click**: Centers chart on entry price
+   - **Highlight**: Adjusts Y-axis to focus on position entry level
+   - **Signal**: `position_selected` emitted with full position data
+
+4. **Chart Tab Layout**:
+   - **Vertical Splitter** (`chart_positions_splitter`):
+     - Upper: Chart canvas (70% height, stretch factor 7)
+     - Lower: Positions table (30% height, stretch factor 3)
+   - **Resizable**: User can drag splitter handle
+   - **Preserves**: All existing chart functionality intact
+
+**Signal Handlers**:
+```python
+# ChartTab methods
+def set_trading_engine(engine):  # Connect trading engine
+def _on_position_selected(position):  # Highlight on chart
+def _on_close_position_requested(position_id):  # Close position
+def _on_modify_sl_requested(position_id, new_sl):  # Modify SL
+def _on_modify_tp_requested(position_id, new_tp):  # Modify TP
+```
+
+**Helper Methods**:
+- `_get_pnl_color(pnl_pct)`: Returns QColor based on P&L %
+- `_format_duration(seconds)`: Converts seconds to readable format (e.g., "2h 15m", "3d 5h")
+- `_calculate_rr(position)`: Calculates Risk/Reward ratio from entry/SL/TP
+- `_populate_row(row, position)`: Populates table row with position data
+
+**Integration Points**:
+- ✅ Connected to trading engine via `set_trading_engine()`
+- ✅ Signals connected in `ChartTab._connect_ui_signals()`
+- ✅ Handlers implemented for all position operations
+- ✅ Fallback logic if trading engine not available
+
+**Table Settings**:
+- Selection: Single row, full row selection
+- Edit mode: Read-only (no direct editing)
+- Alternating row colors: Enabled for readability
+- Header resize: ResizeToContents for most, Stretch for P&L columns
+- Sorting: Enabled by default (click headers)
+
+**Usage Example**:
+```python
+# In main window or controller
+chart_tab = ChartTab(parent=self)
+
+# Connect trading engine
+if hasattr(self, 'trading_engine'):
+    chart_tab.set_trading_engine(self.trading_engine)
+
+# Positions will auto-update every 1 second
+# User interactions handled automatically
+```
+
+**Testing**:
+- Manual testing: Widget creation, signal emission
+- Integration testing: Pending (requires live trading engine)
+
+**Commit**: `cb9a9ed` - Positions table widget implementation
 
 ---
 
@@ -936,14 +992,14 @@ e) **Buttons**:
    - Backward compatible (new features opt-in)
 
 **Code Statistics**:
-- New Python files: 6
-- Modified Python files: 2
+- New Python files: 7 (added: positions_table_widget.py)
+- Modified Python files: 3 (added: chart_tab.py modifications)
 - Migration files: 1
 - Test files: 1
-- Total new lines: ~2,800
-- Total commits: 9
+- Total new lines: ~3,350 (+550 for positions table widget and integration)
+- Total commits: 10
 
-**Commit**: `aa08bca` - Integration tests
+**Latest Commit**: `cb9a9ed` - Positions table widget (FASE 5)
 
 ---
 
@@ -969,6 +1025,7 @@ This comprehensive final report documents:
 All work committed with descriptive messages following best practices:
 
 ```
+cb9a9ed - feat: Add positions table widget in Chart Tab (FASE 5)
 aa08bca - test: Add comprehensive integration tests for new trading system components
 534d596 - feat: Add backtest integration with adaptive position sizing strategy
 386b94a - feat: Add risk profile system with predefined profiles (Conservative/Moderate/Aggressive)
@@ -1332,24 +1389,24 @@ pytest tests/test_new_trading_integration.py -v
 
 ### Summary
 
-This implementation successfully delivers **9 out of 11 phases (81.8%)** of the Enhanced Trading System specification. All core backend systems are **production-ready**:
+This implementation successfully delivers **10 out of 11 phases (90.9%)** of the Enhanced Trading System specification. All core backend systems are **production-ready** and the main GUI component is complete:
 
 **✅ Fully Operational**:
 - Database schema with 3 new tables (optimized_parameters, risk_profiles, advanced_metrics)
 - Intelligent parameter loading with 4-level fallback and caching
 - Multi-factor adaptive stop loss management with trailing stops
 - Advanced position sizing (Kelly Criterion, Optimal f, Fixed, Volatility)
+- **Real-time positions table widget with P&L tracking** (FASE 5 - newly completed)
 - Comprehensive performance metrics calculator (35+ indicators)
 - Risk profile system with 3 predefined profiles (Conservative, Moderate, Aggressive)
 - Complete backtest integration with adaptive position sizing
 - Integration testing suite covering all components
 
-**⏸️ Pending GUI Work**:
-- Positions table in Chart Tab (FASE 5)
-- Risk profile selector in Settings (FASE 9)
-- Parameter display in Training Tab (FASE 9)
-- Pre-trade calculations dialog (FASE 9)
-- Main window status bar extensions (FASE 9)
+**⏸️ Pending GUI Work** (FASE 9 only):
+- Risk profile selector in Settings
+- Parameter display in Training Tab
+- Pre-trade calculations dialog
+- Main window status bar extensions
 
 ### Production Readiness: ✅ YES
 
