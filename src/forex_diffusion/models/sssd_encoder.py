@@ -13,6 +13,13 @@ from loguru import logger
 
 from .s4_layer import StackedS4
 
+# Try to use Flash Attention for optimized cross-attention
+try:
+    from forex_diffusion.training.flash_attention import FlashAttentionWrapper
+    FLASH_ATTENTION_AVAILABLE = True
+except ImportError:
+    FLASH_ATTENTION_AVAILABLE = False
+
 
 class MultiScaleEncoder(nn.Module):
     """
@@ -68,12 +75,23 @@ class MultiScaleEncoder(nn.Module):
         })
 
         # Cross-timeframe multi-head attention
-        self.cross_attention = nn.MultiheadAttention(
-            embed_dim=feature_dim,
-            num_heads=attention_heads,
-            dropout=attention_dropout,
-            batch_first=True
-        )
+        # Use Flash Attention if available for 30-50% speedup on Ampere+ GPUs
+        if FLASH_ATTENTION_AVAILABLE:
+            self.cross_attention = FlashAttentionWrapper(
+                embed_dim=feature_dim,
+                num_heads=attention_heads,
+                dropout=attention_dropout,
+                batch_first=True
+            )
+            logger.info("Using Flash Attention for cross-timeframe attention (GPU optimized)")
+        else:
+            self.cross_attention = nn.MultiheadAttention(
+                embed_dim=feature_dim,
+                num_heads=attention_heads,
+                dropout=attention_dropout,
+                batch_first=True
+            )
+            logger.info("Using standard PyTorch attention (Flash Attention not available)")
 
         # Fusion MLP
         # Input: concatenated attended representations from all timeframes
