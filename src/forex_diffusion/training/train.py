@@ -262,7 +262,7 @@ def main() -> None:
             precision=precision_map.get(args.precision, PrecisionMode.FP16),
             compile_model=args.compile_model or args.use_nvidia_opts,
             compile_mode=CompileMode.DEFAULT,
-            use_fused_optimizer=args.use_fused_optimizer or args.use_nvidia_opts,
+            use_fused_optimizer=True,  # Always use APEX fused optimizer if available (5-15% speedup)
             use_flash_attention=args.use_flash_attention,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             use_channels_last=True,  # Generally beneficial for CNNs
