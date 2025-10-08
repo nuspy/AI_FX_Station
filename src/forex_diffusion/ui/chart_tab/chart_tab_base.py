@@ -151,6 +151,10 @@ class ChartTabUI(
         self._setup_timers()
         self._connect_mouse_events()
 
+        # Connect splitter signals and restore positions (TASK 6)
+        self._connect_splitter_signals()
+        self._restore_splitters()
+
         # Apply theme
         if theme_combo := getattr(self, "theme_combo", None):
             self._apply_theme(theme_combo.currentText())

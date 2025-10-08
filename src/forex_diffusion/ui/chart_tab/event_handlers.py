@@ -559,3 +559,94 @@ class EventHandlersMixin:
     def _schedule_view_reload(self):
         """Schedule a view reload."""
         return self.chart_controller.schedule_view_reload()
+
+    def _restore_splitters(self):
+        """
+        Restore splitter positions from saved settings.
+
+        TASK 6: Splitter Persistence
+        """
+        try:
+            from ..utils.user_settings import get_setting
+
+            # Restore main splitter (horizontal: market watch | chart+orders)
+            if hasattr(self, 'main_splitter'):
+                sizes = get_setting('chart.main_splitter_sizes', None)
+                if sizes and isinstance(sizes, list) and len(sizes) == 2:
+                    self.main_splitter.setSizes(sizes)
+                    logger.debug(f"Restored main splitter sizes: {sizes}")
+
+            # Restore right splitter (vertical: chart | orders)
+            if hasattr(self, 'right_splitter'):
+                sizes = get_setting('chart.right_splitter_sizes', None)
+                if sizes and isinstance(sizes, list) and len(sizes) >= 2:
+                    self.right_splitter.setSizes(sizes)
+                    logger.debug(f"Restored right splitter sizes: {sizes}")
+
+            # Restore chart area splitter (vertical: drawbar | chart)
+            if hasattr(self, '_chart_area') and hasattr(self._chart_area, 'sizes'):
+                sizes = get_setting('chart.chart_area_splitter_sizes', None)
+                if sizes and isinstance(sizes, list) and len(sizes) >= 2:
+                    self._chart_area.setSizes(sizes)
+                    logger.debug(f"Restored chart area splitter sizes: {sizes}")
+
+        except Exception as e:
+            logger.exception(f"Failed to restore splitter positions: {e}")
+
+    def _persist_splitter_positions(self):
+        """
+        Save splitter positions to settings.
+
+        TASK 6: Splitter Persistence
+        """
+        try:
+            from ..utils.user_settings import set_setting
+
+            # Save main splitter
+            if hasattr(self, 'main_splitter'):
+                sizes = self.main_splitter.sizes()
+                set_setting('chart.main_splitter_sizes', sizes)
+                logger.debug(f"Saved main splitter sizes: {sizes}")
+
+            # Save right splitter
+            if hasattr(self, 'right_splitter'):
+                sizes = self.right_splitter.sizes()
+                set_setting('chart.right_splitter_sizes', sizes)
+                logger.debug(f"Saved right splitter sizes: {sizes}")
+
+            # Save chart area splitter
+            if hasattr(self, '_chart_area') and hasattr(self._chart_area, 'sizes'):
+                sizes = self._chart_area.sizes()
+                set_setting('chart.chart_area_splitter_sizes', sizes)
+                logger.debug(f"Saved chart area splitter sizes: {sizes}")
+
+        except Exception as e:
+            logger.exception(f"Failed to persist splitter positions: {e}")
+
+    def _connect_splitter_signals(self):
+        """
+        Connect splitter moved signals to persistence handler.
+
+        TASK 6: Splitter Persistence
+        """
+        try:
+            # Connect all splitters to the persistence method
+            if hasattr(self, 'main_splitter'):
+                self.main_splitter.splitterMoved.connect(
+                    lambda: self._persist_splitter_positions()
+                )
+
+            if hasattr(self, 'right_splitter'):
+                self.right_splitter.splitterMoved.connect(
+                    lambda: self._persist_splitter_positions()
+                )
+
+            if hasattr(self, '_chart_area') and hasattr(self._chart_area, 'splitterMoved'):
+                self._chart_area.splitterMoved.connect(
+                    lambda: self._persist_splitter_positions()
+                )
+
+            logger.info("Splitter persistence signals connected")
+
+        except Exception as e:
+            logger.exception(f"Failed to connect splitter signals: {e}")
