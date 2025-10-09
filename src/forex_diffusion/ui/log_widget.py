@@ -423,9 +423,63 @@ class QtLogHandler:
         pass
 
 
+# Qt message handler
+def qt_message_handler(mode, context, message):
+    """Handle Qt log messages (qDebug, qWarning, qCritical, qFatal)."""
+    from PySide6.QtCore import QtMsgType
+
+    # Map Qt message types to log levels
+    level_map = {
+        QtMsgType.QtDebugMsg: 'DEBUG',
+        QtMsgType.QtInfoMsg: 'INFO',
+        QtMsgType.QtWarningMsg: 'WARNING',
+        QtMsgType.QtCriticalMsg: 'ERROR',
+        QtMsgType.QtFatalMsg: 'CRITICAL',
+    }
+
+    level = level_map.get(mode, 'INFO')
+
+    # Extract context information
+    file_name = context.file if context.file else 'qt'
+    function = context.function if context.function else 'unknown'
+    line = str(context.line) if context.line else '0'
+
+    # Create log entry
+    log_entry = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3],
+        'level': level,
+        'module': file_name,
+        'function': function,
+        'line': line,
+        'message': message
+    }
+
+    # Send to LogWidget
+    LogWidget.capture_log(log_entry)
+
+    # Also send to loguru for file logging
+    if level == 'DEBUG':
+        logger.debug(f"[Qt] {message}")
+    elif level == 'INFO':
+        logger.info(f"[Qt] {message}")
+    elif level == 'WARNING':
+        logger.warning(f"[Qt] {message}")
+    elif level == 'ERROR':
+        logger.error(f"[Qt] {message}")
+    elif level == 'CRITICAL':
+        logger.critical(f"[Qt] {message}")
+
+
 # Install log handler
 def install_log_handler():
-    """Install the Qt log handler for loguru."""
+    """Install the Qt log handler for loguru and Qt messages."""
+    from PySide6.QtCore import qInstallMessageHandler
+
+    # Install loguru handler
     handler = QtLogHandler()
     logger.add(handler, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:8} | {name}:{function}:{line} - {message}")
-    logger.info("Qt log handler installed")
+
+    # Install Qt message handler
+    qInstallMessageHandler(qt_message_handler)
+
+    logger.info("Qt log handler installed (loguru + Qt messages)")

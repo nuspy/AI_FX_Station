@@ -476,7 +476,11 @@ class DataService(ChartServiceBase):
         except Exception:
             start_ms_view = None
         try:
-            df = self._load_candles_from_db(self.symbol, self.timeframe, limit=3000, start_ms=start_ms_view)
+            # If no date range specified (years=0, months=0), load ALL available data instead of limiting to 3000
+            # This ensures the chart shows full historical data on startup
+            limit_candles = 3000 if start_ms_view is not None else 500000  # 500k = unlimited for practical purposes
+
+            df = self._load_candles_from_db(self.symbol, self.timeframe, limit=limit_candles, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
                 # backfill-on-open: fill data holes across the visible history (skip weekend closures)
@@ -493,8 +497,16 @@ class DataService(ChartServiceBase):
         """Handle symbol change from combo: update context and reload candles from DB."""
         try:
             if not new_symbol:
+                logger.warning("Symbol changed to empty string, ignoring")
                 return
+
+            logger.info(f"Symbol changed from {getattr(self, 'symbol', None)} to {new_symbol}")
             self.symbol = new_symbol
+
+            # Update settings
+            from ...utils.user_settings import set_setting
+            set_setting('chart.symbol', new_symbol)
+
             # reset cache so next reload uses the new context
             self._current_cache_tf = None
             self._current_cache_range = None
@@ -506,27 +518,36 @@ class DataService(ChartServiceBase):
                 mos = int(self.months_combo.currentText() or "0")
                 days = yrs * 365 + mos * 30
                 start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
-                logger.debug(f"Symbol changed to {new_symbol}: years={yrs}, months={mos}, days={days}, start_ms_view={start_ms_view}")
+                logger.info(f"Loading candles for {new_symbol}: years={yrs}, months={mos}, days={days}, start_ms_view={start_ms_view}")
             except Exception as e:
                 logger.warning(f"Failed to calculate date range: {e}")
                 start_ms_view = None
 
             # Try to load candles from DB
-            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=50000, start_ms=start_ms_view)
+            # If no date range specified, load ALL available data
+            limit_candles = 50000 if start_ms_view is not None else 500000
+            current_timeframe = getattr(self, "timeframe", "1m")
+            logger.info(f"Loading {limit_candles} candles for {new_symbol} {current_timeframe}")
+            df = self._load_candles_from_db(new_symbol, current_timeframe, limit=limit_candles, start_ms=start_ms_view)
 
             # If no data found, trigger auto-download
             if df is None or df.empty:
-                logger.info(f"No candles found for {new_symbol}, triggering auto-download...")
+                logger.warning(f"No candles found for {new_symbol} {current_timeframe}, triggering auto-download...")
                 self._trigger_auto_download(new_symbol)
                 # Try loading again after download
-                df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=50000, start_ms=start_ms_view)
+                df = self._load_candles_from_db(new_symbol, current_timeframe, limit=limit_candles, start_ms=start_ms_view)
 
             if df is not None and not df.empty:
+                logger.info(f"Loaded {len(df)} candles for {new_symbol}, updating plot...")
                 self.update_plot(df)
+                logger.info(f"Plot updated successfully for {new_symbol}")
                 try:
                     self._backfill_all_missing_1m()
                 except Exception:
                     pass
+            else:
+                logger.error(f"No candles available for {new_symbol} {current_timeframe} after auto-download attempt")
+
             try:
                 self._backfill_on_open(df)
             except Exception:
