@@ -742,6 +742,16 @@ class CTraderProvider(BaseProvider):
             # Wait for response with timeout
             response = await asyncio.wait_for(future, timeout=timeout)
 
+            # Check if response is wrapped in ProtoMessage
+            if hasattr(response, 'payload'):
+                # Extract actual payload from ProtoMessage wrapper
+                logger.debug(f"[{self.name}] Extracting payload from ProtoMessage wrapper")
+                actual_response = getattr(response.payload, response.payload.WhichOneof('payload'), None)
+                if actual_response is None:
+                    logger.error(f"[{self.name}] Failed to extract payload from ProtoMessage")
+                    return None
+                response = actual_response
+
             # Verify response type
             if not isinstance(response, response_type):
                 logger.error(
