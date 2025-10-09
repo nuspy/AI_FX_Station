@@ -1115,21 +1115,39 @@ class DataService(ChartServiceBase):
             logger.exception(f"Failed to toggle order lines: {e}")
 
     def _update_provider_label(self):
-        """Update the active provider label on the chart from settings."""
+        """Update the active provider label on the chart showing provider and connection type (REST/WS)."""
         try:
             if hasattr(self, 'provider_label') and self.provider_label is not None:
-                from ...utils.user_settings import get_setting
+                # Get settings - fix import path
+                try:
+                    from forex_diffusion.utils.user_settings import get_setting
+                except ImportError:
+                    # Fallback to default values if import fails
+                    primary = "tiingo"
+                    use_ws = False
+                else:
+                    # Get active provider from settings
+                    primary = get_setting("primary_data_provider", "tiingo")
+                    use_ws = get_setting("use_websocket_streaming", False)
 
-                # Get active provider from settings (primary, fallback to secondary)
-                primary = get_setting("primary_data_provider", "tiingo")
-                secondary = get_setting("secondary_data_provider", "none")
+                # Determine connection method
+                connection_type = "WS" if use_ws else "REST"
 
-                # Determine which is actually used (primary if available, else secondary)
-                # For now, show primary (can be enhanced with connection status check)
-                provider_name = primary if primary else secondary
+                # Check if main_window has active adapter info (more accurate)
+                if hasattr(self, '_main_window'):
+                    controller = getattr(self._main_window, "controller", None)
+                    if controller and hasattr(controller, 'active_adapter'):
+                        adapter = controller.active_adapter
+                        if adapter:
+                            # Get provider name from adapter
+                            adapter_name = getattr(adapter, 'name', primary)
+                            # Determine if adapter is using WS
+                            is_ws = getattr(adapter, 'is_websocket', False) or getattr(adapter, 'streaming', False)
+                            connection_type = "WS" if is_ws else "REST"
+                            primary = adapter_name
 
-                # Update text
-                self.provider_label.setText(f"Provider: {provider_name.upper()}")
+                # Update text with provider and connection type
+                self.provider_label.setText(f"Provider: {primary.upper()} ({connection_type})")
 
                 # Update position to top-right corner
                 if hasattr(self, 'main_plot') and self.main_plot is not None:
