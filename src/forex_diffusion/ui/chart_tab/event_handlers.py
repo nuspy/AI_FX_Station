@@ -565,6 +565,15 @@ class EventHandlersMixin:
                 )
                 logger.debug("Historical patterns checkbox connected")
 
+            # Connect pattern action buttons
+            if hasattr(self, 'scan_historical_btn'):
+                self.scan_historical_btn.clicked.connect(self._scan_historical)
+                logger.debug("Scan historical button connected")
+
+            if hasattr(self, 'setting_patterns_btn'):
+                self.setting_patterns_btn.clicked.connect(self._open_patterns_config)
+                logger.debug("Setting patterns button connected")
+
         except Exception as e:
             logger.exception(f"Failed to wire pattern checkboxes: {e}")
 
@@ -628,6 +637,48 @@ class EventHandlersMixin:
         """Clear pattern artists from chart."""
         # This would be implemented by the patterns mixin
         pass
+
+    def _scan_historical(self):
+        """Scan historical data for patterns."""
+        logger.info("Historical pattern scan requested")
+
+        try:
+            # Call pattern scan if chart has the method
+            if hasattr(self, '_refresh_patterns'):
+                self._refresh_patterns()
+            else:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self,
+                    "Historical Scan",
+                    "Historical pattern scanning will be implemented soon."
+                )
+
+        except Exception as e:
+            logger.exception(f"Historical scan failed: {e}")
+
+    def _open_patterns_config(self):
+        """Open pattern configuration dialog."""
+        try:
+            from ..patterns_config_dialog import PatternsConfigDialog
+
+            chart_controller = getattr(self, 'chart_controller', None)
+            patterns_service = getattr(chart_controller, 'patterns_service', None) if chart_controller else None
+
+            dialog = PatternsConfigDialog(
+                parent=self,
+                yaml_path="configs/patterns.yaml",
+                patterns_service=patterns_service
+            )
+
+            if dialog.exec():
+                # Refresh patterns if config was changed
+                logger.info("Pattern configuration updated")
+                if hasattr(self, '_refresh_patterns'):
+                    self._refresh_patterns()
+
+        except Exception as e:
+            logger.exception(f"Failed to open patterns config: {e}")
 
     def _apply_theme(self, theme: str):
         """Apply theme to chart."""

@@ -426,6 +426,13 @@ class UIBuilderMixin:
         self.history_patterns_checkbox = QCheckBox("Historical")
         row2_layout.addWidget(self.history_patterns_checkbox)
 
+        # Pattern action buttons (from DUE tab)
+        self.scan_historical_btn = QPushButton("Scan Historical")
+        row2_layout.addWidget(self.scan_historical_btn)
+
+        self.setting_patterns_btn = QPushButton("Setting Patterns")
+        row2_layout.addWidget(self.setting_patterns_btn)
+
         self.bidask_label = QLabel("Bid: -    Ask: -")
         row2_layout.addWidget(self.bidask_label)
 

@@ -32,32 +32,43 @@ class PatternsTab(QWidget):
         title_label.setStyleSheet("QLabel { font-size: 16px; font-weight: bold; color: #2c3e50; }")
         layout.addWidget(title_label)
 
-        # Pattern Types Group
+        # Pattern Types Group - Now references Chart tab checkboxes
         types_group = QGroupBox("Pattern Types")
         types_layout = QVBoxLayout(types_group)
 
+        # Create info label explaining the connection
+        info_label = QLabel("⚠️ Pattern controls are now in the Chart tab toolbar.\nThese checkboxes mirror the Chart tab settings.")
+        info_label.setStyleSheet("QLabel { color: #95a5a6; font-style: italic; font-size: 11px; }")
+        info_label.setWordWrap(True)
+        types_layout.addWidget(info_label)
+
+        # Reference Chart tab checkboxes instead of creating new ones
+        # These will be synced with Chart tab checkboxes after widget creation
         self.cb_chart_patterns = QCheckBox("Chart Patterns")
         self.cb_chart_patterns.setToolTip(
-            "Enable chart pattern detection (Head & Shoulders, Double Top/Bottom, Triangles, etc.)"
+            "Enable chart pattern detection (Head & Shoulders, Double Top/Bottom, Triangles, etc.)\n"
+            "⚠️ This mirrors the Chart tab checkbox"
         )
-        self.cb_chart_patterns.toggled.connect(lambda checked: self._on_pattern_toggle('chart', checked))
         types_layout.addWidget(self.cb_chart_patterns)
 
         self.cb_candle_patterns = QCheckBox("Candlestick Patterns")
         self.cb_candle_patterns.setToolTip(
-            "Enable candlestick pattern detection (Doji, Hammer, Engulfing, etc.)"
+            "Enable candlestick pattern detection (Doji, Hammer, Engulfing, etc.)\n"
+            "⚠️ This mirrors the Chart tab checkbox"
         )
-        self.cb_candle_patterns.toggled.connect(lambda checked: self._on_pattern_toggle('candle', checked))
         types_layout.addWidget(self.cb_candle_patterns)
 
         self.cb_history_patterns = QCheckBox("Historical Patterns")
         self.cb_history_patterns.setToolTip(
-            "Show historical pattern occurrences on the chart"
+            "Show historical pattern occurrences on the chart\n"
+            "⚠️ This mirrors the Chart tab checkbox"
         )
-        self.cb_history_patterns.toggled.connect(lambda checked: self._on_pattern_toggle('history', checked))
         types_layout.addWidget(self.cb_history_patterns)
 
         layout.addWidget(types_group)
+
+        # Sync with Chart tab checkboxes after initialization
+        self._sync_with_chart_checkboxes()
 
         # Actions Group
         actions_group = QGroupBox("Actions")
@@ -94,29 +105,78 @@ class PatternsTab(QWidget):
 
         logger.info("PatternsTab initialized")
 
-    def _on_pattern_toggle(self, pattern_type: str, checked: bool):
-        """Handle pattern type toggle."""
-        logger.info(f"Pattern type '{pattern_type}' toggled: {checked}")
-
+    def _sync_with_chart_checkboxes(self):
+        """Sync DUE checkboxes with Chart tab checkboxes."""
         if not self.chart_tab:
-            logger.warning("No chart_tab reference - pattern toggle will not affect chart")
+            logger.warning("No chart_tab reference for checkbox sync")
             return
 
         try:
-            # Import patterns service
-            from .chart_components.services.patterns_hook import set_patterns_toggle
+            # Get Chart tab checkboxes
+            chart_patterns_cb = getattr(self.chart_tab, 'chart_patterns_checkbox', None)
+            candle_patterns_cb = getattr(self.chart_tab, 'candle_patterns_checkbox', None)
+            history_patterns_cb = getattr(self.chart_tab, 'history_patterns_checkbox', None)
 
-            # Get chart controller from chart_tab
-            chart_controller = getattr(self.chart_tab, 'chart_controller', None)
-            if chart_controller:
-                kwargs = {f"{pattern_type}": checked}
-                set_patterns_toggle(chart_controller, self.chart_tab, **kwargs)
-                logger.info(f"Pattern toggle applied to chart: {pattern_type}={checked}")
-            else:
-                logger.warning("Chart controller not found")
+            # Connect DUE checkboxes to Chart checkboxes bidirectionally
+            # Use blockSignals to prevent infinite loops
+            if chart_patterns_cb:
+                # DUE -> Chart
+                self.cb_chart_patterns.toggled.connect(
+                    lambda checked: self._sync_checkbox(chart_patterns_cb, checked)
+                )
+                # Chart -> DUE
+                chart_patterns_cb.toggled.connect(
+                    lambda checked: self._sync_checkbox(self.cb_chart_patterns, checked)
+                )
+                # Initial sync
+                self.cb_chart_patterns.blockSignals(True)
+                self.cb_chart_patterns.setChecked(chart_patterns_cb.isChecked())
+                self.cb_chart_patterns.blockSignals(False)
+
+            if candle_patterns_cb:
+                # DUE -> Chart
+                self.cb_candle_patterns.toggled.connect(
+                    lambda checked: self._sync_checkbox(candle_patterns_cb, checked)
+                )
+                # Chart -> DUE
+                candle_patterns_cb.toggled.connect(
+                    lambda checked: self._sync_checkbox(self.cb_candle_patterns, checked)
+                )
+                # Initial sync
+                self.cb_candle_patterns.blockSignals(True)
+                self.cb_candle_patterns.setChecked(candle_patterns_cb.isChecked())
+                self.cb_candle_patterns.blockSignals(False)
+
+            if history_patterns_cb:
+                # DUE -> Chart
+                self.cb_history_patterns.toggled.connect(
+                    lambda checked: self._sync_checkbox(history_patterns_cb, checked)
+                )
+                # Chart -> DUE
+                history_patterns_cb.toggled.connect(
+                    lambda checked: self._sync_checkbox(self.cb_history_patterns, checked)
+                )
+                # Initial sync
+                self.cb_history_patterns.blockSignals(True)
+                self.cb_history_patterns.setChecked(history_patterns_cb.isChecked())
+                self.cb_history_patterns.blockSignals(False)
+
+            logger.info("DUE checkboxes synced with Chart tab checkboxes")
 
         except Exception as e:
-            logger.exception(f"Failed to toggle pattern '{pattern_type}': {e}")
+            logger.exception(f"Failed to sync checkboxes: {e}")
+
+    def _sync_checkbox(self, target_checkbox, checked: bool):
+        """Sync a checkbox state without triggering signals (prevent loops)."""
+        target_checkbox.blockSignals(True)
+        target_checkbox.setChecked(checked)
+        target_checkbox.blockSignals(False)
+
+    def _on_pattern_toggle(self, pattern_type: str, checked: bool):
+        """Handle pattern type toggle - now redirects to Chart tab checkbox."""
+        # This method is no longer used since checkboxes are directly connected
+        # to Chart tab checkboxes in _sync_with_chart_checkboxes
+        logger.debug(f"Pattern type '{pattern_type}' toggled: {checked} (handled by Chart tab)")
 
     def _scan_historical(self):
         """Scan historical data for patterns."""
