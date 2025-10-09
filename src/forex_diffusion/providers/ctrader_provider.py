@@ -77,6 +77,7 @@ class CTraderProvider(BaseProvider):
         # Async communication
         self._message_queue: Optional[asyncio.Queue] = None
         self._running = False
+        self._asyncio_loop: Optional[asyncio.AbstractEventLoop] = None  # Store main event loop
 
         # Message tracking for request/response matching
         self._pending_requests: Dict[str, asyncio.Future] = {}
@@ -118,6 +119,9 @@ class CTraderProvider(BaseProvider):
         Strategy: Application authentication with client_id + client_secret
         No access_token (AppKey) required for historical data access.
         """
+        # Save the asyncio event loop for use in Twisted callbacks
+        self._asyncio_loop = asyncio.get_event_loop()
+
         if not self.client_id or not self.client_secret:
             logger.error(f"[{self.name}] client_id and client_secret required. Configure in Settings.")
             return False
@@ -298,11 +302,9 @@ class CTraderProvider(BaseProvider):
             if msg_id and msg_id in self._pending_requests:
                 # This is a response to a pending request
                 future = self._pending_requests.pop(msg_id)
-                if not future.done():
+                if not future.done() and self._asyncio_loop:
                     # Schedule the future to be resolved in the asyncio event loop
-                    import asyncio
-                    loop = asyncio.get_event_loop()
-                    loop.call_soon_threadsafe(future.set_result, message)
+                    self._asyncio_loop.call_soon_threadsafe(future.set_result, message)
                 return
 
             # Unsolicited message (streaming data) - push to queue
@@ -334,9 +336,14 @@ class CTraderProvider(BaseProvider):
         self.health.is_connected = True
         self.health.last_message_ts = datetime.now()
 
-    def _on_disconnected(self) -> None:
-        """Handle disconnection from cTrader."""
-        logger.warning(f"[{self.name}] Disconnected from cTrader server")
+    def _on_disconnected(self, client, reason) -> None:
+        """Handle disconnection from cTrader.
+
+        Args:
+            client: The cTrader client instance (passed by library)
+            reason: The disconnection reason
+        """
+        logger.warning(f"[{self.name}] Disconnected from cTrader server: {reason}")
         self.health.is_connected = False
         self._running = False
 
