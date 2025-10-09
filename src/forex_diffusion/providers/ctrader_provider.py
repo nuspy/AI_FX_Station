@@ -282,8 +282,13 @@ class CTraderProvider(BaseProvider):
         except Exception as e:
             logger.error(f"[{self.name}] Error during disconnect: {e}")
 
-    def _on_message(self, message: Any) -> None:
-        """Handle incoming message from cTrader (Twisted callback)."""
+    def _on_message(self, client, message: Any) -> None:
+        """Handle incoming message from cTrader (Twisted callback).
+
+        Args:
+            client: The cTrader client instance (passed by library)
+            message: The received message
+        """
         try:
             self.health.last_message_ts = datetime.now()
 
