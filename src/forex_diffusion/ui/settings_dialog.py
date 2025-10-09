@@ -276,7 +276,7 @@ class SettingsDialog(QDialog):
         # Risk Profile Management
         from .risk_profile_settings_widget import RiskProfileSettingsWidget
         from forex_diffusion.services.risk_profile_loader import RiskProfileLoader
-        from ...utils.user_settings import SETTINGS_DIR
+        from forex_diffusion.utils.user_settings import SETTINGS_DIR
 
         self.risk_profile_widget = RiskProfileSettingsWidget()
 
