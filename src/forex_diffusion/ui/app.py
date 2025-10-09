@@ -206,7 +206,12 @@ def setup_ui(
         )
         connector.start()
         result["tiingo_ws_connector"] = connector
-    
+
+    # --- Connect Logs Tab to Main Window for Data Sources monitoring ---
+    main_window.tiingo_ws_connector = connector
+    main_window.controller = controller
+    logs_tab.set_main_window(main_window)
+
     # --- Final UI Setup ---
     default_symbol = "EUR/USD"
     default_tf = "1m"

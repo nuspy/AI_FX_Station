@@ -18,7 +18,14 @@ class LogsTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._main_window = None
         self._init_ui()
+
+    def set_main_window(self, main_window):
+        """Set reference to main window for data sources tab."""
+        self._main_window = main_window
+        if hasattr(self, 'data_sources_tab'):
+            self.data_sources_tab.set_main_window(main_window)
 
     def _init_ui(self):
         """Initialize the UI"""
@@ -88,7 +95,12 @@ class LogsTab(QWidget):
 
     def _create_log_subtabs(self) -> None:
         """Create individual log sub-tabs for different log categories."""
-        # TODO: Implement log sub-tabs (e.g., System, Training, Inference, Errors)
+        # Data Sources tab
+        from .data_sources_tab import DataSourcesTab
+        self.data_sources_tab = DataSourcesTab()
+        self.logs_tab.addTab(self.data_sources_tab, "Data Sources")
+
+        # TODO: Implement other log sub-tabs (e.g., System, Training, Inference, Errors)
         placeholder = QLabel("Log monitoring will be implemented here")
         self.logs_tab.addTab(placeholder, "All Logs")
 

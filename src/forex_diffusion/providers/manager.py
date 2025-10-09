@@ -197,6 +197,50 @@ class ProviderManager:
             logger.error(f"Failover failed: {e}")
             return False
 
+    async def get_realtime_quotes_with_fallback(self, symbols: List[str]) -> Optional[Any]:
+        """
+        Get realtime quotes with WebSocket first, REST fallback strategy.
+
+        Strategy:
+        1. Try WebSocket streaming (faster, lower latency)
+        2. If fails, fallback to REST polling
+
+        Args:
+            symbols: List of symbols to get quotes for
+
+        Returns:
+            AsyncIterator for quotes or None if both fail
+        """
+        primary = self.get_primary_provider()
+        if not primary:
+            logger.error("No primary provider configured")
+            return None
+
+        # Strategy 1: Try WebSocket streaming
+        try:
+            logger.info(f"Attempting WebSocket streaming for {symbols}...")
+            if primary.supports(ProviderCapability.WEBSOCKET):
+                stream = await primary.stream_quotes(symbols)
+                if stream:
+                    logger.info("Successfully started WebSocket streaming")
+                    return stream
+        except Exception as e:
+            logger.warning(f"WebSocket streaming failed: {e}, trying REST fallback...")
+
+        # Strategy 2: Fallback to REST polling
+        try:
+            logger.info(f"Attempting REST polling for {symbols}...")
+            if primary.supports(ProviderCapability.QUOTES):
+                # Note: REST doesn't return a stream, but single quotes
+                # Caller should poll this method periodically
+                quotes = await primary.get_quotes(symbols)
+                logger.info("Successfully got quotes via REST")
+                return quotes
+        except Exception as e:
+            logger.error(f"REST polling also failed: {e}")
+
+        return None
+
     async def disconnect_all(self) -> None:
         """Disconnect all providers."""
         for name, provider in self._providers.items():
