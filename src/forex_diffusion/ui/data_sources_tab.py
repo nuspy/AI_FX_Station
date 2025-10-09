@@ -246,10 +246,29 @@ class DataSourcesTab(QWidget):
             status['realtime_ticks']['status'] = 'Fallback Mode'
             status['realtime_ticks']['details'] = 'WebSocket disabled, using REST polling'
 
-        # Historical candles always use REST
+        # Historical candles - check actual provider used by MarketDataService
         status['historical_candles']['provider'] = status['primary_provider']
         status['historical_candles']['status'] = 'Active'
-        status['historical_candles']['details'] = 'MarketDataService (TiingoClient)'
+
+        # Check if MarketDataService exists and get actual provider
+        try:
+            if self._main_window and hasattr(self._main_window, 'market_service'):
+                market_service = self._main_window.market_service
+                if market_service and hasattr(market_service, 'provider_name'):
+                    provider_name = market_service.provider_name
+                    status['historical_candles']['details'] = f'MarketDataService ({provider_name})'
+
+                    # Check if fallback occurred
+                    if 'fallback' in provider_name.lower():
+                        status['historical_candles']['status'] = 'Fallback Mode'
+                        status['historical_candles']['details'] += ' ⚠️ Using fallback provider'
+                else:
+                    status['historical_candles']['details'] = 'MarketDataService (TiingoClient - default)'
+            else:
+                status['historical_candles']['details'] = 'MarketDataService (TiingoClient - default)'
+        except Exception as e:
+            logger.debug(f"Could not check MarketDataService provider: {e}")
+            status['historical_candles']['details'] = 'MarketDataService (Unknown)'
 
         # cTrader status - check if broker is configured
         try:

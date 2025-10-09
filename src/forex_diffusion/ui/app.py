@@ -210,7 +210,38 @@ def setup_ui(
     # --- Connect Logs Tab to Main Window for Data Sources monitoring ---
     main_window.tiingo_ws_connector = connector
     main_window.controller = controller
+    main_window.market_service = market_service  # Expose MarketDataService for monitoring
     logs_tab.set_main_window(main_window)
+
+    # --- Check for provider fallback and show warning ---
+    if market_service.fallback_occurred:
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import QTimer
+
+        def show_fallback_warning():
+            msg = QMessageBox(main_window)
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setWindowTitle("Provider Fallback")
+            msg.setText("⚠️ Data Provider Fallback Occurred")
+            msg.setInformativeText(
+                f"Requested provider: {market_service.requested_provider}\n"
+                f"Active provider: {market_service.provider_name}\n\n"
+                f"Reason: {market_service.fallback_reason}\n\n"
+                "The application will continue using the fallback provider. "
+                "Check tab:Logs:Data Sources for details."
+            )
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.setDetailedText(
+                "To resolve this:\n"
+                "1. If using cTrader: Ensure broker connection is configured in Settings\n"
+                "2. Check that the selected provider is properly configured\n"
+                "3. Verify API keys and credentials are correct\n"
+                "4. See logs for more detailed error information"
+            )
+            msg.exec()
+
+        # Show after 2 seconds to let UI fully load
+        QTimer.singleShot(2000, show_fallback_warning)
 
     # --- Final UI Setup ---
     default_symbol = "EUR/USD"

@@ -154,6 +154,7 @@ class TiingoClient:
 class MarketDataService:
     """
     High-level service to orchestrate data acquisition and DB ingest following new strategy.
+    Now respects primary_data_provider setting with automatic fallback.
     """
     def __init__(self, database_url: Optional[str] = None):
         self.cfg = get_config()
@@ -161,12 +162,58 @@ class MarketDataService:
         if not db_url:
             raise ValueError("Database URL not configured")
         self.engine = create_engine(db_url, future=True)
-        self.provider = TiingoClient()  # Default provider: Tiingo
+
+        # Initialize provider based on settings (with fallback to Tiingo)
+        self._init_provider()
+
         # Default timeframes to fetch after ticks: 1m up to 1w (week)
         # Note: "60m" is an alias of "1h" -> keep only "1h" to avoid duplicates
         self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
-            # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
+        # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
         self.rest_enabled: bool = True
+
+    def _init_provider(self):
+        """Initialize provider based on primary_data_provider setting with fallback."""
+        self.fallback_occurred = False
+        self.fallback_reason = None
+        self.requested_provider = None
+
+        try:
+            from ..utils.user_settings import get_setting
+            primary_provider = get_setting("primary_data_provider", "tiingo").lower()
+            self.requested_provider = primary_provider
+        except Exception as e:
+            logger.warning(f"Could not load provider settings: {e}, using Tiingo")
+            primary_provider = "tiingo"
+            self.requested_provider = "tiingo"
+
+        # Try to create the primary provider
+        try:
+            if primary_provider == "tiingo":
+                self.provider = TiingoClient()
+                self.provider_name = "Tiingo"
+                logger.info("MarketDataService using Tiingo provider")
+            elif primary_provider == "ctrader":
+                # cTrader requires async initialization, use sync REST-style client
+                # For now, we'll use TiingoClient as fallback since cTrader needs broker connection
+                logger.warning("cTrader selected but requires broker connection. Using Tiingo for historical data.")
+                self.provider = TiingoClient()
+                self.provider_name = "Tiingo (cTrader fallback)"
+                self.fallback_occurred = True
+                self.fallback_reason = "cTrader requires broker connection for historical data. Currently not implemented for MarketDataService."
+                # TODO: Integrate CTraderProvider properly with async support
+            else:
+                logger.warning(f"Unknown provider '{primary_provider}', using Tiingo")
+                self.provider = TiingoClient()
+                self.provider_name = "Tiingo (default)"
+                self.fallback_occurred = True
+                self.fallback_reason = f"Unknown provider '{primary_provider}'. Only 'tiingo' and 'ctrader' are supported."
+        except Exception as e:
+            logger.error(f"Failed to initialize provider '{primary_provider}': {e}, falling back to Tiingo")
+            self.provider = TiingoClient()
+            self.provider_name = "Tiingo (error fallback)"
+            self.fallback_occurred = True
+            self.fallback_reason = f"Provider initialization error: {str(e)}"
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
