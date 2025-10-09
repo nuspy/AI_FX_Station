@@ -26,8 +26,8 @@ dependencies = [
   "lightgbm>=4.0.0",
 
   # Configuration & Utilities
-  "pyyaml",
-  "pytz",
+  "pyyaml>=6.0",
+  "pytz>=2023.3",
   "loguru>=0.7.0",
   "psutil>=5.9.0",
 
@@ -40,7 +40,7 @@ dependencies = [
   # pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl
 
   # Database & Caching
-  "duckdb",
+  "duckdb>=0.9.0",
   "diskcache>=5.6.0",
 
   # Async & Performance
@@ -57,7 +57,9 @@ dependencies = [
   "autograd>=1.4",  # Required by pymoo
   "backtesting>=0.3.3",  # kernc/backtesting.py strategy backtesting
   "hmmlearn>=0.3.0",  # Hidden Markov Models for regime detection
-  "ctrader-open-api==0.9.2",
+  # ctrader-open-api - EXCLUDED from dependencies due to protobuf conflict
+  # Install separately AFTER main install: pip install ctrader-open-api==0.9.2 --no-deps
+  # "ctrader-open-api==0.9.2",  # Commented out - install manually
   "twisted>=24.3.0",  # Async framework for cTrader API
   "inputimeout>=1.0.4",  # For cTrader console input timeout
   "pyOpenSSL>=24.1.0",  # SSL support for cTrader API
