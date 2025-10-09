@@ -95,14 +95,15 @@ class LogsTab(QWidget):
 
     def _create_log_subtabs(self) -> None:
         """Create individual log sub-tabs for different log categories."""
+        # All Logs tab
+        from .log_widget import LogWidget
+        self.all_logs_tab = LogWidget()
+        self.logs_tab.addTab(self.all_logs_tab, "All Logs")
+
         # Data Sources tab
         from .data_sources_tab import DataSourcesTab
         self.data_sources_tab = DataSourcesTab()
         self.logs_tab.addTab(self.data_sources_tab, "Data Sources")
-
-        # TODO: Implement other log sub-tabs (e.g., System, Training, Inference, Errors)
-        placeholder = QLabel("Log monitoring will be implemented here")
-        self.logs_tab.addTab(placeholder, "All Logs")
 
     def _clear_all_logs(self):
         """Clear all log entries."""

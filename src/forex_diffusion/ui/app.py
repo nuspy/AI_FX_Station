@@ -26,18 +26,22 @@ from .live_trading_tab import LiveTradingTab
 
 
 def setup_ui(
-    main_window: QWidget, 
-    layout, 
-    menu_bar, 
-    viewer, 
-    status_label, 
-    engine_url: str = "http://127.0.0.1:8000", 
+    main_window: QWidget,
+    layout,
+    menu_bar,
+    viewer,
+    status_label,
+    engine_url: str = "http://127.0.0.1:8000",
     use_test_server: bool = False
 ) -> dict:
     """
     Initializes all UI components, services, and their connections.
     """
     result: dict[str, Any] = {}
+
+    # --- Install Log Handler (early for capturing all logs) ---
+    from .log_widget import install_log_handler
+    install_log_handler()
 
     # --- Core Services ---
     db_service = DBService()
