@@ -26,12 +26,22 @@ except ImportError:
 class Advanced3DVisualizer:
     """Advanced 3D visualization generator for forex market data"""
 
-    def __init__(self):
+    def __init__(self, data_provider=None):
         if not PLOTLY_AVAILABLE:
             raise ImportError("Plotly is required for 3D visualizations. Install with: pip install plotly")
 
         self.output_dir = Path("reports_3d")
         self.output_dir.mkdir(exist_ok=True)
+
+        # Import AI trading reports extension and data provider
+        from .ai_trading_reports import AITradingReports
+        from .data_provider import ReportDataProvider
+
+        if data_provider is None:
+            data_provider = ReportDataProvider()
+
+        self.data_provider = data_provider
+        self.ai_reports = AITradingReports(self.output_dir, data_provider=data_provider)
 
     def create_3d_market_surface(self, pairs: List[str], data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
         """

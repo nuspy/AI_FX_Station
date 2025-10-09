@@ -130,7 +130,7 @@ def setup_ui(
 
     # Create 3D Reports tab (moved from Chart:Chart:3D Reports to level_1)
     from .reports_3d_tab import Reports3DTab
-    reports_3d_tab = Reports3DTab(main_window)
+    reports_3d_tab = Reports3DTab(main_window, db_service=db_service)
 
     # Add top-level tabs in new order
     tab_widget.addTab(chart_container, "Chart")  # Chart now has nested tabs (Chart, Live Trading, Signals)

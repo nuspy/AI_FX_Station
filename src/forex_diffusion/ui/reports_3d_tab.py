@@ -42,12 +42,19 @@ class ReportGeneratorThread(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, report_type: str, data: Dict[str, pd.DataFrame], params: Dict):
+    def __init__(self, report_type: str, data: Dict[str, pd.DataFrame], params: Dict, db_service=None):
         super().__init__()
         self.report_type = report_type
         self.data = data
         self.params = params
-        self.visualizer = Advanced3DVisualizer() if Advanced3DVisualizer else None
+
+        # Create data provider with db_service if available
+        if Advanced3DVisualizer:
+            from ..visualization.advanced.data_provider import ReportDataProvider
+            data_provider = ReportDataProvider(db_service=db_service)
+            self.visualizer = Advanced3DVisualizer(data_provider=data_provider)
+        else:
+            self.visualizer = None
 
     def run(self):
         """Generate the report in background"""
@@ -93,6 +100,84 @@ class ReportGeneratorThread(QThread):
                 ], axis=1)
                 result = self.visualizer.create_heat_map_analytics(combined_data, analysis_type)
 
+            # AI Forecasting Performance reports (use real data from DB)
+            elif self.report_type == "forecast_accuracy_timeline":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 30)
+                result = self.visualizer.ai_reports.create_forecast_accuracy_timeline(symbol=symbol, days=days)
+            elif self.report_type == "prediction_confidence_sphere":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 30)
+                result = self.visualizer.ai_reports.create_prediction_confidence_sphere(symbol=symbol, days=days)
+            elif self.report_type == "model_performance_terrain":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 30)
+                result = self.visualizer.ai_reports.create_model_performance_terrain(symbol=symbol, days=days)
+            elif self.report_type == "quantile_adherence_surface":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 30)
+                result = self.visualizer.ai_reports.create_quantile_adherence_surface(symbol=symbol, days=days)
+            elif self.report_type == "forecast_error_distribution":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 30)
+                result = self.visualizer.ai_reports.create_forecast_error_distribution_3d(symbol=symbol, days=days)
+
+            # Pattern Recognition reports (use real data from DB)
+            elif self.report_type == "pattern_success_landscape":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 90)
+                result = self.visualizer.ai_reports.create_pattern_success_landscape(symbol=symbol, days=days)
+            elif self.report_type == "chart_patterns_cluster":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 90)
+                result = self.visualizer.ai_reports.create_chart_patterns_cluster(symbol=symbol, days=days)
+            elif self.report_type == "candlestick_patterns_timeline":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 90)
+                result = self.visualizer.ai_reports.create_candlestick_patterns_timeline(symbol=symbol, days=days)
+            elif self.report_type == "pattern_frequency_heatmap":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 90)
+                result = self.visualizer.ai_reports.create_pattern_frequency_heatmap(symbol=symbol, days=days)
+            elif self.report_type == "support_resistance_strength_map":
+                symbol = self.params.get('symbol', 'EUR/USD')
+                days = self.params.get('days', 30)
+                result = self.visualizer.ai_reports.create_support_resistance_strength_map(symbol=symbol, days=days)
+
+            # Trading Operations reports (use real data from DB)
+            elif self.report_type == "trade_pnl_trajectory":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_trade_pnl_trajectory(days=days)
+            elif self.report_type == "position_risk_exposure_map":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_position_risk_exposure_map(days=days)
+            elif self.report_type == "drawdown_analysis_terrain":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_drawdown_analysis_terrain(days=days)
+            elif self.report_type == "win_loss_distribution_sphere":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_win_loss_distribution_sphere(days=days)
+            elif self.report_type == "trade_duration_profit_surface":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_trade_duration_profit_surface(days=days)
+
+            # Strategy Efficiency reports (use real data from DB)
+            elif self.report_type == "strategy_performance_comparison":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_strategy_performance_comparison(days=days)
+            elif self.report_type == "risk_adjusted_returns_landscape":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_risk_adjusted_returns_landscape(days=days)
+            elif self.report_type == "sharpe_ratio_evolution_surface":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_sharpe_ratio_evolution_surface(days=days)
+            elif self.report_type == "trade_execution_quality_map":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_trade_execution_quality_map(days=days)
+            elif self.report_type == "slippage_spread_analysis":
+                days = self.params.get('days', 60)
+                result = self.visualizer.ai_reports.create_slippage_spread_analysis(days=days)
+
             self.progress.emit(80)
 
             if result and result.get('success'):
@@ -119,9 +204,10 @@ class ReportGeneratorThread(QThread):
 class Reports3DTab(QWidget):
     """3D Reports Tab with file management and visualization"""
 
-    def __init__(self, data_manager=None, parent=None):
+    def __init__(self, data_manager=None, parent=None, db_service=None):
         super().__init__(parent)
         self.data_manager = data_manager
+        self.db_service = db_service
         self.current_report = None
         self.report_threads = []
         self.reports_dir = Path("reports_3d")
@@ -214,10 +300,39 @@ class Reports3DTab(QWidget):
 
         self.report_type_combo = QComboBox()
         self.report_type_combo.addItems([
+            # Market Structure (Original 4)
             "3D Market Surface",
             "Correlation Sphere",
             "Volatility Landscape",
-            "Correlation Heat Map"
+            "Correlation Heat Map",
+
+            # AI Forecasting Performance (5 new)
+            "Forecast Accuracy 3D Timeline",
+            "Prediction Confidence Sphere",
+            "Model Performance Terrain",
+            "Quantile Adherence Surface",
+            "Forecast Error Distribution 3D",
+
+            # Pattern Recognition (5 new)
+            "Pattern Success Rate Landscape",
+            "Chart Patterns 3D Cluster",
+            "Candlestick Patterns Timeline",
+            "Pattern Frequency Heatmap 3D",
+            "Support/Resistance Strength Map",
+
+            # Trading Operations (5 new)
+            "Trade P&L Trajectory 3D",
+            "Position Risk Exposure Map",
+            "Drawdown Analysis Terrain",
+            "Win/Loss Distribution Sphere",
+            "Trade Duration vs Profit Surface",
+
+            # Strategy Efficiency (5 new)
+            "Strategy Performance Comparison 3D",
+            "Risk-Adjusted Returns Landscape",
+            "Sharpe Ratio Evolution Surface",
+            "Trade Execution Quality Map",
+            "Slippage & Spread Analysis 3D"
         ])
         self.report_type_combo.currentTextChanged.connect(self.on_report_type_changed)
 
@@ -506,25 +621,56 @@ class Reports3DTab(QWidget):
 
             # Map combo box text to report types
             report_type_map = {
+                # Market Structure
                 "3D Market Surface": "market_surface",
                 "Correlation Sphere": "correlation_sphere",
                 "Volatility Landscape": "volatility_landscape",
-                "Correlation Heat Map": "heat_map"
+                "Correlation Heat Map": "heat_map",
+
+                # AI Forecasting Performance
+                "Forecast Accuracy 3D Timeline": "forecast_accuracy_timeline",
+                "Prediction Confidence Sphere": "prediction_confidence_sphere",
+                "Model Performance Terrain": "model_performance_terrain",
+                "Quantile Adherence Surface": "quantile_adherence_surface",
+                "Forecast Error Distribution 3D": "forecast_error_distribution",
+
+                # Pattern Recognition
+                "Pattern Success Rate Landscape": "pattern_success_landscape",
+                "Chart Patterns 3D Cluster": "chart_patterns_cluster",
+                "Candlestick Patterns Timeline": "candlestick_patterns_timeline",
+                "Pattern Frequency Heatmap 3D": "pattern_frequency_heatmap",
+                "Support/Resistance Strength Map": "support_resistance_strength_map",
+
+                # Trading Operations
+                "Trade P&L Trajectory 3D": "trade_pnl_trajectory",
+                "Position Risk Exposure Map": "position_risk_exposure_map",
+                "Drawdown Analysis Terrain": "drawdown_analysis_terrain",
+                "Win/Loss Distribution Sphere": "win_loss_distribution_sphere",
+                "Trade Duration vs Profit Surface": "trade_duration_profit_surface",
+
+                # Strategy Efficiency
+                "Strategy Performance Comparison 3D": "strategy_performance_comparison",
+                "Risk-Adjusted Returns Landscape": "risk_adjusted_returns_landscape",
+                "Sharpe Ratio Evolution Surface": "sharpe_ratio_evolution_surface",
+                "Trade Execution Quality Map": "trade_execution_quality_map",
+                "Slippage & Spread Analysis 3D": "slippage_spread_analysis"
             }
 
             report_type = report_type_map.get(self.report_type_combo.currentText(), "market_surface")
 
-            # Prepare parameters
+            # Prepare parameters (add symbol and days from UI if available)
             params = {
                 'pairs': list(market_data.keys())[:10],  # Limit to 10 pairs
-                'analysis_type': 'correlation'
+                'analysis_type': 'correlation',
+                'symbol': 'EUR/USD',  # TODO: Get from UI selection
+                'days': 30  # TODO: Get from UI setting
             }
 
-            # Create and start generator thread
+            # Create and start generator thread with db_service
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
 
-            thread = ReportGeneratorThread(report_type, market_data, params)
+            thread = ReportGeneratorThread(report_type, market_data, params, db_service=self.db_service)
             thread.progress.connect(self.progress_bar.setValue)
             thread.status.connect(self.status_label.setText)
             thread.finished.connect(self.on_report_generated)
