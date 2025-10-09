@@ -30,7 +30,7 @@ class LogWidget(QWidget):
     - Log statistics
     """
 
-    logReceived = Signal(dict)  # Signal when new log is received
+    logReceived = Signal(dict)  # Signal when new log is received (thread-safe)
 
     # Class-level storage for logs (shared across instances)
     _log_buffer: Deque[Dict] = deque(maxlen=10000)  # Last 10k logs
@@ -57,6 +57,9 @@ class LogWidget(QWidget):
 
         self._init_ui()
         self._load_existing_logs()
+
+        # Connect signal for thread-safe log updates
+        self.logReceived.connect(self._on_log_received_gui_thread)
 
         # Update timer for periodic refresh
         self._update_timer = QTimer()
@@ -160,16 +163,25 @@ class LogWidget(QWidget):
             self._process_log(log_entry, update_display=False)
         self._update_display()
 
-    def _process_log(self, log_entry: Dict, update_display: bool = True):
-        """Process a log entry and update statistics."""
+    def _on_log_received_gui_thread(self, log_entry: Dict):
+        """Handle log received on GUI thread (called via signal)."""
+        if self._paused:
+            return
+
+        # Update statistics
         level = log_entry.get('level', 'INFO').upper()
         level_key = level.lower()
-
         if level_key in self._stats:
             self._stats[level_key] += 1
 
-        if update_display and not self._paused:
-            self._update_display()
+    def _process_log(self, log_entry: Dict, update_display: bool = True):
+        """Process a log entry and emit signal for thread-safe update."""
+        # Emit signal instead of directly updating (thread-safe)
+        try:
+            self.logReceived.emit(log_entry)
+        except RuntimeError:
+            # Widget might be deleted
+            pass
 
     def _update_display(self):
         """Update the log display with filtered logs."""

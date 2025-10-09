@@ -198,18 +198,27 @@ def setup_ui(
     menu_bar.signals.trainRequested.connect(lambda: tab_widget.setCurrentWidget(training_tab))
 
     # --- WebSocket and Direct Data Flow ---
-    ws_uri = "ws://127.0.0.1:8766" if use_test_server else "wss://api.tiingo.com/fx"
+    # Only start Tiingo WS if it's the primary provider or if explicitly enabled
     connector = None
     if os.environ.get("FOREX_ENABLE_WS", "1") == "1":
-        connector = TiingoWSConnector(
-            uri=ws_uri,
-            api_key=os.environ.get("TIINGO_APIKEY"),
-            tickers=["eurusd"],
-            chart_handler=chart_tab._handle_tick,
-            db_handler=db_writer.write_tick_async
-        )
-        connector.start()
-        result["tiingo_ws_connector"] = connector
+        from ..utils.user_settings import get_setting
+        primary_provider = get_setting("primary_data_provider", "tiingo").lower()
+
+        # Start Tiingo WS only if Tiingo is the primary provider
+        if primary_provider == "tiingo":
+            ws_uri = "ws://127.0.0.1:8766" if use_test_server else "wss://api.tiingo.com/fx"
+            connector = TiingoWSConnector(
+                uri=ws_uri,
+                api_key=os.environ.get("TIINGO_APIKEY"),
+                tickers=["eurusd"],
+                chart_handler=chart_tab._handle_tick,
+                db_handler=db_writer.write_tick_async
+            )
+            connector.start()
+            result["tiingo_ws_connector"] = connector
+            logger.info("Tiingo WebSocket connector started (primary provider: tiingo)")
+        else:
+            logger.info(f"Tiingo WebSocket connector NOT started (primary provider: {primary_provider})")
 
     # --- Connect Logs Tab to Main Window for Data Sources monitoring ---
     main_window.tiingo_ws_connector = connector
