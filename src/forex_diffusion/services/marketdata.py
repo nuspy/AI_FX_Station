@@ -199,7 +199,10 @@ class MarketDataService:
                 try:
                     from .ctrader_client import CTraderClient
                     logger.info("Attempting to initialize cTrader client...")
-                    self.provider = CTraderClient()
+                    client = CTraderClient()
+                    # Force initialization to catch errors immediately (lazy init)
+                    client._ensure_initialized()
+                    self.provider = client
                     self.provider_name = "cTrader"
                     logger.info("MarketDataService using cTrader provider")
                 except ImportError as e:

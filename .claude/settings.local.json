@@ -44,7 +44,8 @@
       "Bash(curl -s https://api.github.com/repos/kingbri1/flash-attention/releases/latest)",
       "Bash(pip show:*)",
       "WebSearch",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
