@@ -23,6 +23,7 @@ from .forecast_settings_tab import ForecastSettingsTab
 from .logs_tab import LogsTab
 from .patterns_tab import PatternsTab
 from .live_trading_tab import LiveTradingTab
+from .portfolio_tab import PortfolioOptimizationTab
 
 
 def setup_ui(
@@ -107,10 +108,14 @@ def setup_ui(
     from .signals_tab import SignalsTab
     signals_tab_chart = SignalsTab(main_window, db_service=db_service)
 
+    # Create Portfolio Optimization tab
+    portfolio_tab = PortfolioOptimizationTab(main_window)
+
     # Add as nested tabs under Chart
     chart_container.addTab(chart_tab, "Chart")
     chart_container.addTab(live_trading_tab, "Live Trading")
     chart_container.addTab(signals_tab_chart, "Signals")
+    chart_container.addTab(portfolio_tab, "Portfolio")
 
     # --- Create Generative Forecast tab with nested tabs (level_2) ---
     uno_tab = QTabWidget()
@@ -144,13 +149,14 @@ def setup_ui(
     tab_widget.addTab(reports_3d_tab, "3D Reports")
     layout.addWidget(tab_widget)
 
-    result["chart_container"] = chart_container  # Chart level_1 (contains Chart, Live Trading, Signals)
+    result["chart_container"] = chart_container  # Chart level_1 (contains Chart, Live Trading, Signals, Portfolio)
     result["chart_tab"] = chart_tab  # Actual chart widget
     result["training_tab"] = training_tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
     result["live_trading_tab"] = live_trading_tab
     result["signals_tab_chart"] = signals_tab_chart  # Signals tab under Chart
+    result["portfolio_tab"] = portfolio_tab  # Portfolio Optimization tab under Chart
     result["patterns_tab"] = patterns_tab  # Contains Pattern Training/Backtest
     result["logs_tab"] = logs_tab
     result["reports_3d_tab"] = reports_3d_tab  # 3D Reports at level_1
