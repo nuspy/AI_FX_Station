@@ -57,12 +57,17 @@ dependencies = [
   "autograd>=1.4",  # Required by pymoo
   "backtesting>=0.3.3",  # kernc/backtesting.py strategy backtesting
   "hmmlearn>=0.3.0",  # Hidden Markov Models for regime detection
-
+  "ctrader-open-api==0.9.2",
+  "twisted>=24.3.0",  # Async framework for cTrader API
+  "inputimeout>=1.0.4",  # For cTrader console input timeout
+  "pyOpenSSL>=24.1.0",  # SSL support for cTrader API
+  "requests>=2.31.0",  # HTTP requests for cTrader API
+  "service-identity>=21.1.0",  # For cTrader API
   # Multi-Provider Integration (Phase 1-4)
   # ctrader-open-api - INSTALL SEPARATELY (conflicts with TensorFlow protobuf version):
   # pip install ctrader-open-api==0.9.2 --no-deps
   # pip install twisted==24.3.0 inputimeout==1.0.4 pyOpenSSL==24.1.0 requests
-  "twisted>=23.0.0",           # Async framework (also for cTrader if installed)
+  # "twisted>=23.0.0",           # Async framework (also for cTrader if installed)
   "protobuf>=5.28.0",         # Protocol buffers (TensorFlow requires >=5.28)
   "keyring>=24.0.0",          # Secure credential storage
   "cryptography>=41.0.0",     # Fernet encryption

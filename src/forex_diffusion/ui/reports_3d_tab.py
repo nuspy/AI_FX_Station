@@ -382,27 +382,41 @@ class Reports3DTab(QWidget):
         if file_path and Path(file_path).exists():
             self.display_report(file_path)
 
-    def _ensure_web_view(self):
+    def _ensure_web_view(self, callback=None):
         """Lazy initialize QWebEngineView on first use to avoid blocking startup"""
         if self.web_view is None:
-            try:
-                from PySide6.QtWebEngineWidgets import QWebEngineView
-                self.web_view = QWebEngineView()
-                self.web_view.setMinimumHeight(400)
+            # Show loading message
+            if self.web_view_placeholder:
+                self.web_view_placeholder.setText("Loading 3D viewer, please wait...")
 
-                # Remove placeholder and add web view
-                if self.web_view_placeholder:
-                    self.web_view_layout.removeWidget(self.web_view_placeholder)
-                    self.web_view_placeholder.deleteLater()
-                    self.web_view_placeholder = None
-
-                self.web_view_layout.addWidget(self.web_view)
-                logger.info("QWebEngineView initialized (lazy loading)")
-            except Exception as e:
-                logger.error(f"Failed to initialize QWebEngineView: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to initialize web viewer: {str(e)}")
-                return False
+            # Defer initialization to avoid blocking
+            QTimer.singleShot(100, lambda: self._init_web_view(callback))
+            return False
         return True
+
+    def _init_web_view(self, callback=None):
+        """Actually initialize the web view (called asynchronously)"""
+        try:
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+            self.web_view = QWebEngineView()
+            self.web_view.setMinimumHeight(400)
+
+            # Remove placeholder and add web view
+            if self.web_view_placeholder:
+                self.web_view_layout.removeWidget(self.web_view_placeholder)
+                self.web_view_placeholder.deleteLater()
+                self.web_view_placeholder = None
+
+            self.web_view_layout.addWidget(self.web_view)
+            logger.info("QWebEngineView initialized (lazy loading)")
+
+            # Execute callback if provided
+            if callback:
+                callback()
+
+        except Exception as e:
+            logger.error(f"Failed to initialize QWebEngineView: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to initialize web viewer: {str(e)}")
 
     def display_report(self, file_path: str):
         """Display selected report in viewer"""
@@ -412,8 +426,23 @@ class Reports3DTab(QWidget):
                 QMessageBox.warning(self, "File Not Found", f"Report file not found: {file_path}")
                 return
 
-            # Ensure web view is initialized
-            if not self._ensure_web_view():
+            # If web view not initialized, initialize it first then load
+            if self.web_view is None:
+                self._ensure_web_view(callback=lambda: self._load_report(file_path))
+                return
+
+            # Load HTML in web view
+            self._load_report(file_path)
+
+        except Exception as e:
+            logger.error(f"Error displaying report: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to display report: {str(e)}")
+
+    def _load_report(self, file_path: str):
+        """Load report HTML into web view"""
+        try:
+            path = Path(file_path)
+            if not path.exists():
                 return
 
             # Load HTML in web view
