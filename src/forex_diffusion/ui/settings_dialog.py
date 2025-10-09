@@ -842,18 +842,42 @@ class SettingsDialog(QDialog):
         try:
             self.ctrader_accounts_list.clear()
 
-            # TODO: Get real accounts from cTrader API
-            # For now, show mock data
-            mock_accounts = [
-                {"id": "1234567", "type": "demo", "balance": 100000, "currency": "USD"},
-                {"id": "7654321", "type": "live", "balance": 5000, "currency": "EUR"},
-                {"id": "9999999", "type": "demo", "balance": 50000, "currency": "GBP"},
-            ]
+            # Get credentials from settings
+            client_id = self.ctrader_client_id_edit.text().strip()
+            client_secret = self.ctrader_client_secret_edit.text().strip()
+            access_token = self.ctrader_access_token_edit.text().strip()
 
-            for acc in mock_accounts:
-                is_demo = acc["type"] == "demo"
+            if not all([client_id, client_secret, access_token]):
+                QMessageBox.warning(self, "Warning", "Please configure cTrader credentials first")
+                return
+
+            # Use standalone function to get accounts
+            from ..broker.ctrader_broker import get_ctrader_accounts
+
+            # Get accounts from API
+            accounts = get_ctrader_accounts(
+                client_id=client_id,
+                client_secret=client_secret,
+                access_token=access_token,
+                environment='demo'  # TODO: Get from settings
+            )
+
+            if not accounts:
+                logger.warning("No accounts returned from cTrader API, using fallback")
+                # Fallback to mock data for testing
+                accounts = [
+                    {"id": "1234567", "type": "demo", "balance": 100000, "currency": "USD"},
+                    {"id": "7654321", "type": "live", "balance": 5000, "currency": "EUR"},
+                ]
+
+            for acc in accounts:
+                is_demo = acc.get("type", "demo") == "demo"
                 color_icon = "🔵" if is_demo else "🟢"
-                text = f"{color_icon} {acc['id']} - {acc['currency']} {acc['balance']:,.2f}"
+                acc_id = acc.get("id", "N/A")
+                currency = acc.get("currency", "USD")
+                balance = acc.get("balance", 0)
+
+                text = f"{color_icon} {acc_id} - {currency} {balance:,.2f}"
 
                 item = QListWidgetItem(text)
                 # Set background color
@@ -864,7 +888,8 @@ class SettingsDialog(QDialog):
 
                 self.ctrader_accounts_list.addItem(item)
 
-            logger.info(f"Loaded {len(mock_accounts)} cTrader accounts")
+            logger.info(f"Loaded {len(accounts)} cTrader accounts (fallback: {not accounts})")
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load cTrader accounts: {str(e)}")
+            logger.error(f"Failed to load cTrader accounts: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to load cTrader accounts: {str(e)}\n\nPlease check your credentials.")

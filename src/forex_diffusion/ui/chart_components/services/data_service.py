@@ -498,15 +498,7 @@ class DataService(ChartServiceBase):
             # reset cache so next reload uses the new context
             self._current_cache_tf = None
             self._current_cache_range = None
-            # reset cache so next reload uses the new context
-            self._current_cache_tf = None
-            self._current_cache_range = None
-            # reset cache so next reload uses the new context
-            self._current_cache_tf = None
-            self._current_cache_range = None
-            # reset cache so next reload uses the new context
-            self._current_cache_tf = None
-            self._current_cache_range = None
+
             # reload last candles for this symbol/timeframe (respect view range)
             from datetime import datetime, timezone, timedelta
             try:
@@ -518,7 +510,17 @@ class DataService(ChartServiceBase):
             except Exception as e:
                 logger.warning(f"Failed to calculate date range: {e}")
                 start_ms_view = None
+
+            # Try to load candles from DB
             df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=50000, start_ms=start_ms_view)
+
+            # If no data found, trigger auto-download
+            if df is None or df.empty:
+                logger.info(f"No candles found for {new_symbol}, triggering auto-download...")
+                self._trigger_auto_download(new_symbol)
+                # Try loading again after download
+                df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=50000, start_ms=start_ms_view)
+
             if df is not None and not df.empty:
                 self.update_plot(df)
                 try:
@@ -529,12 +531,32 @@ class DataService(ChartServiceBase):
                 self._backfill_on_open(df)
             except Exception:
                 pass
-            try:
-                self._backfill_on_open(df)
-            except Exception:
-                    pass
         except Exception as e:
             logger.exception("Failed to switch symbol: {}", e)
+
+    def _trigger_auto_download(self, symbol: str):
+        """Trigger automatic download of candles when no data is available."""
+        try:
+            logger.info(f"Auto-downloading candles for {symbol}...")
+            from datetime import datetime, timezone, timedelta
+
+            # Download last 30 days of 1m candles
+            end_date = datetime.now(timezone.utc)
+            start_date = end_date - timedelta(days=30)
+
+            # Use existing download mechanism
+            if hasattr(self, 'data_manager') and self.data_manager:
+                self.data_manager.download_candles(
+                    symbol=symbol,
+                    timeframe='1m',
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                logger.info(f"Auto-download completed for {symbol}")
+            else:
+                logger.warning("Data manager not available for auto-download")
+        except Exception as e:
+            logger.error(f"Auto-download failed for {symbol}: {e}")
 
     def _on_timeframe_changed(self, new_timeframe: str):
         """Handle timeframe change: reload candles from DB with new timeframe."""

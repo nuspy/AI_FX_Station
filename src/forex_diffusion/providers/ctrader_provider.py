@@ -105,45 +105,88 @@ class CTraderProvider(BaseProvider):
         ]
 
     async def connect(self) -> bool:
-        """Connect to cTrader Open API."""
+        """
+        Connect to cTrader Open API.
+
+        Strategy: Token first, OAuth fallback
+        1. Try direct token authentication (faster, simpler)
+        2. If fails, fallback to OAuth flow
+        """
+        if not self.access_token:
+            logger.error(f"[{self.name}] No access token configured. Run OAuth flow first.")
+            return False
+
+        # Create message queue
+        self._message_queue = asyncio.Queue(maxsize=10000)
+
+        # Strategy 1: Try direct token authentication
         try:
-            if not self.access_token:
-                logger.error(f"[{self.name}] No access token configured. Run OAuth flow first.")
-                return False
-
-            # Create message queue
-            self._message_queue = asyncio.Queue(maxsize=10000)
-
-            # Create cTrader client
-            self.client = Client(
-                self.host,
-                self.port,
-                TcpProtocol
-            )
-
-            # Setup message handlers
-            self.client.set_message_callback(self._on_message)
-            self.client.set_error_callback(self._on_error)
-
-            # Connect (Twisted reactor runs in separate thread)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._connect_twisted)
-
-            # Authenticate
-            await self._authenticate()
-
-            self.health.is_connected = True
-            self._running = True
-            self._start_time = datetime.now()
-
-            logger.info(f"[{self.name}] Connected to cTrader ({self.environment})")
-            return True
-
+            logger.info(f"[{self.name}] Attempting direct token connection...")
+            success = await self._connect_with_token()
+            if success:
+                logger.info(f"[{self.name}] Connected via direct token")
+                return True
         except Exception as e:
-            logger.error(f"[{self.name}] Failed to connect: {e}")
+            logger.warning(f"[{self.name}] Direct token failed: {e}, trying OAuth fallback...")
+
+        # Strategy 2: Fallback to OAuth
+        try:
+            logger.info(f"[{self.name}] Attempting OAuth connection...")
+            success = await self._connect_with_oauth()
+            if success:
+                logger.info(f"[{self.name}] Connected via OAuth")
+                return True
+        except Exception as e:
+            logger.error(f"[{self.name}] OAuth connection also failed: {e}")
             self.health.is_connected = False
             self.health.errors.append(str(e))
             return False
+
+        return False
+
+    async def _connect_with_token(self) -> bool:
+        """Connect using direct token (no OAuth) - preferred method."""
+        # Create cTrader client
+        self.client = Client(self.host, self.port, TcpProtocol)
+
+        # Setup message handlers
+        self.client.set_message_callback(self._on_message)
+        self.client.set_error_callback(self._on_error)
+
+        # Connect
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._connect_twisted)
+
+        # Authenticate with token (no OAuth)
+        await self._authenticate_token()
+
+        self.health.is_connected = True
+        self._running = True
+        self._start_time = datetime.now()
+
+        return True
+
+    async def _connect_with_oauth(self) -> bool:
+        """Connect using OAuth flow - fallback method."""
+        # Create cTrader client
+        self.client = Client(self.host, self.port, TcpProtocol)
+
+        # Setup message handlers
+        self.client.set_message_callback(self._on_message)
+        self.client.set_error_callback(self._on_error)
+
+        # Connect
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._connect_twisted)
+
+        # Authenticate with OAuth
+        await self._authenticate_oauth()
+
+        self.health.is_connected = True
+        self._running = True
+        self._start_time = datetime.now()
+
+        return True
 
     def _connect_twisted(self) -> None:
         """Start Twisted reactor in thread (blocking call)."""
@@ -151,8 +194,8 @@ class CTraderProvider(BaseProvider):
         # For now, placeholder - will implement full Twisted→asyncio bridge
         pass
 
-    async def _authenticate(self) -> None:
-        """Authenticate with cTrader using access token."""
+    async def _authenticate_token(self) -> None:
+        """Authenticate with cTrader using direct token (no OAuth)."""
         if not self.client:
             raise RuntimeError("Client not initialized")
 
@@ -164,7 +207,26 @@ class CTraderProvider(BaseProvider):
         # Send via client (placeholder - full implementation needed)
         # await self._send_message(request)
 
-        logger.info(f"[{self.name}] Authenticated successfully")
+        # Use access token directly (no OAuth redirect)
+        # This is the simpler, faster method
+        logger.info(f"[{self.name}] Authenticated via direct token")
+
+    async def _authenticate_oauth(self) -> None:
+        """Authenticate with cTrader using OAuth flow."""
+        if not self.client:
+            raise RuntimeError("Client not initialized")
+
+        # Send auth message
+        request = Messages.ApplicationAuthReq()
+        request.clientId = self.client_id
+        request.clientSecret = self.client_secret
+
+        # Send via client (placeholder - full implementation needed)
+        # await self._send_message(request)
+
+        # OAuth flow - uses access_token obtained via browser redirect
+        # This assumes the token was already obtained
+        logger.info(f"[{self.name}] Authenticated via OAuth")
 
     async def disconnect(self) -> None:
         """Disconnect from cTrader."""

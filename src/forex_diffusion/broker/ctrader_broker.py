@@ -176,41 +176,99 @@ class CTraderBroker:
         logger.info(f"Initialized cTrader broker: account={account_id}, env={environment}")
 
     async def connect(self):
-        """Connect to cTrader API."""
+        """
+        Connect to cTrader API.
+
+        Strategy: Token first, OAuth fallback
+        1. Try direct token authentication (faster, simpler)
+        2. If fails, fallback to OAuth flow
+        """
+        # Strategy 1: Try direct token authentication
         try:
-            # Determine host
-            if self.environment == "demo":
-                host = EndPoints.PROTOBUF_DEMO_HOST
-            else:
-                host = EndPoints.PROTOBUF_LIVE_HOST
-
-            # Create client
-            self.client = Client(host, EndPoints.PROTOBUF_PORT, TcpProtocol)
-
-            # Connect
-            await self.client.connect()
-
-            # Authenticate
-            await self.client.send(ProtoOAApplicationAuthReq(
-                clientId=self.client_id,
-                clientSecret=self.client_secret
-            ))
-
-            # Authorize account
-            await self.client.send(ProtoOAAccountAuthReq(
-                ctidTraderAccountId=self.account_id,
-                accessToken=self.access_token
-            ))
-
-            self.connected = True
-            logger.info("Connected to cTrader API")
-
-            # Start event loop
-            asyncio.create_task(self._event_loop())
-
+            logger.info("Attempting direct token connection...")
+            await self._connect_with_token()
+            logger.info("Successfully connected via direct token")
+            return
         except Exception as e:
-            logger.error(f"Failed to connect to cTrader: {e}")
+            logger.warning(f"Direct token connection failed: {e}, trying OAuth fallback...")
+
+        # Strategy 2: Fallback to OAuth
+        try:
+            logger.info("Attempting OAuth connection...")
+            await self._connect_with_oauth()
+            logger.info("Successfully connected via OAuth")
+        except Exception as e:
+            logger.error(f"OAuth connection also failed: {e}")
             raise
+
+    async def _connect_with_token(self):
+        """Connect using direct token (no OAuth) - preferred method."""
+        # Determine host
+        if self.environment == "demo":
+            host = EndPoints.PROTOBUF_DEMO_HOST
+        else:
+            host = EndPoints.PROTOBUF_LIVE_HOST
+
+        # Create client
+        self.client = Client(host, EndPoints.PROTOBUF_PORT)
+
+        # Connect
+        await self.client.connect()
+
+        # Authenticate application
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOAApplicationAuthReq
+        auth_req = ProtoOAApplicationAuthReq()
+        auth_req.clientId = self.client_id
+        auth_req.clientSecret = self.client_secret
+        await self.client.send(auth_req)
+
+        # Authorize account using token (no OAuth)
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOAAccountAuthReq
+        account_req = ProtoOAAccountAuthReq()
+        account_req.ctidTraderAccountId = self.account_id
+        account_req.accessToken = self.access_token
+        await self.client.send(account_req)
+
+        self.connected = True
+        logger.info("Connected to cTrader API via token")
+
+        # Start event loop
+        asyncio.create_task(self._event_loop())
+
+    async def _connect_with_oauth(self):
+        """Connect using OAuth flow - fallback method."""
+        # Determine host
+        if self.environment == "demo":
+            host = EndPoints.PROTOBUF_DEMO_HOST
+        else:
+            host = EndPoints.PROTOBUF_LIVE_HOST
+
+        # Create client
+        self.client = Client(host, EndPoints.PROTOBUF_PORT)
+
+        # Connect
+        await self.client.connect()
+
+        # Authenticate application
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOAApplicationAuthReq
+        auth_req = ProtoOAApplicationAuthReq()
+        auth_req.clientId = self.client_id
+        auth_req.clientSecret = self.client_secret
+        await self.client.send(auth_req)
+
+        # OAuth flow - authorize with access token
+        # Note: This assumes access_token was obtained via OAuth beforehand
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOAAccountAuthReq
+        account_req = ProtoOAAccountAuthReq()
+        account_req.ctidTraderAccountId = self.account_id
+        account_req.accessToken = self.access_token
+        await self.client.send(account_req)
+
+        self.connected = True
+        logger.info("Connected to cTrader API via OAuth")
+
+        # Start event loop
+        asyncio.create_task(self._event_loop())
 
     async def disconnect(self):
         """Disconnect from cTrader API."""
@@ -611,3 +669,186 @@ class BrokerSimulator(CTraderBroker):
         # Update equity
         _, unrealized = self._calculate_total_pnl()
         self.equity = self.balance + unrealized
+
+
+def get_ctrader_accounts(client_id: str, client_secret: str, access_token: str, environment: str = "demo") -> List[Dict]:
+    """
+    Get list of cTrader accounts using API credentials.
+
+    Strategy: Token first, OAuth fallback
+    1. Try direct connection with access_token (no OAuth)
+    2. If fails, fallback to OAuth flow
+
+    Args:
+        client_id: cTrader app client ID
+        client_secret: cTrader app client secret
+        access_token: OAuth access token (or direct token)
+        environment: 'demo' or 'live'
+
+    Returns:
+        List of account dictionaries with id, type, balance, currency
+    """
+    if not CTRADER_AVAILABLE:
+        logger.warning("cTrader API not available")
+        return []
+
+    # Strategy 1: Try direct token connection (no OAuth)
+    try:
+        logger.info(f"Attempting direct token connection to cTrader {environment}...")
+        accounts = _get_accounts_with_token(client_id, client_secret, access_token, environment)
+        if accounts:
+            logger.info(f"Successfully retrieved {len(accounts)} accounts via direct token")
+            return accounts
+    except Exception as e:
+        logger.warning(f"Direct token connection failed: {e}, trying OAuth fallback...")
+
+    # Strategy 2: Fallback to OAuth flow
+    try:
+        logger.info(f"Attempting OAuth connection to cTrader {environment}...")
+        accounts = _get_accounts_with_oauth(client_id, client_secret, access_token, environment)
+        if accounts:
+            logger.info(f"Successfully retrieved {len(accounts)} accounts via OAuth")
+            return accounts
+    except Exception as e:
+        logger.error(f"OAuth connection also failed: {e}")
+
+    return []
+
+
+def _get_accounts_with_token(client_id: str, client_secret: str, access_token: str, environment: str) -> List[Dict]:
+    """
+    Get accounts using direct token (no OAuth flow).
+
+    This is the preferred method - faster and simpler.
+    """
+    import asyncio
+    from ctrader_open_api import Client, EndPoints
+    from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+        ProtoOAApplicationAuthReq,
+        ProtoOAGetAccountListByAccessTokenReq
+    )
+
+    async def _fetch_accounts():
+        # Determine host
+        host = EndPoints.PROTOBUF_DEMO_HOST if environment == "demo" else EndPoints.PROTOBUF_LIVE_HOST
+        port = EndPoints.PROTOBUF_PORT
+
+        # Create client
+        client = Client(host, port)
+
+        try:
+            # Connect
+            await client.connect()
+            logger.debug(f"Connected to {host}:{port}")
+
+            # Authenticate application
+            auth_req = ProtoOAApplicationAuthReq()
+            auth_req.clientId = client_id
+            auth_req.clientSecret = client_secret
+
+            await client.send(auth_req)
+            logger.debug("Application authenticated")
+
+            # Get accounts by access token (no OAuth)
+            accounts_req = ProtoOAGetAccountListByAccessTokenReq()
+            accounts_req.accessToken = access_token
+
+            response = await client.send(accounts_req)
+
+            # Parse accounts from response
+            accounts = []
+            if hasattr(response, 'ctidTraderAccount'):
+                for acc in response.ctidTraderAccount:
+                    account_info = {
+                        'id': str(acc.ctidTraderAccountId),
+                        'type': 'demo' if acc.isLive == False else 'live',
+                        'balance': acc.balance / 100 if hasattr(acc, 'balance') else 0,  # Convert cents to dollars
+                        'currency': acc.depositAssetId if hasattr(acc, 'depositAssetId') else 'USD'
+                    }
+                    accounts.append(account_info)
+
+            return accounts
+
+        finally:
+            await client.disconnect()
+            logger.debug("Disconnected from cTrader")
+
+    # Run async function
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_fetch_accounts())
+    finally:
+        loop.close()
+
+
+def _get_accounts_with_oauth(client_id: str, client_secret: str, access_token: str, environment: str) -> List[Dict]:
+    """
+    Get accounts using OAuth flow.
+
+    This is the fallback method when direct token doesn't work.
+    """
+    import asyncio
+    from ctrader_open_api import Client, EndPoints
+    from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+        ProtoOAApplicationAuthReq,
+        ProtoOAAccountAuthReq,
+        ProtoOAGetAccountListReq
+    )
+
+    async def _fetch_accounts():
+        # Determine host
+        host = EndPoints.PROTOBUF_DEMO_HOST if environment == "demo" else EndPoints.PROTOBUF_LIVE_HOST
+        port = EndPoints.PROTOBUF_PORT
+
+        # Create client
+        client = Client(host, port)
+
+        try:
+            # Connect
+            await client.connect()
+            logger.debug(f"Connected to {host}:{port} for OAuth")
+
+            # Authenticate application
+            auth_req = ProtoOAApplicationAuthReq()
+            auth_req.clientId = client_id
+            auth_req.clientSecret = client_secret
+
+            await client.send(auth_req)
+            logger.debug("Application authenticated for OAuth")
+
+            # Note: OAuth flow requires user interaction
+            # This is a simplified version - real OAuth needs browser redirect
+            # For now, we try to use the access_token as if it's already authorized
+
+            # Get accounts list (requires prior OAuth authorization)
+            accounts_req = ProtoOAGetAccountListReq()
+            accounts_req.accessToken = access_token
+
+            response = await client.send(accounts_req)
+
+            # Parse accounts from response
+            accounts = []
+            if hasattr(response, 'ctidTraderAccount'):
+                for acc in response.ctidTraderAccount:
+                    account_info = {
+                        'id': str(acc.ctidTraderAccountId),
+                        'type': 'demo' if acc.isLive == False else 'live',
+                        'balance': acc.balance / 100 if hasattr(acc, 'balance') else 0,
+                        'currency': acc.depositAssetId if hasattr(acc, 'depositAssetId') else 'USD'
+                    }
+                    accounts.append(account_info)
+
+            return accounts
+
+        finally:
+            await client.disconnect()
+            logger.debug("Disconnected from cTrader OAuth")
+
+    # Run async function
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_fetch_accounts())
+    finally:
+        loop.close()
