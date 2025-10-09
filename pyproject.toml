@@ -64,11 +64,12 @@ dependencies = [
   "requests>=2.31.0",  # HTTP requests for cTrader API
   "service-identity>=21.1.0",  # For cTrader API
   # Multi-Provider Integration (Phase 1-4)
-  # ctrader-open-api - INSTALL SEPARATELY (conflicts with TensorFlow protobuf version):
-  # pip install ctrader-open-api==0.9.2 --no-deps
-  # pip install twisted==24.3.0 inputimeout==1.0.4 pyOpenSSL==24.1.0 requests
+  # ctrader-open-api - protobuf version conflict resolved:
+  # ctrader-open-api declares protobuf==3.20.1 but works fine with protobuf>=3.20.1
+  # TensorFlow 2.20+ requires protobuf>=3.20.1 and works with 6.x
+  # Both packages work with protobuf 6.x, so we don't pin it here (let TensorFlow manage it)
   # "twisted>=23.0.0",           # Async framework (also for cTrader if installed)
-  "protobuf>=5.28.0",         # Protocol buffers (TensorFlow requires >=5.28)
+  # "protobuf>=5.28.0",         # Removed - let TensorFlow manage protobuf version (no conflict)
   "keyring>=24.0.0",          # Secure credential storage
   "cryptography>=41.0.0",     # Fernet encryption
   "httpx>=0.25.0",            # Async HTTP for OAuth
