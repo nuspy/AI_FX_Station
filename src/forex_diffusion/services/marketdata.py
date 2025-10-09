@@ -193,21 +193,42 @@ class MarketDataService:
                 self.provider = TiingoClient()
                 self.provider_name = "Tiingo"
                 logger.info("MarketDataService using Tiingo provider")
+
             elif primary_provider == "ctrader":
-                # cTrader requires async initialization, use sync REST-style client
-                # For now, we'll use TiingoClient as fallback since cTrader needs broker connection
-                logger.warning("cTrader selected but requires broker connection. Using Tiingo for historical data.")
-                self.provider = TiingoClient()
-                self.provider_name = "Tiingo (cTrader fallback)"
-                self.fallback_occurred = True
-                self.fallback_reason = "cTrader requires broker connection for historical data. Currently not implemented for MarketDataService."
-                # TODO: Integrate CTraderProvider properly with async support
+                # Try to initialize cTrader client
+                try:
+                    from .ctrader_client import CTraderClient
+                    logger.info("Attempting to initialize cTrader client...")
+                    self.provider = CTraderClient()
+                    self.provider_name = "cTrader"
+                    logger.info("MarketDataService using cTrader provider")
+                except ImportError as e:
+                    logger.warning(f"cTrader client not available: {e}. Falling back to Tiingo.")
+                    self.provider = TiingoClient()
+                    self.provider_name = "Tiingo (cTrader import fallback)"
+                    self.fallback_occurred = True
+                    self.fallback_reason = "ctrader-open-api package not installed. Install with: pip install ctrader-open-api twisted protobuf"
+                except ValueError as e:
+                    # Missing credentials
+                    logger.warning(f"cTrader configuration error: {e}. Falling back to Tiingo.")
+                    self.provider = TiingoClient()
+                    self.provider_name = "Tiingo (cTrader config fallback)"
+                    self.fallback_occurred = True
+                    self.fallback_reason = f"cTrader credentials not configured: {str(e)}. Configure in Settings > cTrader."
+                except Exception as e:
+                    logger.error(f"Failed to initialize cTrader client: {e}. Falling back to Tiingo.")
+                    self.provider = TiingoClient()
+                    self.provider_name = "Tiingo (cTrader error fallback)"
+                    self.fallback_occurred = True
+                    self.fallback_reason = f"cTrader initialization error: {str(e)}"
+
             else:
                 logger.warning(f"Unknown provider '{primary_provider}', using Tiingo")
                 self.provider = TiingoClient()
                 self.provider_name = "Tiingo (default)"
                 self.fallback_occurred = True
                 self.fallback_reason = f"Unknown provider '{primary_provider}'. Only 'tiingo' and 'ctrader' are supported."
+
         except Exception as e:
             logger.error(f"Failed to initialize provider '{primary_provider}': {e}, falling back to Tiingo")
             self.provider = TiingoClient()
