@@ -221,8 +221,38 @@ class DataSourcesTab(QWidget):
         except Exception as e:
             logger.debug(f"Could not load settings: {e}")
 
-        # Check Tiingo WebSocket status
-        if status['ws_enabled']:
+        # Check Realtime ticks status
+        # If cTrader is primary provider, show cTrader WebSocket status instead of Tiingo
+        if status['primary_provider'].lower() == 'ctrader':
+            status['realtime_ticks']['method'] = 'WebSocket (cTrader ProtoOA)'
+            status['realtime_ticks']['provider'] = 'cTrader'
+
+            # Check if cTrader is enabled and connected
+            ctrader_enabled = get_setting("ctrader_enabled", False)
+            if ctrader_enabled:
+                # Check if broker is connected (cTrader WebSocket)
+                if self._main_window and hasattr(self._main_window, 'controller'):
+                    controller = self._main_window.controller
+                    if hasattr(controller, 'broker') and controller.broker:
+                        broker = controller.broker
+                        is_connected = getattr(broker, '_connected', False)
+                        if is_connected:
+                            status['realtime_ticks']['status'] = 'Connected'
+                            status['realtime_ticks']['details'] = 'cTrader ProtoOA WebSocket active'
+                        else:
+                            status['realtime_ticks']['status'] = 'Disconnected'
+                            status['realtime_ticks']['details'] = 'Broker not connected'
+                    else:
+                        status['realtime_ticks']['status'] = 'Not Initialized'
+                        status['realtime_ticks']['details'] = 'Broker not created'
+                else:
+                    status['realtime_ticks']['status'] = 'Not Initialized'
+                    status['realtime_ticks']['details'] = 'Controller not available'
+            else:
+                status['realtime_ticks']['status'] = 'Disabled'
+                status['realtime_ticks']['details'] = 'cTrader real-time features not enabled in settings'
+        elif status['ws_enabled']:
+            # Tiingo WebSocket
             status['realtime_ticks']['method'] = 'WebSocket'
             status['realtime_ticks']['provider'] = 'Tiingo'
 

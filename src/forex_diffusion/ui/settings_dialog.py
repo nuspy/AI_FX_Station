@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QVBoxLayout,
+    QVBoxLayout, QCheckBox,
 )
+from loguru import logger
 
 from ..utils.user_settings import get_setting, set_setting
 
@@ -213,6 +214,10 @@ class SettingsDialog(QDialog):
         self.btn_ctrader_oauth = QPushButton("Authorize cTrader (OAuth)")
         self.btn_ctrader_test = QPushButton("Test Connection")
 
+        # cTrader enabled checkbox (enables real-time ticks, volumes, order book)
+        self.ctrader_enabled_checkbox = QCheckBox("Enable cTrader Real-time Features")
+        self.ctrader_enabled_checkbox.setToolTip("Enable cTrader real-time ticks, volumes, and order book streaming via WebSocket")
+
         provider_form.addWidget(QLabel("Primary Provider:"), 0, 0)
         provider_form.addWidget(self.primary_provider, 0, 1)
         provider_form.addWidget(QLabel("Fallback Provider:"), 0, 2)
@@ -227,6 +232,9 @@ class SettingsDialog(QDialog):
         provider_form.addWidget(self.ctrader_environment, 2, 1)
         provider_form.addWidget(self.btn_ctrader_oauth, 2, 2)
         provider_form.addWidget(self.btn_ctrader_test, 2, 3)
+
+        # Add cTrader enabled checkbox on a new row
+        provider_form.addWidget(self.ctrader_enabled_checkbox, 3, 0, 1, 2)
 
         layout.addWidget(provider_group)
 
@@ -396,6 +404,11 @@ class SettingsDialog(QDialog):
         self.ctrader_client_secret.setText(str(get_setting("provider.ctrader.client_secret", "")))
         self.ctrader_access_token.setText(str(get_setting("provider.ctrader.access_token", "")))
         self.ctrader_environment.setCurrentText(str(get_setting("provider.ctrader.environment", "demo")))
+
+        # Load cTrader enabled state (auto-enable if primary_provider is ctrader)
+        primary = str(get_setting("primary_data_provider", "tiingo"))
+        ctrader_enabled = get_setting("ctrader_enabled", primary.lower() == "ctrader")
+        self.ctrader_enabled_checkbox.setChecked(ctrader_enabled)
 
         self._accounts = self._load_accounts_dict()
         self._populate_accounts_list()
@@ -667,6 +680,7 @@ class SettingsDialog(QDialog):
             set_setting("provider.ctrader.client_secret", self.ctrader_client_secret.text().strip())
             set_setting("provider.ctrader.access_token", self.ctrader_access_token.text().strip())
             set_setting("provider.ctrader.environment", self.ctrader_environment.currentText())
+            set_setting("ctrader_enabled", self.ctrader_enabled_checkbox.isChecked())
 
             QMessageBox.information(self, "Settings", "Settings saved")
             self.accept()

@@ -1018,6 +1018,41 @@ class DataService(ChartServiceBase):
         except Exception as e:
             logger.exception(f"Failed to update market quote for {symbol}: {e}")
 
+    def _update_provider_label(self):
+        """Update the provider label showing the current data provider and method."""
+        try:
+            if not hasattr(self, 'provider_label'):
+                return
+
+            from ....utils.user_settings import get_setting
+
+            # Get primary provider setting
+            primary_provider = get_setting("primary_data_provider", "tiingo")
+
+            # Determine method (REST or WebSocket)
+            # Check if WebSocket is enabled
+            ws_enabled = get_setting("ws_enabled", True)
+
+            # Check if cTrader realtime is enabled
+            ctrader_enabled = get_setting("ctrader_enabled", False)
+
+            # Build provider label text
+            if primary_provider.lower() == 'ctrader':
+                if ctrader_enabled:
+                    method = "WebSocket (ProtoOA)"
+                else:
+                    method = "REST"
+                provider_text = f"cTrader ({method})"
+            elif primary_provider.lower() == 'tiingo':
+                method = "WebSocket" if ws_enabled else "REST"
+                provider_text = f"Tiingo ({method})"
+            else:
+                provider_text = f"{primary_provider.upper()} (REST)"
+
+            self.provider_label.setText(f"Provider: {provider_text}")
+        except Exception as e:
+            logger.debug(f"Failed to update provider label: {e}")
+
     def _refresh_orders(self):
         """
         Pull open orders from broker and refresh the table.

@@ -189,55 +189,46 @@ class MarketDataService:
 
         # Try to create the primary provider
         try:
-            if primary_provider == "tiingo":
-                self.provider = TiingoClient()
-                self.provider_name = "Tiingo"
-                logger.info("MarketDataService using Tiingo provider")
+            # TIINGO DISABLED FOR TESTING - ONLY CTRADER ALLOWED
+            # if primary_provider == "tiingo":
+            #     self.provider = TiingoClient()
+            #     self.provider_name = "Tiingo"
+            #     logger.info("MarketDataService using Tiingo provider")
 
-            elif primary_provider == "ctrader":
-                # Try to initialize cTrader client
-                try:
-                    from .ctrader_client import CTraderClient
-                    logger.info("Attempting to initialize cTrader client...")
-                    client = CTraderClient()
-                    # Force initialization to catch errors immediately (lazy init)
-                    client._ensure_initialized()
-                    self.provider = client
-                    self.provider_name = "cTrader"
-                    logger.info("MarketDataService using cTrader provider")
-                except ImportError as e:
-                    logger.warning(f"cTrader client not available: {e}. Falling back to Tiingo.")
-                    self.provider = TiingoClient()
-                    self.provider_name = "Tiingo (cTrader import fallback)"
-                    self.fallback_occurred = True
-                    self.fallback_reason = "ctrader-open-api package not installed. Install with: pip install ctrader-open-api twisted protobuf"
-                except ValueError as e:
-                    # Missing credentials
-                    logger.warning(f"cTrader configuration error: {e}. Falling back to Tiingo.")
-                    self.provider = TiingoClient()
-                    self.provider_name = "Tiingo (cTrader config fallback)"
-                    self.fallback_occurred = True
-                    self.fallback_reason = f"cTrader credentials not configured: {str(e)}. Configure in Settings > cTrader."
-                except Exception as e:
-                    logger.error(f"Failed to initialize cTrader client: {e}. Falling back to Tiingo.")
-                    self.provider = TiingoClient()
-                    self.provider_name = "Tiingo (cTrader error fallback)"
-                    self.fallback_occurred = True
-                    self.fallback_reason = f"cTrader initialization error: {str(e)}"
+            if primary_provider == "ctrader":
+                # Initialize cTrader client (NO FALLBACK - will raise error if fails)
+                from .ctrader_client import CTraderClient
+                logger.info("Initializing cTrader client (NO FALLBACK)...")
+                client = CTraderClient()
+                # Force initialization to catch errors immediately (lazy init)
+                client._ensure_initialized()
+                self.provider = client
+                self.provider_name = "cTrader"
+                logger.info("MarketDataService using cTrader provider (NO FALLBACK)")
+                # NO try/except - errors will propagate and crash the app
+                # This is intentional for testing cTrader standalone
+
+            elif primary_provider == "tiingo":
+                raise ValueError(
+                    "Tiingo provider is DISABLED for testing. "
+                    "Only 'ctrader' is supported. "
+                    "Set primary_data_provider='ctrader' in Settings."
+                )
 
             else:
-                logger.warning(f"Unknown provider '{primary_provider}', using Tiingo")
-                self.provider = TiingoClient()
-                self.provider_name = "Tiingo (default)"
-                self.fallback_occurred = True
-                self.fallback_reason = f"Unknown provider '{primary_provider}'. Only 'tiingo' and 'ctrader' are supported."
+                raise ValueError(
+                    f"Unknown provider '{primary_provider}'. "
+                    f"Only 'ctrader' is supported (Tiingo disabled for testing). "
+                    f"Set primary_data_provider='ctrader' in Settings."
+                )
 
         except Exception as e:
-            logger.error(f"Failed to initialize provider '{primary_provider}': {e}, falling back to Tiingo")
-            self.provider = TiingoClient()
-            self.provider_name = "Tiingo (error fallback)"
+            # NO FALLBACK - let errors propagate
+            logger.error(f"FATAL: Failed to initialize provider '{primary_provider}': {e}")
+            logger.error("NO FALLBACK AVAILABLE - Tiingo is disabled for testing")
             self.fallback_occurred = True
-            self.fallback_reason = f"Provider initialization error: {str(e)}"
+            self.fallback_reason = f"Provider initialization error: {str(e)}. NO FALLBACK (Tiingo disabled)."
+            raise  # Re-raise to crash the app
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """

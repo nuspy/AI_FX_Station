@@ -25,14 +25,16 @@ from .base import BaseProvider, ProviderCapability
 # cTrader API imports (will be installed via pip)
 try:
     from ctrader_open_api import Client, Protobuf, TcpProtocol, EndPoints
-    from ctrader_open_api.messages.protobuf import OpenApiCommonMessages_pb2 as CommonMessages
-    from ctrader_open_api.messages.protobuf import OpenApiMessages_pb2 as Messages
+    from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import (
+        ProtoMessage, ProtoHeartbeatEvent, ProtoErrorRes
+    )
+    from ctrader_open_api.messages import OpenApiMessages_pb2 as Messages
     from twisted.internet import reactor, ssl
     from twisted.internet.protocol import ReconnectingClientFactory
     _HAS_CTRADER = True
-except ImportError:
+except ImportError as e:
     _HAS_CTRADER = False
-    logger.warning("ctrader-open-api not installed. CTraderProvider will not work.")
+    logger.warning(f"ctrader-open-api not installed: {e}")
 
 
 class CTraderProvider(BaseProvider):
@@ -76,16 +78,21 @@ class CTraderProvider(BaseProvider):
         self._message_queue: Optional[asyncio.Queue] = None
         self._running = False
 
+        # Message tracking for request/response matching
+        self._pending_requests: Dict[str, asyncio.Future] = {}
+        self._next_msg_id = 1
+
         # Rate limiting (5 req/sec for historical data)
         self._rate_limiter = deque(maxlen=5)
 
         # Endpoint configuration
         if self.environment == "live":
             self.host = EndPoints.PROTOBUF_LIVE_HOST
-            self.port = EndPoints.PROTOBUF_LIVE_PORT
         else:
             self.host = EndPoints.PROTOBUF_DEMO_HOST
-            self.port = EndPoints.PROTOBUF_DEMO_PORT
+
+        # Port is the same for both demo and live
+        self.port = EndPoints.PROTOBUF_PORT
 
     @property
     def capabilities(self) -> List[ProviderCapability]:
@@ -108,125 +115,156 @@ class CTraderProvider(BaseProvider):
         """
         Connect to cTrader Open API.
 
-        Strategy: Token first, OAuth fallback
-        1. Try direct token authentication (faster, simpler)
-        2. If fails, fallback to OAuth flow
+        Strategy: Application authentication with client_id + client_secret
+        No access_token (AppKey) required for historical data access.
         """
-        if not self.access_token:
-            logger.error(f"[{self.name}] No access token configured. Run OAuth flow first.")
+        if not self.client_id or not self.client_secret:
+            logger.error(f"[{self.name}] client_id and client_secret required. Configure in Settings.")
             return False
 
         # Create message queue
         self._message_queue = asyncio.Queue(maxsize=10000)
 
-        # Strategy 1: Try direct token authentication
+        # Connect with application credentials (client_id + client_secret)
         try:
-            logger.info(f"[{self.name}] Attempting direct token connection...")
-            success = await self._connect_with_token()
+            logger.info(f"[{self.name}] Connecting with application credentials...")
+            success = await self._connect_with_app_credentials()
             if success:
-                logger.info(f"[{self.name}] Connected via direct token")
+                logger.info(f"[{self.name}] Connected successfully")
                 return True
+            else:
+                logger.error(f"[{self.name}] Connection failed")
+                return False
         except Exception as e:
-            logger.warning(f"[{self.name}] Direct token failed: {e}, trying OAuth fallback...")
-
-        # Strategy 2: Fallback to OAuth
-        try:
-            logger.info(f"[{self.name}] Attempting OAuth connection...")
-            success = await self._connect_with_oauth()
-            if success:
-                logger.info(f"[{self.name}] Connected via OAuth")
-                return True
-        except Exception as e:
-            logger.error(f"[{self.name}] OAuth connection also failed: {e}")
+            logger.error(f"[{self.name}] Connection error: {e}")
             self.health.is_connected = False
             self.health.errors.append(str(e))
             return False
 
-        return False
-
-    async def _connect_with_token(self) -> bool:
-        """Connect using direct token (no OAuth) - preferred method."""
+    async def _connect_with_app_credentials(self) -> bool:
+        """
+        Connect using application credentials (client_id + client_secret).
+        No access_token required for historical data access.
+        """
         # Create cTrader client
         self.client = Client(self.host, self.port, TcpProtocol)
 
         # Setup message handlers
-        self.client.set_message_callback(self._on_message)
-        self.client.set_error_callback(self._on_error)
+        self.client.setMessageReceivedCallback(self._on_message)
+        self.client.setConnectedCallback(self._on_connected)
+        self.client.setDisconnectedCallback(self._on_disconnected)
 
-        # Connect
+        # Connect via Twisted
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._connect_twisted)
 
-        # Authenticate with token (no OAuth)
-        await self._authenticate_token()
+        # Start the client service (initiates connection)
+        logger.info(f"[{self.name}] Starting client service...")
+        self.client.startService()
+
+        # Wait for connection to establish
+        await asyncio.sleep(2.0)
+
+        # Authenticate with application credentials
+        await self._authenticate_application()
 
         self.health.is_connected = True
         self._running = True
         self._start_time = datetime.now()
 
-        return True
-
-    async def _connect_with_oauth(self) -> bool:
-        """Connect using OAuth flow - fallback method."""
-        # Create cTrader client
-        self.client = Client(self.host, self.port, TcpProtocol)
-
-        # Setup message handlers
-        self.client.set_message_callback(self._on_message)
-        self.client.set_error_callback(self._on_error)
-
-        # Connect
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._connect_twisted)
-
-        # Authenticate with OAuth
-        await self._authenticate_oauth()
-
-        self.health.is_connected = True
-        self._running = True
-        self._start_time = datetime.now()
-
+        logger.info(f"[{self.name}] Connected and authenticated")
         return True
 
     def _connect_twisted(self) -> None:
-        """Start Twisted reactor in thread (blocking call)."""
-        # This runs Twisted reactor - would need proper thread management
-        # For now, placeholder - will implement full Twisted→asyncio bridge
-        pass
+        """
+        Start Twisted reactor in thread (blocking call).
 
-    async def _authenticate_token(self) -> None:
-        """Authenticate with cTrader using direct token (no OAuth)."""
+        Twisted→asyncio bridge: Runs Twisted reactor in a background thread
+        to avoid blocking the asyncio event loop.
+        """
+        import threading
+
         if not self.client:
-            raise RuntimeError("Client not initialized")
+            raise RuntimeError("Client not initialized before connecting")
 
-        # Send auth message
-        request = Messages.ApplicationAuthReq()
+        # Check if reactor is already running
+        if reactor.running:
+            logger.info(f"[{self.name}] Twisted reactor already running")
+            return
+
+        # Start reactor in a background thread (non-blocking)
+        def run_reactor():
+            try:
+                logger.info(f"[{self.name}] Starting Twisted reactor in background thread...")
+                # Run reactor (blocking call within this thread)
+                reactor.run(installSignalHandlers=False)  # Don't install signal handlers in thread
+                logger.info(f"[{self.name}] Twisted reactor stopped")
+            except Exception as e:
+                logger.error(f"[{self.name}] Twisted reactor error: {e}")
+
+        # Start reactor thread
+        reactor_thread = threading.Thread(target=run_reactor, daemon=True, name="cTrader-Twisted-Reactor")
+        reactor_thread.start()
+
+        # Wait a bit for reactor to start
+        import time
+        time.sleep(0.5)
+
+        logger.info(f"[{self.name}] Twisted reactor started in thread {reactor_thread.name}")
+
+    async def _authenticate_application(self) -> None:
+        """Authenticate with cTrader using application credentials (client_id + client_secret)."""
+        logger.info(f"[{self.name}] Authenticating application with client_id: {self.client_id[:8]}...")
+
+        request = Messages.ProtoOAApplicationAuthReq()
         request.clientId = self.client_id
         request.clientSecret = self.client_secret
 
-        # Send via client (placeholder - full implementation needed)
-        # await self._send_message(request)
+        response = await self._send_and_wait(request, Messages.ProtoOAApplicationAuthRes, timeout=30.0)
 
-        # Use access token directly (no OAuth redirect)
-        # This is the simpler, faster method
-        logger.info(f"[{self.name}] Authenticated via direct token")
+        if not response:
+            raise RuntimeError("Application authentication failed - no response received")
 
-    async def _authenticate_oauth(self) -> None:
-        """Authenticate with cTrader using OAuth flow."""
-        if not self.client:
-            raise RuntimeError("Client not initialized")
+        logger.info(f"[{self.name}] Application authenticated successfully")
 
-        # Send auth message
-        request = Messages.ApplicationAuthReq()
-        request.clientId = self.client_id
-        request.clientSecret = self.client_secret
+        # After app auth, authenticate the trading account
+        await self._authenticate_account()
 
-        # Send via client (placeholder - full implementation needed)
-        # await self._send_message(request)
+    async def _authenticate_account(self) -> None:
+        """Authenticate trading account after application authentication."""
+        logger.info(f"[{self.name}] Authenticating trading account...")
 
-        # OAuth flow - uses access_token obtained via browser redirect
-        # This assumes the token was already obtained
-        logger.info(f"[{self.name}] Authenticated via OAuth")
+        # First, get the list of available accounts
+        accounts_req = Messages.ProtoOAGetAccountListByAccessTokenReq()
+        accounts_req.accessToken = ""  # Empty for client credentials flow
+
+        try:
+            accounts_res = await self._send_and_wait(accounts_req, Messages.ProtoOAGetAccountListByAccessTokenRes, timeout=30.0)
+
+            if not accounts_res or not accounts_res.ctidTraderAccount:
+                raise RuntimeError("No trading accounts found")
+
+            # Use the first available account
+            account = accounts_res.ctidTraderAccount[0]
+            self._account_id = account.ctidTraderAccountId
+
+            logger.info(f"[{self.name}] Using account ID: {self._account_id}")
+
+            # Now authenticate this specific account
+            auth_req = Messages.ProtoOAAccountAuthReq()
+            auth_req.ctidTraderAccountId = self._account_id
+            auth_req.accessToken = ""  # Empty for client credentials flow
+
+            auth_res = await self._send_and_wait(auth_req, Messages.ProtoOAAccountAuthRes, timeout=30.0)
+
+            if not auth_res:
+                raise RuntimeError(f"Account authentication failed for account {self._account_id}")
+
+            logger.info(f"[{self.name}] Account {self._account_id} authenticated successfully")
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Account authentication error: {e}")
+            raise
 
     async def disconnect(self) -> None:
         """Disconnect from cTrader."""
@@ -249,12 +287,24 @@ class CTraderProvider(BaseProvider):
         try:
             self.health.last_message_ts = datetime.now()
 
-            # Convert Protobuf message to dict
-            msg_dict = self._protobuf_to_dict(message)
+            # Check if this is a response to a pending request
+            msg_id = getattr(message, 'clientMsgId', None)
 
-            # Push to async queue
+            if msg_id and msg_id in self._pending_requests:
+                # This is a response to a pending request
+                future = self._pending_requests.pop(msg_id)
+                if not future.done():
+                    # Schedule the future to be resolved in the asyncio event loop
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    loop.call_soon_threadsafe(future.set_result, message)
+                return
+
+            # Unsolicited message (streaming data) - push to queue
             if self._message_queue and not self._message_queue.full():
                 try:
+                    # Convert Protobuf message to dict for streaming data
+                    msg_dict = self._protobuf_to_dict(message)
                     self._message_queue.put_nowait(msg_dict)
                 except asyncio.QueueFull:
                     logger.warning(f"[{self.name}] Message queue full, dropping message")
@@ -268,6 +318,18 @@ class CTraderProvider(BaseProvider):
         logger.error(f"[{self.name}] Connection error: {error}")
         self.health.errors.append(str(error))
         self.health.is_connected = False
+
+    def _on_connected(self) -> None:
+        """Handle successful connection to cTrader."""
+        logger.info(f"[{self.name}] Connected to cTrader server")
+        self.health.is_connected = True
+        self.health.last_message_ts = datetime.now()
+
+    def _on_disconnected(self) -> None:
+        """Handle disconnection from cTrader."""
+        logger.warning(f"[{self.name}] Disconnected from cTrader server")
+        self.health.is_connected = False
+        self._running = False
 
     def _protobuf_to_dict(self, message: Any) -> Dict[str, Any]:
         """Convert Protobuf message to dictionary."""
@@ -386,6 +448,24 @@ class CTraderProvider(BaseProvider):
             logger.error(f"[{self.name}] Failed to get historical bars for {symbol}: {e}")
             self.health.errors.append(str(e))
             return None
+
+    async def get_historical_bars(
+        self, symbol: str, timeframe: str, start_ms: int, end_ms: int
+    ) -> Optional[pd.DataFrame]:
+        """
+        Public wrapper for _get_historical_bars_impl.
+        Allows CTraderClient to call historical bars API.
+
+        Args:
+            symbol: Symbol like "EUR/USD"
+            timeframe: cTrader format ('1m', '5m', '15m', '1h', '4h', '1d')
+            start_ms: Start timestamp in milliseconds
+            end_ms: End timestamp in milliseconds
+
+        Returns:
+            DataFrame with columns: ts_utc, open, high, low, close, volume, tick_volume
+        """
+        return await self._get_historical_bars_impl(symbol, timeframe, start_ms, end_ms)
 
     async def _get_historical_ticks_impl(
         self, symbol: str, start_ts_ms: int, end_ts_ms: int
@@ -534,16 +614,74 @@ class CTraderProvider(BaseProvider):
     # Helper methods for cTrader protocol
 
     async def _get_symbol_id(self, symbol: str) -> int:
-        """Get cTrader symbol ID from symbol name."""
-        # This would need to query symbols list - placeholder implementation
-        # In production, cache symbol mappings
-        symbol_map = {
-            "EUR/USD": 1,
-            "GBP/USD": 2,
-            "USD/JPY": 3,
-            # Add more mappings
-        }
-        return symbol_map.get(symbol, 1)
+        """
+        Get cTrader symbol ID from symbol name via API.
+        Caches results to avoid repeated API calls.
+        """
+        # Initialize cache if not present
+        if not hasattr(self, '_symbol_cache'):
+            self._symbol_cache = {}
+
+        # Return from cache if available
+        if symbol in self._symbol_cache:
+            return self._symbol_cache[symbol]
+
+        # Request symbols list from cTrader API
+        try:
+            await self._rate_limit_wait()
+
+            request = Messages.ProtoOASymbolsListReq()
+            request.ctidTraderAccountId = self._account_id
+
+            response = await self._send_and_wait(request, Messages.ProtoOASymbolsListRes)
+
+            if not response or not hasattr(response, 'symbol'):
+                raise ValueError(f"Could not retrieve symbols list from cTrader")
+
+            # Build cache from response
+            for sym in response.symbol:
+                sym_name = sym.symbolName  # e.g. "EURUSD"
+
+                # Normalize to "EUR/USD" format (add slash if 6-char currency pair)
+                if len(sym_name) == 6 and sym_name.isalpha():
+                    normalized = f"{sym_name[:3]}/{sym_name[3:]}"
+                else:
+                    normalized = sym_name
+
+                self._symbol_cache[normalized] = sym.symbolId
+                # Also cache without slash for flexibility
+                self._symbol_cache[sym_name] = sym.symbolId
+
+            logger.info(f"[{self.name}] Cached {len(self._symbol_cache)} symbols from cTrader")
+
+            # Check if requested symbol is now in cache
+            if symbol not in self._symbol_cache:
+                # Try without slash as fallback
+                symbol_no_slash = symbol.replace("/", "")
+                if symbol_no_slash in self._symbol_cache:
+                    return self._symbol_cache[symbol_no_slash]
+
+                raise ValueError(
+                    f"Symbol '{symbol}' not found in cTrader symbols list. "
+                    f"Available: {list(self._symbol_cache.keys())[:10]}..."
+                )
+
+            return self._symbol_cache[symbol]
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to get symbol ID for {symbol}: {e}")
+            # Fallback to hardcoded common symbols as last resort
+            fallback_map = {
+                "EUR/USD": 1, "EURUSD": 1,
+                "GBP/USD": 2, "GBPUSD": 2,
+                "USD/JPY": 3, "USDJPY": 3,
+                "USD/CHF": 4, "USDCHF": 4,
+                "AUD/USD": 5, "AUDUSD": 5,
+            }
+            if symbol in fallback_map:
+                logger.warning(f"[{self.name}] Using fallback symbol ID for {symbol}")
+                return fallback_map[symbol]
+            raise
 
     def _convert_timeframe(self, timeframe: str) -> Optional[int]:
         """Convert standard timeframe to cTrader period enum."""
@@ -567,26 +705,46 @@ class CTraderProvider(BaseProvider):
         return tf_map.get(timeframe)
 
     async def _send_and_wait(self, request: Any, response_type: Any, timeout: float = 10.0) -> Optional[Any]:
-        """Send request to cTrader and wait for response."""
-        # This is a simplified placeholder - full implementation would:
-        # 1. Send protobuf message via client
-        # 2. Wait for response in message queue
-        # 3. Match response by clientMsgId
-        # 4. Return matched response or timeout
+        """Send Protobuf request to cTrader and wait for response with matching clientMsgId."""
+        if not self.client:
+            raise RuntimeError("Client not connected")
+
+        # Generate unique message ID
+        msg_id = str(self._next_msg_id)
+        self._next_msg_id += 1
+
+        # Create Future for response
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        self._pending_requests[msg_id] = future
 
         try:
-            if not self.client:
-                raise RuntimeError("Client not connected")
+            # Send request via Twisted client with clientMsgId parameter
+            logger.debug(f"[{self.name}] Sending request {msg_id} ({request.__class__.__name__})")
+            self.client.send(request, clientMsgId=msg_id)
 
-            # In a real implementation, this would:
-            # - Generate unique clientMsgId
-            # - Send request via self.client.send(request)
-            # - Poll self._message_queue for response matching clientMsgId
-            # - Return response or raise TimeoutError
+            # Wait for response with timeout
+            response = await asyncio.wait_for(future, timeout=timeout)
 
-            logger.warning(f"[{self.name}] _send_and_wait placeholder - needs full Twisted integration")
+            # Verify response type
+            if not isinstance(response, response_type):
+                logger.error(
+                    f"[{self.name}] Response type mismatch for msg {msg_id}: "
+                    f"expected {response_type.__name__}, got {response.__class__.__name__}"
+                )
+                return None
+
+            logger.debug(f"[{self.name}] Received response {msg_id} ({response.__class__.__name__})")
+            return response
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[{self.name}] Request {msg_id} ({request.__class__.__name__}) timed out after {timeout}s"
+            )
+            self._pending_requests.pop(msg_id, None)
             return None
 
         except Exception as e:
-            logger.error(f"[{self.name}] Send/wait error: {e}")
-            return None
+            logger.error(f"[{self.name}] Request {msg_id} error: {e}")
+            self._pending_requests.pop(msg_id, None)
+            raise

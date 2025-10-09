@@ -75,6 +75,9 @@ class ChartTab(QWidget):
         # Load initial data for the selected symbol/timeframe
         QTimer.singleShot(100, self._load_initial_chart_data)
 
+        # Update provider label initially and on settings changes
+        QTimer.singleShot(200, lambda: self.chart_controller._update_provider_label() if hasattr(self.chart_controller, '_update_provider_label') else None)
+
         self.ax = self.canvas.figure.subplots()
         try:
             # Minimize outer paddings around the plot area
@@ -229,6 +232,11 @@ class ChartTab(QWidget):
         top_layout.addWidget(self.tf_combo)
         self.tf_used_label = QLabel("TF used: -")
         top_layout.addWidget(self.tf_used_label)
+
+        # Provider label showing data provider and method (REST/WebSocket)
+        self.provider_label = QLabel("Provider: -")
+        self.provider_label.setToolTip("Shows the data provider and connection method used for chart data")
+        top_layout.addWidget(self.provider_label)
 
         self.forecast_settings_btn = QPushButton("Prediction Settings")
         self.forecast_btn = QPushButton("Make Prediction")
