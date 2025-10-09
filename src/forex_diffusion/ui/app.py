@@ -91,69 +91,66 @@ def setup_ui(
     tab_widget = QTabWidget()
     tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    # --- Create and connect the single, consolidated chart tab ---
-    chart_tab = ChartTabUI(main_window)
+    # --- Create Chart tab with nested tabs (level_2) ---
+    chart_container = QTabWidget()
+    chart_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    # Create Tab UNO (Generative Forecast) - now only with Forecast Settings and Live Trading
+    # Create the actual chart tab, Live Trading tab, and Signals tab
+    chart_tab = ChartTabUI(main_window)
+    live_trading_tab = LiveTradingTab(main_window)
+
+    # Create Signals tab (moved from Chart:Chart:Signals to Chart:Signals)
+    from .signals_tab import SignalsTab
+    signals_tab_chart = SignalsTab(main_window, db_service=db_service)
+
+    # Add as nested tabs under Chart
+    chart_container.addTab(chart_tab, "Chart")
+    chart_container.addTab(live_trading_tab, "Live Trading")
+    chart_container.addTab(signals_tab_chart, "Signals")
+
+    # --- Create Generative Forecast tab with nested tabs (level_2) ---
     uno_tab = QTabWidget()
     uno_tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # Create tabs for Generative Forecast
     forecast_settings_tab = ForecastSettingsTab(main_window)
-    live_trading_tab = LiveTradingTab(main_window)
-
-    # Add tabs to Generative Forecast
-    uno_tab.addTab(forecast_settings_tab, "Forecast Settings")
-    uno_tab.addTab(live_trading_tab, "Live Trading")
-
-    # Create standalone Training/Backtest tab (moved from level_2 to level_1)
-    training_backtest_tab = QTabWidget()
-    training_backtest_tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
     training_tab = TrainingTab(main_window)
     backtesting_tab = BacktestingTab(main_window)
 
-    training_backtest_tab.addTab(training_tab, "Training")
-    training_backtest_tab.addTab(backtesting_tab, "Backtesting")
+    # Add tabs directly to Generative Forecast (no Training/Backtest container)
+    uno_tab.addTab(forecast_settings_tab, "Forecast Settings")
+    uno_tab.addTab(training_tab, "Training")
+    uno_tab.addTab(backtesting_tab, "Backtesting")
 
-    # Create Tab DUE with Patterns as nested tab
-    due_tab = QTabWidget()
-    due_tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-    # Create Patterns tab (pass chart_tab reference for pattern display)
+    # Create Tab Patterns (simple widget, pattern controls are in Chart tab)
     patterns_tab = PatternsTab(main_window, chart_tab=chart_tab)
-    due_tab.addTab(patterns_tab, "Patterns")
 
     # Create Logs tab (top-level)
     logs_tab = LogsTab(main_window)
 
-    # Create Signals and 3D Reports tabs (moved from Chart to level_1)
-    from .signals_tab import SignalsTab
-    # from .reports_3d_tab import Reports3DTab
-
-    signals_tab = SignalsTab(main_window, db_service=db_service)
-    # reports_3d_tab = Reports3DTab(main_window)  # Temporarily disabled - causing startup hang
+    # Create 3D Reports tab (moved from Chart:Chart:3D Reports to level_1)
+    from .reports_3d_tab import Reports3DTab
+    reports_3d_tab = Reports3DTab(main_window)
 
     # Add top-level tabs in new order
-    tab_widget.addTab(chart_tab, "Chart")
-    tab_widget.addTab(uno_tab, "Generative Forecast")
-    tab_widget.addTab(training_backtest_tab, "Training/Backtest")  # Moved from level_2 to level_1
-    tab_widget.addTab(due_tab, "DUE")
+    tab_widget.addTab(chart_container, "Chart")  # Chart now has nested tabs (Chart, Live Trading, Signals)
+    tab_widget.addTab(uno_tab, "Generative Forecast")  # Now has Forecast Settings, Training, Backtesting
+    tab_widget.addTab(patterns_tab, "Patterns")  # Contains Pattern Training/Backtest
     tab_widget.addTab(logs_tab, "Logs")
-    tab_widget.addTab(signals_tab, "Signals")  # Moved from Chart to level_1
-    # tab_widget.addTab(reports_3d_tab, "3D Reports")  # Temporarily disabled - causing startup hang
+    tab_widget.addTab(reports_3d_tab, "3D Reports")
     layout.addWidget(tab_widget)
 
-    result["chart_tab"] = chart_tab
+    result["chart_container"] = chart_container  # Chart level_1 (contains Chart, Live Trading, Signals)
+    result["chart_tab"] = chart_tab  # Actual chart widget
     result["training_tab"] = training_tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
     result["live_trading_tab"] = live_trading_tab
-    result["patterns_tab"] = patterns_tab
+    result["signals_tab_chart"] = signals_tab_chart  # Signals tab under Chart
+    result["patterns_tab"] = patterns_tab  # Contains Pattern Training/Backtest
     result["logs_tab"] = logs_tab
-    # result["reports_3d_tab"] = reports_3d_tab  # Temporarily disabled
-    result["uno_tab"] = uno_tab
-    result["due_tab"] = due_tab
+    result["reports_3d_tab"] = reports_3d_tab  # 3D Reports at level_1
+    result["uno_tab"] = uno_tab  # Generative Forecast (now with 3 nested tabs)
     result["tab_widget"] = tab_widget
 
     # --- Connect controller and signals to the new chart_tab ---

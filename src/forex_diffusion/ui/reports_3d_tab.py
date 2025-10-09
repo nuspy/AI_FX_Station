@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QProgressBar, QMessageBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, Slot, QUrl
-from PySide6.QtWebEngineWidgets import QWebEngineView
+# QWebEngineView imported lazily in _ensure_web_view() to avoid blocking startup
 from PySide6.QtGui import QIcon, QFont
 
 import pandas as pd
@@ -282,10 +282,20 @@ class Reports3DTab(QWidget):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
 
-        # HTML viewer for reports
-        self.web_view = QWebEngineView()
-        self.web_view.setMinimumHeight(400)
-        right_layout.addWidget(self.web_view)
+        # HTML viewer for reports - Lazy loaded to avoid blocking startup
+        self.web_view = None
+        self.web_view_container = QWidget()
+        self.web_view_layout = QVBoxLayout(self.web_view_container)
+        self.web_view_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Placeholder until first use
+        self.web_view_placeholder = QLabel("Click on a report to view it here")
+        self.web_view_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.web_view_placeholder.setStyleSheet("QLabel { color: #7f8c8d; font-size: 14px; }")
+        self.web_view_layout.addWidget(self.web_view_placeholder)
+
+        self.web_view_container.setMinimumHeight(400)
+        right_layout.addWidget(self.web_view_container)
 
         # Report description panel
         desc_group = QGroupBox("Report Description")
@@ -372,12 +382,38 @@ class Reports3DTab(QWidget):
         if file_path and Path(file_path).exists():
             self.display_report(file_path)
 
+    def _ensure_web_view(self):
+        """Lazy initialize QWebEngineView on first use to avoid blocking startup"""
+        if self.web_view is None:
+            try:
+                from PySide6.QtWebEngineWidgets import QWebEngineView
+                self.web_view = QWebEngineView()
+                self.web_view.setMinimumHeight(400)
+
+                # Remove placeholder and add web view
+                if self.web_view_placeholder:
+                    self.web_view_layout.removeWidget(self.web_view_placeholder)
+                    self.web_view_placeholder.deleteLater()
+                    self.web_view_placeholder = None
+
+                self.web_view_layout.addWidget(self.web_view)
+                logger.info("QWebEngineView initialized (lazy loading)")
+            except Exception as e:
+                logger.error(f"Failed to initialize QWebEngineView: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to initialize web viewer: {str(e)}")
+                return False
+        return True
+
     def display_report(self, file_path: str):
         """Display selected report in viewer"""
         try:
             path = Path(file_path)
             if not path.exists():
                 QMessageBox.warning(self, "File Not Found", f"Report file not found: {file_path}")
+                return
+
+            # Ensure web view is initialized
+            if not self._ensure_web_view():
                 return
 
             # Load HTML in web view
@@ -552,7 +588,11 @@ class Reports3DTab(QWidget):
             try:
                 Path(file_path).unlink()
                 self.load_existing_reports()
-                self.web_view.setHtml("")
+
+                # Clear web view if initialized
+                if self.web_view is not None:
+                    self.web_view.setHtml("")
+
                 self.desc_title.setText("Select a report to view")
                 self.desc_text.clear()
                 QMessageBox.information(self, "Deleted", "Report deleted successfully.")

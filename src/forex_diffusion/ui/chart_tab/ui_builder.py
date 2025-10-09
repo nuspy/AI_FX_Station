@@ -76,14 +76,10 @@ class UIBuilderMixin:
         # Chart tab (finplot-based)
         self._create_chart_tab()
 
-        # Training/Backtest tab (pattern training - restored from commit 11d3627)
-        self._create_training_tab()
-
-        # Signals tab
-        self._create_signals_tab()
-
-        # 3D Reports tab
-        self._create_3d_reports_tab()
+        # Training/Backtest, Signals, and 3D Reports tabs moved to different locations
+        # - Training/Backtest moved to tab:Patterns
+        # - Signals moved to tab:Chart (level 2)
+        # - 3D Reports moved to tab:3D Reports (level 1)
 
         # Log Monitoring tab moved to top-level (see logs_tab.py)
 
