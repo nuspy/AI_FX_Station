@@ -319,8 +319,12 @@ class CTraderProvider(BaseProvider):
         self.health.errors.append(str(error))
         self.health.is_connected = False
 
-    def _on_connected(self) -> None:
-        """Handle successful connection to cTrader."""
+    def _on_connected(self, client) -> None:
+        """Handle successful connection to cTrader.
+
+        Args:
+            client: The cTrader client instance (passed by library)
+        """
         logger.info(f"[{self.name}] Connected to cTrader server")
         self.health.is_connected = True
         self.health.last_message_ts = datetime.now()
