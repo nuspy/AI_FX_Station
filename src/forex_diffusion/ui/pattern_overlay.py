@@ -17,6 +17,222 @@ class mpla:
 
 class MouseEvent: pass
 
+
+class PyQtGraphAxesWrapper:
+    """
+    Wrapper that makes PyQtGraph PlotItem compatible with matplotlib Axes API
+    used by PatternOverlayRenderer.
+    """
+    def __init__(self, plot_item):
+        self.plot_item = plot_item
+        self.lines = []  # Track added lines for matplotlib compatibility
+        self.collections = []
+        self.patches = []
+        self.texts = []
+        self._pattern_items = []  # Track pattern overlay items
+
+    def get_xlim(self):
+        """Get x-axis limits from PyQtGraph viewbox"""
+        try:
+            viewbox = self.plot_item.getViewBox()
+            if viewbox:
+                [[xmin, xmax], [ymin, ymax]] = viewbox.viewRange()
+                return (xmin, xmax)
+        except Exception:
+            pass
+        return (0, 100)
+
+    def get_ylim(self):
+        """Get y-axis limits from PyQtGraph viewbox"""
+        try:
+            viewbox = self.plot_item.getViewBox()
+            if viewbox:
+                [[xmin, xmax], [ymin, ymax]] = viewbox.viewRange()
+                return (ymin, ymax)
+        except Exception:
+            pass
+        return (0, 100)
+
+    def plot(self, *args, **kwargs):
+        """Add a line plot - matplotlib compatible signature"""
+        import pyqtgraph as pg
+        from PySide6.QtGui import QPen, QColor, QBrush
+        from PySide6.QtCore import Qt
+
+        # Parse matplotlib-style arguments
+        if len(args) >= 2:
+            x, y = args[0], args[1]
+        else:
+            x, y = [], []
+
+        color = kwargs.get('color', '#FFFFFF')
+        linewidth = kwargs.get('linewidth', 1)
+        linestyle = kwargs.get('linestyle', '-')
+        alpha = kwargs.get('alpha', 1.0)
+        zorder = kwargs.get('zorder', 0)
+        marker = kwargs.get('marker', None)
+        markersize = kwargs.get('markersize', 5)
+        markerfacecolor = kwargs.get('markerfacecolor', color)
+        markeredgecolor = kwargs.get('markeredgecolor', 'black')
+        markeredgewidth = kwargs.get('markeredgewidth', 1)
+        picker = kwargs.get('picker', None)
+
+        items = []
+
+        # Handle marker (scatter plot)
+        if marker and len(x) > 0:
+            # Convert colors
+            face_color = QColor(markerfacecolor)
+            face_color.setAlphaF(alpha)
+            edge_color = QColor(markeredgecolor)
+
+            brush = QBrush(face_color)
+            pen = QPen(edge_color)
+            pen.setWidthF(markeredgewidth)
+
+            # Create scatter plot
+            scatter = pg.ScatterPlotItem(
+                x=x, y=y,
+                size=markersize * 2,  # PyQtGraph uses diameter, matplotlib uses radius-ish
+                brush=brush,
+                pen=pen,
+                symbol='o'  # Circle marker
+            )
+            self.plot_item.addItem(scatter)
+            self._pattern_items.append(scatter)
+            items.append(scatter)
+
+        # Handle line (if no marker or linestyle is specified)
+        elif not marker or linestyle != 'None':
+            # Convert matplotlib color to QColor
+            qcolor = QColor(color)
+            qcolor.setAlphaF(alpha)
+
+            pen = QPen(qcolor)
+            pen.setWidthF(linewidth)
+
+            # Convert linestyle
+            if linestyle == '--':
+                pen.setStyle(Qt.PenStyle.DashLine)
+            elif linestyle == ':':
+                pen.setStyle(Qt.PenStyle.DotLine)
+            elif linestyle == 'None':
+                pen.setStyle(Qt.PenStyle.NoPen)
+
+            # Create PyQtGraph curve
+            if len(x) > 0:
+                curve = pg.PlotCurveItem(x=x, y=y, pen=pen)
+                self.plot_item.addItem(curve)
+                self._pattern_items.append(curve)
+                items.append(curve)
+
+        # Fake line object for matplotlib compatibility
+        class FakeLine:
+            def __init__(self, xdata, ydata):
+                self._xdata = xdata
+                self._ydata = ydata
+            def get_xdata(self):
+                return self._xdata
+            def get_ydata(self):
+                return self._ydata
+            def remove(self):
+                pass  # Handled by clear_pattern_overlays
+
+        fake_line = FakeLine(x, y)
+        self.lines.append(fake_line)
+        return [fake_line]
+
+    def axhline(self, y, **kwargs):
+        """Add horizontal line at y"""
+        xmin, xmax = self.get_xlim()
+        return self.plot([xmin, xmax], [y, y], **kwargs)
+
+    def axvline(self, x, **kwargs):
+        """Add vertical line at x"""
+        ymin, ymax = self.get_ylim()
+        return self.plot([x, x], [ymin, ymax], **kwargs)
+
+    def text(self, x, y, text, **kwargs):
+        """Add text annotation - matplotlib compatible"""
+        import pyqtgraph as pg
+        from PySide6.QtGui import QColor
+
+        fontsize = kwargs.get('fontsize', 10)
+        color = kwargs.get('color', '#FFFFFF')
+        zorder = kwargs.get('zorder', 0)
+        va = kwargs.get('va', 'center')  # vertical alignment
+        ha = kwargs.get('ha', 'center')  # horizontal alignment
+        bbox = kwargs.get('bbox', None)  # Background box styling
+
+        # Map matplotlib alignment to PyQtGraph anchor
+        anchor_map = {
+            ('center', 'center'): (0.5, 0.5),
+            ('center', 'top'): (0.5, 0.0),
+            ('center', 'bottom'): (0.5, 1.0),
+            ('left', 'center'): (0.0, 0.5),
+            ('right', 'center'): (1.0, 0.5),
+            ('left', 'bottom'): (0.0, 1.0),
+            ('right', 'bottom'): (1.0, 1.0),
+        }
+        anchor = anchor_map.get((ha, va), (0.5, 0.5))
+
+        # Create text with HTML formatting if bbox is specified
+        if bbox:
+            # Extract background color from bbox
+            bg_color = bbox.get('fc', bbox.get('facecolor', '#2196F3'))
+            border_color = bbox.get('ec', bbox.get('edgecolor', 'black'))
+            alpha_val = bbox.get('alpha', 0.95)
+
+            # Create HTML-styled text with background
+            html_text = f'<div style="background-color: {bg_color}; color: {color}; padding: 2px 5px; border: 1px solid {border_color}; border-radius: 3px; opacity: {alpha_val};">{text}</div>'
+            text_item = pg.TextItem(html=html_text, anchor=anchor)
+        else:
+            text_item = pg.TextItem(text=str(text), anchor=anchor, color=QColor(color))
+
+        text_item.setPos(x, y)
+        self.plot_item.addItem(text_item)
+        self._pattern_items.append(text_item)
+        self.texts.append(text_item)
+
+        # Return fake text object for matplotlib compatibility
+        class FakeText:
+            def __init__(self):
+                pass
+            def remove(self):
+                pass
+
+        return FakeText()
+
+    def clear_pattern_overlays(self):
+        """Remove all pattern overlay items"""
+        for item in self._pattern_items:
+            try:
+                self.plot_item.removeItem(item)
+            except Exception:
+                pass
+        self._pattern_items.clear()
+        self.lines.clear()
+        self.texts.clear()
+        self.collections.clear()
+        self.patches.clear()
+
+    # Fake figure/canvas for compatibility
+    @property
+    def figure(self):
+        class FakeFigure:
+            class FakeCanvas:
+                def draw_idle(self):
+                    pass
+            canvas = FakeCanvas()
+        return FakeFigure()
+
+    def transData(self):
+        """Fake transform for compatibility"""
+        class FakeTransform:
+            def transform(self, points):
+                return points
+        return FakeTransform()
+
 # ---------------- UI CONSTANTS ----------------
 MAX_OVERLAYS = 80
 MIN_SEP_BARS = 8
@@ -221,6 +437,30 @@ class PatternOverlayRenderer:
 
     # ---------- Axes & Time Helpers ----------
     def _resolve_axes(self) -> Optional[mpla.Axes]:
+        # PYQTGRAPH SUPPORT: Check for main_plot first (PyQtGraph)
+        def _find_pyqtgraph_plot(obj):
+            if not obj:
+                return None
+            # Check for main_plot attribute (PyQtGraph PlotItem)
+            for name in ("main_plot", "plot", "plot_widget"):
+                plot = getattr(obj, name, None)
+                if plot and hasattr(plot, 'addItem'):  # PyQtGraph PlotItem has addItem
+                    return plot
+            return None
+
+        # Try to find PyQtGraph plot
+        pyqt_plot = (_find_pyqtgraph_plot(self.controller) or
+                     _find_pyqtgraph_plot(getattr(self.controller, "plot_service", None)) or
+                     _find_pyqtgraph_plot(getattr(self.controller, "view", None)))
+
+        if pyqt_plot:
+            # Store the PyQtGraph plot wrapped in a compatible object
+            if not hasattr(self, '_pyqtgraph_wrapper'):
+                self._pyqtgraph_wrapper = PyQtGraphAxesWrapper(pyqt_plot)
+            self.ax = self._pyqtgraph_wrapper
+            return self.ax
+
+        # MATPLOTLIB SUPPORT (legacy fallback - currently not used)
         if getattr(self, "ax", None) is not None and getattr(self.ax, "figure", None) is not None:
             return self.ax
 
@@ -407,6 +647,11 @@ class PatternOverlayRenderer:
 
     # ---------- Drawing ----------
     def _clear_all(self) -> None:
+        # PyQtGraph support: use wrapper's clear method if available
+        if hasattr(self.ax, 'clear_pattern_overlays'):
+            self.ax.clear_pattern_overlays()
+
+        # Matplotlib support (legacy)
         for art in self._badges + self._arrows + self._formations:
             try: art.remove()
             except Exception: pass
