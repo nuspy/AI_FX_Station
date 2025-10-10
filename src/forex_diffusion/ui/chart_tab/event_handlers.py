@@ -690,16 +690,28 @@ class EventHandlersMixin:
         logger.info("Historical pattern scan requested")
 
         try:
-            # Get patterns service from chart controller
+            # Get or create patterns service (create=True ensures it always exists)
+            from ..chart_components.services.patterns_hook import get_patterns_service
             chart_controller = getattr(self, 'chart_controller', None)
-            patterns_service = getattr(chart_controller, 'patterns_service', None) if chart_controller else None
+
+            if not chart_controller:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Historical Scan",
+                    "Chart controller not available."
+                )
+                return
+
+            # Always create patterns service if it doesn't exist (ignore checkbox state)
+            patterns_service = get_patterns_service(chart_controller, self, create=True)
 
             if not patterns_service or not hasattr(patterns_service, 'start_historical_scan_with_range'):
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(
                     self,
                     "Historical Scan",
-                    "Pattern service not available. Please enable patterns in Pattern Config."
+                    "Pattern service initialization failed."
                 )
                 return
 

@@ -136,6 +136,10 @@ class UIBuilderMixin:
         self.main_plot = self.graphics_layout.addPlot(row=0, col=0, axisItems={'bottom': self.date_axis})
         self.finplot_axes.append(self.main_plot)
 
+        # Add PyQtGraph legend (native support)
+        self.legend = self.main_plot.addLegend(offset=(10, 10))
+        self.legend.setParentItem(self.main_plot.getViewBox())
+
         # Add active provider label in top-right corner
         self.provider_label = pg.TextItem(text="Provider: ...", color=(200, 200, 200), anchor=(1, 0))
         self.main_plot.addItem(self.provider_label)
@@ -316,6 +320,24 @@ class UIBuilderMixin:
             btn = QToolButton()
             btn.setText(f"{icon} {name}")
             btn.setCheckable(True)
+            # Style for visual on/off state
+            btn.setStyleSheet("""
+                QToolButton {
+                    background-color: #3a3a3a;
+                    color: #e0e0e0;
+                    border: 1px solid #555555;
+                    padding: 4px;
+                    border-radius: 3px;
+                }
+                QToolButton:checked {
+                    background-color: #0078d7;
+                    color: #ffffff;
+                    border: 1px solid #005a9e;
+                }
+                QToolButton:hover {
+                    background-color: #4a4a4a;
+                }
+            """)
             # Create a closure to capture the mode properly
             def make_callback(mode_val):
                 return lambda checked: self._set_drawing_mode(mode_val if checked else None)

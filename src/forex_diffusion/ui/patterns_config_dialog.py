@@ -661,9 +661,9 @@ class PatternsConfigDialog(QDialog):
         strategy_key = strategy_text.split(' - ')[0]  # Extract key (profittabilità, rischio, bilanciato)
         self.cfg['dataset_strategy'] = strategy_key
 
-        # Save historical patterns settings
+        # Save historical patterns settings (enabled always True since trigger is the button)
         historical_settings = {
-            'enabled': self.cb_historical_enabled.isChecked(),
+            'enabled': True,  # Always enabled - trigger is "Scan Historical" button
             'start_time': self.le_start_time.text().strip(),
             'end_time': self.le_end_time.text().strip()  # Saved as default for scan dialog
         }
@@ -774,13 +774,20 @@ class PatternsConfigDialog(QDialog):
         layout.addWidget(separator1)
 
         # Historical Patterns Settings
-        self.cb_historical_enabled = QCheckBox("Abilita Patterns Storici")
-        self.cb_historical_enabled.setChecked(self.historical_settings.get('enabled', False))
-        layout.addWidget(self.cb_historical_enabled)
+        # REMOVED: Checkbox "Abilita Patterns Storici" - the trigger is the "Scan Historical" button
+        # self.cb_historical_enabled = QCheckBox("Abilita Patterns Storici")
+        # self.cb_historical_enabled.setChecked(self.historical_settings.get('enabled', False))
+        # layout.addWidget(self.cb_historical_enabled)
 
-        # Gruppo per le impostazioni temporali (inizialmente nascosto)
+        # Gruppo per le impostazioni temporali (sempre visibile)
         self.historical_settings_group = QWidget()
         settings_layout = QFormLayout(self.historical_settings_group)
+
+        # Info label explaining that scan is triggered by button
+        info_label = QLabel("Impostazioni per Ricerca Storica Patterns (trigger: bottone 'Scan Historical Patterns')")
+        info_label.setStyleSheet("color: #00cc00; font-weight: bold; font-size: 11px;")
+        info_label.setWordWrap(True)
+        settings_layout.addRow(info_label)
 
         # Tempo inizio patterns storici
         self.le_start_time = QLineEdit()
@@ -800,9 +807,8 @@ class PatternsConfigDialog(QDialog):
         note_label.setWordWrap(True)
         settings_layout.addRow(note_label)
 
-        # Visibilità basata sulle impostazioni salvate
-        enabled = self.historical_settings.get('enabled', False)
-        self.historical_settings_group.setVisible(enabled)
+        # SEMPRE VISIBILE - non più controllato da checkbox
+        self.historical_settings_group.setVisible(True)
 
         layout.addWidget(self.historical_settings_group)
 
@@ -871,14 +877,15 @@ class PatternsConfigDialog(QDialog):
         scroll.setWidget(content_widget)
         main_layout.addWidget(scroll)
 
-        # Connetti il checkbox per mostrare/nascondere le impostazioni
-        self.cb_historical_enabled.toggled.connect(self._on_historical_enabled_changed)
+        # REMOVED: Signal connection for checkbox (checkbox no longer exists)
+        # self.cb_historical_enabled.toggled.connect(self._on_historical_enabled_changed)
 
         return box
 
-    def _on_historical_enabled_changed(self, enabled: bool):
-        """Mostra/nasconde le impostazioni quando historical patterns è abilitato"""
-        self.historical_settings_group.setVisible(enabled)
+    # REMOVED: Method no longer needed (checkbox removed, settings always visible)
+    # def _on_historical_enabled_changed(self, enabled: bool):
+    #     """Mostra/nasconde le impostazioni quando historical patterns è abilitato"""
+    #     self.historical_settings_group.setVisible(enabled)
 
     @staticmethod
     def parse_time_string(time_str: str) -> int:

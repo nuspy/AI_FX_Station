@@ -24,6 +24,22 @@ class InteractionService(ChartServiceBase):
         if hasattr(self.view, 'drawing_manager') and self.view.drawing_manager:
             self.view.drawing_manager.set_tool(mode)
             logger.debug(f"Drawing mode set to: {mode}")
+
+        # Disable/enable pan based on drawing mode
+        try:
+            if hasattr(self.view, 'main_plot') and self.view.main_plot:
+                viewbox = self.view.main_plot.getViewBox()
+                if mode is None:
+                    # Re-enable pan and zoom when no drawing tool is active
+                    viewbox.setMouseEnabled(x=True, y=True)
+                    logger.debug("Pan/zoom enabled (no drawing tool active)")
+                else:
+                    # Disable pan when drawing tool is active (keep zoom enabled)
+                    viewbox.setMouseEnabled(x=False, y=False)
+                    logger.debug(f"Pan/zoom disabled (drawing tool '{mode}' active)")
+        except Exception as e:
+            logger.debug(f"Failed to toggle pan/zoom: {e}")
+
         if hasattr(self, '_pending_points'):
             self._pending_points.clear()
 
