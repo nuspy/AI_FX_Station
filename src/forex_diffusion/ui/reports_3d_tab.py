@@ -493,75 +493,114 @@ class Reports3DTab(QWidget):
 
     def on_report_selected(self, item: QListWidgetItem):
         """Handle report selection from list"""
-        file_path = item.data(Qt.ItemDataRole.UserRole)
-        if file_path and Path(file_path).exists():
+        try:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            logger.info(f"Report selected: {file_path}")
+
+            if not file_path:
+                logger.warning("No file path in item data")
+                return
+
+            if not Path(file_path).exists():
+                logger.error(f"Report file not found: {file_path}")
+                QMessageBox.warning(self, "File Not Found", f"Report file not found:\n{file_path}")
+                return
+
             self.display_report(file_path)
+
+        except Exception as e:
+            logger.error(f"Error handling report selection: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to select report:\n{str(e)}")
 
     def _ensure_web_view(self, callback=None):
         """Lazy initialize QWebEngineView on first use to avoid blocking startup"""
+        logger.debug(f"_ensure_web_view called, web_view is None: {self.web_view is None}, callback: {callback}")
         if self.web_view is None:
             # Show loading message
             if self.web_view_placeholder:
+                logger.debug("Setting placeholder loading text")
                 self.web_view_placeholder.setText("Loading 3D viewer, please wait...")
 
             # Defer initialization to avoid blocking
+            logger.debug("Scheduling _init_web_view with QTimer.singleShot(100ms)")
             QTimer.singleShot(100, lambda: self._init_web_view(callback))
             return False
+        logger.debug("Web view already initialized")
         return True
 
     def _init_web_view(self, callback=None):
         """Actually initialize the web view (called asynchronously)"""
+        logger.debug(f"_init_web_view started, callback: {callback}")
         try:
+            logger.debug("Importing QWebEngineView...")
             from PySide6.QtWebEngineWidgets import QWebEngineView
+
+            logger.debug("Creating QWebEngineView instance...")
             self.web_view = QWebEngineView()
             self.web_view.setMinimumHeight(400)
+            logger.debug("QWebEngineView created successfully")
 
             # Remove placeholder and add web view
             if self.web_view_placeholder:
+                logger.debug("Removing placeholder widget")
                 self.web_view_layout.removeWidget(self.web_view_placeholder)
                 self.web_view_placeholder.deleteLater()
                 self.web_view_placeholder = None
 
+            logger.debug("Adding web view to layout")
             self.web_view_layout.addWidget(self.web_view)
             logger.info("QWebEngineView initialized (lazy loading)")
 
             # Execute callback if provided
             if callback:
+                logger.debug(f"Executing callback: {callback}")
                 callback()
+                logger.debug("Callback executed successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize QWebEngineView: {e}")
+            logger.error(f"Failed to initialize QWebEngineView: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to initialize web viewer: {str(e)}")
 
     def display_report(self, file_path: str):
         """Display selected report in viewer"""
         try:
+            logger.info(f"Displaying report: {file_path}")
             path = Path(file_path)
             if not path.exists():
+                logger.error(f"Report file not found: {file_path}")
                 QMessageBox.warning(self, "File Not Found", f"Report file not found: {file_path}")
                 return
 
             # If web view not initialized, initialize it first then load
             if self.web_view is None:
+                logger.info("Web view not initialized, initializing...")
                 self._ensure_web_view(callback=lambda: self._load_report(file_path))
                 return
 
             # Load HTML in web view
+            logger.info("Loading report in web view...")
             self._load_report(file_path)
 
         except Exception as e:
-            logger.error(f"Error displaying report: {e}")
+            logger.error(f"Error displaying report: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to display report: {str(e)}")
 
     def _load_report(self, file_path: str):
         """Load report HTML into web view"""
         try:
+            logger.info(f"Loading report file: {file_path}")
             path = Path(file_path)
             if not path.exists():
+                logger.error(f"Report file not found in _load_report: {file_path}")
+                return
+
+            if self.web_view is None:
+                logger.error("Web view is None in _load_report - should not happen!")
                 return
 
             # Load HTML in web view
             url = QUrl.fromLocalFile(str(path.absolute()))
+            logger.info(f"Loading URL: {url.toString()}")
             self.web_view.load(url)
 
             # Update description based on report type
@@ -579,6 +618,7 @@ class Reports3DTab(QWidget):
                 desc_info = self.report_descriptions["correlation"]
 
             if desc_info:
+                logger.info(f"Setting description for report type: {desc_info['title']}")
                 self.desc_title.setText(desc_info["title"])
 
                 desc_text = f"""
@@ -595,12 +635,15 @@ class Reports3DTab(QWidget):
                 """
 
                 self.desc_text.setHtml(desc_text.replace('\n', '<br>'))
+            else:
+                logger.warning(f"No description found for report: {filename}")
 
             self.current_report = file_path
+            logger.info(f"Report loaded successfully: {file_path}")
 
         except Exception as e:
-            logger.error(f"Error displaying report: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to display report: {str(e)}")
+            logger.error(f"Error loading report: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load report: {str(e)}")
 
     def generate_report(self):
         """Generate new 3D report with current data"""

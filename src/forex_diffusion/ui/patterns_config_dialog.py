@@ -664,8 +664,8 @@ class PatternsConfigDialog(QDialog):
         # Save historical patterns settings
         historical_settings = {
             'enabled': self.cb_historical_enabled.isChecked(),
-            'start_time': self.le_start_time.text().strip()
-            # end_time removed - now defined per pattern via boundaries
+            'start_time': self.le_start_time.text().strip(),
+            'end_time': self.le_end_time.text().strip()  # Saved as default for scan dialog
         }
         self.cfg['historical_patterns'] = historical_settings
 
@@ -787,6 +787,12 @@ class PatternsConfigDialog(QDialog):
         self.le_start_time.setPlaceholderText("es. 30d, 24h, 120m")
         self.le_start_time.setText(self.historical_settings.get('start_time', '30d'))
         settings_layout.addRow(QLabel("Tempo inizio patterns storici:"), self.le_start_time)
+
+        # Tempo fine patterns storici (default per scan dialog)
+        self.le_end_time = QLineEdit()
+        self.le_end_time.setPlaceholderText("es. 7d, 24h, 120m")
+        self.le_end_time.setText(self.historical_settings.get('end_time', '7d'))
+        settings_layout.addRow(QLabel("Tempo fine patterns storici:"), self.le_end_time)
 
         # Note about historical boundaries
         note_label = QLabel("Nota: Il confine tra patterns 'attuali' e 'storici' è ora configurato per singolo pattern nei tab sopra (sezione 'Historical Boundaries')")
@@ -917,3 +923,70 @@ class PatternsConfigDialog(QDialog):
 
         except Exception as e:
             print(f"Errore durante la scansione storica: {e}")
+
+
+class HistoricalScanDialog(QDialog):
+    """Dialog to configure time range for historical pattern scanning"""
+
+    def __init__(self, parent=None, default_start: str = '30d', default_end: str = '7d'):
+        super().__init__(parent)
+        self.setWindowTitle("Historical Pattern Scan Range")
+        self.resize(400, 200)
+
+        self.start_time = default_start
+        self.end_time = default_end
+
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Instructions
+        info_label = QLabel("Configura il periodo temporale per la scansione patterns storici:")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # Form layout for inputs
+        form_layout = QFormLayout()
+
+        # Start time input
+        self.le_start = QLineEdit()
+        self.le_start.setPlaceholderText("es. 30d, 24h, 720m")
+        self.le_start.setText(self.start_time)
+        self.le_start.setToolTip("Inizio periodo: usa formato 'm' (minuti), 'h' (ore), 'd' (giorni)")
+        form_layout.addRow(QLabel("Inizio (tempo fa):"), self.le_start)
+
+        # End time input
+        self.le_end = QLineEdit()
+        self.le_end.setPlaceholderText("es. 7d, 12h, 360m")
+        self.le_end.setText(self.end_time)
+        self.le_end.setToolTip("Fine periodo: usa formato 'm' (minuti), 'h' (ore), 'd' (giorni)")
+        form_layout.addRow(QLabel("Fine (tempo fa):"), self.le_end)
+
+        layout.addLayout(form_layout)
+
+        # Example label
+        example_label = QLabel("Esempio: Start='30d' End='7d' → Scansiona da 30 giorni fa fino a 7 giorni fa")
+        example_label.setStyleSheet("color: #666666; font-size: 10px; font-style: italic;")
+        example_label.setWordWrap(True)
+        layout.addWidget(example_label)
+
+        layout.addSpacing(10)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        self.btn_scan = QPushButton("Avvia Scansione")
+        self.btn_scan.clicked.connect(self.accept)
+        self.btn_scan.setDefault(True)
+        button_layout.addWidget(self.btn_scan)
+
+        self.btn_cancel = QPushButton("Annulla")
+        self.btn_cancel.clicked.connect(self.reject)
+        button_layout.addWidget(self.btn_cancel)
+
+        layout.addLayout(button_layout)
+
+    def get_time_range(self) -> tuple[str, str]:
+        """Return (start_time, end_time) as strings"""
+        return self.le_start.text().strip(), self.le_end.text().strip()

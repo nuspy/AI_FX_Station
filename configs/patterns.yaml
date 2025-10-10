@@ -221,6 +221,7 @@ dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
   start_time: 30d
+  end_time: 7d
 performance:
   detection_threads: 32
   detection_mode: balanced

@@ -62,6 +62,29 @@ class LogsTab(QWidget):
 
         # Log tabs widget
         self.logs_tab = QTabWidget()
+        self.logs_tab.setObjectName("level3_tabs")
+        # Level 3 tabs: Low contrast
+        self.logs_tab.setStyleSheet("""
+            QTabWidget#level3_tabs::pane {
+                border: 1px solid #3a3a3a;
+                background: #303030;
+            }
+            QTabWidget#level3_tabs QTabBar::tab {
+                background: #2c2c2c;
+                color: #a0a0a0;
+                padding: 5px 10px;
+                margin-right: 1px;
+                border: 1px solid #3a3a3a;
+            }
+            QTabWidget#level3_tabs QTabBar::tab:selected {
+                background: #353535;
+                color: #c0c0c0;
+                border-bottom: 1px solid #0078d7;
+            }
+            QTabWidget#level3_tabs QTabBar::tab:hover {
+                background: #323232;
+            }
+        """)
         layout.addWidget(self.logs_tab)
 
         # Create individual log tabs based on configuration

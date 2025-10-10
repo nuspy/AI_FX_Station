@@ -1013,7 +1013,7 @@ class DataService(ChartServiceBase):
                     item.setForeground(Qt.black)
                 self.market_watch.addItem(item)
 
-            logger.debug(f"Market watch updated: {symbol} bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.1f} color={spread_color}")
+            # PlutoTouch logger.debug(f"Market watch updated: {symbol} bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.1f} color={spread_color}")
 
         except Exception as e:
             logger.exception(f"Failed to update market quote for {symbol}: {e}")
@@ -1109,7 +1109,7 @@ class DataService(ChartServiceBase):
                 except Exception as e:
                     logger.debug(f"Could not draw order line: {e}")
 
-            logger.debug(f"Refreshed {len(orders)} orders with chart overlays")
+            # PlutoTouch logger.debug(f"Refreshed {len(orders)} orders with chart overlays")
 
         except Exception as e:
             logger.debug(f"Orders refresh skipped: {e}")
@@ -1193,30 +1193,39 @@ class DataService(ChartServiceBase):
                     self.provider_label.setText("")
                     return
 
-                # RT provider (WebSocket if enabled, otherwise same as historical)
-                rt_provider = primary.upper() if use_ws else primary.upper()
-                rt_connection = "WS" if use_ws else "REST"
+                # Verify if WebSocket is ACTUALLY active by checking connector
+                ws_actually_active = False
+                if hasattr(self, '_main_window') and self._main_window:
+                    # Check if Tiingo WebSocket connector exists and is running
+                    if hasattr(self._main_window, 'tiingo_ws_connector'):
+                        connector = self._main_window.tiingo_ws_connector
+                        if connector and hasattr(connector, '_thread'):
+                            if connector._thread and connector._thread.is_alive():
+                                ws_actually_active = True
+
+                # RT provider (WebSocket if ACTUALLY active, otherwise REST)
+                rt_provider = primary.upper()
+                rt_connection = "WS" if ws_actually_active else "REST"
 
                 # Historical provider (always REST)
                 historical_provider = primary.upper()
                 historical_connection = "REST"
 
                 # Check if main_window has active adapter info (more accurate)
-                if hasattr(self, '_main_window'):
+                if hasattr(self, '_main_window') and self._main_window:
                     controller = getattr(self._main_window, "controller", None)
                     if controller and hasattr(controller, 'active_adapter'):
                         adapter = controller.active_adapter
                         if adapter:
                             # Get provider name from adapter
                             adapter_name = getattr(adapter, 'name', primary).upper()
-                            # Determine if adapter is using WS
-                            is_ws = getattr(adapter, 'is_websocket', False) or getattr(adapter, 'streaming', False)
-                            if is_ws:
-                                rt_provider = adapter_name
-                                rt_connection = "WS"
-                            else:
-                                rt_provider = adapter_name
-                                rt_connection = "REST"
+
+                            # For RT connection, still check if WS is actually running
+                            # (adapter might support WS but not be using it)
+                            rt_provider = adapter_name
+                            # Keep the previously determined ws_actually_active value
+                            # Don't override it based on adapter alone
+
                             historical_provider = adapter_name
 
                 # Build label text with RT and Historical on separate lines

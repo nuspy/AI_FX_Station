@@ -639,23 +639,56 @@ class EventHandlersMixin:
         pass
 
     def _scan_historical(self):
-        """Scan historical data for patterns."""
+        """Scan historical data for patterns - opens dialog to select time range."""
         logger.info("Historical pattern scan requested")
 
         try:
-            # Call pattern scan if chart has the method
-            if hasattr(self, '_refresh_patterns'):
-                self._refresh_patterns()
-            else:
+            # Get patterns service from chart controller
+            chart_controller = getattr(self, 'chart_controller', None)
+            patterns_service = getattr(chart_controller, 'patterns_service', None) if chart_controller else None
+
+            if not patterns_service or not hasattr(patterns_service, 'start_historical_scan_with_range'):
                 from PySide6.QtWidgets import QMessageBox
-                QMessageBox.information(
+                QMessageBox.warning(
                     self,
                     "Historical Scan",
-                    "Historical pattern scanning will be implemented soon."
+                    "Pattern service not available. Please enable patterns in Pattern Config."
                 )
+                return
+
+            # Load default values from patterns.yaml
+            historical_config = patterns_service._load_historical_config()
+            default_start = historical_config.get('start_time', '30d')
+            default_end = historical_config.get('end_time', '7d')
+
+            # Open dialog to get time range
+            from ..patterns_config_dialog import HistoricalScanDialog
+            dialog = HistoricalScanDialog(self, default_start=default_start, default_end=default_end)
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                start_time, end_time = dialog.get_time_range()
+
+                if not start_time or not end_time:
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Invalid Range", "Please specify both start and end time.")
+                    return
+
+                # Update historical config temporarily for this scan
+                patterns_service._historical_config['start_time'] = start_time
+                patterns_service._historical_config['end_time'] = end_time
+
+                # Start historical scan with selected range
+                patterns_service.start_historical_scan_with_range()
+                logger.info(f"Historical pattern scan started: {start_time} to {end_time}")
 
         except Exception as e:
             logger.exception(f"Historical scan failed: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Historical scan failed: {str(e)}"
+            )
 
     def _open_patterns_config(self):
         """Open pattern configuration dialog."""

@@ -95,31 +95,100 @@ def setup_ui(
 
     tab_widget = QTabWidget()
     tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    tab_widget.setObjectName("level1_tabs")
+    # Level 1 tabs: High contrast
+    tab_widget.setStyleSheet("""
+        QTabWidget#level1_tabs::pane {
+            border: 2px solid #555555;
+            background: #2b2b2b;
+        }
+        QTabWidget#level1_tabs QTabBar::tab {
+            background: #3a3a3a;
+            color: #e0e0e0;
+            padding: 8px 16px;
+            margin-right: 2px;
+            font-weight: bold;
+            border: 1px solid #555555;
+        }
+        QTabWidget#level1_tabs QTabBar::tab:selected {
+            background: #505050;
+            color: #ffffff;
+            border-bottom: 3px solid #0078d7;
+        }
+        QTabWidget#level1_tabs QTabBar::tab:hover {
+            background: #454545;
+        }
+    """)
 
-    # --- Create Chart tab with nested tabs (level_2) ---
-    chart_container = QTabWidget()
-    chart_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-    # Create the actual chart tab, Live Trading tab, and Signals tab
+    # --- Create Chart tab (level_1, no nested tabs) ---
+    # Chart content is shown directly without nested tabs
     chart_tab = ChartTabUI(main_window)
+
+    # Live Trading will be a separate window, stored as attribute
     live_trading_tab = LiveTradingTab(main_window)
 
-    # Create Signals tab (moved from Chart:Chart:Signals to Chart:Signals)
-    from .signals_tab import SignalsTab
-    signals_tab_chart = SignalsTab(main_window, db_service=db_service)
+    # --- Create Trading Intelligence tab with nested tabs (level_2) ---
+    trading_intelligence_container = QTabWidget()
+    trading_intelligence_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    trading_intelligence_container.setObjectName("level2_tabs")
+    # Level 2 tabs: Medium contrast
+    trading_intelligence_container.setStyleSheet("""
+        QTabWidget#level2_tabs::pane {
+            border: 1px solid #444444;
+            background: #2e2e2e;
+        }
+        QTabWidget#level2_tabs QTabBar::tab {
+            background: #333333;
+            color: #c0c0c0;
+            padding: 6px 12px;
+            margin-right: 1px;
+            border: 1px solid #444444;
+        }
+        QTabWidget#level2_tabs QTabBar::tab:selected {
+            background: #404040;
+            color: #e0e0e0;
+            border-bottom: 2px solid #0078d7;
+        }
+        QTabWidget#level2_tabs QTabBar::tab:hover {
+            background: #3a3a3a;
+        }
+    """)
 
-    # Create Portfolio Optimization tab
+    # Create Portfolio and Signals tabs
     portfolio_tab = PortfolioOptimizationTab(main_window)
+    from .signals_tab import SignalsTab
+    signals_tab = SignalsTab(main_window, db_service=db_service)
 
-    # Add as nested tabs under Chart
-    chart_container.addTab(chart_tab, "Chart")
-    chart_container.addTab(live_trading_tab, "Live Trading")
-    chart_container.addTab(signals_tab_chart, "Signals")
-    chart_container.addTab(portfolio_tab, "Portfolio")
+    # Add as nested tabs under Trading Intelligence
+    trading_intelligence_container.addTab(portfolio_tab, "Portfolio")
+    trading_intelligence_container.addTab(signals_tab, "Signals")
 
     # --- Create Generative Forecast tab with nested tabs (level_2) ---
     uno_tab = QTabWidget()
     uno_tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    uno_tab.setObjectName("level2_tabs_alt")
+    # Level 2 tabs: Medium contrast (same as Trading Intelligence)
+    uno_tab.setStyleSheet("""
+        QTabWidget#level2_tabs_alt::pane {
+            border: 1px solid #444444;
+            background: #2e2e2e;
+        }
+        QTabWidget#level2_tabs_alt QTabBar::tab {
+            background: #333333;
+            color: #c0c0c0;
+            padding: 6px 12px;
+            margin-right: 1px;
+            border: 1px solid #444444;
+        }
+        QTabWidget#level2_tabs_alt QTabBar::tab:selected {
+            background: #404040;
+            color: #e0e0e0;
+            border-bottom: 2px solid #0078d7;
+        }
+        QTabWidget#level2_tabs_alt QTabBar::tab:hover {
+            background: #3a3a3a;
+        }
+    """)
 
     # Create tabs for Generative Forecast
     forecast_settings_tab = ForecastSettingsTab(main_window)
@@ -142,21 +211,22 @@ def setup_ui(
     reports_3d_tab = Reports3DTab(main_window, db_service=db_service)
 
     # Add top-level tabs in new order
-    tab_widget.addTab(chart_container, "Chart")  # Chart now has nested tabs (Chart, Live Trading, Signals)
-    tab_widget.addTab(uno_tab, "Generative Forecast")  # Now has Forecast Settings, Training, Backtesting
+    tab_widget.addTab(chart_tab, "Chart")  # Chart content shown directly (no nested tabs)
+    tab_widget.addTab(trading_intelligence_container, "Trading Intelligence")  # Portfolio + Signals
+    tab_widget.addTab(uno_tab, "Generative Forecast")  # Forecast Settings, Training, Backtesting
     tab_widget.addTab(patterns_tab, "Patterns")  # Contains Pattern Training/Backtest
     tab_widget.addTab(logs_tab, "Logs")
     tab_widget.addTab(reports_3d_tab, "3D Reports")
     layout.addWidget(tab_widget)
 
-    result["chart_container"] = chart_container  # Chart level_1 (contains Chart, Live Trading, Signals, Portfolio)
-    result["chart_tab"] = chart_tab  # Actual chart widget
+    result["chart_tab"] = chart_tab  # Chart widget (level_1, no nested tabs)
+    result["trading_intelligence_container"] = trading_intelligence_container  # Trading Intelligence level_1 (contains Portfolio, Signals)
+    result["portfolio_tab"] = portfolio_tab  # Portfolio tab under Trading Intelligence
+    result["signals_tab"] = signals_tab  # Signals tab under Trading Intelligence
     result["training_tab"] = training_tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
-    result["live_trading_tab"] = live_trading_tab
-    result["signals_tab_chart"] = signals_tab_chart  # Signals tab under Chart
-    result["portfolio_tab"] = portfolio_tab  # Portfolio Optimization tab under Chart
+    result["live_trading_tab"] = live_trading_tab  # Stored as window, opened via button
     result["patterns_tab"] = patterns_tab  # Contains Pattern Training/Backtest
     result["logs_tab"] = logs_tab
     result["reports_3d_tab"] = reports_3d_tab  # 3D Reports at level_1
@@ -230,6 +300,7 @@ def setup_ui(
     main_window.tiingo_ws_connector = connector
     main_window.controller = controller
     main_window.market_service = market_service  # Expose MarketDataService for monitoring
+    main_window.live_trading_tab = live_trading_tab  # Expose for Live Trading window
     logs_tab.set_main_window(main_window)
 
     # --- Check for provider fallback and show warning ---

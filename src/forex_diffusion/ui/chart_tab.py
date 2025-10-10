@@ -12,7 +12,8 @@ import matplotlib.dates as mdates
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QMessageBox,
     QSplitter, QTableWidget, QComboBox,
-    QToolButton, QCheckBox, QTableWidgetItem, QAbstractItemView, QHeaderView
+    QToolButton, QCheckBox, QTableWidgetItem, QAbstractItemView, QHeaderView,
+    QColorDialog
 )
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import QTimer, Qt, Signal, QSize, QFile, QSignalBlocker
@@ -27,6 +28,7 @@ from loguru import logger
 from ..utils.user_settings import get_setting, set_setting
 from ..services.brokers import get_broker_service
 from .chart_components.controllers.chart_controller import ChartTabController
+from .drawing_tools import DrawingManager, IconSelectorDialog
 
 class ChartTab(QWidget):
     """
@@ -60,6 +62,9 @@ class ChartTab(QWidget):
         self._price_line = None
         self._candle_artists: list = []
         self.chart_controller = ChartTabController(self, self.controller)
+
+        # Initialize drawing manager
+        self.drawing_manager = DrawingManager(self)
 
         self._build_ui()
         self._init_control_defaults()
@@ -157,6 +162,7 @@ class ChartTab(QWidget):
         self.backfill_btn.clicked.connect(self.chart_controller.on_backfill_missing_clicked)
         self.indicators_btn.clicked.connect(self.chart_controller.on_indicators_clicked)
         self.build_latents_btn.clicked.connect(self.chart_controller.on_build_latents_clicked)
+        self.live_trading_btn.clicked.connect(self._open_live_trading_window)
 
         # Mouse interaction:
         # - Alt+Click => TestingPoint basic; Shift+Alt+Click => advanced (già gestito da _on_canvas_click)
@@ -277,6 +283,10 @@ class ChartTab(QWidget):
 
         self.build_latents_btn = QPushButton("Build Latents")
         top_layout.addWidget(self.build_latents_btn)
+
+        self.live_trading_btn = QPushButton("Live Trading")
+        self.live_trading_btn.setToolTip("Open Live Trading window")
+        top_layout.addWidget(self.live_trading_btn)
 
         from PySide6.QtWidgets import QProgressBar
 
@@ -1050,6 +1060,54 @@ class ChartTab(QWidget):
         self.tb_label = QToolButton()
         self.tb_label.setToolTip("Label")
         self.tb_label.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+
+        # New drawing tools
+        self.tb_arrow = QToolButton()
+        self.tb_arrow.setToolTip("Arrow")
+        self.tb_arrow.setText("➡️")
+        self.tb_arrow.setCheckable(True)
+
+        self.tb_triangle = QToolButton()
+        self.tb_triangle.setToolTip("Triangle")
+        self.tb_triangle.setText("🔺")
+        self.tb_triangle.setCheckable(True)
+
+        self.tb_icon = QToolButton()
+        self.tb_icon.setToolTip("Icon")
+        self.tb_icon.setText("⭐")
+        self.tb_icon.setCheckable(True)
+
+        self.tb_freehand = QToolButton()
+        self.tb_freehand.setToolTip("Freehand")
+        self.tb_freehand.setText("✏️")
+        self.tb_freehand.setCheckable(True)
+
+        self.tb_gaussian = QToolButton()
+        self.tb_gaussian.setToolTip("Gaussian Curve")
+        self.tb_gaussian.setText("🔔")
+        self.tb_gaussian.setCheckable(True)
+
+        dlay.addSpacing(12)
+
+        # Color selectors
+        self.tb_line_color = QPushButton("Line")
+        self.tb_line_color.setToolTip("Select line color")
+        self.tb_line_color.setMaximumWidth(50)
+        self.tb_line_color.clicked.connect(self._select_line_color)
+
+        self.tb_fill_color = QPushButton("Fill")
+        self.tb_fill_color.setToolTip("Select fill color")
+        self.tb_fill_color.setMaximumWidth(50)
+        self.tb_fill_color.clicked.connect(self._select_fill_color)
+
+        dlay.addSpacing(12)
+
+        # Delete tool
+        self.tb_delete = QToolButton()
+        self.tb_delete.setToolTip("Delete last drawing")
+        self.tb_delete.setText("🗑️")
+        self.tb_delete.clicked.connect(self._delete_last_drawing)
+
         self.tb_colors = QToolButton()
         self.tb_colors.setToolTip("Color/CSS Settings")
         self.tb_colors.setIcon(self.style().standardIcon(QStyle.SP_DriveDVDIcon))
@@ -1061,6 +1119,13 @@ class ChartTab(QWidget):
         self.tb_orders.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
         self.tb_orders.toggled.connect(self._toggle_orders)
 
+        # Connect new drawing tool buttons
+        self.tb_arrow.clicked.connect(lambda: self._on_drawing_tool_clicked('arrow'))
+        self.tb_triangle.clicked.connect(lambda: self._on_drawing_tool_clicked('triangle'))
+        self.tb_icon.clicked.connect(lambda: self._on_drawing_tool_clicked('icon'))
+        self.tb_freehand.clicked.connect(lambda: self._on_drawing_tool_clicked('freehand'))
+        self.tb_gaussian.clicked.connect(lambda: self._on_drawing_tool_clicked('gaussian'))
+
         for button in (
             self.tb_cross,
             self.tb_hline,
@@ -1068,6 +1133,14 @@ class ChartTab(QWidget):
             self.tb_rect,
             self.tb_fib,
             self.tb_label,
+            self.tb_arrow,
+            self.tb_triangle,
+            self.tb_icon,
+            self.tb_freehand,
+            self.tb_gaussian,
+            self.tb_line_color,
+            self.tb_fill_color,
+            self.tb_delete,
             self.tb_colors,
             self.tb_orders,
         ):
@@ -1230,11 +1303,37 @@ class ChartTab(QWidget):
         return self.chart_controller.on_scroll_zoom(event=event)
 
     def _on_mouse_press(self, event):
+        # Handle drawing tools first
+        if self.drawing_manager.current_tool and event and event.inaxes:
+            if event.button == 1:  # Left click
+                try:
+                    x, y = event.xdata, event.ydata
+                    if x is not None and y is not None:
+                        self.drawing_manager.start_drawing(x, y)
+                        logger.debug(f"Drawing started at ({x:.2f}, {y:.2f})")
+                        return  # Don't pass to controller when drawing
+                except Exception as e:
+                    logger.error(f"Error starting drawing: {e}")
+
         if event is not None and getattr(event, "button", None) in (1, 3):
             self._suspend_follow()
         return self.chart_controller.on_mouse_press(event=event)
 
     def _on_mouse_move(self, event):
+        # Handle drawing tools first (for freehand, add points during drag)
+        if self.drawing_manager.current_tool and self.drawing_manager.current_drawing and event and event.inaxes:
+            if self.drawing_manager.current_tool == 'freehand':
+                try:
+                    x, y = event.xdata, event.ydata
+                    if x is not None and y is not None:
+                        self.drawing_manager.add_point(x, y)
+                        return  # Don't pass to controller when drawing
+                except Exception as e:
+                    logger.error(f"Error adding drawing point: {e}")
+
+        # Update hover legend with mouse position
+        self._update_hover_info(event)
+
         if event is not None:
             btn = getattr(event, "button", None)
             gui_event = getattr(event, "guiEvent", None)
@@ -1244,6 +1343,22 @@ class ChartTab(QWidget):
         return self.chart_controller.on_mouse_move(event=event)
 
     def _on_mouse_release(self, event):
+        # Handle drawing tools - finish drawing on release
+        if self.drawing_manager.current_tool and self.drawing_manager.current_drawing and event and event.inaxes:
+            if event.button == 1:  # Left click
+                try:
+                    x, y = event.xdata, event.ydata
+                    if x is not None and y is not None:
+                        # Add final point for non-freehand drawings
+                        if self.drawing_manager.current_tool != 'freehand':
+                            self.drawing_manager.add_point(x, y)
+                        # Finish the drawing
+                        self.drawing_manager.finish_drawing()
+                        logger.debug(f"Drawing finished at ({x:.2f}, {y:.2f})")
+                        return  # Don't pass to controller when drawing
+                except Exception as e:
+                    logger.error(f"Error finishing drawing: {e}")
+
         if event is not None and getattr(event, "button", None) in (1, 3):
             self._suspend_follow()
         return self.chart_controller.on_mouse_release(event=event)
@@ -1429,7 +1544,42 @@ class ChartTab(QWidget):
                 f"Failed to modify take profit: {str(e)}"
             )
 
+    def _open_live_trading_window(self) -> None:
+        """Open Live Trading as a separate window."""
+        try:
+            # Get live_trading_tab from main_window result dict
+            main_window = self._main_window
+            if not hasattr(main_window, '_live_trading_window'):
+                # Create window only once
+                from PySide6.QtWidgets import QDialog, QVBoxLayout
 
+                # Get live_trading_tab from setup_ui result
+                live_trading_tab = getattr(main_window, 'live_trading_tab', None)
+                if live_trading_tab is None:
+                    QMessageBox.warning(self, "Warning", "Live Trading tab not initialized")
+                    return
+
+                # Create dialog window
+                dialog = QDialog(main_window)
+                dialog.setWindowTitle("Live Trading")
+                dialog.setMinimumSize(800, 600)
+
+                # Add live_trading_tab to dialog
+                layout = QVBoxLayout(dialog)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.addWidget(live_trading_tab)
+
+                # Store reference
+                main_window._live_trading_window = dialog
+
+            # Show window
+            main_window._live_trading_window.show()
+            main_window._live_trading_window.raise_()
+            main_window._live_trading_window.activateWindow()
+
+        except Exception as e:
+            logger.error(f"Failed to open Live Trading window: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open Live Trading window: {str(e)}")
 
 
 class _ChartTabUiLoader(QUiLoader):
@@ -1552,6 +1702,90 @@ class ChartTabUI(ChartTab):
             self._chart_area.setStretchFactor(1, 1)
             self._chart_area.setHandleWidth(4)
             self._chart_area.setOpaqueResize(True)
+
+    def _on_drawing_tool_clicked(self, tool: str) -> None:
+        """Handle drawing tool button clicks with exclusive selection."""
+        try:
+            # List of all drawing tool buttons
+            tool_buttons = {
+                'arrow': self.tb_arrow,
+                'triangle': self.tb_triangle,
+                'icon': self.tb_icon,
+                'freehand': self.tb_freehand,
+                'gaussian': self.tb_gaussian
+            }
+
+            clicked_button = tool_buttons.get(tool)
+            if not clicked_button:
+                return
+
+            # If button is being unchecked, clear drawing mode
+            if not clicked_button.isChecked():
+                self.drawing_manager.set_tool(None)
+                logger.info("Drawing tool deselected")
+                return
+
+            # Uncheck all other tool buttons
+            for t, btn in tool_buttons.items():
+                if t != tool:
+                    btn.setChecked(False)
+
+            # Set the drawing tool in DrawingManager
+            self.drawing_manager.set_tool(tool)
+
+            # Special handling for icon tool - show icon selector
+            if tool == 'icon':
+                icon = IconSelectorDialog.get_icon(self)
+                if icon:
+                    # Store selected icon in drawing manager metadata
+                    if not hasattr(self.drawing_manager, '_selected_icon'):
+                        self.drawing_manager._selected_icon = icon
+                    self.drawing_manager._selected_icon = icon
+                    logger.info(f"Icon selected: {icon}")
+                else:
+                    # User canceled, uncheck the button
+                    clicked_button.setChecked(False)
+                    self.drawing_manager.set_tool(None)
+
+            logger.info(f"Drawing tool set to: {tool}")
+        except Exception as e:
+            logger.error(f"Failed to set drawing tool: {e}")
+
+    def _select_line_color(self) -> None:
+        """Open color picker for line color."""
+        try:
+            current_color = QColor(self.drawing_manager.line_color)
+            color = QColorDialog.getColor(current_color, self, "Select Line Color")
+            if color.isValid():
+                color_hex = color.name()
+                self.drawing_manager.set_line_color(color_hex)
+                # Update button background
+                self.tb_line_color.setStyleSheet(f"background-color: {color_hex};")
+                logger.info(f"Line color changed to: {color_hex}")
+        except Exception as e:
+            logger.error(f"Failed to select line color: {e}")
+
+    def _select_fill_color(self) -> None:
+        """Open color picker for fill color."""
+        try:
+            current_color = QColor(self.drawing_manager.fill_color) if self.drawing_manager.fill_color != 'transparent' else QColor(Qt.GlobalColor.transparent)
+            color = QColorDialog.getColor(current_color, self, "Select Fill Color")
+            if color.isValid():
+                color_hex = color.name()
+                self.drawing_manager.set_fill_color(color_hex)
+                # Update button background
+                self.tb_fill_color.setStyleSheet(f"background-color: {color_hex};")
+                logger.info(f"Fill color changed to: {color_hex}")
+        except Exception as e:
+            logger.error(f"Failed to select fill color: {e}")
+
+    def _delete_last_drawing(self) -> None:
+        """Delete the last drawing."""
+        try:
+            self.drawing_manager.delete_last()
+            logger.info("Deleted last drawing")
+        except Exception as e:
+            logger.error(f"Failed to delete drawing: {e}")
 
     def _load_designer_ui(self) -> None:
         ui_path = self.UI_FILE

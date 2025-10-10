@@ -84,6 +84,15 @@ class LogWidget(QWidget):
 
         controls1.addSpacing(10)
 
+        # Qt messages only filter
+        self.q_messages_only = QCheckBox("Qt messages only")
+        self.q_messages_only.setChecked(True)  # Default: enabled
+        self.q_messages_only.setToolTip("Show only Qt messages (qDebug, qWarning, qCritical, qFatal)")
+        self.q_messages_only.toggled.connect(self._apply_filters)
+        controls1.addWidget(self.q_messages_only)
+
+        controls1.addSpacing(10)
+
         # Search
         controls1.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit()
@@ -193,6 +202,7 @@ class LogWidget(QWidget):
         search_text = self.search_input.text()
         case_sensitive = self.case_sensitive.isChecked()
         use_regex = self.regex_search.isChecked()
+        q_messages_only = self.q_messages_only.isChecked()
 
         # Clear display
         self.log_display.clear()
@@ -218,6 +228,12 @@ class LogWidget(QWidget):
             module = log_entry.get('module', '')
             function = log_entry.get('function', '')
             line = log_entry.get('line', '')
+
+            # Qt messages only filter
+            if q_messages_only:
+                # Check if message contains '[Qt]' (Qt library messages)
+                if '[Qt]' not in message and 'qt' not in module.lower():
+                    continue
 
             # Level filter
             if level_filter != "ALL":
