@@ -6,12 +6,14 @@ from __future__ import annotations
 from typing import Optional, Dict, List
 import pandas as pd
 from PySide6.QtWidgets import QWidget, QLabel
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
 from loguru import logger
+from matplotlib.lines import Line2D
 
 from ...utils.user_settings import get_setting, set_setting
 from ...services.brokers import get_broker_service
 from ..chart_components.controllers.chart_controller import ChartTabController
+from ..drawing_tools import DrawingManager, IconSelectorDialog
 
 # Mixins for different functionality areas
 from .ui_builder import UIBuilderMixin
@@ -136,6 +138,13 @@ class ChartTabUI(
         self._pattern_cache = {}
         self._last_patterns_scan = 0
 
+        # Drawing tools state
+        self.drawing_manager = None  # Will be initialized after UI is built
+
+        # Hover legend state
+        self._hover_legend = None
+        self._hover_legend_text = None
+
     def _setup_chart_components(self):
         """Setup chart components after UI is built."""
         # Finplot-only initialization
@@ -143,6 +152,12 @@ class ChartTabUI(
         self.ax = None  # Will be set when first plot is created
         self._osc_ax = None
         self._ind_artists = {}
+
+        # Initialize drawing manager
+        self.drawing_manager = DrawingManager(self)
+
+        # Schedule hover legend initialization after axes are created
+        QTimer.singleShot(500, self._ensure_hover_legend)
 
     def _initialize_timers_and_connections(self):
         """Setup timers and UI connections."""
@@ -193,3 +208,62 @@ class ChartTabUI(
     @follow_enabled.setter
     def follow_enabled(self, value: bool):
         self._follow_enabled = value
+
+    def _ensure_hover_legend(self) -> None:
+        """Ensure hover legend exists with proper visibility and z-order."""
+        try:
+            if getattr(self, '_hover_legend', None) is not None:
+                return
+
+            if not hasattr(self, 'ax') or self.ax is None:
+                # Axes not created yet, reschedule
+                QTimer.singleShot(500, self._ensure_hover_legend)
+                return
+
+            # Check if ax has matplotlib-like legend method
+            if not hasattr(self.ax, 'legend') or not callable(getattr(self.ax, 'legend', None)):
+                # Finplot axes don't support matplotlib legends
+                # Skip legend creation for finplot
+                logger.debug("Hover legend not supported for finplot axes")
+                return
+
+            # Create a dummy invisible line for the legend
+            dummy = Line2D([], [])
+
+            # Create legend with invisible handle
+            legend = self.ax.legend(
+                [dummy],
+                [''],
+                loc='upper left',
+                framealpha=0.9,
+                fontsize=9,
+                handlelength=0,
+                handletextpad=0,
+                borderpad=0.5
+            )
+
+            # Get the text object
+            texts = legend.get_texts()
+            try:
+                # Hide the dummy handle
+                for handle in legend.legendHandles:
+                    handle.set_visible(False)
+            except Exception:
+                pass
+
+            # Set z-order high to ensure legend is visible above other elements
+            legend.set_zorder(1000)
+            legend.set_visible(True)
+            self.ax.add_artist(legend)
+            self._hover_legend = legend
+            self._hover_legend_text = texts[0] if texts else None
+            logger.debug("Hover legend created and added to chart")
+
+            try:
+                if hasattr(self, 'canvas'):
+                    self.canvas.draw_idle()
+            except Exception:
+                pass
+        except Exception as e:
+            # Silently handle any legend creation errors
+            logger.debug(f"Could not create hover legend: {e}")

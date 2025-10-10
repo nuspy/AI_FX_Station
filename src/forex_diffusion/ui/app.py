@@ -54,27 +54,55 @@ def setup_ui(
     result["db_writer"] = db_writer
 
     # --- Auto-backfill on startup (Mode A) ---
-    # Fill gaps between first candle and now() for each timeframe
-    # Excludes market closed hours (Friday 22:00 UTC - Sunday 22:00 UTC)
+    # OPTIMIZATION: Only download 1m data from REST API, then derive higher timeframes locally
+    # This reduces REST API calls from 8 per symbol to 1 per symbol
+    # Higher timeframes (5m, 15m, 30m, 1h, 4h, 1d, 1w) are derived from 1m by AggregatorService
     try:
-        logger.info("Auto-backfill: scanning for gaps in existing data...")
+        logger.info("Auto-backfill: downloading 1m data and deriving higher timeframes...")
         symbols_to_backfill = ["EUR/USD"]  # Add more symbols as needed
-        timeframes_to_backfill = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
 
         for symbol in symbols_to_backfill:
-            for tf in timeframes_to_backfill:
+            try:
+                # STEP 1: Download only 1m data from REST API
+                logger.info(f"Downloading 1m data for {symbol}...")
+                market_service.backfill_symbol_timeframe(
+                    symbol=symbol,
+                    timeframe="1m",
+                    force_full=False,  # Only fill gaps, not full history
+                    progress_cb=None,  # No UI progress callback on startup
+                    start_ms_override=None  # Auto-detect from last candle
+                )
+                logger.info(f"1m download completed for {symbol}")
+
+                # STEP 2: Derive higher timeframes from 1m using local database
+                # The AggregatorService (started below) will handle this automatically
+                # But we can also trigger immediate derivation here if needed
+                from ..services.aggregator import derive_timeframes_from_base
                 try:
-                    # backfill_symbol_timeframe with no start_ms_override will fill gaps from last candle to now
-                    market_service.backfill_symbol_timeframe(
-                        symbol=symbol,
-                        timeframe=tf,
-                        force_full=False,  # Only fill gaps, not full history
-                        progress_cb=None,  # No UI progress callback on startup
-                        start_ms_override=None  # Auto-detect from last candle
-                    )
+                    logger.info(f"Deriving higher timeframes from 1m for {symbol}...")
+                    # Derive all higher timeframes from 1m using database
+                    higher_timeframes = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+                    for tf in higher_timeframes:
+                        try:
+                            derive_timeframes_from_base(
+                                engine=db_service.engine,
+                                symbol=symbol,
+                                base_tf="1m",
+                                target_tf=tf
+                            )
+                            logger.info(f"Derived {tf} from 1m for {symbol}")
+                        except Exception as e:
+                            logger.warning(f"Failed to derive {tf} from 1m for {symbol}: {e}")
+                except ImportError:
+                    # If derive function doesn't exist, AggregatorService will handle it later
+                    logger.info("Derivation function not available - AggregatorService will handle it")
                 except Exception as e:
-                    logger.warning(f"Auto-backfill failed for {symbol} {tf}: {e}")
-        logger.info("Auto-backfill completed.")
+                    logger.warning(f"Derivation failed for {symbol}: {e}")
+
+            except Exception as e:
+                logger.warning(f"Auto-backfill failed for {symbol}: {e}")
+
+        logger.info("Auto-backfill completed (1m + derived timeframes).")
     except Exception as e:
         logger.exception(f"Auto-backfill error: {e}")
 

@@ -223,7 +223,15 @@ class EventHandlersMixin:
     def _on_price_mode_toggled(self, checked: bool) -> None:
         self._price_mode = 'candles' if checked else 'line'
         if (mb := getattr(self, 'mode_btn', None)):
-            mb.setText('Candles' if checked else 'Line')
+            # Update icon and tooltip based on mode
+            if checked:
+                # Currently in Candles mode, show line icon to switch to Line
+                mb.setText('📈')  # Line chart icon
+                mb.setToolTip('Usa Line Chart')
+            else:
+                # Currently in Line mode, show candlestick icon to switch to Candles
+                mb.setText('📊')  # Candlestick icon
+                mb.setToolTip('Usa Candlesticks')
         set_setting('chart.price_mode', self._price_mode)
         self.chart_controller.on_mode_toggled(checked=checked)
 
@@ -288,11 +296,38 @@ class EventHandlersMixin:
 
     # Mouse event handlers
     def _on_mouse_press(self, event):
+        # Handle drawing tools first
+        if hasattr(self, 'drawing_manager') and self.drawing_manager and self.drawing_manager.current_tool:
+            if event and event.inaxes and getattr(event, "button", None) == 1:  # Left click
+                try:
+                    x, y = event.xdata, event.ydata
+                    if x is not None and y is not None:
+                        self.drawing_manager.start_drawing(x, y)
+                        logger.debug(f"Drawing started at ({x:.2f}, {y:.2f})")
+                        return  # Don't pass to controller when drawing
+                except Exception as e:
+                    logger.error(f"Error starting drawing: {e}")
+
         if event and getattr(event, "button", None) in (1, 3):
             self._suspend_follow()
         return self.chart_controller.on_mouse_press(event=event)
 
     def _on_mouse_move(self, event):
+        # Handle drawing tools first (for freehand, add points during drag)
+        if hasattr(self, 'drawing_manager') and self.drawing_manager:
+            if self.drawing_manager.current_tool and self.drawing_manager.current_drawing:
+                if event and event.inaxes and self.drawing_manager.current_tool == 'freehand':
+                    try:
+                        x, y = event.xdata, event.ydata
+                        if x is not None and y is not None:
+                            self.drawing_manager.add_point(x, y)
+                            return  # Don't pass to controller when drawing
+                    except Exception as e:
+                        logger.error(f"Error adding drawing point: {e}")
+
+        # Update hover legend with mouse position
+        self._update_hover_info(event)
+
         if event and (getattr(event, "button", None) in (1, 3) or
                      (ge := getattr(event, "guiEvent", None)) and
                      getattr(ge, "buttons", lambda: 0)()):
@@ -306,6 +341,23 @@ class EventHandlersMixin:
         return self.chart_controller.on_mouse_move(event=event)
 
     def _on_mouse_release(self, event):
+        # Handle drawing tools - finish drawing on release
+        if hasattr(self, 'drawing_manager') and self.drawing_manager:
+            if self.drawing_manager.current_tool and self.drawing_manager.current_drawing:
+                if event and event.inaxes and getattr(event, "button", None) == 1:  # Left click
+                    try:
+                        x, y = event.xdata, event.ydata
+                        if x is not None and y is not None:
+                            # Add final point for non-freehand drawings
+                            if self.drawing_manager.current_tool != 'freehand':
+                                self.drawing_manager.add_point(x, y)
+                            # Finish the drawing
+                            self.drawing_manager.finish_drawing()
+                            logger.debug(f"Drawing finished at ({x:.2f}, {y:.2f})")
+                            return  # Don't pass to controller when drawing
+                    except Exception as e:
+                        logger.error(f"Error finishing drawing: {e}")
+
         if event and getattr(event, "button", None) in (1, 3):
             self._suspend_follow()
         return self.chart_controller.on_mouse_release(event=event)
@@ -558,12 +610,7 @@ class EventHandlersMixin:
                 )
                 logger.debug("Candle patterns checkbox connected")
 
-            # Connect historical patterns checkbox
-            if hasattr(self, 'history_patterns_checkbox'):
-                self.history_patterns_checkbox.toggled.connect(
-                    lambda enabled: self._toggle_history_patterns(enabled)
-                )
-                logger.debug("Historical patterns checkbox connected")
+            # Historical patterns checkbox removed - replaced by scan_historical_btn
 
             # Connect pattern action buttons
             if hasattr(self, 'scan_historical_btn'):
@@ -816,3 +863,32 @@ class EventHandlersMixin:
 
         except Exception as e:
             logger.exception(f"Failed to connect splitter signals: {e}")
+
+    def _update_hover_info(self, event):
+        """Update hover legend with current mouse position and price info."""
+        if not event or not event.inaxes:
+            return
+
+        try:
+            if not hasattr(self, '_hover_legend') or self._hover_legend is None:
+                return
+
+            if not hasattr(self, '_hover_legend_text') or self._hover_legend_text is None:
+                return
+
+            x, y = event.xdata, event.ydata
+            if x is None or y is None:
+                return
+
+            # Format hover info
+            info_text = f"Price: {y:.5f}"
+
+            # Update legend text
+            self._hover_legend_text.set_text(info_text)
+
+            # Redraw canvas
+            if hasattr(self, 'canvas'):
+                self.canvas.draw_idle()
+
+        except Exception as e:
+            logger.debug(f"Failed to update hover info: {e}")

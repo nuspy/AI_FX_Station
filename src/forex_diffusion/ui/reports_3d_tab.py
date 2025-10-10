@@ -19,8 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QProgressBar, QMessageBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, Slot, QUrl
-# QWebEngineView imported lazily in _ensure_web_view() to avoid blocking startup
-from PySide6.QtGui import QIcon, QFont
+from PySide6.QtGui import QIcon, QFont, QDesktopServices
 
 import pandas as pd
 import numpy as np
@@ -393,24 +392,51 @@ class Reports3DTab(QWidget):
 
         left_layout.addLayout(file_btns_layout)
 
-        # Right panel - Report viewer
+        # Right panel - Report preview/info
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
 
-        # HTML viewer for reports - Lazy loaded to avoid blocking startup
-        self.web_view = None
-        self.web_view_container = QWidget()
-        self.web_view_layout = QVBoxLayout(self.web_view_container)
-        self.web_view_layout.setContentsMargins(0, 0, 0, 0)
+        # Report preview info (no web view - reports open in browser)
+        preview_group = QGroupBox("Report Preview")
+        preview_layout = QVBoxLayout()
 
-        # Placeholder until first use
-        self.web_view_placeholder = QLabel("Click on a report to view it here")
-        self.web_view_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.web_view_placeholder.setStyleSheet("QLabel { color: #7f8c8d; font-size: 14px; }")
-        self.web_view_layout.addWidget(self.web_view_placeholder)
+        self.preview_label = QLabel("Select a report from the list to view details")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setWordWrap(True)
+        self.preview_label.setStyleSheet("""
+            QLabel {
+                color: #7f8c8d;
+                font-size: 14px;
+                padding: 20px;
+            }
+        """)
+        preview_layout.addWidget(self.preview_label)
 
-        self.web_view_container.setMinimumHeight(400)
-        right_layout.addWidget(self.web_view_container)
+        # Open in browser button
+        self.open_browser_btn = QPushButton("📊 Open Report in Browser")
+        self.open_browser_btn.setEnabled(False)
+        self.open_browser_btn.setMinimumHeight(50)
+        self.open_browser_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 14px;
+                font-weight: bold;
+                background-color: #0078d7;
+                color: white;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1984e0;
+            }
+            QPushButton:disabled {
+                background-color: #4a4a4a;
+                color: #888888;
+            }
+        """)
+        self.open_browser_btn.clicked.connect(self._open_in_browser)
+        preview_layout.addWidget(self.open_browser_btn)
+
+        preview_group.setLayout(preview_layout)
+        right_layout.addWidget(preview_group)
 
         # Report description panel
         desc_group = QGroupBox("Report Description")
@@ -495,115 +521,106 @@ class Reports3DTab(QWidget):
         """Handle report selection from list"""
         try:
             file_path = item.data(Qt.ItemDataRole.UserRole)
+            print(f"[3D REPORTS] Report selected: {file_path}")
             logger.info(f"Report selected: {file_path}")
 
             if not file_path:
+                print("[3D REPORTS] WARNING: No file path in item data")
                 logger.warning("No file path in item data")
                 return
 
             if not Path(file_path).exists():
+                print(f"[3D REPORTS] ERROR: Report file not found: {file_path}")
                 logger.error(f"Report file not found: {file_path}")
                 QMessageBox.warning(self, "File Not Found", f"Report file not found:\n{file_path}")
                 return
 
-            self.display_report(file_path)
+            print(f"[3D REPORTS] Displaying report info for: {file_path}")
+            self.display_report_info(file_path)
+            print(f"[3D REPORTS] Report info displayed")
 
         except Exception as e:
+            print(f"[3D REPORTS] EXCEPTION in on_report_selected: {e}")
             logger.error(f"Error handling report selection: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to select report:\n{str(e)}")
 
-    def _ensure_web_view(self, callback=None):
-        """Lazy initialize QWebEngineView on first use to avoid blocking startup"""
-        logger.debug(f"_ensure_web_view called, web_view is None: {self.web_view is None}, callback: {callback}")
-        if self.web_view is None:
-            # Show loading message
-            if self.web_view_placeholder:
-                logger.debug("Setting placeholder loading text")
-                self.web_view_placeholder.setText("Loading 3D viewer, please wait...")
-
-            # Defer initialization to avoid blocking
-            logger.debug("Scheduling _init_web_view with QTimer.singleShot(100ms)")
-            QTimer.singleShot(100, lambda: self._init_web_view(callback))
-            return False
-        logger.debug("Web view already initialized")
-        return True
-
-    def _init_web_view(self, callback=None):
-        """Actually initialize the web view (called asynchronously)"""
-        logger.debug(f"_init_web_view started, callback: {callback}")
+    def display_report_info(self, file_path: str):
+        """Display report information and enable browser open button"""
         try:
-            logger.debug("Importing QWebEngineView...")
-            from PySide6.QtWebEngineWidgets import QWebEngineView
-
-            logger.debug("Creating QWebEngineView instance...")
-            self.web_view = QWebEngineView()
-            self.web_view.setMinimumHeight(400)
-            logger.debug("QWebEngineView created successfully")
-
-            # Remove placeholder and add web view
-            if self.web_view_placeholder:
-                logger.debug("Removing placeholder widget")
-                self.web_view_layout.removeWidget(self.web_view_placeholder)
-                self.web_view_placeholder.deleteLater()
-                self.web_view_placeholder = None
-
-            logger.debug("Adding web view to layout")
-            self.web_view_layout.addWidget(self.web_view)
-            logger.info("QWebEngineView initialized (lazy loading)")
-
-            # Execute callback if provided
-            if callback:
-                logger.debug(f"Executing callback: {callback}")
-                callback()
-                logger.debug("Callback executed successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize QWebEngineView: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to initialize web viewer: {str(e)}")
-
-    def display_report(self, file_path: str):
-        """Display selected report in viewer"""
-        try:
-            logger.info(f"Displaying report: {file_path}")
+            print(f"[3D REPORTS] display_report_info called with: {file_path}")
+            logger.info(f"Displaying report info: {file_path}")
             path = Path(file_path)
             if not path.exists():
+                print(f"[3D REPORTS] ERROR: Report file not found: {file_path}")
                 logger.error(f"Report file not found: {file_path}")
-                QMessageBox.warning(self, "File Not Found", f"Report file not found: {file_path}")
                 return
 
-            # If web view not initialized, initialize it first then load
-            if self.web_view is None:
-                logger.info("Web view not initialized, initializing...")
-                self._ensure_web_view(callback=lambda: self._load_report(file_path))
-                return
+            # Store current report path
+            self.current_report = str(path.absolute())
 
-            # Load HTML in web view
-            logger.info("Loading report in web view...")
-            self._load_report(file_path)
+            # Update preview label
+            file_size = path.stat().st_size / 1024  # KB
+            file_date = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+            info_text = f"""
+            <div style="text-align: center; padding: 20px;">
+                <h2 style="color: #0078d7;">📊 3D Report Ready</h2>
+                <p style="font-size: 14px; color: #cccccc; margin-top: 20px;">
+                    <b>File:</b> {path.name}<br>
+                    <b>Size:</b> {file_size:.1f} KB<br>
+                    <b>Created:</b> {file_date}<br>
+                </p>
+                <p style="font-size: 13px; color: #888888; margin-top: 30px;">
+                    Click the button below to open this interactive 3D report<br>
+                    in your default web browser for best performance.
+                </p>
+            </div>
+            """
+
+            self.preview_label.setText(info_text)
+            self.open_browser_btn.setEnabled(True)
+
+            print(f"[3D REPORTS] Report info displayed successfully")
+            logger.info(f"Report info displayed: {path.name}")
 
         except Exception as e:
-            logger.error(f"Error displaying report: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to display report: {str(e)}")
+            print(f"[3D REPORTS] EXCEPTION in display_report_info: {e}")
+            logger.error(f"Error displaying report info: {e}", exc_info=True)
 
-    def _load_report(self, file_path: str):
-        """Load report HTML into web view"""
+    def _open_in_browser(self):
+        """Open current report in system's default web browser"""
         try:
-            logger.info(f"Loading report file: {file_path}")
-            path = Path(file_path)
+            if not self.current_report:
+                QMessageBox.warning(self, "No Report", "No report selected. Please select a report first.")
+                return
+
+            path = Path(self.current_report)
             if not path.exists():
-                logger.error(f"Report file not found in _load_report: {file_path}")
+                QMessageBox.warning(self, "File Not Found", f"Report file not found:\n{self.current_report}")
                 return
 
-            if self.web_view is None:
-                logger.error("Web view is None in _load_report - should not happen!")
-                return
-
-            # Load HTML in web view
+            # Open in default browser
             url = QUrl.fromLocalFile(str(path.absolute()))
-            logger.info(f"Loading URL: {url.toString()}")
-            self.web_view.load(url)
+            print(f"[3D REPORTS] Opening in browser: {url.toString()}")
+            logger.info(f"Opening report in browser: {path.name}")
 
-            # Update description based on report type
+            if QDesktopServices.openUrl(url):
+                print("[3D REPORTS] Report opened successfully in browser")
+                logger.info("Report opened in browser successfully")
+            else:
+                print("[3D REPORTS] Failed to open report in browser")
+                logger.error("Failed to open report in browser")
+                QMessageBox.warning(self, "Error", "Failed to open report in browser.")
+
+        except Exception as e:
+            print(f"[3D REPORTS] EXCEPTION in _open_in_browser: {e}")
+            logger.error(f"Error opening report in browser: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to open report:\n{str(e)}")
+
+    def _update_report_description(self, file_path: str):
+        """Update description panel based on report type"""
+        try:
+            path = Path(file_path)
             filename = path.name.lower()
 
             # Find matching description
@@ -638,12 +655,8 @@ class Reports3DTab(QWidget):
             else:
                 logger.warning(f"No description found for report: {filename}")
 
-            self.current_report = file_path
-            logger.info(f"Report loaded successfully: {file_path}")
-
         except Exception as e:
-            logger.error(f"Error loading report: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load report: {str(e)}")
+            logger.error(f"Error updating report description: {e}", exc_info=True)
 
     def generate_report(self):
         """Generate new 3D report with current data"""
@@ -769,9 +782,10 @@ class Reports3DTab(QWidget):
         # Refresh file list
         self.load_existing_reports()
 
-        # Auto-select and display the new report
+        # Auto-select and display the new report info
         if 'html_file' in result and Path(result['html_file']).exists():
-            self.display_report(result['html_file'])
+            self.display_report_info(result['html_file'])
+            self._update_report_description(result['html_file'])
 
         # Show success message
         QMessageBox.information(self, "Success", "3D report generated successfully!")
@@ -807,9 +821,10 @@ class Reports3DTab(QWidget):
                 Path(file_path).unlink()
                 self.load_existing_reports()
 
-                # Clear web view if initialized
-                if self.web_view is not None:
-                    self.web_view.setHtml("")
+                # Clear preview
+                self.preview_label.setText("Select a report from the list to view details")
+                self.open_browser_btn.setEnabled(False)
+                self.current_report = None
 
                 self.desc_title.setText("Select a report to view")
                 self.desc_text.clear()

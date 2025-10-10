@@ -399,32 +399,103 @@ class UIBuilderMixin:
 
         row2_layout.addStretch()
 
-        # Display and interface controls
-        self.toggle_drawbar_btn = QCheckBox("Drawbar")
+        # Common style for circular buttons with on/off state
+        circular_btn_style = """
+            QPushButton {
+                border-radius: 15px;
+                background-color: #4a4a4a;
+                color: #888888;
+                font-size: 18px;
+                border: 2px solid #666666;
+            }
+            QPushButton:checked {
+                background-color: #0078d7;
+                color: #ffffff;
+                border: 2px solid #005a9e;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+            }
+            QPushButton:checked:hover {
+                background-color: #1984e0;
+            }
+        """
+
+        # Style for action buttons (no on/off state)
+        action_btn_style = """
+            QPushButton {
+                border-radius: 15px;
+                background-color: #4a4a4a;
+                color: #888888;
+                font-size: 18px;
+                border: 2px solid #666666;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+            }
+            QPushButton:pressed {
+                background-color: #0078d7;
+            }
+        """
+
+        # Drawbar button (secchio + pennello) - toggle state
+        self.toggle_drawbar_btn = QPushButton("🪣🖌️")  # Bucket + paintbrush
+        self.toggle_drawbar_btn.setCheckable(True)
+        self.toggle_drawbar_btn.setMaximumSize(30, 30)
+        self.toggle_drawbar_btn.setMinimumSize(30, 30)
+        self.toggle_drawbar_btn.setToolTip("Toggle Drawbar")
+        self.toggle_drawbar_btn.setStyleSheet(circular_btn_style)
         row2_layout.addWidget(self.toggle_drawbar_btn)
 
-        self.mode_btn = QCheckBox("Candles")
-        self.mode_btn.setChecked(True)
+        # Mode button (Line/Candles) - changes icon based on current mode
+        self.mode_btn = QPushButton("📈")  # Start with line icon (to switch to Line from Candles)
+        self.mode_btn.setCheckable(True)
+        self.mode_btn.setChecked(True)  # Start in candles mode (checked = candles)
+        self.mode_btn.setMaximumSize(30, 30)
+        self.mode_btn.setMinimumSize(30, 30)
+        self.mode_btn.setToolTip("Usa Line Chart")
+        self.mode_btn.setStyleSheet(circular_btn_style)
         row2_layout.addWidget(self.mode_btn)
 
-        self.follow_checkbox = QCheckBox("Follow")
+        # Follow button (footprints icon) - 25% smaller
+        self.follow_checkbox = QPushButton("👣")
+        self.follow_checkbox.setCheckable(True)
+        self.follow_checkbox.setMaximumSize(30, 30)  # Reduced from 40x40
+        self.follow_checkbox.setMinimumSize(30, 30)
+        self.follow_checkbox.setToolTip("Segui nuove candele")
+        self.follow_checkbox.setStyleSheet(circular_btn_style)
         row2_layout.addWidget(self.follow_checkbox)
 
-        # Pattern checkboxes (TASK 5)
-        self.chart_patterns_checkbox = QCheckBox("Chart Patterns")
+        # Chart Patterns button (lente + grafico) - toggle state
+        self.chart_patterns_checkbox = QPushButton("🔍📈")  # Magnifying glass + chart
+        self.chart_patterns_checkbox.setCheckable(True)
         self.chart_patterns_checkbox.setChecked(True)  # Default enabled
+        self.chart_patterns_checkbox.setMaximumSize(30, 30)
+        self.chart_patterns_checkbox.setMinimumSize(30, 30)
+        self.chart_patterns_checkbox.setToolTip("Chart Patterns Detection")
+        self.chart_patterns_checkbox.setStyleSheet(circular_btn_style)
         row2_layout.addWidget(self.chart_patterns_checkbox)
 
-        self.candle_patterns_checkbox = QCheckBox("Candle Patterns")
+        # Candle Patterns button (lente + candlestick) - toggle state
+        self.candle_patterns_checkbox = QPushButton("🔍📊")  # Magnifying glass + candlestick
+        self.candle_patterns_checkbox.setCheckable(True)
         self.candle_patterns_checkbox.setChecked(True)  # Default enabled
+        self.candle_patterns_checkbox.setMaximumSize(30, 30)
+        self.candle_patterns_checkbox.setMinimumSize(30, 30)
+        self.candle_patterns_checkbox.setToolTip("Candle Patterns Detection")
+        self.candle_patterns_checkbox.setStyleSheet(circular_btn_style)
         row2_layout.addWidget(self.candle_patterns_checkbox)
 
-        self.history_patterns_checkbox = QCheckBox("Historical")
-        row2_layout.addWidget(self.history_patterns_checkbox)
-
-        # Pattern action buttons (from DUE tab)
-        self.scan_historical_btn = QPushButton("Scan Historical")
+        # Scan Historical button (pergamena + lente) - action button, no toggle
+        self.scan_historical_btn = QPushButton("📜🔍")  # Scroll + magnifying glass
+        self.scan_historical_btn.setMaximumSize(30, 30)
+        self.scan_historical_btn.setMinimumSize(30, 30)
+        self.scan_historical_btn.setToolTip("Scan Historical Patterns")
+        self.scan_historical_btn.setStyleSheet(action_btn_style)
         row2_layout.addWidget(self.scan_historical_btn)
+
+        # Remove old history patterns checkbox (replaced by scan button)
+        # self.history_patterns_checkbox removed
 
         self.setting_patterns_btn = QPushButton("Setting Patterns")
         row2_layout.addWidget(self.setting_patterns_btn)

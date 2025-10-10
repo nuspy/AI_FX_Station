@@ -250,11 +250,17 @@ class DrawingManager:
         if not self.current_tool:
             return
 
+        # For icon type, save the selected icon
+        icon_name = None
+        if self.current_tool == 'icon' and hasattr(self, '_selected_icon'):
+            icon_name = self._selected_icon
+
         self.current_drawing = DrawingObject(
             type=self.current_tool,
             points=[(x, y)],
             color=self.line_color,
-            fill_color=self.fill_color
+            fill_color=self.fill_color,
+            icon_name=icon_name
         )
         logger.info(f"Started drawing {self.current_tool} at ({x}, {y})")
 
@@ -283,31 +289,40 @@ class DrawingManager:
     def redraw_all(self):
         """Redraw all drawings on the chart"""
         try:
+            logger.debug(f"redraw_all called with {len(self.drawings)} drawings")
+
             if not hasattr(self.chart_tab, 'ax') or self.chart_tab.ax is None:
                 logger.warning("Chart axis not available for redrawing")
                 return
 
             ax = self.chart_tab.ax
+            logger.debug(f"Got axis: {ax}")
 
             # Remove previous drawing artists if they exist
             if hasattr(self, '_drawing_artists'):
+                logger.debug(f"Removing {len(self._drawing_artists)} previous artists")
                 for artist in self._drawing_artists:
                     try:
                         artist.remove()
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to remove artist: {e}")
             self._drawing_artists = []
 
             # Draw each saved drawing
-            for drawing in self.drawings:
+            for i, drawing in enumerate(self.drawings):
+                logger.debug(f"Drawing object {i}: type={drawing.type}, points={len(drawing.points)}")
                 artists = self._draw_object(ax, drawing)
                 self._drawing_artists.extend(artists)
+                logger.debug(f"Added {len(artists)} artists for drawing {i}")
 
             # Redraw canvas
             if hasattr(self.chart_tab, 'canvas'):
+                logger.debug("Calling canvas.draw_idle()")
                 self.chart_tab.canvas.draw_idle()
+            else:
+                logger.warning("Canvas not available")
 
-            logger.info(f"Redrawn {len(self.drawings)} objects")
+            logger.info(f"Redrawn {len(self.drawings)} objects with {len(self._drawing_artists)} total artists")
         except Exception as e:
             logger.error(f"Failed to redraw drawings: {e}", exc_info=True)
 
