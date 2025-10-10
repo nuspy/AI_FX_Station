@@ -771,10 +771,15 @@ class PatternsService(ChartServiceBase):
 
             # Use the provided dataframe or get current one
             if df is None:
+                # Try _current_df first (set by detect_async)
                 df = getattr(self, '_current_df', None)
 
+            # If still None, try to get from plot_service
             if df is None:
-                logger.error("No dataframe available for historical scan")
+                df = getattr(self.controller.plot_service, '_last_df', None)
+
+            if df is None:
+                logger.error("No dataframe available for historical scan - load chart data first")
                 return
 
             # Filter dataframe to historical range
