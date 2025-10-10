@@ -230,6 +230,7 @@ class MarketDataService:
             if primary_provider == "ctrader":
                 # Initialize cTrader client
                 from .ctrader_client import CTraderClient
+                from ..providers.ctrader_provider import CTraderAuthorizationError
                 logger.info("Initializing cTrader client...")
                 try:
                     client = CTraderClient()
@@ -238,9 +239,21 @@ class MarketDataService:
                     self.provider = client
                     self.provider_name = "cTrader"
                     logger.info("MarketDataService using cTrader provider")
+                except CTraderAuthorizationError as e:
+                    logger.error(f"cTrader authorization error: {e}")
+                    # Show configuration dialog for authorization errors
+                    self._show_provider_config_dialog(
+                        "Trading account is not authorized.\n\n"
+                        "This may require:\n"
+                        "1. OAuth2 access token (complete authorization flow)\n"
+                        "2. Additional broker-side account authorization\n"
+                        "3. Using alternative provider (Tiingo/AlphaVantage)\n\n"
+                        f"Technical details: {str(e)}"
+                    )
+                    raise  # Re-raise to prevent app from continuing without provider
                 except Exception as e:
                     logger.error(f"Failed to initialize cTrader: {e}")
-                    # Show configuration dialog
+                    # Show configuration dialog for other errors
                     self._show_provider_config_dialog(str(e))
                     raise  # Re-raise to prevent app from continuing without provider
 

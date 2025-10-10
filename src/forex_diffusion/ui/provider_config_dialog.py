@@ -254,12 +254,197 @@ class ProviderConfigDialog(QDialog):
         """Test connection to selected provider."""
         provider = self.primary_combo.currentText()
 
-        QMessageBox.information(
-            self,
-            "Test Connection",
-            f"Testing connection to {provider}...\n\n"
-            f"Note: Connection testing will be implemented in a future update."
+        # Show progress dialog
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt, QThread, Signal
+
+        progress = QProgressDialog(
+            f"Testing connection to {provider}...",
+            "Cancel",
+            0, 0,  # Indeterminate progress
+            self
         )
+        progress.setWindowTitle("Testing Connection")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        # Test in background thread to avoid blocking UI
+        class TestWorker(QThread):
+            finished = Signal(bool, str)
+
+            def __init__(self, provider_name, config):
+                super().__init__()
+                self.provider_name = provider_name
+                self.config = config
+
+            def run(self):
+                try:
+                    if self.provider_name == "ctrader":
+                        success, message = self._test_ctrader()
+                    elif self.provider_name == "tiingo":
+                        success, message = self._test_tiingo()
+                    elif self.provider_name == "alphavantage":
+                        success, message = self._test_alphavantage()
+                    else:
+                        success, message = False, f"Unknown provider: {self.provider_name}"
+
+                    self.finished.emit(success, message)
+                except Exception as e:
+                    self.finished.emit(False, f"Test error: {str(e)}")
+
+            def _test_ctrader(self):
+                """Test cTrader connection."""
+                try:
+                    import asyncio
+                    from ...providers.ctrader_provider import CTraderProvider, CTraderAuthorizationError
+
+                    # Get credentials from config
+                    client_id = self.config.get('client_id', '')
+                    client_secret = self.config.get('client_secret', '')
+                    access_token = self.config.get('access_token', '')
+                    environment = self.config.get('environment', 'demo')
+
+                    if not client_id or not client_secret:
+                        return False, "Client ID and Client Secret are required"
+
+                    # Create provider instance
+                    provider = CTraderProvider(
+                        client_id=client_id,
+                        client_secret=client_secret,
+                        access_token=access_token if access_token else None,
+                        environment=environment
+                    )
+
+                    # Try to connect
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        connected = loop.run_until_complete(provider.connect())
+                        if connected:
+                            # Disconnect after successful test
+                            loop.run_until_complete(provider.disconnect())
+                            return True, "Connection successful!"
+                        else:
+                            return False, "Connection failed - check credentials"
+                    finally:
+                        loop.close()
+
+                except CTraderAuthorizationError as e:
+                    return False, f"Authorization error: {str(e)}"
+                except Exception as e:
+                    return False, f"Connection error: {str(e)}"
+
+            def _test_tiingo(self):
+                """Test Tiingo connection."""
+                try:
+                    import httpx
+
+                    api_key = self.config.get('api_key', '')
+                    if not api_key:
+                        return False, "API Key is required"
+
+                    # Test with a simple API call
+                    url = "https://api.tiingo.com/api/test"
+                    headers = {"Authorization": f"Token {api_key}"}
+
+                    with httpx.Client(timeout=10.0) as client:
+                        response = client.get(url, headers=headers)
+                        response.raise_for_status()
+
+                        # Tiingo returns {"message": "You successfully sent a request"}
+                        data = response.json()
+                        if "message" in data:
+                            return True, f"Connection successful! {data['message']}"
+                        else:
+                            return True, "Connection successful!"
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 401:
+                        return False, "Invalid API key"
+                    else:
+                        return False, f"HTTP error {e.response.status_code}"
+                except Exception as e:
+                    return False, f"Connection error: {str(e)}"
+
+            def _test_alphavantage(self):
+                """Test AlphaVantage connection."""
+                try:
+                    import httpx
+
+                    api_key = self.config.get('api_key', '')
+                    if not api_key:
+                        return False, "API Key is required"
+
+                    # Test with a simple API call (FX rate)
+                    url = "https://www.alphavantage.co/query"
+                    params = {
+                        "function": "CURRENCY_EXCHANGE_RATE",
+                        "from_currency": "USD",
+                        "to_currency": "EUR",
+                        "apikey": api_key
+                    }
+
+                    with httpx.Client(timeout=10.0) as client:
+                        response = client.get(url, params=params)
+                        response.raise_for_status()
+
+                        data = response.json()
+
+                        # Check for error messages
+                        if "Error Message" in data:
+                            return False, data["Error Message"]
+                        elif "Note" in data:
+                            return False, f"API limit: {data['Note']}"
+                        elif "Realtime Currency Exchange Rate" in data:
+                            return True, "Connection successful!"
+                        else:
+                            return False, "Unexpected response from AlphaVantage"
+
+                except Exception as e:
+                    return False, f"Connection error: {str(e)}"
+
+        # Prepare configuration for test
+        config = {}
+        if provider == "ctrader":
+            config = {
+                'client_id': self.ctrader_client_id_edit.text(),
+                'client_secret': self.ctrader_client_secret_edit.text(),
+                'access_token': self.ctrader_access_token_edit.text(),
+                'environment': self.ctrader_env_combo.currentText()
+            }
+        elif provider == "tiingo":
+            config = {
+                'api_key': self.tiingo_api_key_edit.text()
+            }
+        elif provider == "alphavantage":
+            config = {
+                'api_key': self.alphavantage_api_key_edit.text()
+            }
+
+        # Create and start worker thread
+        self.test_worker = TestWorker(provider, config)
+
+        def on_test_finished(success, message):
+            progress.close()
+
+            if success:
+                QMessageBox.information(
+                    self,
+                    "Test Connection",
+                    f"✓ {provider.upper()} Test Successful\n\n{message}"
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Test Connection Failed",
+                    f"✗ {provider.upper()} Test Failed\n\n{message}"
+                )
+
+        self.test_worker.finished.connect(on_test_finished)
+        self.test_worker.start()
+
+        progress.exec()
 
     def _save_settings(self):
         """Save provider settings."""

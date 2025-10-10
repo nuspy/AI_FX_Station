@@ -22,6 +22,12 @@ from loguru import logger
 
 from .base import BaseProvider, ProviderCapability
 
+
+class CTraderAuthorizationError(Exception):
+    """Raised when cTrader trading account is not authorized."""
+    pass
+
+
 # cTrader API imports (will be installed via pip)
 try:
     from ctrader_open_api import Client, Protobuf, TcpProtocol, EndPoints
@@ -752,6 +758,18 @@ class CTraderProvider(BaseProvider):
             if hasattr(response, 'payloadType') and hasattr(response, 'payload'):
                 # This is a ProtoMessage wrapper - need to parse the payload
                 logger.debug(f"[{self.name}] Response is ProtoMessage, payloadType={response.payloadType}")
+
+                # Check if this is an error response (payloadType 2142 = AUTH_FAILURE)
+                if response.payloadType == 2142:
+                    error_msg = response.payload.decode('utf-8', errors='ignore') if isinstance(response.payload, bytes) else str(response.payload)
+                    logger.error(f"[{self.name}] cTrader authorization error: {error_msg}")
+
+                    # Check for "Trading account is not authorized" error
+                    if "not authorized" in error_msg.lower() or "Trading account is not authorized" in error_msg:
+                        raise CTraderAuthorizationError(f"Trading account is not authorized: {error_msg}")
+
+                    # Other auth errors
+                    raise RuntimeError(f"cTrader authentication failed: {error_msg}")
 
                 # Try to parse the payload bytes into the expected response type
                 try:
