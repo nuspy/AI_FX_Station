@@ -247,10 +247,21 @@ class PatternsConfigDialog(QDialog):
         # Get the correct layout for this tab
         try:
             current_tab = self.chart_tab if kind == 'chart_patterns' else self.candle_tab
-            parameters_layout = getattr(current_tab, f'parameters_layout_{kind}')
-            parameters_widget = getattr(current_tab, f'parameters_widget_{kind}')
+            if current_tab is None:
+                logger.warning(f"Tab not initialized for {kind}")
+                return
+
+            attr_name_layout = f'parameters_layout_{kind}'
+            attr_name_widget = f'parameters_widget_{kind}'
+
+            if not hasattr(current_tab, attr_name_layout):
+                logger.warning(f"Tab missing attribute {attr_name_layout}. Available: {dir(current_tab)}")
+                return
+
+            parameters_layout = getattr(current_tab, attr_name_layout)
+            parameters_widget = getattr(current_tab, attr_name_widget)
         except AttributeError as e:
-            print(f"Error: Could not find layout for {kind}: {e}")
+            logger.error(f"Could not find layout for {kind}: {e}")
             return
 
         # Save current pattern state before switching (if any)

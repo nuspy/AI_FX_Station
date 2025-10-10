@@ -18,7 +18,7 @@ from .base import ChartServiceBase
 
 # Try to import finplot service
 try:
-    from ..enhanced_finplot_subplot_service import EnhancedFinplotSubplotService
+    from .enhanced_finplot_subplot_service import EnhancedFinplotSubplotService
     FINPLOT_SERVICE_AVAILABLE = True
 except ImportError:
     FINPLOT_SERVICE_AVAILABLE = False

@@ -77,8 +77,8 @@ def setup_ui(
                 # STEP 2: Derive higher timeframes from 1m using local database
                 # The AggregatorService (started below) will handle this automatically
                 # But we can also trigger immediate derivation here if needed
-                from ..services.aggregator import derive_timeframes_from_base
                 try:
+                    from ..services.aggregator import derive_timeframes_from_base
                     logger.info(f"Deriving higher timeframes from 1m for {symbol}...")
                     # Derive all higher timeframes from 1m using database
                     higher_timeframes = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
@@ -95,7 +95,7 @@ def setup_ui(
                             logger.warning(f"Failed to derive {tf} from 1m for {symbol}: {e}")
                 except ImportError:
                     # If derive function doesn't exist, AggregatorService will handle it later
-                    logger.info("Derivation function not available - AggregatorService will handle it")
+                    logger.debug("Derivation function not available - AggregatorService will handle it")
                 except Exception as e:
                     logger.warning(f"Derivation failed for {symbol}: {e}")
 
