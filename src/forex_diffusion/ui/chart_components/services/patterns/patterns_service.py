@@ -803,6 +803,7 @@ class PatternsService(ChartServiceBase):
         """Filter dataframe to specified historical time range"""
         try:
             # imports moved to top
+            logger.debug(f"Filtering df with {len(df)} rows, columns: {list(df.columns)}")
 
             # Find timestamp column
             ts_col = None
@@ -820,18 +821,44 @@ class PatternsService(ChartServiceBase):
                     logger.error("No timestamp column found for historical filtering")
                     return None
 
+            logger.debug(f"Using timestamp column: {ts_col}, dtype: {df[ts_col].dtype}")
+
             # Convert to datetime if needed
             if not pd.api.types.is_datetime64_any_dtype(df[ts_col]):
-                df[ts_col] = pd.to_datetime(df[ts_col])
+                # Check if it's in milliseconds (common for ts_utc)
+                if df[ts_col].dtype in ['int64', 'float64'] and df[ts_col].max() > 1e10:
+                    logger.debug(f"Converting {ts_col} from milliseconds to datetime")
+                    df[ts_col] = pd.to_datetime(df[ts_col], unit='ms', utc=True)
+                else:
+                    df[ts_col] = pd.to_datetime(df[ts_col])
 
             # Calculate time range
-            now = datetime.now()
+            # Make sure 'now' is timezone-aware if data is UTC
+            if pd.api.types.is_datetime64_any_dtype(df[ts_col]):
+                # Check if data has timezone info
+                sample_ts = df[ts_col].iloc[0] if len(df) > 0 else None
+                if sample_ts is not None and hasattr(sample_ts, 'tz') and sample_ts.tz is not None:
+                    # Data is timezone-aware, make 'now' UTC too
+                    from datetime import timezone
+                    now = datetime.now(timezone.utc)
+                    logger.debug("Using UTC timezone for comparison")
+                else:
+                    now = datetime.now()
+                    logger.debug("Using local timezone for comparison")
+            else:
+                now = datetime.now()
+
             start_time = now - timedelta(minutes=start_minutes)
             end_time = now - timedelta(minutes=end_minutes)
+
+            logger.debug(f"Filter range: {start_time} to {end_time}")
+            logger.debug(f"Data range: {df[ts_col].min()} to {df[ts_col].max()}")
 
             # Filter dataframe
             mask = (df[ts_col] >= start_time) & (df[ts_col] <= end_time)
             filtered_df = df[mask].copy()
+
+            logger.info(f"Historical filter: {len(df)} rows -> {len(filtered_df)} rows in range")
 
             return filtered_df
 
