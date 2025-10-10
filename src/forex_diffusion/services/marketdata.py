@@ -221,13 +221,12 @@ class MarketDataService:
 
         # Try to create the primary provider
         try:
-            # TIINGO DISABLED FOR TESTING - ONLY CTRADER ALLOWED
-            # if primary_provider == "tiingo":
-            #     self.provider = TiingoClient()
-            #     self.provider_name = "Tiingo"
-            #     logger.info("MarketDataService using Tiingo provider")
+            if primary_provider == "tiingo":
+                self.provider = TiingoClient()
+                self.provider_name = "Tiingo"
+                logger.info("MarketDataService using Tiingo provider")
 
-            if primary_provider == "ctrader":
+            elif primary_provider == "ctrader":
                 # Initialize cTrader client
                 from .ctrader_client import CTraderClient
                 from ..providers.ctrader_provider import CTraderAuthorizationError
@@ -257,27 +256,60 @@ class MarketDataService:
                     self._show_provider_config_dialog(str(e))
                     raise  # Re-raise to prevent app from continuing without provider
 
-            elif primary_provider == "tiingo":
+            elif primary_provider == "alphavantage":
+                # AlphaVantage support (future implementation)
                 raise ValueError(
-                    "Tiingo provider is DISABLED for testing. "
-                    "Only 'ctrader' is supported. "
-                    "Set primary_data_provider='ctrader' in Settings."
+                    "AlphaVantage provider not yet implemented. "
+                    "Use 'tiingo' or 'ctrader' as primary provider."
                 )
 
             else:
                 raise ValueError(
                     f"Unknown provider '{primary_provider}'. "
-                    f"Only 'ctrader' is supported (Tiingo disabled for testing). "
-                    f"Set primary_data_provider='ctrader' in Settings."
+                    f"Supported providers: 'tiingo', 'ctrader', 'alphavantage'"
                 )
 
         except Exception as e:
-            # NO FALLBACK - let errors propagate
-            logger.error(f"FATAL: Failed to initialize provider '{primary_provider}': {e}")
-            logger.error("NO FALLBACK AVAILABLE - Tiingo is disabled for testing")
-            self.fallback_occurred = True
-            self.fallback_reason = f"Provider initialization error: {str(e)}. NO FALLBACK (Tiingo disabled)."
-            raise  # Re-raise to crash the app
+            # Try fallback provider if configured
+            logger.error(f"Failed to initialize primary provider '{primary_provider}': {e}")
+
+            # Get fallback provider
+            try:
+                from ..utils.user_settings import get_setting
+                fallback_provider = get_setting("fallback_data_provider", "").lower()
+            except:
+                fallback_provider = ""
+
+            if fallback_provider and fallback_provider != primary_provider:
+                logger.info(f"Attempting to use fallback provider: {fallback_provider}")
+                try:
+                    if fallback_provider == "tiingo":
+                        self.provider = TiingoClient()
+                        self.provider_name = "Tiingo"
+                        self.fallback_occurred = True
+                        self.fallback_reason = f"Primary provider '{primary_provider}' failed: {str(e)}"
+                        logger.info(f"Successfully initialized fallback provider: Tiingo")
+                    elif fallback_provider == "ctrader":
+                        from .ctrader_client import CTraderClient
+                        client = CTraderClient()
+                        client._ensure_initialized()
+                        self.provider = client
+                        self.provider_name = "cTrader"
+                        self.fallback_occurred = True
+                        self.fallback_reason = f"Primary provider '{primary_provider}' failed: {str(e)}"
+                        logger.info(f"Successfully initialized fallback provider: cTrader")
+                    else:
+                        raise ValueError(f"Unsupported fallback provider: {fallback_provider}")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback provider '{fallback_provider}' also failed: {fallback_error}")
+                    self.fallback_occurred = True
+                    self.fallback_reason = f"Both primary and fallback providers failed"
+                    raise
+            else:
+                # No fallback configured or same as primary
+                self.fallback_occurred = True
+                self.fallback_reason = f"Provider initialization error: {str(e)}. No fallback configured."
+                raise
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
