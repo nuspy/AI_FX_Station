@@ -172,6 +172,38 @@ class MarketDataService:
         # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
         self.rest_enabled: bool = True
 
+    def _show_provider_config_dialog(self, error_message: str):
+        """Show provider configuration dialog."""
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            from ..ui.provider_config_dialog import ProviderConfigDialog
+
+            # Check if QApplication exists
+            app = QApplication.instance()
+            if not app:
+                logger.warning("No QApplication instance - cannot show config dialog")
+                return
+
+            # Show error message first
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Provider Configuration Error")
+            msg.setText("Failed to initialize data provider")
+            msg.setInformativeText(
+                f"Error: {error_message}\n\n"
+                "Would you like to configure provider credentials now?"
+            )
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+            if msg.exec() == QMessageBox.StandardButton.Yes:
+                # Show configuration dialog
+                dialog = ProviderConfigDialog()
+                dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Failed to show provider config dialog: {e}")
+
     def _init_provider(self):
         """Initialize provider based on primary_data_provider setting with fallback."""
         self.fallback_occurred = False
@@ -196,17 +228,21 @@ class MarketDataService:
             #     logger.info("MarketDataService using Tiingo provider")
 
             if primary_provider == "ctrader":
-                # Initialize cTrader client (NO FALLBACK - will raise error if fails)
+                # Initialize cTrader client
                 from .ctrader_client import CTraderClient
-                logger.info("Initializing cTrader client (NO FALLBACK)...")
-                client = CTraderClient()
-                # Force initialization to catch errors immediately (lazy init)
-                client._ensure_initialized()
-                self.provider = client
-                self.provider_name = "cTrader"
-                logger.info("MarketDataService using cTrader provider (NO FALLBACK)")
-                # NO try/except - errors will propagate and crash the app
-                # This is intentional for testing cTrader standalone
+                logger.info("Initializing cTrader client...")
+                try:
+                    client = CTraderClient()
+                    # Force initialization to catch errors immediately (lazy init)
+                    client._ensure_initialized()
+                    self.provider = client
+                    self.provider_name = "cTrader"
+                    logger.info("MarketDataService using cTrader provider")
+                except Exception as e:
+                    logger.error(f"Failed to initialize cTrader: {e}")
+                    # Show configuration dialog
+                    self._show_provider_config_dialog(str(e))
+                    raise  # Re-raise to prevent app from continuing without provider
 
             elif primary_provider == "tiingo":
                 raise ValueError(
