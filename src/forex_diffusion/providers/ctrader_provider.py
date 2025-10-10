@@ -748,10 +748,24 @@ class CTraderProvider(BaseProvider):
             # Wait for response with timeout
             response = await asyncio.wait_for(future, timeout=timeout)
 
-            # The response should already be the correct type as the library deserializes it
-            # Just verify the type
+            # Check if response is a ProtoMessage wrapper
+            if hasattr(response, 'payloadType') and hasattr(response, 'payload'):
+                # This is a ProtoMessage wrapper - need to parse the payload
+                logger.debug(f"[{self.name}] Response is ProtoMessage, payloadType={response.payloadType}")
+
+                # Try to parse the payload bytes into the expected response type
+                try:
+                    actual_response = response_type()
+                    actual_response.ParseFromString(response.payload)
+                    logger.debug(f"[{self.name}] Successfully parsed payload into {response_type.__name__}")
+                    return actual_response
+                except Exception as e:
+                    logger.error(f"[{self.name}] Failed to parse payload: {e}")
+                    logger.debug(f"[{self.name}] Raw response: {response}")
+                    return None
+
+            # Direct response (not wrapped)
             if not isinstance(response, response_type):
-                # Log the actual response for debugging
                 logger.error(
                     f"[{self.name}] Response type mismatch for msg {msg_id}: "
                     f"expected {response_type.__name__}, got {type(response).__name__}"
