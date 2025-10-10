@@ -173,10 +173,16 @@ class ProviderConfigDialog(QDialog):
         self.ctrader_env_combo.setCurrentText(self.ctrader_environment)
         layout.addRow("Environment:", self.ctrader_env_combo)
 
+        # OAuth2 Authorization button
+        self.ctrader_oauth_btn = QPushButton("Authorize with cTrader")
+        self.ctrader_oauth_btn.clicked.connect(self._start_ctrader_oauth)
+        layout.addRow("", self.ctrader_oauth_btn)
+
         # Help text
         help_label = QLabel(
             "Get cTrader credentials from your broker's cTrader developer portal.\n"
-            "Client ID and Client Secret are required for historical data access."
+            "Client ID and Client Secret are required.\n"
+            "Click 'Authorize with cTrader' to complete OAuth2 flow and obtain access token."
         )
         help_label.setWordWrap(True)
         help_label.setStyleSheet("color: gray; font-size: 10px;")
@@ -445,6 +451,195 @@ class ProviderConfigDialog(QDialog):
         self.test_worker.start()
 
         progress.exec()
+
+    def _start_ctrader_oauth(self):
+        """Start cTrader OAuth2 authorization flow."""
+        try:
+            from ctrader_open_api import Auth
+            import webbrowser
+            import socket
+            from http.server import HTTPServer, BaseHTTPRequestHandler
+            from urllib.parse import urlparse, parse_qs
+            import threading
+
+            # Get credentials
+            client_id = self.ctrader_client_id_edit.text().strip()
+            client_secret = self.ctrader_client_secret_edit.text().strip()
+
+            if not client_id or not client_secret:
+                QMessageBox.critical(
+                    self,
+                    "OAuth2 Error",
+                    "Client ID and Client Secret are required for OAuth2 authorization."
+                )
+                return
+
+            # Find available port
+            def find_free_port():
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('', 0))
+                    s.listen(1)
+                    port = s.getsockname()[1]
+                return port
+
+            port = find_free_port()
+            redirect_uri = f"http://localhost:{port}/callback"
+
+            # Create Auth instance
+            auth = Auth(client_id, client_secret, redirect_uri)
+
+            # Get authorization URL
+            auth_url = auth.getAuthUri(scope='trading')
+
+            # Setup callback server
+            auth_code = None
+            server_error = None
+
+            class OAuthCallbackHandler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    nonlocal auth_code, server_error
+
+                    parsed = urlparse(self.path)
+                    params = parse_qs(parsed.query)
+
+                    if 'code' in params:
+                        auth_code = params['code'][0]
+                        self.send_response(200)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        self.wfile.write(b"<html><body><h1>Authorization Successful!</h1><p>You can close this window and return to the application.</p></body></html>")
+                    elif 'error' in params:
+                        server_error = params.get('error_description', ['Unknown error'])[0]
+                        self.send_response(400)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        self.wfile.write(f"<html><body><h1>Authorization Failed</h1><p>{server_error}</p></body></html>".encode())
+                    else:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        self.wfile.write(b"<html><body><h1>Invalid Request</h1></body></html>")
+
+                def log_message(self, format, *args):
+                    pass  # Suppress logging
+
+            # Start local server
+            server = HTTPServer(('localhost', port), OAuthCallbackHandler)
+
+            def run_server():
+                server.handle_request()  # Handle one request then stop
+
+            server_thread = threading.Thread(target=run_server, daemon=True)
+            server_thread.start()
+
+            # Show info dialog
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setWindowTitle("cTrader OAuth2 Authorization")
+            msg.setText("Opening browser for cTrader authorization...")
+            msg.setInformativeText(
+                f"1. Browser will open to cTrader authorization page\n"
+                f"2. Login with your cTrader ID\n"
+                f"3. Authorize the application\n"
+                f"4. You will be redirected back automatically\n\n"
+                f"Waiting for authorization on port {port}..."
+            )
+            msg.setStandardButtons(QMessageBox.StandardButton.Cancel)
+            msg.setDefaultButton(QMessageBox.StandardButton.Cancel)
+
+            # Open browser
+            webbrowser.open(auth_url)
+
+            # Non-blocking wait for callback
+            from PySide6.QtCore import QTimer
+
+            def check_auth_result():
+                nonlocal auth_code, server_error
+
+                if auth_code:
+                    msg.accept()
+                    # Exchange code for token
+                    try:
+                        token_response = auth.getToken(auth_code)
+
+                        if 'errorCode' in token_response:
+                            QMessageBox.critical(
+                                self,
+                                "Token Exchange Failed",
+                                f"Error: {token_response.get('description', 'Unknown error')}"
+                            )
+                        elif 'accessToken' in token_response:
+                            # Success! Update UI with token
+                            self.ctrader_access_token_edit.setText(token_response['accessToken'])
+
+                            # Optionally save refresh token to settings for future use
+                            if 'refreshToken' in token_response:
+                                from ..utils.user_settings import set_setting
+                                set_setting('ctrader_refresh_token', token_response['refreshToken'])
+
+                            QMessageBox.information(
+                                self,
+                                "Authorization Successful",
+                                f"Access token obtained successfully!\n\n"
+                                f"Token type: {token_response.get('tokenType', 'Bearer')}\n"
+                                f"Expires in: {token_response.get('expiresIn', 'Unknown')} seconds\n\n"
+                                f"The access token has been set. Click 'Test Connection' to verify, then 'Save'."
+                            )
+                        else:
+                            QMessageBox.warning(
+                                self,
+                                "Unexpected Response",
+                                f"Unexpected token response:\n{token_response}"
+                            )
+
+                    except Exception as e:
+                        QMessageBox.critical(
+                            self,
+                            "Token Exchange Error",
+                            f"Failed to exchange authorization code for token:\n{str(e)}"
+                        )
+
+                elif server_error:
+                    msg.reject()
+                    QMessageBox.critical(
+                        self,
+                        "Authorization Failed",
+                        f"cTrader authorization failed:\n{server_error}"
+                    )
+
+                elif server_thread.is_alive():
+                    # Still waiting, check again
+                    QTimer.singleShot(500, check_auth_result)
+                else:
+                    # Server stopped without auth_code or error
+                    msg.reject()
+
+            # Start checking
+            QTimer.singleShot(500, check_auth_result)
+
+            # Show modal dialog
+            result = msg.exec()
+
+            if result == QMessageBox.StandardButton.Cancel:
+                # User cancelled - stop server
+                try:
+                    server.shutdown()
+                except:
+                    pass
+
+        except ImportError:
+            QMessageBox.critical(
+                self,
+                "OAuth2 Error",
+                "ctrader-open-api library not installed.\n\n"
+                "Install with: pip install ctrader-open-api"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "OAuth2 Error",
+                f"Failed to start OAuth2 flow:\n{str(e)}"
+            )
 
     def _save_settings(self):
         """Save provider settings."""

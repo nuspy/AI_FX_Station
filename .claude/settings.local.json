@@ -45,7 +45,10 @@
       "Bash(pip show:*)",
       "WebSearch",
       "Bash(timeout:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:help.ctrader.com)",
+      "WebFetch(domain:community.ctrader.com)"
     ],
     "deny": [],
     "ask": []
