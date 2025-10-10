@@ -117,11 +117,109 @@ class EventHandlersMixin:
                 logger.warning(f"Failed to connect positions table signals: {e}")
 
     def _connect_mouse_events(self):
-        """Connect mouse events for chart interaction."""
-        # Mouse events are handled directly by finplot/PyQtGraph
-        # mpl_connect is matplotlib-specific and not available in finplot
-        # Events will be connected through finplot's native event system
-        pass
+        """Connect mouse events for chart interaction using PyQtGraph."""
+        try:
+            # Connect PyQtGraph scene mouse events
+            if hasattr(self, 'main_plot') and self.main_plot:
+                scene = self.main_plot.scene()
+                if scene:
+                    # Connect mouse press, move, release events
+                    scene.sigMouseClicked.connect(self._on_pyqtgraph_mouse_click)
+                    scene.sigMouseMoved.connect(self._on_pyqtgraph_mouse_move)
+                    logger.debug("PyQtGraph mouse events connected")
+        except Exception as e:
+            logger.warning(f"Failed to connect PyQtGraph mouse events: {e}")
+
+    def _on_pyqtgraph_mouse_click(self, event):
+        """Handle PyQtGraph mouse click - convert to DrawingManager format."""
+        try:
+            from PySide6.QtCore import Qt
+
+            # Check if we have a drawing tool active
+            if not hasattr(self, 'drawing_manager') or not self.drawing_manager:
+                return
+
+            if not self.drawing_manager.current_tool:
+                return
+
+            # Get the mouse button
+            button = event.button()
+            if button != Qt.MouseButton.LeftButton:
+                return
+
+            # Get scene position
+            scene_pos = event.scenePos()
+
+            # Map to view (data) coordinates
+            if hasattr(self, 'main_plot') and self.main_plot:
+                viewbox = self.main_plot.getViewBox()
+                view_pos = viewbox.mapSceneToView(scene_pos)
+
+                # Extract x (timestamp) and y (price) in data coordinates
+                x_data = view_pos.x()
+                y_data = view_pos.y()
+
+                # Check if this is the first click (start) or subsequent click
+                if self.drawing_manager.current_drawing is None:
+                    # Start new drawing
+                    self.drawing_manager.start_drawing(x_data, y_data)
+                    logger.debug(f"Started drawing at ({x_data}, {y_data})")
+
+                    # For single-click tools (icon), finish immediately
+                    if self.drawing_manager.current_tool in ['icon']:
+                        self.drawing_manager.finish_drawing()
+                        logger.debug("Single-click tool completed")
+                else:
+                    # Add point and check if we should finish
+                    self.drawing_manager.add_point(x_data, y_data)
+                    logger.debug(f"Added point at ({x_data}, {y_data})")
+
+                    # For two-point tools, finish after second click
+                    if self.drawing_manager.current_tool in ['line', 'arrow', 'rectangle', 'triangle', 'fib', 'gaussian']:
+                        if len(self.drawing_manager.current_drawing.points) >= 2:
+                            self.drawing_manager.finish_drawing()
+                            logger.debug("Two-point tool completed")
+
+                    # Freehand continues until explicit finish (double-click or Esc)
+
+        except Exception as e:
+            logger.warning(f"Failed to handle mouse click for drawing: {e}", exc_info=True)
+
+    def _on_pyqtgraph_mouse_move(self, pos):
+        """Handle PyQtGraph mouse move - update drawing preview."""
+        try:
+            # Check if we're currently drawing
+            if not hasattr(self, 'drawing_manager') or not self.drawing_manager:
+                return
+
+            if not self.drawing_manager.current_drawing:
+                return
+
+            # Get scene position from tuple
+            if isinstance(pos, tuple):
+                scene_pos = pos[0]  # PyQtGraph sigMouseMoved sends (QPointF,)
+            else:
+                scene_pos = pos
+
+            # Map to view (data) coordinates
+            if hasattr(self, 'main_plot') and self.main_plot:
+                viewbox = self.main_plot.getViewBox()
+                view_pos = viewbox.mapSceneToView(scene_pos)
+
+                # Extract coordinates
+                x_data = view_pos.x()
+                y_data = view_pos.y()
+
+                # For freehand tool, continuously add points while dragging
+                if self.drawing_manager.current_tool == 'freehand':
+                    self.drawing_manager.add_point(x_data, y_data)
+
+                # TODO: Add preview line/shape rendering here
+                # This would show a rubber-band effect while drawing
+                logger.debug(f"Mouse moved to ({x_data}, {y_data}) during drawing")
+
+        except Exception as e:
+            logger.debug(f"Failed to handle mouse move for drawing: {e}")
 
     # Symbol and timeframe change handlers
     def _on_symbol_combo_changed(self, new_symbol: str) -> None:

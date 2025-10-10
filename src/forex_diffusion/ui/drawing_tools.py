@@ -295,42 +295,36 @@ class DrawingManager:
         self.redraw_all()
 
     def redraw_all(self):
-        """Redraw all drawings on the chart"""
+        """Redraw all drawings on the chart using PyQtGraph"""
         try:
             logger.debug(f"redraw_all called with {len(self.drawings)} drawings")
 
-            if not hasattr(self.chart_tab, 'ax') or self.chart_tab.ax is None:
-                logger.warning("Chart axis not available for redrawing")
+            # Check for PyQtGraph main_plot
+            if not hasattr(self.chart_tab, 'main_plot') or self.chart_tab.main_plot is None:
+                logger.warning("PyQtGraph main_plot not available for redrawing")
                 return
 
-            ax = self.chart_tab.ax
-            logger.debug(f"Got axis: {ax}")
+            plot = self.chart_tab.main_plot
+            logger.debug(f"Got PyQtGraph plot: {plot}")
 
-            # Remove previous drawing artists if they exist
-            if hasattr(self, '_drawing_artists'):
-                logger.debug(f"Removing {len(self._drawing_artists)} previous artists")
-                for artist in self._drawing_artists:
+            # Remove previous drawing items if they exist
+            if hasattr(self, '_drawing_items'):
+                logger.debug(f"Removing {len(self._drawing_items)} previous items")
+                for item in self._drawing_items:
                     try:
-                        artist.remove()
+                        plot.removeItem(item)
                     except Exception as e:
-                        logger.debug(f"Failed to remove artist: {e}")
-            self._drawing_artists = []
+                        logger.debug(f"Failed to remove item: {e}")
+            self._drawing_items = []
 
             # Draw each saved drawing
             for i, drawing in enumerate(self.drawings):
                 logger.debug(f"Drawing object {i}: type={drawing.type}, points={len(drawing.points)}")
-                artists = self._draw_object(ax, drawing)
-                self._drawing_artists.extend(artists)
-                logger.debug(f"Added {len(artists)} artists for drawing {i}")
+                items = self._draw_object_pyqtgraph(plot, drawing)
+                self._drawing_items.extend(items)
+                logger.debug(f"Added {len(items)} items for drawing {i}")
 
-            # Redraw canvas
-            if hasattr(self.chart_tab, 'canvas'):
-                logger.debug("Calling canvas.draw_idle()")
-                self.chart_tab.canvas.draw_idle()
-            else:
-                logger.warning("Canvas not available")
-
-            logger.info(f"Redrawn {len(self.drawings)} objects with {len(self._drawing_artists)} total artists")
+            logger.info(f"Redrawn {len(self.drawings)} objects with {len(self._drawing_items)} total items")
         except Exception as e:
             logger.error(f"Failed to redraw drawings: {e}", exc_info=True)
 
@@ -462,6 +456,161 @@ class DrawingManager:
             logger.error(f"Error drawing {drawing.type}: {e}")
 
         return artists
+
+    def _draw_object_pyqtgraph(self, plot, drawing: DrawingObject) -> list:
+        """Draw a single DrawingObject using PyQtGraph, return list of items"""
+        import pyqtgraph as pg
+        import numpy as np
+        from PySide6.QtGui import QColor, QPen, QBrush
+        from PySide6.QtCore import Qt
+
+        items = []
+        points = drawing.points
+
+        if len(points) < 1:
+            return items
+
+        try:
+            # Convert color string to QColor
+            color = QColor(drawing.color)
+            pen = QPen(color)
+            pen.setWidth(int(drawing.width))
+
+            if drawing.type == 'line':
+                if len(points) >= 2:
+                    xs = [p[0] for p in points]
+                    ys = [p[1] for p in points]
+                    line = pg.PlotCurveItem(x=xs, y=ys, pen=pen)
+                    plot.addItem(line)
+                    items.append(line)
+
+            elif drawing.type == 'arrow':
+                if len(points) >= 2:
+                    x1, y1 = points[0]
+                    x2, y2 = points[-1]
+                    # Draw line
+                    line = pg.PlotCurveItem(x=[x1, x2], y=[y1, y2], pen=pen)
+                    plot.addItem(line)
+                    items.append(line)
+                    # Draw arrowhead (simplified triangle)
+                    dx = x2 - x1
+                    dy = y2 - y1
+                    length = np.sqrt(dx**2 + dy**2)
+                    if length > 0:
+                        # Arrow size proportional to line length
+                        arrow_size = min(length * 0.1, 50)
+                        angle = np.arctan2(dy, dx)
+                        # Arrow tip points
+                        arrow_x = [x2,
+                                   x2 - arrow_size * np.cos(angle - np.pi/6),
+                                   x2 - arrow_size * np.cos(angle + np.pi/6)]
+                        arrow_y = [y2,
+                                   y2 - arrow_size * np.sin(angle - np.pi/6),
+                                   y2 - arrow_size * np.sin(angle + np.pi/6)]
+                        arrow_head = pg.PlotCurveItem(x=arrow_x + [arrow_x[0]],
+                                                     y=arrow_y + [arrow_y[0]],
+                                                     pen=pen,
+                                                     brush=color)
+                        plot.addItem(arrow_head)
+                        items.append(arrow_head)
+
+            elif drawing.type == 'rectangle':
+                if len(points) >= 2:
+                    x1, y1 = points[0]
+                    x2, y2 = points[-1]
+                    # Create rectangle outline
+                    rect_x = [x1, x2, x2, x1, x1]
+                    rect_y = [y1, y1, y2, y2, y1]
+
+                    # Brush for fill
+                    brush = None
+                    if drawing.fill_color != 'transparent':
+                        fill_color = QColor(drawing.fill_color)
+                        brush = QBrush(fill_color)
+
+                    rect = pg.PlotCurveItem(x=rect_x, y=rect_y, pen=pen,
+                                           brush=brush, fillLevel=None)
+                    plot.addItem(rect)
+                    items.append(rect)
+
+            elif drawing.type == 'triangle':
+                if len(points) >= 2:
+                    x1, y1 = points[0]
+                    x2, y2 = points[-1]
+                    # Create triangle with base at bottom
+                    tri_x = [x1, x2, (x1 + x2) / 2, x1]
+                    tri_y = [y1, y1, y2, y1]
+
+                    brush = None
+                    if drawing.fill_color != 'transparent':
+                        fill_color = QColor(drawing.fill_color)
+                        brush = QBrush(fill_color)
+
+                    triangle = pg.PlotCurveItem(x=tri_x, y=tri_y, pen=pen,
+                                               brush=brush, fillLevel=None)
+                    plot.addItem(triangle)
+                    items.append(triangle)
+
+            elif drawing.type == 'fib':
+                if len(points) >= 2:
+                    x1, y1 = points[0]
+                    x2, y2 = points[-1]
+                    # Fibonacci levels
+                    fib_levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+                    y_range = y2 - y1
+
+                    for level in fib_levels:
+                        y = y1 + y_range * level
+                        fib_line = pg.PlotCurveItem(x=[x1, x2], y=[y, y], pen=pen)
+                        plot.addItem(fib_line)
+                        items.append(fib_line)
+
+                        # Add text label
+                        label = pg.TextItem(text=f"{level:.3f}", anchor=(0, 0.5), color=color)
+                        label.setPos(x1, y)
+                        plot.addItem(label)
+                        items.append(label)
+
+            elif drawing.type == 'icon':
+                if len(points) >= 1:
+                    x, y = points[0]
+                    icon_text = drawing.icon_name if drawing.icon_name else '⭐'
+                    text_item = pg.TextItem(text=icon_text, anchor=(0.5, 0.5), color=color)
+                    text_item.setPos(x, y)
+                    plot.addItem(text_item)
+                    items.append(text_item)
+
+            elif drawing.type == 'freehand':
+                if len(points) >= 2:
+                    xs = [p[0] for p in points]
+                    ys = [p[1] for p in points]
+                    freehand = pg.PlotCurveItem(x=xs, y=ys, pen=pen)
+                    plot.addItem(freehand)
+                    items.append(freehand)
+
+            elif drawing.type == 'gaussian':
+                if len(points) >= 2:
+                    from scipy.stats import norm
+                    x1, y1 = points[0]
+                    x2, y2 = points[-1]
+                    # Center and width
+                    center_x = (x1 + x2) / 2
+                    center_y = (y1 + y2) / 2
+                    std_x = abs(x2 - x1) / 4
+                    std_y = abs(y2 - y1) / 4
+
+                    # Generate gaussian curve
+                    x_range = np.linspace(x1, x2, 100)
+                    y_range = center_y + std_y * norm.pdf((x_range - center_x) / std_x)
+
+                    gaussian = pg.PlotCurveItem(x=x_range, y=y_range, pen=pen)
+                    plot.addItem(gaussian)
+                    items.append(gaussian)
+
+        except Exception as e:
+            logger.error(f"Error drawing {drawing.type} with PyQtGraph: {e}")
+
+        return items
 
     def save_drawings(self):
         """Save drawings to file"""
