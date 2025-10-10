@@ -418,7 +418,7 @@ class MarketDataService:
                         for (sub_s, sub_e) in subranges:
                             start_date = sub_s.date().isoformat()
                             end_date = sub_e.date().isoformat()
-                            logger.info("Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
+                            logger.info("MarketData:backfill_symbol_timeframe Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
                             df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                             if df is not None and not df.empty:
                                 try:
@@ -503,7 +503,7 @@ class MarketDataService:
             for (sub_s, sub_e) in subranges:
                 start_date = sub_s.date().isoformat()
                 end_date = sub_e.date().isoformat()
-                logger.info("Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
+                logger.info("MarketData:_ensure_ticks_then_aggregate Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
                 df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                 if df is None or df.empty:
                     logger.info("No tick/1m data returned for {} {}-{}", symbol, start_date, end_date)
@@ -709,22 +709,44 @@ class MarketDataService:
                 e_ms = int(pd.to_datetime(e_dt_plus).value // 1_000_000)
             out_ranges.append((int(s), e_ms))
 
-        # AGGREGATE nearby gaps: merge ranges separated by less than 1 hour to reduce API calls
-        if len(out_ranges) > 1:
-            aggregation_threshold_ms = 60 * 60 * 1000  # 1 hour
-            merged: List[Tuple[int, int]] = []
-            current_start, current_end = out_ranges[0]
+        # NEW AGGREGATION STRATEGY: If any day has gaps, download the ENTIRE day
+        # This prevents multiple requests for the same day when there are scattered gaps
+        # Group ranges by day and merge all gaps within the same day
+        if out_ranges:
+            from datetime import datetime
+            day_ranges: Dict[str, Tuple[int, int]] = {}  # day_key -> (min_start, max_end)
 
-            for next_start, next_end in out_ranges[1:]:
-                # If gap between current_end and next_start is small, merge them
-                if next_start - current_end < aggregation_threshold_ms:
-                    current_end = next_end  # Extend current range
-                else:
-                    merged.append((current_start, current_end))
-                    current_start, current_end = next_start, next_end
+            for start_ms, end_ms in out_ranges:
+                # Get the day for both start and end
+                start_dt = datetime.utcfromtimestamp(start_ms / 1000.0)
+                end_dt = datetime.utcfromtimestamp(end_ms / 1000.0)
 
-            merged.append((current_start, current_end))
-            out_ranges = merged
+                # Generate day keys for all days covered by this range
+                current_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                while current_dt <= end_day:
+                    day_key = current_dt.strftime("%Y-%m-%d")
+                    day_start_ms = int(current_dt.timestamp() * 1000)
+                    day_end_ms = int((current_dt.timestamp() + 86400) * 1000)  # +24 hours
+
+                    if day_key in day_ranges:
+                        # Extend the day range if needed
+                        existing_start, existing_end = day_ranges[day_key]
+                        day_ranges[day_key] = (
+                            min(existing_start, day_start_ms),
+                            max(existing_end, day_end_ms)
+                        )
+                    else:
+                        # Use full day boundaries
+                        day_ranges[day_key] = (day_start_ms, day_end_ms)
+
+                    current_dt += pd.Timedelta(days=1)
+
+            # Convert back to list of ranges, sorted by start time
+            out_ranges = sorted(list(day_ranges.values()), key=lambda x: x[0])
+
+            logger.debug(f"Aggregated {len(out_ranges)} day-level ranges for {symbol} {timeframe}")
 
         return out_ranges
 
