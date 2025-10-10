@@ -73,6 +73,7 @@ class CTraderProvider(BaseProvider):
         # Configuration
         self.client_id = config.get("client_id") if config else None
         self.client_secret = config.get("client_secret") if config else None
+        self.refresh_token = config.get("refresh_token") if config else None
         self.access_token = config.get("access_token") if config else None
         self.environment = config.get("environment", "demo") if config else "demo"  # demo or live
 
@@ -240,13 +241,62 @@ class CTraderProvider(BaseProvider):
         # After app auth, authenticate the trading account
         await self._authenticate_account()
 
+    async def _refresh_access_token(self) -> Optional[str]:
+        """Refresh access token using refresh token."""
+        if not self.refresh_token:
+            return None
+
+        try:
+            from ctrader_open_api import Auth
+
+            # We need a redirect_uri for Auth class, but it's not used in refresh
+            auth = Auth(self.client_id, self.client_secret, "http://localhost:8080/callback")
+
+            logger.info(f"[{self.name}] Refreshing access token...")
+            token_response = auth.refreshToken(self.refresh_token)
+
+            if 'accessToken' in token_response:
+                new_token = token_response['accessToken']
+                logger.info(f"[{self.name}] Access token refreshed successfully")
+
+                # Update refresh token if provided
+                if 'refreshToken' in token_response:
+                    self.refresh_token = token_response['refreshToken']
+                    # Save to settings
+                    try:
+                        from ..utils.user_settings import set_setting
+                        set_setting('ctrader_refresh_token', self.refresh_token)
+                    except:
+                        pass
+
+                return new_token
+            else:
+                logger.error(f"[{self.name}] Token refresh failed: {token_response}")
+                return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to refresh token: {e}")
+            return None
+
     async def _authenticate_account(self) -> None:
         """Authenticate trading account after application authentication."""
         logger.info(f"[{self.name}] Authenticating trading account...")
 
+        # Try to refresh access token if we have refresh token but no access token
+        if not self.access_token and self.refresh_token:
+            self.access_token = await self._refresh_access_token()
+
+        if not self.access_token:
+            raise CTraderAuthorizationError(
+                "No access token available. Please complete OAuth2 authorization:\n"
+                "1. Open provider configuration dialog\n"
+                "2. Click 'Authorize with cTrader' button\n"
+                "3. Complete authorization in browser"
+            )
+
         # First, get the list of available accounts
         accounts_req = Messages.ProtoOAGetAccountListByAccessTokenReq()
-        accounts_req.accessToken = ""  # Empty for client credentials flow
+        accounts_req.accessToken = self.access_token
 
         try:
             accounts_res = await self._send_and_wait(accounts_req, Messages.ProtoOAGetAccountListByAccessTokenRes, timeout=30.0)
@@ -263,7 +313,7 @@ class CTraderProvider(BaseProvider):
             # Now authenticate this specific account
             auth_req = Messages.ProtoOAAccountAuthReq()
             auth_req.ctidTraderAccountId = self._account_id
-            auth_req.accessToken = ""  # Empty for client credentials flow
+            auth_req.accessToken = self.access_token
 
             auth_res = await self._send_and_wait(auth_req, Messages.ProtoOAAccountAuthRes, timeout=30.0)
 
