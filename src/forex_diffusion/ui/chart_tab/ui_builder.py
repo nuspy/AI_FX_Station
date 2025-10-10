@@ -302,7 +302,13 @@ class UIBuilderMixin:
             ("🔢", "Levels", "levels"),
             ("📐", "Trend", "trend"),
             ("📊", "Rectangle", "rectangle"),
-            ("⭕", "Circle", "circle")
+            ("⭕", "Circle", "circle"),
+            ("📊", "Fib", "fib"),
+            ("➡️", "Arrow", "arrow"),
+            ("🔺", "Triangle", "triangle"),
+            ("⭐", "Icon", "icon"),
+            ("✏️", "Freehand", "freehand"),
+            ("🔔", "Gaussian", "gaussian")
         ]
 
         self.draw_buttons = []
@@ -310,7 +316,10 @@ class UIBuilderMixin:
             btn = QToolButton()
             btn.setText(f"{icon} {name}")
             btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, m=mode: self._set_drawing_mode(m if checked else None))
+            # Create a closure to capture the mode properly
+            def make_callback(mode_val):
+                return lambda checked: self._set_drawing_mode(mode_val if checked else None)
+            btn.clicked.connect(make_callback(mode))
             drawbar_layout.addWidget(btn)
             self.draw_buttons.append(btn)
 
