@@ -296,6 +296,12 @@ class CTraderProvider(BaseProvider):
         try:
             self.health.last_message_ts = datetime.now()
 
+            # Log message type for debugging
+            logger.debug(
+                f"[{self.name}] Received message: type={type(message).__name__}, "
+                f"has_clientMsgId={hasattr(message, 'clientMsgId')}"
+            )
+
             # Check if this is a response to a pending request
             msg_id = getattr(message, 'clientMsgId', None)
 
@@ -742,22 +748,15 @@ class CTraderProvider(BaseProvider):
             # Wait for response with timeout
             response = await asyncio.wait_for(future, timeout=timeout)
 
-            # Check if response is wrapped in ProtoMessage
-            if hasattr(response, 'payload'):
-                # Extract actual payload from ProtoMessage wrapper
-                logger.debug(f"[{self.name}] Extracting payload from ProtoMessage wrapper")
-                actual_response = getattr(response.payload, response.payload.WhichOneof('payload'), None)
-                if actual_response is None:
-                    logger.error(f"[{self.name}] Failed to extract payload from ProtoMessage")
-                    return None
-                response = actual_response
-
-            # Verify response type
+            # The response should already be the correct type as the library deserializes it
+            # Just verify the type
             if not isinstance(response, response_type):
+                # Log the actual response for debugging
                 logger.error(
                     f"[{self.name}] Response type mismatch for msg {msg_id}: "
-                    f"expected {response_type.__name__}, got {response.__class__.__name__}"
+                    f"expected {response_type.__name__}, got {type(response).__name__}"
                 )
+                logger.debug(f"[{self.name}] Response object: {response}")
                 return None
 
             logger.debug(f"[{self.name}] Received response {msg_id} ({response.__class__.__name__})")
