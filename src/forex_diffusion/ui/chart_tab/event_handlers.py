@@ -831,6 +831,7 @@ class EventHandlersMixin:
                     return
 
                 # Update historical config temporarily for this scan
+                patterns_service._historical_config['enabled'] = True  # Ensure enabled for this scan
                 patterns_service._historical_config['start_time'] = start_time
                 patterns_service._historical_config['end_time'] = end_time
 

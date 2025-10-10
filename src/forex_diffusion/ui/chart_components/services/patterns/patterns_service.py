@@ -755,8 +755,9 @@ class PatternsService(ChartServiceBase):
     def start_historical_scan_with_range(self, df: Optional[pd.DataFrame] = None) -> None:
         """Start one-time historical pattern scan with configured time range"""
         try:
-            # Reload historical config in case it was updated
-            self._historical_config = self._load_historical_config()
+            # DO NOT reload config here - it would overwrite user's dialog input
+            # The config is already set by event_handlers.py after dialog input
+            # self._historical_config = self._load_historical_config()
 
             if not self._historical_config.get('enabled', False):
                 logger.info("Historical patterns not enabled")
@@ -2087,32 +2088,44 @@ class PatternsService(ChartServiceBase):
 
 
 
-    def _scan_once(self, kind: str):
-        """Scan for patterns with async resource monitoring"""
+    def _scan_once(self, kind: str, df: Optional[pd.DataFrame] = None):
+        """Scan for patterns with async resource monitoring
+
+        Args:
+            kind: Pattern type ('chart' or 'candle')
+            df: Optional dataframe to scan. If None, uses current live data.
+        """
         try:
+            # Determine if this is a historical scan (df provided) or live scan (df is None)
+            is_historical_scan = (df is not None)
+
             # Check resource limits before scanning
             if not self._check_resource_limits():
                 logger.debug(f"Skipping {kind} pattern scan due to resource limits")
                 return []
 
-            df = getattr(self.controller.plot_service, '_last_df', None)
+            # Use provided df for historical scans, otherwise get current live data
+            if df is None:
+                df = getattr(self.controller.plot_service, '_last_df', None)
             dfN = self._normalize_df(df)
             if dfN is None or len(dfN)==0:
                 logger.debug(f"Skipping {kind} pattern scan - no data available")
                 return []
 
-            # Check if data has changed since last scan to avoid unnecessary processing
-            if hasattr(self, '_last_scan_data_hash'):
-                current_hash = hash(str(dfN.iloc[-10:].values.tobytes()) if len(dfN) >= 10 else str(dfN.values.tobytes()))
-                if current_hash == getattr(self, f'_last_{kind}_scan_hash', None):
-                    logger.debug(f"Skipping {kind} pattern scan - data unchanged")
-                    return []
-                setattr(self, f'_last_{kind}_scan_hash', current_hash)
+            # Skip optimization checks for historical scans
+            if not is_historical_scan:
+                # Check if data has changed since last scan to avoid unnecessary processing
+                if hasattr(self, '_last_scan_data_hash'):
+                    current_hash = hash(str(dfN.iloc[-10:].values.tobytes()) if len(dfN) >= 10 else str(dfN.values.tobytes()))
+                    if current_hash == getattr(self, f'_last_{kind}_scan_hash', None):
+                        logger.debug(f"Skipping {kind} pattern scan - data unchanged")
+                        return []
+                    setattr(self, f'_last_{kind}_scan_hash', current_hash)
 
-            # Check market hours to avoid scanning when markets are closed
-            if self._is_market_likely_closed():
-                logger.debug(f"Skipping {kind} pattern scan - market likely closed")
-                return []
+                # Check market hours to avoid scanning when markets are closed
+                if self._is_market_likely_closed():
+                    logger.debug(f"Skipping {kind} pattern scan - market likely closed")
+                    return []
 
             # Start synchronous pattern detection to avoid thread blocking
             result = self._sync_pattern_detection(dfN, kind)
