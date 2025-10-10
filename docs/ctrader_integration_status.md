@@ -244,6 +244,29 @@ e536085 fix: Add client parameter to _on_message callback
 84bd0fe fix: Add client parameter to _on_connected callback
 ```
 
+## Known Console Messages
+
+### Twisted "Unhandled error in Deferred"
+
+**Message**:
+```
+Unhandled error in Deferred:
+Traceback (most recent call last):
+  File "twisted/internet/defer.py", line 798, in timeItOut
+    self.cancel()
+  ...
+twisted.internet.defer.CancelledError
+```
+
+**Explanation**:
+- This is Twisted's internal logging when a request times out
+- Appears when cTrader authentication fails or times out
+- **Not an error** - expected behavior when connection/auth fails
+- Our code properly handles the timeout (see `_send_and_wait:779-784`)
+- User sees the provider configuration dialog as intended
+
+**Action**: Ignore this stack trace - it's just Twisted's way of logging cancelled operations
+
 ## References
 
 - [cTrader Open API Documentation](https://help.ctrader.com/open-api/)
