@@ -74,6 +74,9 @@ if hasattr(response, 'payloadType') and hasattr(response, 'payload'):
 - Callbacks execute without signature errors
 - Event loop cross-thread communication works
 - ProtoMessage payloads are parsed correctly
+- **Test Connection functionality** for all providers (cTrader, Tiingo, AlphaVantage)
+- **CTraderAuthorizationError exception** properly detected and handled
+- **Automatic dialog re-open** when "Trading account is not authorized" error occurs
 
 ### ⚠️ Known Issue: Trading Account Authorization
 
@@ -159,7 +162,7 @@ Use Tiingo or AlphaVantage as primary provider while resolving cTrader authoriza
 Settings → Data Providers
 
 **Currently**:
-Dialog automatically appears when provider initialization fails.
+Dialog automatically appears when provider initialization fails or authorization error occurs.
 
 **Configuration Steps**:
 
@@ -188,9 +191,51 @@ Dialog automatically appears when provider initialization fails.
    - API Key: From https://www.alphavantage.co/
    - Free tier: 5 requests/minute, 500/day
 
-4. **Save Settings**:
+4. **Test Connection** (optional but recommended):
+   - Click "Test Connection" button
+   - Wait for background test to complete
+   - Verify credentials are working before saving
+
+5. **Save Settings**:
    - Click "Save" button
    - Restart application for changes to take effect
+
+## Test Connection Feature
+
+The dialog now includes a "Test Connection" button that verifies provider credentials before saving:
+
+### cTrader Test
+- Creates temporary provider instance
+- Attempts full connection and authentication flow
+- Tests both application auth (client_id/client_secret) and account auth
+- Disconnects after successful test
+- **Errors detected**:
+  - Missing credentials
+  - Invalid client_id/client_secret
+  - Trading account authorization failures (CTraderAuthorizationError)
+  - Network/connection errors
+
+### Tiingo Test
+- Tests API key with `/api/test` endpoint
+- Verifies authentication
+- **Errors detected**:
+  - Missing API key
+  - Invalid API key (401 Unauthorized)
+  - Network errors
+
+### AlphaVantage Test
+- Tests API key with FX rate query (USD/EUR)
+- Verifies API access
+- **Errors detected**:
+  - Missing API key
+  - Invalid API key
+  - API rate limit exceeded
+  - Network errors
+
+**Implementation**:
+- Tests run in background QThread to avoid blocking UI
+- Shows progress dialog during test
+- Displays success/failure message with details
 
 ## Testing
 
@@ -234,6 +279,9 @@ print('Dialog created successfully')
 ## Commits
 
 ```
+2a46a38 feat: Add CTraderAuthorizationError exception and implement Test Connection
+f699fe3 docs: Document Twisted 'Unhandled error in Deferred' console message
+51dad9b docs: Add comprehensive cTrader integration status guide
 761d477 fix: Wrap QFormLayout in QVBoxLayout to support addStretch()
 fdf3703 feat: Add provider configuration dialog for credentials management
 7870fd7 fix: Parse ProtoMessage payload bytes into expected response type
