@@ -218,6 +218,9 @@ class SettingsDialog(QDialog):
         self.ctrader_enabled_checkbox = QCheckBox("Enable cTrader Real-time Features")
         self.ctrader_enabled_checkbox.setToolTip("Enable cTrader real-time ticks, volumes, and order book streaming via WebSocket")
 
+        self.show_provider_label_checkbox = QCheckBox("Show Provider Label on Chart")
+        self.show_provider_label_checkbox.setToolTip("Display RT data and Historical provider information on the chart")
+
         provider_form.addWidget(QLabel("Primary Provider:"), 0, 0)
         provider_form.addWidget(self.primary_provider, 0, 1)
         provider_form.addWidget(QLabel("Fallback Provider:"), 0, 2)
@@ -235,6 +238,7 @@ class SettingsDialog(QDialog):
 
         # Add cTrader enabled checkbox on a new row
         provider_form.addWidget(self.ctrader_enabled_checkbox, 3, 0, 1, 2)
+        provider_form.addWidget(self.show_provider_label_checkbox, 3, 2, 1, 2)
 
         layout.addWidget(provider_group)
 
@@ -409,6 +413,9 @@ class SettingsDialog(QDialog):
         primary = str(get_setting("primary_data_provider", "tiingo"))
         ctrader_enabled = get_setting("ctrader_enabled", primary.lower() == "ctrader")
         self.ctrader_enabled_checkbox.setChecked(ctrader_enabled)
+
+        show_provider_label = get_setting("show_provider_label", True)
+        self.show_provider_label_checkbox.setChecked(show_provider_label)
 
         self._accounts = self._load_accounts_dict()
         self._populate_accounts_list()
@@ -681,6 +688,7 @@ class SettingsDialog(QDialog):
             set_setting("provider.ctrader.access_token", self.ctrader_access_token.text().strip())
             set_setting("provider.ctrader.environment", self.ctrader_environment.currentText())
             set_setting("ctrader_enabled", self.ctrader_enabled_checkbox.isChecked())
+            set_setting("show_provider_label", self.show_provider_label_checkbox.isChecked())
 
             QMessageBox.information(self, "Settings", "Settings saved")
             self.accept()
