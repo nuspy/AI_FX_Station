@@ -257,17 +257,22 @@ class CTraderProvider(BaseProvider):
 
             if 'accessToken' in token_response:
                 new_token = token_response['accessToken']
+                self.access_token = new_token  # Update instance variable
                 logger.info(f"[{self.name}] Access token refreshed successfully")
 
-                # Update refresh token if provided
-                if 'refreshToken' in token_response:
-                    self.refresh_token = token_response['refreshToken']
-                    # Save to settings
-                    try:
-                        from ..utils.user_settings import set_setting
+                # Save both tokens to settings
+                try:
+                    from ..utils.user_settings import set_setting
+                    set_setting('ctrader_access_token', new_token)
+                    logger.debug(f"[{self.name}] New access token saved to settings")
+
+                    # Update refresh token if provided
+                    if 'refreshToken' in token_response:
+                        self.refresh_token = token_response['refreshToken']
                         set_setting('ctrader_refresh_token', self.refresh_token)
-                    except:
-                        pass
+                        logger.debug(f"[{self.name}] New refresh token saved to settings")
+                except Exception as save_error:
+                    logger.warning(f"[{self.name}] Failed to save tokens to settings: {save_error}")
 
                 return new_token
             else:
@@ -288,43 +293,73 @@ class CTraderProvider(BaseProvider):
 
         if not self.access_token:
             raise CTraderAuthorizationError(
-                "No access token available. Please complete OAuth2 authorization:\n"
+                "No access token available. Please provide credentials:\n\n"
+                "Option 1 - Use existing tokens (recommended if you have them):\n"
                 "1. Open provider configuration dialog\n"
-                "2. Click 'Authorize with cTrader' button\n"
-                "3. Complete authorization in browser"
+                "2. Enter Access Token and Refresh Token\n"
+                "3. Save settings\n\n"
+                "Option 2 - OAuth2 authorization (generates new tokens):\n"
+                "1. Open provider configuration dialog\n"
+                "2. Enter Client ID and Client Secret\n"
+                "3. Click 'Authorize with cTrader' button\n"
+                "4. Complete authorization in browser"
             )
 
         # First, get the list of available accounts
         accounts_req = Messages.ProtoOAGetAccountListByAccessTokenReq()
         accounts_req.accessToken = self.access_token
 
-        try:
-            accounts_res = await self._send_and_wait(accounts_req, Messages.ProtoOAGetAccountListByAccessTokenRes, timeout=30.0)
+        # Retry logic with token refresh
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                accounts_res = await self._send_and_wait(accounts_req, Messages.ProtoOAGetAccountListByAccessTokenRes, timeout=30.0)
 
-            if not accounts_res or not accounts_res.ctidTraderAccount:
-                raise RuntimeError("No trading accounts found")
+                if not accounts_res or not accounts_res.ctidTraderAccount:
+                    raise RuntimeError("No trading accounts found")
 
-            # Use the first available account
-            account = accounts_res.ctidTraderAccount[0]
-            self._account_id = account.ctidTraderAccountId
+                # Use the first available account
+                account = accounts_res.ctidTraderAccount[0]
+                self._account_id = account.ctidTraderAccountId
 
-            logger.info(f"[{self.name}] Using account ID: {self._account_id}")
+                logger.info(f"[{self.name}] Using account ID: {self._account_id}")
 
-            # Now authenticate this specific account
-            auth_req = Messages.ProtoOAAccountAuthReq()
-            auth_req.ctidTraderAccountId = self._account_id
-            auth_req.accessToken = self.access_token
+                # Now authenticate this specific account
+                auth_req = Messages.ProtoOAAccountAuthReq()
+                auth_req.ctidTraderAccountId = self._account_id
+                auth_req.accessToken = self.access_token
 
-            auth_res = await self._send_and_wait(auth_req, Messages.ProtoOAAccountAuthRes, timeout=30.0)
+                auth_res = await self._send_and_wait(auth_req, Messages.ProtoOAAccountAuthRes, timeout=30.0)
 
-            if not auth_res:
-                raise RuntimeError(f"Account authentication failed for account {self._account_id}")
+                if not auth_res:
+                    raise RuntimeError(f"Account authentication failed for account {self._account_id}")
 
-            logger.info(f"[{self.name}] Account {self._account_id} authenticated successfully")
+                logger.info(f"[{self.name}] Account {self._account_id} authenticated successfully")
+                return  # Success, exit retry loop
 
-        except Exception as e:
-            logger.error(f"[{self.name}] Account authentication error: {e}")
-            raise
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Check if error is due to expired/invalid token
+                if ('unauthorized' in error_msg or 'invalid' in error_msg or
+                    'expired' in error_msg or 'token' in error_msg) and attempt < max_retries - 1:
+
+                    logger.warning(f"[{self.name}] Token appears invalid/expired, attempting refresh (attempt {attempt + 1}/{max_retries})...")
+
+                    if self.refresh_token:
+                        new_token = await self._refresh_access_token()
+                        if new_token:
+                            # Update the request with new token and retry
+                            accounts_req.accessToken = new_token
+                            logger.info(f"[{self.name}] Token refreshed, retrying authentication...")
+                            continue
+                        else:
+                            logger.error(f"[{self.name}] Token refresh failed, cannot retry")
+                    else:
+                        logger.error(f"[{self.name}] No refresh token available for retry")
+
+                # If not a token error or last attempt, re-raise
+                logger.error(f"[{self.name}] Account authentication error: {e}")
+                raise
 
     async def disconnect(self) -> None:
         """Disconnect from cTrader."""

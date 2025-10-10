@@ -51,6 +51,7 @@ class ProviderConfigDialog(QDialog):
             self.ctrader_client_id = get_setting('ctrader_client_id', '')
             self.ctrader_client_secret = get_setting('ctrader_client_secret', '')
             self.ctrader_access_token = get_setting('ctrader_access_token', '')
+            self.ctrader_refresh_token = get_setting('ctrader_refresh_token', '')
             self.ctrader_account_id = get_setting('ctrader_account_id', '')
             self.ctrader_environment = get_setting('ctrader_environment', 'demo')
 
@@ -68,6 +69,7 @@ class ProviderConfigDialog(QDialog):
             self.ctrader_client_id = ''
             self.ctrader_client_secret = ''
             self.ctrader_access_token = ''
+            self.ctrader_refresh_token = ''
             self.ctrader_account_id = ''
             self.ctrader_environment = 'demo'
             self.tiingo_api_key = ''
@@ -162,6 +164,20 @@ class ProviderConfigDialog(QDialog):
         token_layout.addWidget(self.ctrader_access_token_edit)
         token_layout.addWidget(self.ctrader_show_token)
         layout.addRow("Access Token (optional):", token_layout)
+
+        # Refresh Token (optional)
+        refresh_token_layout = QHBoxLayout()
+        self.ctrader_refresh_token_edit = QLineEdit(self.ctrader_refresh_token)
+        self.ctrader_refresh_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ctrader_show_refresh_token = QCheckBox("Show")
+        self.ctrader_show_refresh_token.toggled.connect(
+            lambda checked: self.ctrader_refresh_token_edit.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+            )
+        )
+        refresh_token_layout.addWidget(self.ctrader_refresh_token_edit)
+        refresh_token_layout.addWidget(self.ctrader_show_refresh_token)
+        layout.addRow("Refresh Token (optional):", refresh_token_layout)
 
         # Account ID
         self.ctrader_account_id_edit = QLineEdit(self.ctrader_account_id)
@@ -569,11 +585,12 @@ class ProviderConfigDialog(QDialog):
                                 f"Error: {token_response.get('description', 'Unknown error')}"
                             )
                         elif 'accessToken' in token_response:
-                            # Success! Update UI with token
+                            # Success! Update UI with tokens
                             self.ctrader_access_token_edit.setText(token_response['accessToken'])
 
-                            # Optionally save refresh token to settings for future use
+                            # Update refresh token in UI and save to settings
                             if 'refreshToken' in token_response:
+                                self.ctrader_refresh_token_edit.setText(token_response['refreshToken'])
                                 from ..utils.user_settings import set_setting
                                 set_setting('ctrader_refresh_token', token_response['refreshToken'])
 
@@ -655,6 +672,7 @@ class ProviderConfigDialog(QDialog):
             set_setting('ctrader_client_id', self.ctrader_client_id_edit.text())
             set_setting('ctrader_client_secret', self.ctrader_client_secret_edit.text())
             set_setting('ctrader_access_token', self.ctrader_access_token_edit.text())
+            set_setting('ctrader_refresh_token', self.ctrader_refresh_token_edit.text())
             set_setting('ctrader_account_id', self.ctrader_account_id_edit.text())
             set_setting('ctrader_environment', self.ctrader_env_combo.currentText())
 

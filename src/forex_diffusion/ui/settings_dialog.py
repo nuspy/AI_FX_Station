@@ -150,6 +150,7 @@ class SettingsDialog(QDialog):
         self.ctrader_client_id = QLineEdit(); self.ctrader_client_id.setPlaceholderText("cTrader Client ID")
         self.ctrader_client_secret = QLineEdit(); self.ctrader_client_secret.setPlaceholderText("cTrader Client Secret"); self.ctrader_client_secret.setEchoMode(QLineEdit.Password)
         self.ctrader_access_token = QLineEdit(); self.ctrader_access_token.setEchoMode(QLineEdit.Password); self.ctrader_access_token.setPlaceholderText("Access Token (optional - use if already have one)")
+        self.ctrader_refresh_token = QLineEdit(); self.ctrader_refresh_token.setEchoMode(QLineEdit.Password); self.ctrader_refresh_token.setPlaceholderText("Refresh Token (optional - for auto token renewal)")
         self.ctrader_environment = QComboBox(); self.ctrader_environment.addItems(["demo", "live"])
 
         # Left column
@@ -193,12 +194,14 @@ class SettingsDialog(QDialog):
         form.addWidget(self.ctrader_client_id, 8, 1)
         form.addWidget(QLabel("cTrader Secret:"), 8, 2)
         form.addWidget(self.ctrader_client_secret, 8, 3)
-        form.addWidget(QLabel("cTrader Token:"), 9, 0)
+        form.addWidget(QLabel("cTrader Access Token:"), 9, 0)
         form.addWidget(self.ctrader_access_token, 9, 1, 1, 3)
+        form.addWidget(QLabel("cTrader Refresh Token:"), 10, 0)
+        form.addWidget(self.ctrader_refresh_token, 10, 1, 1, 3)
 
         # Spanning field
-        form.addWidget(QLabel("Account Tiingo Key:"), 10, 0)
-        form.addWidget(self.acc_tiingo, 10, 1, 1, 3)
+        form.addWidget(QLabel("Account Tiingo Key:"), 11, 0)
+        form.addWidget(self.acc_tiingo, 11, 1, 1, 3)
 
         layout.addWidget(form_group)
 
@@ -407,6 +410,7 @@ class SettingsDialog(QDialog):
         self.ctrader_client_id.setText(str(get_setting("provider.ctrader.client_id", "")))
         self.ctrader_client_secret.setText(str(get_setting("provider.ctrader.client_secret", "")))
         self.ctrader_access_token.setText(str(get_setting("provider.ctrader.access_token", "")))
+        self.ctrader_refresh_token.setText(str(get_setting("provider.ctrader.refresh_token", "")))
         self.ctrader_environment.setCurrentText(str(get_setting("provider.ctrader.environment", "demo")))
 
         # Load cTrader enabled state (auto-enable if primary_provider is ctrader)
@@ -686,6 +690,7 @@ class SettingsDialog(QDialog):
             set_setting("provider.ctrader.client_id", self.ctrader_client_id.text().strip())
             set_setting("provider.ctrader.client_secret", self.ctrader_client_secret.text().strip())
             set_setting("provider.ctrader.access_token", self.ctrader_access_token.text().strip())
+            set_setting("provider.ctrader.refresh_token", self.ctrader_refresh_token.text().strip())
             set_setting("provider.ctrader.environment", self.ctrader_environment.currentText())
             set_setting("ctrader_enabled", self.ctrader_enabled_checkbox.isChecked())
             set_setting("show_provider_label", self.show_provider_label_checkbox.isChecked())
