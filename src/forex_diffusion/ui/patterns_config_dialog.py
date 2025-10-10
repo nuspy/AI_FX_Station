@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QWidget, QHBoxL
 from PySide6.QtCore import Qt
 import yaml, os
 import inspect
+from loguru import logger
 from ..patterns.registry import PatternRegistry
 from ..patterns.boundary_config import get_boundary_config
 

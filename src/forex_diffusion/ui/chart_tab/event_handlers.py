@@ -834,6 +834,7 @@ class EventHandlersMixin:
                 patterns_service._historical_config['enabled'] = True  # Ensure enabled for this scan
                 patterns_service._historical_config['start_time'] = start_time
                 patterns_service._historical_config['end_time'] = end_time
+                logger.info(f"Config updated: start_time='{start_time}', end_time='{end_time}', config={patterns_service._historical_config}")
 
                 # Start historical scan with selected range
                 patterns_service.start_historical_scan_with_range()

@@ -764,10 +764,12 @@ class PatternsService(ChartServiceBase):
                 return
 
             # Get time range in minutes
-            start_minutes = self.parse_time_string(self._historical_config.get('start_time', '30d'))
-            end_minutes = self.parse_time_string(self._historical_config.get('end_time', '7d'))
+            start_time_str = self._historical_config.get('start_time', '30d')
+            end_time_str = self._historical_config.get('end_time', '7d')
+            start_minutes = self.parse_time_string(start_time_str)
+            end_minutes = self.parse_time_string(end_time_str)
 
-            logger.info(f"Starting historical scan: {start_minutes}m to {end_minutes}m ago")
+            logger.info(f"Starting historical scan: {start_minutes}m to {end_minutes}m ago (config: start_time='{start_time_str}', end_time='{end_time_str}')")
 
             # Use the provided dataframe or get current one
             if df is None:
