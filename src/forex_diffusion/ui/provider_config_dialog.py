@@ -187,7 +187,8 @@ class ProviderConfigDialog(QDialog):
     def _create_tiingo_tab(self):
         """Create Tiingo configuration tab."""
         widget = QGroupBox()
-        layout = QFormLayout(widget)
+        main_layout = QVBoxLayout(widget)
+        layout = QFormLayout()
 
         # API Key
         api_key_layout = QHBoxLayout()
@@ -212,13 +213,15 @@ class ProviderConfigDialog(QDialog):
         help_label.setStyleSheet("color: gray; font-size: 10px;")
         layout.addRow(help_label)
 
-        layout.addStretch()
+        main_layout.addLayout(layout)
+        main_layout.addStretch()
         return widget
 
     def _create_alphavantage_tab(self):
         """Create AlphaVantage configuration tab."""
         widget = QGroupBox()
-        layout = QFormLayout(widget)
+        main_layout = QVBoxLayout(widget)
+        layout = QFormLayout()
 
         # API Key
         api_key_layout = QHBoxLayout()
@@ -243,7 +246,8 @@ class ProviderConfigDialog(QDialog):
         help_label.setStyleSheet("color: gray; font-size: 10px;")
         layout.addRow(help_label)
 
-        layout.addStretch()
+        main_layout.addLayout(layout)
+        main_layout.addStretch()
         return widget
 
     def _test_connection(self):
