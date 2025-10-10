@@ -286,6 +286,14 @@ class DrawingManager:
             self.save_drawings()
             self.redraw_all()
 
+    def clear_all(self):
+        """Clear all drawings"""
+        count = len(self.drawings)
+        self.drawings.clear()
+        logger.info(f"Cleared {count} drawings")
+        self.save_drawings()
+        self.redraw_all()
+
     def redraw_all(self):
         """Redraw all drawings on the chart"""
         try:

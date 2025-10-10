@@ -20,7 +20,12 @@ class InteractionService(ChartServiceBase):
 
     def _set_drawing_mode(self, mode: Optional[str]):
         self._drawing_mode = mode
-        self._pending_points.clear()
+        # Update drawing_manager tool if available
+        if hasattr(self.view, 'drawing_manager') and self.view.drawing_manager:
+            self.view.drawing_manager.set_tool(mode)
+            logger.debug(f"Drawing mode set to: {mode}")
+        if hasattr(self, '_pending_points'):
+            self._pending_points.clear()
 
     def _on_canvas_click(self, event):
         """

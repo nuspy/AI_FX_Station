@@ -1751,10 +1751,11 @@ class PlotService(ChartServiceBase):
 
     def _toggle_drawbar(self, visible: bool):
         try:
-            if hasattr(self, "_drawbar") and self._drawbar is not None:
-                self._drawbar.setVisible(bool(visible))
-        except Exception:
-            pass
+            if hasattr(self.view, "_drawbar") and self.view._drawbar is not None:
+                self.view._drawbar.setVisible(bool(visible))
+                logger.debug(f"Drawbar visibility set to {visible}")
+        except Exception as e:
+            logger.debug(f"Failed to toggle drawbar: {e}")
 
     def _refresh_legend_unique(self, loc: str = "upper left"):
         """Refresh legend showing only visible, unique labels (main + oscillator axes)."""

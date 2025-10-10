@@ -174,8 +174,8 @@ class ActionService(ChartServiceBase):
     def _on_build_latents_clicked(self) -> None:
         """Prompt PCA dim and launch latents build via controller."""
         try:
-            sym = getattr(self, "symbol", None)
-            tf = getattr(self, "timeframe", None)
+            sym = getattr(self.view, "symbol", None)
+            tf = getattr(self.view, "timeframe", None)
             if not sym or not tf:
                 QMessageBox.information(self.view, "Latents", "Imposta prima symbol e timeframe.")
                 return
@@ -185,7 +185,7 @@ class ActionService(ChartServiceBase):
             bars, ok2 = QInputDialog.getInt(self.view, "Build Latents (PCA)", "History bars to use:", 100000, 1000, 1000000, 1000)
             if not ok2:
                 bars = 100000
-            controller = getattr(self._main_window, "controller", None)
+            controller = getattr(self.view._main_window, "controller", None)
             if controller and hasattr(controller, "handle_build_latents"):
                 controller.handle_build_latents(symbol=sym, timeframe=tf, dim=dim, bars=bars)
             else:

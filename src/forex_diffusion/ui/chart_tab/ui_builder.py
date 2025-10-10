@@ -531,7 +531,9 @@ class UIBuilderMixin:
     # Utility methods for UI management
     def _clear_drawings(self):
         """Clear all drawings from the chart."""
-        pass
+        if hasattr(self, 'drawing_manager') and self.drawing_manager:
+            self.drawing_manager.clear_all()
+            logger.info("All drawings cleared")
 
     def _clear_all_logs(self):
         """Clear all log entries."""
