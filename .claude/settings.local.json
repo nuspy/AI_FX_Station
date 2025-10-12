@@ -50,7 +50,8 @@
       "WebFetch(domain:help.ctrader.com)",
       "WebFetch(domain:community.ctrader.com)",
       "Bash(git rm:*)",
-      "Bash(do echo \"=== $file ===\")"
+      "Bash(do echo \"=== $file ===\")",
+      "Bash(a value\" error when import failed.\n\nSolution: Separate import error handling from connection error handling by\nchecking imports first and returning early if they fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []

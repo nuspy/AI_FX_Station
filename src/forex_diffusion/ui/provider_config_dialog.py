@@ -317,10 +317,14 @@ class ProviderConfigDialog(QDialog):
 
             def _test_ctrader(self):
                 """Test cTrader connection."""
+                # Import dependencies first
                 try:
                     import asyncio
                     from ...providers.ctrader_provider import CTraderProvider, CTraderAuthorizationError
+                except ImportError as e:
+                    return False, f"Import error: cTrader provider not available - {str(e)}"
 
+                try:
                     # Get credentials from config
                     client_id = self.config.get('client_id', '')
                     client_secret = self.config.get('client_secret', '')
