@@ -116,13 +116,25 @@ class CTraderClient:
         except RuntimeError:
             pass
 
+        # Reuse existing event loop if available (for provider connection lifetime)
+        if self._event_loop and not self._event_loop.is_closed():
+            asyncio.set_event_loop(self._event_loop)
+            return self._event_loop.run_until_complete(coro)
+
         # Create new event loop for sync context
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+        # Store the loop to keep it alive for provider callbacks
+        self._event_loop = loop
+
         try:
             return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        except Exception as e:
+            # Don't close loop on error - provider may still need it
+            logger.error(f"Error in _run_async: {e}")
+            raise
+        # DON'T close the loop here - it needs to stay alive for Twisted callbacks
 
     def get_candles(
         self,
@@ -252,6 +264,14 @@ class CTraderClient:
             except Exception as e:
                 logger.warning(f"Error disconnecting CTraderClient during reset: {e}")
 
+            # Close the event loop
+            try:
+                if cls._instance._event_loop and not cls._instance._event_loop.is_closed():
+                    cls._instance._event_loop.close()
+                    logger.debug("Closed event loop for CTraderClient")
+            except Exception as e:
+                logger.warning(f"Error closing event loop during reset: {e}")
+
             cls._instance = None
             logger.info("CTraderClient singleton instance reset")
 
@@ -262,3 +282,10 @@ class CTraderClient:
                 self._run_async(self._provider.disconnect())
             except Exception as e:
                 logger.debug(f"Error disconnecting CTraderClient: {e}")
+
+        # Close event loop if it exists
+        try:
+            if self._event_loop and not self._event_loop.is_closed():
+                self._event_loop.close()
+        except Exception as e:
+            logger.debug(f"Error closing event loop in __del__: {e}")
