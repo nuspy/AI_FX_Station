@@ -1033,22 +1033,32 @@ class EventHandlersMixin:
 
                     # Find nearest candle by timestamp
                     if 'ts_utc' in df.columns:
-                        # ts_utc is in milliseconds
-                        df_timestamps = df['ts_utc'] / 1000.0
+                        # ts_utc is in milliseconds, drop NaN values before finding nearest
+                        df_clean = df.dropna(subset=['ts_utc'])
+                        if df_clean.empty:
+                            return
+
+                        df_timestamps = df_clean['ts_utc'] / 1000.0
                         idx = (df_timestamps - x_data).abs().idxmin()
 
-                        nearest = df.loc[idx]
+                        nearest = df_clean.loc[idx]
 
-                        # Add OHLC data if available
+                        # Add OHLC data if available and not NaN
                         if all(col in nearest for col in ['open', 'high', 'low', 'close']):
-                            info_lines.append(f"O: {nearest['open']:.5f}")
-                            info_lines.append(f"H: {nearest['high']:.5f}")
-                            info_lines.append(f"L: {nearest['low']:.5f}")
-                            info_lines.append(f"C: {nearest['close']:.5f}")
+                            o, h, l, c = nearest['open'], nearest['high'], nearest['low'], nearest['close']
+                            if pd.notna(o) and pd.notna(h) and pd.notna(l) and pd.notna(c):
+                                info_lines.append(f"O: {o:.5f}")
+                                info_lines.append(f"H: {h:.5f}")
+                                info_lines.append(f"L: {l:.5f}")
+                                info_lines.append(f"C: {c:.5f}")
 
-                        # Add volume if available
-                        if 'volume' in nearest:
-                            info_lines.append(f"Vol: {int(nearest['volume']):,}")
+                        # Add volume if available and not NaN
+                        if 'volume' in nearest and pd.notna(nearest['volume']):
+                            try:
+                                vol = int(float(nearest['volume']))
+                                info_lines.append(f"Vol: {vol:,}")
+                            except (ValueError, TypeError):
+                                pass  # Skip volume if conversion fails
 
                 except Exception as e:
                     logger.debug(f"Could not get candle data: {e}")
