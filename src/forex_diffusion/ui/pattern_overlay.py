@@ -107,6 +107,7 @@ class PyQtGraphAxesWrapper:
                 # Connect signals for interactivity
                 scatter.sigClicked.connect(self._on_scatter_clicked)
                 scatter.sigHovered.connect(lambda points: self._on_scatter_hovered(scatter, points))
+                logger.info(f"Connected click/hover signals to scatter item {id(scatter)} with picker={picker}")
 
             self.plot_item.addItem(scatter)
             self._pattern_items.append(scatter)
@@ -294,20 +295,29 @@ class PyQtGraphAxesWrapper:
 
     def register_scatter_data(self, scatter_item, event_data):
         """Register event data associated with a scatter item for click/hover handling"""
-        self._clickable_items[id(scatter_item)] = event_data
+        item_id = id(scatter_item)
+        self._clickable_items[item_id] = event_data
+        logger.info(f"Registered scatter item {item_id} with event data: {getattr(event_data, 'pattern_key', 'unknown')}")
 
     def _on_scatter_clicked(self, scatter_item, points):
         """Handle click on pattern badge scatter plot"""
         try:
+            logger.info(f"Scatter clicked! scatter_item={scatter_item}, points={len(points)}")
+            logger.info(f"Clickable items: {len(self._clickable_items)} registered")
+
             # Get associated event data
             event_data = self._clickable_items.get(id(scatter_item))
             if event_data is None:
+                logger.warning(f"No event data for scatter item {id(scatter_item)}")
+                logger.debug(f"Available IDs: {list(self._clickable_items.keys())}")
                 return
+
+            logger.info(f"Found event data: {event_data}")
 
             # Find the renderer to access info provider and controller
             # The renderer should have stored a reference when creating this wrapper
             if not hasattr(self, '_renderer_ref'):
-                logger.debug("No renderer reference for pattern click")
+                logger.warning("No renderer reference for pattern click")
                 return
 
             renderer = self._renderer_ref
@@ -319,6 +329,7 @@ class PyQtGraphAxesWrapper:
             except Exception:
                 pass
 
+            logger.info("Opening pattern details dialog")
             from .pattern_overlay import PatternDetailsDialog
             dialog = PatternDetailsDialog(parent_widget, event_data, renderer.info)
             dialog.exec()
