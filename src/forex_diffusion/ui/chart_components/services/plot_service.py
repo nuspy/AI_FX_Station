@@ -424,8 +424,25 @@ class PlotService(ChartServiceBase):
             df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')
             df2 = df2.dropna(subset=['ts_utc', y_col]).reset_index(drop=True)
 
+            # Validate timestamp range (reject corrupted timestamps)
+            # Valid range: 1970-2100 (in milliseconds: ~0 to ~4e12)
+            min_valid_ts = 0
+            max_valid_ts = 4e12  # Year 2096
+            ts_valid_mask = (df2['ts_utc'] >= min_valid_ts) & (df2['ts_utc'] <= max_valid_ts)
+            invalid_count = (~ts_valid_mask).sum()
+            if invalid_count > 0:
+                logger.warning(f"Dropping {invalid_count} rows with invalid timestamps (out of range {min_valid_ts} - {max_valid_ts})")
+                logger.debug(f"Sample invalid timestamps: {df2.loc[~ts_valid_mask, 'ts_utc'].head().tolist()}")
+                df2 = df2[ts_valid_mask].reset_index(drop=True)
+
+            if df2.empty:
+                logger.error("All timestamps were invalid - cannot plot")
+                return
+
             # Convert timestamp to datetime
-            df2['time'] = pd.to_datetime(df2['ts_utc'], unit='ms', utc=True)
+            df2['time'] = pd.to_datetime(df2['ts_utc'], unit='ms', utc=True, errors='coerce')
+            # Drop any rows where datetime conversion failed
+            df2 = df2.dropna(subset=['time']).reset_index(drop=True)
             df2 = df2.set_index('time')
 
             # Get enabled indicators to check if we need 2 subplots

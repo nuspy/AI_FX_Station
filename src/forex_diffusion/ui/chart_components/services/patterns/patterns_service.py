@@ -1379,7 +1379,18 @@ class PatternsService(ChartServiceBase):
             logger.warning(f"Patterns: no time column found; available={list(df0.columns)[:24]} (orig={original_cols[:24]})")
             return None
         s = df0[ts_col]
-        if np.issubdtype(s.dtype, np.datetime64):
+
+        # Handle timezone-aware datetime64 (from historical filtering)
+        if pd.api.types.is_datetime64_any_dtype(s.dtype):
+            # Check if timezone-aware
+            sample_val = s.iloc[0] if len(s) > 0 else None
+            if sample_val is not None and hasattr(sample_val, 'tz') and sample_val.tz is not None:
+                # Timezone-aware datetime - convert to int64 milliseconds
+                ts_ms = s.astype('int64') // 10**6
+            else:
+                # Timezone-naive datetime - convert to int64 milliseconds
+                ts_ms = pd.to_datetime(s).view('int64') // 10**6
+        elif np.issubdtype(s.dtype, np.datetime64):
             ts_ms = pd.to_datetime(s).view('int64') // 10**6
         else:
             vals = pd.to_numeric(s, errors='coerce')
@@ -1394,6 +1405,18 @@ class PatternsService(ChartServiceBase):
         df0['ts_utc'] = ts_ms.astype('int64', errors='ignore')
         before = len(df0)
         df0 = df0.dropna(subset=['open','high','low','close','ts_utc'])
+
+        # Validate timestamp range (reject corrupted timestamps)
+        # Valid range: 1970-2100 (in milliseconds: ~0 to ~4e12)
+        min_valid_ts = 0
+        max_valid_ts = 4e12  # Year 2096
+        ts_valid_mask = (df0['ts_utc'] >= min_valid_ts) & (df0['ts_utc'] <= max_valid_ts)
+        invalid_count = (~ts_valid_mask).sum()
+        if invalid_count > 0:
+            logger.warning(f"Patterns: Dropping {invalid_count} rows with invalid timestamps")
+            logger.debug(f"Patterns: Sample invalid timestamps: {df0.loc[~ts_valid_mask, 'ts_utc'].head().tolist()}")
+            df0 = df0[ts_valid_mask]
+
         after = len(df0)
         logger.info(f"Patterns: normalized df rows={after} (dropped {before-after}); cols={list(df0.columns)[:24]} → using ['ts_utc','open','high','low','close']")
         return df0[['ts_utc','open','high','low','close']].copy()
