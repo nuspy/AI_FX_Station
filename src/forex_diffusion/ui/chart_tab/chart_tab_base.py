@@ -222,9 +222,10 @@ class ChartTabUI(
 
             # Check if ax has matplotlib-like legend method
             if not hasattr(self.ax, 'legend') or not callable(getattr(self.ax, 'legend', None)):
-                # Finplot axes don't support matplotlib legends
-                # Skip legend creation for finplot
-                logger.debug("Hover legend not supported for finplot axes")
+                # Finplot/PyQtGraph axes don't support matplotlib legends
+                # Create Qt-based hover overlay instead
+                logger.debug("Using Qt-based hover legend for finplot axes")
+                self._create_qt_hover_legend()
                 return
 
             # Create a dummy invisible line for the legend
@@ -267,3 +268,28 @@ class ChartTabUI(
         except Exception as e:
             # Silently handle any legend creation errors
             logger.debug(f"Could not create hover legend: {e}")
+
+    def _create_qt_hover_legend(self) -> None:
+        """Create a Qt-based draggable hover legend overlay for finplot/PyQtGraph charts."""
+        try:
+            # Find the chart container widget to overlay the legend on
+            chart_container = getattr(self, 'chart_container', None)
+            if not chart_container:
+                logger.warning("Chart container not found for hover legend")
+                return
+
+            # Create draggable overlay label
+            self._hover_legend = DraggableOverlay("", chart_container)
+            self._hover_legend.setVisible(True)
+
+            # Position in top-left corner initially
+            self._hover_legend.move(10, 10)
+
+            # Set initial text
+            self._hover_legend.setText("Move mouse over chart")
+            self._hover_legend.adjustSize()
+
+            logger.info("Qt-based hover legend created successfully")
+
+        except Exception as e:
+            logger.exception(f"Failed to create Qt hover legend: {e}")

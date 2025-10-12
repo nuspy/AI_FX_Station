@@ -418,7 +418,7 @@ class MarketDataService:
                         for (sub_s, sub_e) in subranges:
                             start_date = sub_s.date().isoformat()
                             end_date = sub_e.date().isoformat()
-                            logger.info("MarketData:backfill_symbol_timeframe Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
+                            # PlutoTouch logger.info("MarketData:backfill_symbol_timeframe Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
                             df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
                             if df is not None and not df.empty:
                                 try:

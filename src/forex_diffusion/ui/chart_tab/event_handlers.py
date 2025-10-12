@@ -8,7 +8,7 @@ from typing import Optional, Dict
 import numpy as np
 import pandas as pd
 # import matplotlib.dates as mdates  # matplotlib removed
-from PySide6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QMessageBox
+from PySide6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QMessageBox, QWidget
 from PySide6.QtCore import Qt, QSignalBlocker
 from loguru import logger
 
@@ -186,15 +186,8 @@ class EventHandlersMixin:
             logger.warning(f"Failed to handle mouse click for drawing: {e}", exc_info=True)
 
     def _on_pyqtgraph_mouse_move(self, pos):
-        """Handle PyQtGraph mouse move - update drawing preview."""
+        """Handle PyQtGraph mouse move - update drawing preview and hover legend."""
         try:
-            # Check if we're currently drawing
-            if not hasattr(self, 'drawing_manager') or not self.drawing_manager:
-                return
-
-            if not self.drawing_manager.current_drawing:
-                return
-
             # Get scene position from tuple
             if isinstance(pos, tuple):
                 scene_pos = pos[0]  # PyQtGraph sigMouseMoved sends (QPointF,)
@@ -210,16 +203,22 @@ class EventHandlersMixin:
                 x_data = view_pos.x()
                 y_data = view_pos.y()
 
-                # For freehand tool, continuously add points while dragging
-                if self.drawing_manager.current_tool == 'freehand':
-                    self.drawing_manager.add_point(x_data, y_data)
+                # Update hover legend with price info
+                self._update_pyqtgraph_hover_info(x_data, y_data)
 
-                # TODO: Add preview line/shape rendering here
-                # This would show a rubber-band effect while drawing
-                logger.debug(f"Mouse moved to ({x_data}, {y_data}) during drawing")
+                # Handle drawing tools
+                if hasattr(self, 'drawing_manager') and self.drawing_manager:
+                    if self.drawing_manager.current_drawing:
+                        # For freehand tool, continuously add points while dragging
+                        if self.drawing_manager.current_tool == 'freehand':
+                            self.drawing_manager.add_point(x_data, y_data)
+
+                        # TODO: Add preview line/shape rendering here
+                        # This would show a rubber-band effect while drawing
+                        logger.debug(f"Mouse moved to ({x_data}, {y_data}) during drawing")
 
         except Exception as e:
-            logger.debug(f"Failed to handle mouse move for drawing: {e}")
+            logger.debug(f"Failed to handle mouse move: {e}")
 
     # Symbol and timeframe change handlers
     def _on_symbol_combo_changed(self, new_symbol: str) -> None:
@@ -977,7 +976,7 @@ class EventHandlersMixin:
             logger.exception(f"Failed to connect splitter signals: {e}")
 
     def _update_hover_info(self, event):
-        """Update hover legend with current mouse position and price info."""
+        """Update hover legend with current mouse position and price info (matplotlib version)."""
         if not event or not event.inaxes:
             return
 
@@ -1004,3 +1003,60 @@ class EventHandlersMixin:
 
         except Exception as e:
             logger.debug(f"Failed to update hover info: {e}")
+
+    def _update_pyqtgraph_hover_info(self, x_data: float, y_data: float):
+        """Update hover legend for PyQtGraph/finplot charts."""
+        try:
+            # Check if we have a Qt-based hover legend
+            if not hasattr(self, '_hover_legend') or self._hover_legend is None:
+                return
+
+            # Check if it's a Qt widget (DraggableOverlay) rather than matplotlib legend
+            if not isinstance(self._hover_legend, QWidget):
+                return
+
+            # Get current dataframe to find nearest candle data
+            df = getattr(self, '_last_df', None)
+
+            # Format basic price info
+            info_lines = [f"Price: {y_data:.5f}"]
+
+            # Try to find nearest candle if we have data
+            if df is not None and not df.empty:
+                try:
+                    import pandas as pd
+                    from datetime import datetime
+
+                    # Convert x_data (Unix timestamp in seconds) to datetime
+                    dt = datetime.fromtimestamp(x_data)
+                    info_lines.insert(0, f"Time: {dt.strftime('%Y-%m-%d %H:%M')}")
+
+                    # Find nearest candle by timestamp
+                    if 'ts_utc' in df.columns:
+                        # ts_utc is in milliseconds
+                        df_timestamps = df['ts_utc'] / 1000.0
+                        idx = (df_timestamps - x_data).abs().idxmin()
+
+                        nearest = df.loc[idx]
+
+                        # Add OHLC data if available
+                        if all(col in nearest for col in ['open', 'high', 'low', 'close']):
+                            info_lines.append(f"O: {nearest['open']:.5f}")
+                            info_lines.append(f"H: {nearest['high']:.5f}")
+                            info_lines.append(f"L: {nearest['low']:.5f}")
+                            info_lines.append(f"C: {nearest['close']:.5f}")
+
+                        # Add volume if available
+                        if 'volume' in nearest:
+                            info_lines.append(f"Vol: {int(nearest['volume']):,}")
+
+                except Exception as e:
+                    logger.debug(f"Could not get candle data: {e}")
+
+            # Update legend text
+            info_text = "\n".join(info_lines)
+            self._hover_legend.setText(info_text)
+            self._hover_legend.adjustSize()
+
+        except Exception as e:
+            logger.debug(f"Failed to update PyQtGraph hover info: {e}")

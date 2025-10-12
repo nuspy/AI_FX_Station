@@ -23,16 +23,40 @@ patterns:
     - diamond_top
     - diamond_bottom
     - double_top
+    - bull_flag
     - double_bottom
     - triple_top
     - triple_bottom
     - rising_channel
     - falling_channel
-    - bull_flag
     - bear_flag
     - bull_pennant
     - bear_pennant
     - head_and_shoulders
+    - inverse_head_and_shoulders
+    - elliott_impulse_bull
+    - elliott_impulse_bear
+    - elliott_corrective_abc
+    - gartley_bull
+    - gartley_bear
+    - butterfly_bull
+    - butterfly_bear
+    - bat_bull
+    - bat_bear
+    - crab_bull
+    - crab_bear
+    - cypher_bull
+    - cypher_bear
+    - shark_bull
+    - shark_bear
+    - abcd_bull
+    - abcd_bear
+    - rounding_bottom
+    - rounding_top
+    - island_reversal_top
+    - island_reversal_bottom
+    - measured_move
+    - three_drives
     parameter_overrides:
       broadening_bottom: {}
       broadening_top: {}
@@ -49,60 +73,43 @@ patterns:
       diamond_top: {}
       diamond_bottom: {}
       double_top: {}
+      bull_flag: {}
       double_bottom: {}
       triple_top: {}
       triple_bottom: {}
       rising_channel: {}
       falling_channel: {}
-      bull_flag: {}
       bear_flag: {}
       bull_pennant: {}
       bear_pennant: {}
       head_and_shoulders: {}
       inverse_head_and_shoulders: {}
+      elliott_impulse_bull: {}
+      elliott_impulse_bear: {}
+      elliott_corrective_abc: {}
+      gartley_bull: {}
+      gartley_bear: {}
+      butterfly_bull: {}
+      butterfly_bear: {}
+      bat_bull: {}
+      bat_bear: {}
+      crab_bull: {}
+      crab_bear: {}
+      cypher_bull: {}
+      cypher_bear: {}
+      shark_bull: {}
+      shark_bear: {}
+      abcd_bull: {}
+      abcd_bear: {}
+      rounding_bottom: {}
+      rounding_top: {}
+      island_reversal_top: {}
+      island_reversal_bottom: {}
+      measured_move: {}
+      three_drives: {}
   candle_patterns:
     enabled_default: true
-    keys_enabled:
-    - hammer
-    - shooting_star
-    - bearish_engulfing
-    - bullish_engulfing
-    - harami_bull
-    - harami_bear
-    - three_white_soldiers
-    - three_black_crows
-    - dark_cloud_cover
-    - piercing_line
-    - dragonfly_doji
-    - gravestone_doji
-    - tweezer_top
-    - tweezer_bottom
-    - rising_three_methods
-    - falling_three_methods
-    - harami_cross_bull
-    - harami_cross_bear
-    - belt_hold_bull
-    - belt_hold_bear
-    - mat_hold_bull
-    - mat_hold_bear
-    - kicker_bull
-    - kicker_bear
-    - tasuki_bull
-    - tasuki_bear
-    - morning_star
-    - evening_star
-    - abandoned_baby_bull
-    - abandoned_baby_bear
-    - three_line_strike_bull
-    - three_line_strike_bear
-    - three_inside_up
-    - three_inside_down
-    - three_outside_up
-    - unique_three_river_bottom
-    - three_outside_down
-    - unique_three_river_top
-    - concealing_baby_swallow
-    - identical_three_crows
+    keys_enabled: []
     params:
       bearish_engulfing:
         confirm_with_volume: false
@@ -168,47 +175,55 @@ patterns:
         confirm_with_volume: false
         rr: 1.5
         target_mode: Altezza figura
-    parameter_overrides:
-      hammer: {}
-      shooting_star: {}
-      bearish_engulfing: {}
-      bullish_engulfing: {}
-      harami_bull: {}
-      harami_bear: {}
-      three_white_soldiers: {}
-      three_black_crows: {}
-      dark_cloud_cover: {}
-      piercing_line: {}
-      dragonfly_doji: {}
-      gravestone_doji: {}
-      tweezer_top: {}
-      tweezer_bottom: {}
-      rising_three_methods: {}
-      falling_three_methods: {}
-      harami_cross_bull: {}
-      harami_cross_bear: {}
-      belt_hold_bull: {}
-      belt_hold_bear: {}
-      mat_hold_bull: {}
-      mat_hold_bear: {}
-      kicker_bull: {}
-      kicker_bear: {}
-      tasuki_bull: {}
-      tasuki_bear: {}
-      morning_star: {}
-      evening_star: {}
-      abandoned_baby_bull: {}
-      abandoned_baby_bear: {}
-      three_line_strike_bull: {}
-      three_line_strike_bear: {}
-      three_inside_up: {}
-      three_inside_down: {}
-      three_outside_up: {}
-      unique_three_river_bottom: {}
-      three_outside_down: {}
-      unique_three_river_top: {}
-      concealing_baby_swallow: {}
-      identical_three_crows: {}
+      harami_cross_bull:
+        confirm_with_volume: false
+      harami_cross_bear:
+        confirm_with_volume: false
+      belt_hold_bull:
+        confirm_with_volume: false
+      belt_hold_bear:
+        confirm_with_volume: false
+      mat_hold_bull:
+        confirm_with_volume: false
+      mat_hold_bear:
+        confirm_with_volume: false
+      kicker_bull:
+        confirm_with_volume: false
+      kicker_bear:
+        confirm_with_volume: false
+      tasuki_bull:
+        confirm_with_volume: false
+      tasuki_bear:
+        confirm_with_volume: false
+      morning_star:
+        confirm_with_volume: false
+      evening_star:
+        confirm_with_volume: false
+      abandoned_baby_bull:
+        confirm_with_volume: false
+      abandoned_baby_bear:
+        confirm_with_volume: false
+      three_line_strike_bull:
+        confirm_with_volume: false
+      three_line_strike_bear:
+        confirm_with_volume: false
+      three_inside_up:
+        confirm_with_volume: false
+      three_inside_down:
+        confirm_with_volume: false
+      three_outside_up:
+        confirm_with_volume: false
+      three_outside_down:
+        confirm_with_volume: false
+      unique_three_river_bottom:
+        confirm_with_volume: false
+      unique_three_river_top:
+        confirm_with_volume: false
+      concealing_baby_swallow:
+        confirm_with_volume: false
+      identical_three_crows:
+        confirm_with_volume: false
+    parameter_overrides: {}
   view:
     badge_info: true
     badge_font_pt: 8
@@ -221,9 +236,9 @@ dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
   start_time: 30d
-  end_time: 7d
+  end_time: 1d
 performance:
-  detection_threads: 32
-  detection_mode: balanced
+  detection_threads: 24
+  detection_mode: max_speed
   parallel_historical: true
   parallel_realtime: true

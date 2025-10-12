@@ -48,7 +48,9 @@
       "Bash(chmod:*)",
       "Bash(curl:*)",
       "WebFetch(domain:help.ctrader.com)",
-      "WebFetch(domain:community.ctrader.com)"
+      "WebFetch(domain:community.ctrader.com)",
+      "Bash(git rm:*)",
+      "Bash(do echo \"=== $file ===\")"
     ],
     "deny": [],
     "ask": []
