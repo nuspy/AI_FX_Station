@@ -215,9 +215,11 @@ class PatternsConfigDialog(QDialog):
             lambda current, previous: self._on_pattern_selected(current, kind)
         )
 
-        # Auto-select first pattern but don't trigger yet (will be triggered after full initialization)
+        # Auto-select first pattern but block signals to avoid triggering during construction
         if patterns and pattern_list.count() > 0:
+            pattern_list.blockSignals(True)
             pattern_list.setCurrentRow(0)
+            pattern_list.blockSignals(False)
 
         # Initialize dictionaries for this tab if they don't exist
         if not hasattr(self, '_parameter_widgets'):
