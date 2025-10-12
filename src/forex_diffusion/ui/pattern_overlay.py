@@ -212,27 +212,14 @@ class PyQtGraphAxesWrapper:
         self.plot_item.addItem(line)
         self._pattern_items.append(line)
 
-        # Add arrow symbol at target price using scatter plot
-        direction_up = (y1 > y0)
-
-        scatter = pg.ScatterPlotItem(
-            x=[x1],
-            y=[y1],
-            size=15,
-            pen=QPen(qcolor, 1),
-            brush=qcolor,
-            symbol='t' if direction_up else 't3'  # Triangle up or down
-        )
-        scatter.setZValue(120)
-
-        self.plot_item.addItem(scatter)
-        self._pattern_items.append(scatter)
+        # Note: Arrow symbol removed - only vertical dashed line remains
+        # Symbols ('t', 't3') were causing yellow squares to appear
+        # The vertical line with text label is sufficient for TP/SL markers
 
         # Return fake annotation for compatibility
         class FakeAnnotation:
-            def __init__(self, line_item, scatter_item):
+            def __init__(self, line_item):
                 self._line = line_item
-                self._scatter = scatter_item
             def remove(self):
                 # Cleanup handled by clear_pattern_overlays
                 pass
@@ -240,11 +227,10 @@ class PyQtGraphAxesWrapper:
                 # Support visibility toggle
                 try:
                     self._line.setVisible(visible)
-                    self._scatter.setVisible(visible)
                 except Exception:
                     pass
 
-        return FakeAnnotation(line, scatter)
+        return FakeAnnotation(line)
 
     def text(self, x, y, text, **kwargs):
         """Add text annotation - matplotlib compatible"""
@@ -326,14 +312,28 @@ class PyQtGraphAxesWrapper:
 
             renderer = self._renderer_ref
 
-            # Open pattern details dialog
+            # Open pattern details dialog - find proper QWidget parent
             parent_widget = None
             try:
-                parent_widget = self.plot_item.getViewBox().parentWidget()
-            except Exception:
-                pass
+                # Walk up parent chain to find a proper QWidget
+                obj = self.plot_item
+                while obj is not None:
+                    # Check if it's a QWidget (not PlotItem or GraphicsObject)
+                    if hasattr(obj, 'isWidgetType') and callable(obj.isWidgetType):
+                        if obj.isWidgetType():
+                            parent_widget = obj
+                            break
+                    # Try to get parent
+                    if hasattr(obj, 'parentWidget') and callable(obj.parentWidget):
+                        obj = obj.parentWidget()
+                    elif hasattr(obj, 'parent') and callable(obj.parent):
+                        obj = obj.parent()
+                    else:
+                        break
+            except Exception as e:
+                logger.debug(f"Error finding parent widget: {e}")
 
-            logger.info("Opening pattern details dialog")
+            logger.info(f"Opening pattern details dialog with parent: {type(parent_widget).__name__ if parent_widget else 'None'}")
             from .pattern_overlay import PatternDetailsDialog
             dialog = PatternDetailsDialog(parent_widget, event_data, renderer.info)
             dialog.exec()
@@ -888,7 +888,7 @@ class PatternOverlayRenderer:
                     break
 
     def _draw_target_arrow(self, x: float, y: float, direction: str, e: object) -> None:
-        """Draw yellow arrow pointing to target price (take profit)"""
+        """Draw yellow label for target price (take profit) - no vertical line"""
         target = getattr(e, "target_price", None)
         if target is None:
             return
@@ -898,25 +898,19 @@ class PatternOverlayRenderer:
             return
         ax = self.ax
 
-        # Yellow arrow for target (take profit)
+        # Yellow label for target (take profit) - NO arrow/line
         color = "#FFD700"  # Gold/Yellow
         dy = ty - y
-        if abs(dy) < 1e-12:
-            dy = 0.0001
 
-        arr = ax.annotate(
-            "", xy=(x, ty), xytext=(x, y),
-            arrowprops=dict(arrowstyle="-|>", lw=2.0, color=color, shrinkA=0, shrinkB=0),
-            zorder=119
-        )
+        # Only draw text label at target price
         lab = ax.text(x, ty, f"TP: {ty:.5f}", fontsize=8, color=color,
                       va="bottom" if dy>0 else "top", ha="left",
                       bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
                       zorder=119)
-        self._arrows.extend([arr, lab])
+        self._arrows.append(lab)
 
     def _draw_invalidation_arrow(self, x: float, y: float, direction: str, e: object) -> None:
-        """Draw red arrow pointing to invalidation price (stop loss)"""
+        """Draw red label for invalidation price (stop loss) - no vertical line"""
         failure_price = getattr(e, "failure_price", None)
         if failure_price is None:
             return
@@ -926,21 +920,16 @@ class PatternOverlayRenderer:
             return
 
         ax = self.ax
-        # Red arrow for invalidation (stop loss)
+        # Red label for invalidation (stop loss) - NO arrow/line
         color = "#FF4444"  # Bright red
-        arrow = ax.annotate(
-            "", xy=(x, fp), xytext=(x, y),
-            arrowprops=dict(arrowstyle="-|>", lw=2.0, color=color, shrinkA=0, shrinkB=0),
-            zorder=120
-        )
 
-        # Add label for invalidation point
+        # Only draw text label at invalidation price
         label = ax.text(x, fp, f"SL: {fp:.5f}", fontsize=8, color=color,
                        va="bottom" if fp < y else "top", ha="left",
                        bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
                        zorder=120)
 
-        self._arrows.extend([arrow, label])
+        self._arrows.append(label)
 
     def _draw_invalidation_timeline(self, x: float, y: float, direction: str, e: object) -> None:
         """Draw gray 50% opacity line indicating maximum invalidation time"""
