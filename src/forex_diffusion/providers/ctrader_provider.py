@@ -583,7 +583,7 @@ class CTraderProvider(BaseProvider):
     async def _get_historical_ticks_impl(
         self, symbol: str, start_ts_ms: int, end_ts_ms: int
     ) -> Optional[pd.DataFrame]:
-        """Get historical tick data from cTrader."""
+        """Get historical tick data from cTrader (both BID and ASK)."""
         try:
             await self._rate_limit_wait()
 
@@ -591,39 +591,103 @@ class CTraderProvider(BaseProvider):
             start_us = start_ts_ms * 1000
             end_us = end_ts_ms * 1000
 
-            # Request tick data
-            request = Messages.ProtoOAGetTickDataReq()
-            request.ctidTraderAccountId = self._account_id
-            request.symbolId = symbol_id
-            request.fromTimestamp = start_us
-            request.toTimestamp = end_us
-            request.type = Messages.ProtoOAQuoteType.BID_ASK  # Get both bid and ask
+            # Request BID ticks (type=1)
+            logger.debug(f"[{self.name}] Requesting BID ticks for {symbol}")
+            bid_request = Messages.ProtoOAGetTickDataReq()
+            bid_request.ctidTraderAccountId = self._account_id
+            bid_request.symbolId = symbol_id
+            bid_request.fromTimestamp = start_us
+            bid_request.toTimestamp = end_us
+            bid_request.type = 1  # BID
 
-            response = await self._send_and_wait(request, Messages.ProtoOAGetTickDataRes)
+            bid_response = await self._send_and_wait(bid_request, Messages.ProtoOAGetTickDataRes)
 
-            if not response or not response.tickData:
+            # Request ASK ticks (type=2)
+            await self._rate_limit_wait()  # Respect rate limit between requests
+            logger.debug(f"[{self.name}] Requesting ASK ticks for {symbol}")
+            ask_request = Messages.ProtoOAGetTickDataReq()
+            ask_request.ctidTraderAccountId = self._account_id
+            ask_request.symbolId = symbol_id
+            ask_request.fromTimestamp = start_us
+            ask_request.toTimestamp = end_us
+            ask_request.type = 2  # ASK
+
+            ask_response = await self._send_and_wait(ask_request, Messages.ProtoOAGetTickDataRes)
+
+            # Parse BID ticks
+            bid_data = {}
+            if bid_response and bid_response.tickData:
+                for tick_data in bid_response.tickData:
+                    ts = int(tick_data.timestamp / 1000)  # Convert from microseconds
+                    bid_data[ts] = tick_data.tick / 100000  # cTrader uses 100000 multiplier
+
+            # Parse ASK ticks
+            ask_data = {}
+            if ask_response and ask_response.tickData:
+                for tick_data in ask_response.tickData:
+                    ts = int(tick_data.timestamp / 1000)
+                    ask_data[ts] = tick_data.tick / 100000
+
+            if not bid_data and not ask_data:
+                logger.warning(f"[{self.name}] No tick data received for {symbol}")
                 return None
 
-            # Parse tick data
+            # Merge BID and ASK data by timestamp
+            # Use all unique timestamps from both datasets
+            all_timestamps = sorted(set(bid_data.keys()) | set(ask_data.keys()))
+
             ticks = []
-            for tick in response.tickData:
+            for ts in all_timestamps:
+                bid_value = bid_data.get(ts)
+                ask_value = ask_data.get(ts)
+
+                # Calculate mid price if both available, otherwise use available one
+                if bid_value is not None and ask_value is not None:
+                    price = (bid_value + ask_value) / 2
+                elif bid_value is not None:
+                    price = bid_value
+                elif ask_value is not None:
+                    price = ask_value
+                else:
+                    continue  # Skip if neither available
+
                 ticks.append({
-                    "ts_utc": int(tick.timestamp / 1000),
-                    "bid": tick.bid / 100000 if hasattr(tick, "bid") else None,
-                    "ask": tick.ask / 100000 if hasattr(tick, "ask") else None,
-                    "price": ((tick.bid + tick.ask) / 2) / 100000 if hasattr(tick, "bid") and hasattr(tick, "ask") else None,
+                    "ts_utc": ts,
+                    "bid": bid_value,
+                    "ask": ask_value,
+                    "price": price,  # Mid price for analysis/sampling
                 })
 
             df = pd.DataFrame(ticks)
             df = df.sort_values("ts_utc").reset_index(drop=True)
 
-            logger.info(f"[{self.name}] Retrieved {len(df)} ticks for {symbol}")
+            logger.info(f"[{self.name}] Retrieved {len(df)} ticks for {symbol} (BID: {len(bid_data)}, ASK: {len(ask_data)})")
             return df
 
         except Exception as e:
             logger.error(f"[{self.name}] Failed to get historical ticks for {symbol}: {e}")
             self.health.errors.append(str(e))
             return None
+
+    async def get_historical_ticks(
+        self, symbol: str, start_ms: int, end_ms: int
+    ) -> Optional[pd.DataFrame]:
+        """
+        Public wrapper for _get_historical_ticks_impl.
+        Allows CTraderClient to call historical ticks API.
+
+        Args:
+            symbol: Symbol like "EUR/USD"
+            start_ms: Start timestamp in milliseconds
+            end_ms: End timestamp in milliseconds
+
+        Returns:
+            DataFrame with columns: ts_utc, bid, ask, price
+            - bid: BID price (may be None for some timestamps)
+            - ask: ASK price (may be None for some timestamps)
+            - price: Mid price (bid+ask)/2 when both available, otherwise bid or ask
+        """
+        return await self._get_historical_ticks_impl(symbol, start_ms, end_ms)
 
     async def _get_market_depth_impl(self, symbol: str, levels: int) -> Optional[Dict[str, Any]]:
         """Get market depth (DOM) from cTrader."""

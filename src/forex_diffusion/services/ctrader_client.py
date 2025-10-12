@@ -214,7 +214,7 @@ class CTraderClient:
         fmt: str = "json"
     ) -> pd.DataFrame:
         """
-        Query cTrader for tick data.
+        Query cTrader for tick data (both BID and ASK).
 
         Args:
             symbol: Symbol like "EUR/USD"
@@ -223,7 +223,10 @@ class CTraderClient:
             fmt: Format (json or other) - currently only json supported
 
         Returns:
-            DataFrame with columns: ts_utc, price, bid, ask
+            DataFrame with columns: ts_utc, bid, ask, price
+            - bid: BID price for display in GUI
+            - ask: ASK price for display in GUI
+            - price: Mid price for sampling/analysis
         """
         self._ensure_initialized()
 
