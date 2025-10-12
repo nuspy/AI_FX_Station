@@ -121,6 +121,24 @@ class PatternsConfigDialog(QDialog):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
+
+        # Add toolbar with bulk actions
+        toolbar = QHBoxLayout()
+        toolbar.addWidget(QLabel("Azioni rapide:"))
+
+        self.bulk_action_combo = QComboBox()
+        self.bulk_action_combo.addItem("Seleziona azione...", None)
+        self.bulk_action_combo.addItem("Abilita tutti", "enable_all")
+        self.bulk_action_combo.addItem("Disabilita tutti", "disable_all")
+        self.bulk_action_combo.addItem("Solo Candlestick", "only_candle")
+        self.bulk_action_combo.addItem("Solo Chart", "only_chart")
+        self.bulk_action_combo.addItem("Tutti senza volume", "all_without_volume")
+        self.bulk_action_combo.currentIndexChanged.connect(self._on_bulk_action)
+        toolbar.addWidget(self.bulk_action_combo)
+        toolbar.addStretch(1)
+
+        lay.addLayout(toolbar)
+
         tabs = QTabWidget(self); lay.addWidget(tabs)
 
         self.chart_tab = self._make_pattern_tab(kind='chart_patterns')
@@ -944,6 +962,77 @@ class PatternsConfigDialog(QDialog):
 
         except Exception as e:
             print(f"Errore durante la scansione storica: {e}")
+
+    def _on_bulk_action(self, index):
+        """Handle bulk pattern enable/disable actions"""
+        action = self.bulk_action_combo.itemData(index)
+
+        if action is None:
+            return
+
+        # Reset combo to default
+        self.bulk_action_combo.blockSignals(True)
+        self.bulk_action_combo.setCurrentIndex(0)
+        self.bulk_action_combo.blockSignals(False)
+
+        # Get all patterns from registry
+        all_chart_patterns = self.available_patterns.get('chart_patterns', [])
+        all_candle_patterns = self.available_patterns.get('candle_patterns', [])
+
+        # Determine which patterns to enable based on action
+        if action == "enable_all":
+            chart_keys = [p['key'] for p in all_chart_patterns]
+            candle_keys = [p['key'] for p in all_candle_patterns]
+        elif action == "disable_all":
+            chart_keys = []
+            candle_keys = []
+        elif action == "only_candle":
+            chart_keys = []
+            candle_keys = [p['key'] for p in all_candle_patterns]
+        elif action == "only_chart":
+            chart_keys = [p['key'] for p in all_chart_patterns]
+            candle_keys = []
+        elif action == "all_without_volume":
+            # Enable all patterns and disable volume confirmation for candles
+            chart_keys = [p['key'] for p in all_chart_patterns]
+            candle_keys = [p['key'] for p in all_candle_patterns]
+            # Will set confirm_with_volume=False below
+        else:
+            return
+
+        # Update patterns config
+        if 'chart_patterns' not in self.patterns:
+            self.patterns['chart_patterns'] = {}
+        if 'candle_patterns' not in self.patterns:
+            self.patterns['candle_patterns'] = {}
+
+        self.patterns['chart_patterns']['keys_enabled'] = chart_keys
+        self.patterns['candle_patterns']['keys_enabled'] = candle_keys
+
+        # For "all without volume" action, set confirm_with_volume=False for all candle patterns
+        if action == "all_without_volume":
+            if 'params' not in self.patterns['candle_patterns']:
+                self.patterns['candle_patterns']['params'] = {}
+
+            for pattern_key in candle_keys:
+                if pattern_key not in self.patterns['candle_patterns']['params']:
+                    self.patterns['candle_patterns']['params'][pattern_key] = {}
+                self.patterns['candle_patterns']['params'][pattern_key]['confirm_with_volume'] = False
+
+        # Save to YAML immediately
+        self._save()
+
+        # Show confirmation message
+        from PySide6.QtWidgets import QMessageBox
+        msg = {
+            "enable_all": "Tutti i pattern sono stati abilitati",
+            "disable_all": "Tutti i pattern sono stati disabilitati",
+            "only_candle": "Solo i pattern candlestick sono stati abilitati",
+            "only_chart": "Solo i pattern chart sono stati abilitati",
+            "all_without_volume": "Tutti i pattern sono stati abilitati senza conferma volume"
+        }.get(action, "Operazione completata")
+
+        QMessageBox.information(self, "Azione completata", msg)
 
 
 class HistoricalScanDialog(QDialog):
