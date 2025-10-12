@@ -19,11 +19,24 @@ class CTraderClient:
     Synchronous cTrader client for historical data fetching.
 
     Wraps CTraderProvider with sync interface for MarketDataService compatibility.
+    Uses singleton pattern to ensure only one connection instance exists.
     """
+
+    _instance = None
+    _lock = None
+
+    def __new__(cls, config: Optional[dict] = None):
+        """
+        Singleton pattern: return existing instance if available.
+        """
+        if cls._instance is None:
+            cls._instance = super(CTraderClient, cls).__new__(cls)
+            cls._instance._singleton_initialized = False
+        return cls._instance
 
     def __init__(self, config: Optional[dict] = None):
         """
-        Initialize cTrader client.
+        Initialize cTrader client (only runs once due to singleton).
 
         Args:
             config: Optional config dict with:
@@ -33,10 +46,20 @@ class CTraderClient:
                 - account_id: cTrader account ID
                 - environment: 'demo' or 'live' (default: 'demo')
         """
+        # Only initialize once
+        if self._singleton_initialized:
+            # Update config if provided
+            if config:
+                self.config.update(config)
+                logger.debug("Updated CTraderClient config (singleton)")
+            return
+
         self.config = config or {}
         self._provider = None
         self._initialized = False
         self._event_loop = None
+        self._singleton_initialized = True
+        logger.debug("CTraderClient singleton instance created")
 
     def _ensure_initialized(self):
         """Ensure provider is initialized (lazy initialization)."""
@@ -216,6 +239,21 @@ class CTraderClient:
         except Exception as e:
             logger.error(f"Failed to get ticks from cTrader: {e}")
             return pd.DataFrame()
+
+    @classmethod
+    def reset_instance(cls):
+        """Reset singleton instance (useful when credentials change)."""
+        if cls._instance is not None:
+            # Disconnect existing provider
+            try:
+                if cls._instance._provider and cls._instance._initialized:
+                    cls._instance._run_async(cls._instance._provider.disconnect())
+                    logger.info("Disconnected existing CTraderClient instance")
+            except Exception as e:
+                logger.warning(f"Error disconnecting CTraderClient during reset: {e}")
+
+            cls._instance = None
+            logger.info("CTraderClient singleton instance reset")
 
     def __del__(self):
         """Cleanup on deletion."""

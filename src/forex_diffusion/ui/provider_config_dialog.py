@@ -682,13 +682,21 @@ class ProviderConfigDialog(QDialog):
             # AlphaVantage settings
             set_setting('alphavantage_api_key', self.alphavantage_api_key_edit.text())
 
+            # Reset CTraderClient singleton to force reconnection with new credentials
+            try:
+                from ..services.ctrader_client import CTraderClient
+                CTraderClient.reset_instance()
+                logger.info("Reset CTraderClient singleton for credential update")
+            except Exception as e:
+                logger.warning(f"Could not reset CTraderClient: {e}")
+
             logger.info("Provider settings saved successfully")
 
             QMessageBox.information(
                 self,
                 "Settings Saved",
                 "Provider settings have been saved.\n\n"
-                "Please restart the application for changes to take effect."
+                "cTrader connection will be reinitialized with new credentials."
             )
 
             self.accept()
