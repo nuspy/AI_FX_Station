@@ -152,6 +152,77 @@ class PyQtGraphAxesWrapper:
         ymin, ymax = self.get_ylim()
         return self.plot([x, x], [ymin, ymax], **kwargs)
 
+    def annotate(self, text, xy, xytext=None, **kwargs):
+        """Add arrow annotation - matplotlib compatible"""
+        import pyqtgraph as pg
+        from PySide6.QtGui import QColor, QPen
+        from PySide6.QtCore import Qt
+
+        arrowprops = kwargs.get('arrowprops', {})
+        if not arrowprops:
+            # Just text annotation without arrow
+            return self.text(xy[0], xy[1], text, **kwargs)
+
+        # Draw arrow from xytext to xy
+        if xytext is None:
+            xytext = xy
+
+        x0, y0 = xytext
+        x1, y1 = xy
+
+        # Extract arrow properties
+        color = arrowprops.get('color', '#FFFFFF')
+        linewidth = arrowprops.get('lw', 1.2)
+        alpha = kwargs.get('alpha', 1.0)
+
+        # Convert color
+        qcolor = QColor(color)
+        qcolor.setAlphaF(alpha)
+        pen = QPen(qcolor)
+        pen.setWidthF(linewidth)
+
+        # Create arrow
+        arrow = pg.ArrowItem(
+            angle=0,  # Will be rotated based on direction
+            tipAngle=30,
+            headLen=10,
+            tailLen=None,
+            pen=pen,
+            brush=qcolor
+        )
+
+        # Calculate angle and position
+        import math
+        dx = x1 - x0
+        dy = y1 - y0
+        angle = math.degrees(math.atan2(dy, dx))
+
+        arrow.setPos(x1, y1)
+        arrow.setStyle(angle=angle)
+
+        # Add line from start to arrow (plot returns list with fake line)
+        line_result = self.plot([x0, x1], [y0, y1], color=color, linewidth=linewidth, alpha=alpha)
+
+        # Add arrow to plot
+        self.plot_item.addItem(arrow)
+        self._pattern_items.append(arrow)
+
+        # Return fake annotation for compatibility
+        class FakeAnnotation:
+            def __init__(self, arrow_item):
+                self._arrow = arrow_item
+            def remove(self):
+                # Cleanup handled by clear_pattern_overlays
+                pass
+            def set_visible(self, visible):
+                # Support visibility toggle
+                try:
+                    self._arrow.setVisible(visible)
+                except Exception:
+                    pass
+
+        return FakeAnnotation(arrow)
+
     def text(self, x, y, text, **kwargs):
         """Add text annotation - matplotlib compatible"""
         import pyqtgraph as pg
