@@ -104,10 +104,14 @@ class PyQtGraphAxesWrapper:
 
             # Enable click/hover for scatter plots (pattern badges)
             if picker is not None:
+                # Enable mouse interaction for scatter items
+                scatter.setAcceptHoverEvents(True)
+                scatter.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+
                 # Connect signals for interactivity
                 scatter.sigClicked.connect(self._on_scatter_clicked)
                 scatter.sigHovered.connect(lambda points: self._on_scatter_hovered(scatter, points))
-                logger.info(f"Connected click/hover signals to scatter item {id(scatter)} with picker={picker}")
+                logger.info(f"Connected click/hover signals to scatter item {id(scatter)} with picker={picker}, hover enabled, mouse buttons accepted")
 
             self.plot_item.addItem(scatter)
             self._pattern_items.append(scatter)

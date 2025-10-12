@@ -963,6 +963,60 @@ class PlotService(ChartServiceBase):
                 logger.debug(f"Failed to get event modifiers: {e}")
                 return
 
+            # Check if click is on any scatter plot items (e.g., pattern badges)
+            # PyQtGraph scatter items handle their own events via sigClicked
+            # We need to check if there are any clickable scatter items and give them priority
+            # by not consuming the event if click might be on a scatter point
+            try:
+                # Get all items in the plot
+                all_items = plot_item.listDataItems()
+                # Check if any ScatterPlotItem exists with connected signals
+                has_clickable_scatters = any(
+                    hasattr(item, 'sigClicked') and
+                    hasattr(item, 'scatter') and  # ScatterPlotItem has scatter attribute
+                    item.scatter is not None
+                    for item in all_items
+                )
+
+                if has_clickable_scatters:
+                    # There are clickable scatter items - check if click is near any point
+                    scene_pos = event.scenePos()
+                    view_pos = plot_item.vb.mapSceneToView(scene_pos)
+
+                    for item in all_items:
+                        if hasattr(item, 'scatter') and item.scatter is not None:
+                            # Get scatter points
+                            try:
+                                points = item.scatter.points()
+                                for point in points:
+                                    point_pos = point.pos()
+                                    # Calculate distance in view coordinates
+                                    dx = abs(point_pos.x() - view_pos.x())
+                                    dy = abs(point_pos.y() - view_pos.y())
+
+                                    # Get view range to calculate pixel distance
+                                    view_range = plot_item.vb.viewRange()
+                                    view_width = view_range[0][1] - view_range[0][0]
+                                    view_height = view_range[1][1] - view_range[1][0]
+
+                                    # Widget size
+                                    widget_rect = plot_item.vb.rect()
+                                    px_per_unit_x = widget_rect.width() / view_width if view_width > 0 else 1
+                                    px_per_unit_y = widget_rect.height() / view_height if view_height > 0 else 1
+
+                                    # Distance in pixels
+                                    dist_px = ((dx * px_per_unit_x) ** 2 + (dy * px_per_unit_y) ** 2) ** 0.5
+
+                                    # If within 20 pixels of a scatter point, let it handle the event
+                                    if dist_px < 20:
+                                        logger.debug(f"Click near scatter point (dist={dist_px:.1f}px), letting item handle it")
+                                        return
+                            except Exception as e:
+                                logger.debug(f"Error checking scatter points: {e}")
+                                continue
+            except Exception as e:
+                logger.debug(f"Error checking for clickable items: {e}")
+
             # Check for left button + Alt modifier (forecast trigger)
             # button is MouseButton enum, check for LeftButton
             if button == QtCore_Qt.MouseButton.LeftButton and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
