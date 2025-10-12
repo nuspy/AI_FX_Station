@@ -326,21 +326,27 @@ class ProviderConfigDialog(QDialog):
 
                 try:
                     # Get credentials from config
-                    client_id = self.config.get('client_id', '')
-                    client_secret = self.config.get('client_secret', '')
-                    access_token = self.config.get('access_token', '')
+                    client_id = self.config.get('client_id', '').strip()
+                    client_secret = self.config.get('client_secret', '').strip()
+                    access_token = self.config.get('access_token', '').strip()
                     environment = self.config.get('environment', 'demo')
 
                     if not client_id or not client_secret:
                         return False, "Client ID and Client Secret are required"
 
+                    # Debug: Log credential format (first/last 8 chars only for security)
+                    from loguru import logger
+                    logger.info(f"cTrader test - client_id: {client_id[:8]}...{client_id[-8:] if len(client_id) > 16 else ''}")
+                    logger.info(f"cTrader test - environment: {environment}")
+                    logger.info(f"cTrader test - has access_token: {bool(access_token)}")
+
                     # Create provider instance
-                    provider = CTraderProvider(
-                        client_id=client_id,
-                        client_secret=client_secret,
-                        access_token=access_token if access_token else None,
-                        environment=environment
-                    )
+                    provider = CTraderProvider(config={
+                        'client_id': client_id,
+                        'client_secret': client_secret,
+                        'access_token': access_token if access_token else None,
+                        'environment': environment
+                    })
 
                     # Try to connect
                     loop = asyncio.new_event_loop()
@@ -494,6 +500,10 @@ class ProviderConfigDialog(QDialog):
                 )
                 return
 
+            # Debug logging
+            logger.info(f"OAuth2 - client_id format: {client_id[:8]}...{client_id[-8:] if len(client_id) > 16 else ''}")
+            logger.info(f"OAuth2 - client_id length: {len(client_id)}")
+
             # Find available port
             def find_free_port():
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -510,6 +520,7 @@ class ProviderConfigDialog(QDialog):
 
             # Get authorization URL
             auth_url = auth.getAuthUri(scope='trading')
+            logger.info(f"OAuth2 - Generated URL: {auth_url}")
 
             # Setup callback server
             auth_code = None
