@@ -111,6 +111,9 @@ class PatternsService(ChartServiceBase):
         # Load historical pattern configuration
         self._historical_config = self._load_historical_config()
 
+        # Load enabled state from patterns.yaml
+        self._load_enabled_state_from_config()
+
         # Resource monitoring
         self._cpu_limit_percent = self._config.get('resources', {}).get('pattern_detection', {}).get('max_cpu_percent', 30)
         self._memory_threshold = self._config.get('resources', {}).get('memory', {}).get('max_usage_percent', 80)
@@ -438,6 +441,39 @@ class PatternsService(ChartServiceBase):
                 'start_time': '30d',
                 'end_time': '7d'
             }
+
+    def _load_enabled_state_from_config(self) -> None:
+        """Load enabled state for chart/candle patterns from patterns.yaml"""
+        try:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                '..', '..', '..', 'configs', 'patterns.yaml'
+            )
+
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+
+            # Load patterns section
+            patterns_config = config.get('patterns', {})
+
+            # Check if chart patterns are enabled (either enabled_default or has keys_enabled)
+            chart_config = patterns_config.get('chart_patterns', {})
+            chart_enabled_default = chart_config.get('enabled_default', False)
+            chart_keys_enabled = chart_config.get('keys_enabled', [])
+            self._enabled_chart = chart_enabled_default or bool(chart_keys_enabled)
+
+            # Check if candle patterns are enabled
+            candle_config = patterns_config.get('candle_patterns', {})
+            candle_enabled_default = candle_config.get('enabled_default', False)
+            candle_keys_enabled = candle_config.get('keys_enabled', [])
+            self._enabled_candle = candle_enabled_default or bool(candle_keys_enabled)
+
+            logger.info(f"Patterns loaded from config: chart={self._enabled_chart}, candle={self._enabled_candle}")
+
+        except Exception as e:
+            logger.warning(f"Could not load enabled state from config, using defaults (False): {e}")
+            self._enabled_chart = False
+            self._enabled_candle = False
 
     @staticmethod
     def parse_time_string(time_str: str) -> int:
