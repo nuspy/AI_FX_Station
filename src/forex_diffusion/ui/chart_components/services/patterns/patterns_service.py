@@ -1398,10 +1398,15 @@ class PatternsService(ChartServiceBase):
                 ts_ms = pd.to_datetime(s, errors='coerce').view('int64') // 10**6
             else:
                 v = int(vals.dropna().iloc[0]) if not vals.dropna().empty else 0
-                if v > 10**16: ts_ms = vals.astype('int64') // 10**6
-                elif v > 10**13: ts_ms = vals.astype('int64') // 10**3
-                elif v > 10**11: ts_ms = vals.astype('int64')
-                else: ts_ms = vals.astype('int64') * 1000
+                # Detect timestamp unit and convert to milliseconds
+                if v > 10**15:  # Nanoseconds (> year 2001 in nanoseconds)
+                    ts_ms = vals.astype('int64') // 10**6
+                elif v > 10**13:  # Microseconds (> year 2001 in microseconds)
+                    ts_ms = vals.astype('int64') // 10**3
+                elif v > 10**11:  # Milliseconds already
+                    ts_ms = vals.astype('int64')
+                else:  # Seconds
+                    ts_ms = vals.astype('int64') * 1000
         df0['ts_utc'] = ts_ms.astype('int64', errors='ignore')
         before = len(df0)
         df0 = df0.dropna(subset=['open','high','low','close','ts_utc'])

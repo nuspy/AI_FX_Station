@@ -1038,7 +1038,9 @@ class EventHandlersMixin:
                         if df_clean.empty:
                             return
 
-                        df_timestamps = df_clean['ts_utc'] / 1000.0
+                        # Convert ts_utc to numeric and then to seconds
+                        ts_numeric = pd.to_numeric(df_clean['ts_utc'], errors='coerce')
+                        df_timestamps = ts_numeric / 1000.0
                         idx = (df_timestamps - x_data).abs().idxmin()
 
                         nearest = df_clean.loc[idx]

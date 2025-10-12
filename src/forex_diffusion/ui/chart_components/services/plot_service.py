@@ -424,6 +424,19 @@ class PlotService(ChartServiceBase):
             df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')
             df2 = df2.dropna(subset=['ts_utc', y_col]).reset_index(drop=True)
 
+            # Detect and convert timestamp unit (nanoseconds vs milliseconds)
+            if not df2.empty:
+                sample_ts = df2['ts_utc'].iloc[0]
+                # Nanoseconds: > 1e15 (year 2001 in nanoseconds)
+                # Milliseconds: > 1e12 (year 2001 in milliseconds)
+                # Seconds: > 1e9 (year 2001 in seconds)
+                if sample_ts > 1e15:
+                    logger.debug(f"Converting timestamps from nanoseconds to milliseconds (sample: {sample_ts})")
+                    df2['ts_utc'] = df2['ts_utc'] / 1e6  # nanoseconds to milliseconds
+                elif sample_ts < 1e10:
+                    logger.debug(f"Converting timestamps from seconds to milliseconds (sample: {sample_ts})")
+                    df2['ts_utc'] = df2['ts_utc'] * 1000  # seconds to milliseconds
+
             # Validate timestamp range (reject corrupted timestamps)
             # Valid range: 1970-2100 (in milliseconds: ~0 to ~4e12)
             min_valid_ts = 0
