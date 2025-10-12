@@ -294,7 +294,19 @@ class PyQtGraphAxesWrapper:
             class FakeCanvas:
                 def draw_idle(self):
                     pass
+                def mpl_connect(self, event_name, callback):
+                    # For PyQtGraph, event binding is not supported via matplotlib API
+                    # Return fake connection ID
+                    return 0
+                def parent(self):
+                    # Return plot item's parent widget for dialogs
+                    try:
+                        return self._plot_item.getViewBox().parentWidget()
+                    except Exception:
+                        return None
             canvas = FakeCanvas()
+            # Store reference to plot_item for canvas.parent()
+            canvas._plot_item = self.plot_item
         return FakeFigure()
 
     def transData(self):
