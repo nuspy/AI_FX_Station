@@ -590,19 +590,21 @@ class PatternOverlayRenderer:
         mode = self._axis_mode(ax)
         logger.info(f"PatternOverlay: drawing {len(kept)}/{len(evs)} events on ax=Axes (mode={mode})")
 
-        # Disegna in ordine: formazione (dietro), poi badge/testo + target (davanti)
-        for x, y, label, kind, direction, e in kept:
-            try:
-                self._draw_formation_segment(x, e)  # dietro
-            except Exception as ex:
-                logger.debug(f"formation draw failed: {ex}")
+        # Draw pattern overlays: circles, target arrows, invalidation arrows
+        # Formation segments disabled per user request - only show circles + arrows
+        # for x, y, label, kind, direction, e in kept:
+        #     try:
+        #         self._draw_formation_segment(x, e)  # dietro
+        #     except Exception as ex:
+        #         logger.debug(f"formation draw failed: {ex}")
 
         for x, y, label, kind, direction, e in kept:
             try:
-                self._draw_badge(x, y, label, direction, e)  # davanti
-                self._draw_target_arrow(x, y, direction, e)  # davanti
-                self._draw_invalidation_arrow(x, y, direction, e)  # freccia invalidazione
-                self._draw_invalidation_timeline(x, y, direction, e)  # linea grigia 50% tempo max invalidazione
+                self._draw_badge(x, y, label, direction, e)  # Circle badge
+                self._draw_target_arrow(x, y, direction, e)  # Yellow TP arrow
+                self._draw_invalidation_arrow(x, y, direction, e)  # Red SL arrow
+                # Invalidation timeline disabled - too cluttered
+                # self._draw_invalidation_timeline(x, y, direction, e)  # linea grigia 50% tempo max invalidazione
             except Exception as ex:
                 logger.debug(f"overlay draw_event failed: {ex}")
 
@@ -841,17 +843,17 @@ class PatternOverlayRenderer:
         self._last_hover_artist = None
 
     def _draw_badge(self, x: float, y: float, label: str, direction: str, event_obj: object) -> None:
+        """Draw pattern badge as a simple colored circle (red for bear, green for bull)"""
         ax = self.ax
         color = self._direction_color(direction)
-        ms = 9.0
+
+        # Draw only a circle marker - no text label initially
+        ms = 12.0  # Slightly larger for visibility
         ln = ax.plot([x], [y], marker="o", markersize=ms, markerfacecolor=color,
-                     markeredgecolor="black", markeredgewidth=0.8, zorder=120, picker=HIT_RADIUS_PX)[0]
-        txt = ax.text(x, y, f" {label} ", color="white",
-                      bbox=dict(boxstyle="round,pad=0.25", fc=color, ec="black", lw=0.6, alpha=0.95),
-                      fontsize=9, va="bottom", ha="left", zorder=121)
-        self._badges.extend([ln, txt])
+                     markeredgecolor="white", markeredgewidth=1.5, zorder=120, picker=HIT_RADIUS_PX)[0]
+
+        self._badges.append(ln)
         self._artist_map[ln] = event_obj
-        self._artist_map[txt] = event_obj
 
         # Register scatter data for PyQtGraph click/hover handling
         if hasattr(ax, 'register_scatter_data') and hasattr(ax, '_pattern_items'):
@@ -863,6 +865,7 @@ class PatternOverlayRenderer:
                     break
 
     def _draw_target_arrow(self, x: float, y: float, direction: str, e: object) -> None:
+        """Draw yellow arrow pointing to target price (take profit)"""
         target = getattr(e, "target_price", None)
         if target is None:
             return
@@ -871,23 +874,26 @@ class PatternOverlayRenderer:
         except Exception:
             return
         ax = self.ax
-        color = self._direction_color(direction)
+
+        # Yellow arrow for target (take profit)
+        color = "#FFD700"  # Gold/Yellow
         dy = ty - y
         if abs(dy) < 1e-12:
             dy = 0.0001
+
         arr = ax.annotate(
             "", xy=(x, ty), xytext=(x, y),
-            arrowprops=dict(arrowstyle="-|>", lw=1.2, color=color, shrinkA=0, shrinkB=0),
+            arrowprops=dict(arrowstyle="-|>", lw=2.0, color=color, shrinkA=0, shrinkB=0),
             zorder=119
         )
-        lab = ax.text(x, ty, f"{ty:.5f}", fontsize=8, color=color,
+        lab = ax.text(x, ty, f"TP: {ty:.5f}", fontsize=8, color=color,
                       va="bottom" if dy>0 else "top", ha="left",
-                      bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, lw=0.6, alpha=0.8),
+                      bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
                       zorder=119)
         self._arrows.extend([arr, lab])
 
     def _draw_invalidation_arrow(self, x: float, y: float, direction: str, e: object) -> None:
-        """Draw black vertical arrow indicating pattern invalidation point"""
+        """Draw red arrow pointing to invalidation price (stop loss)"""
         failure_price = getattr(e, "failure_price", None)
         if failure_price is None:
             return
@@ -897,17 +903,18 @@ class PatternOverlayRenderer:
             return
 
         ax = self.ax
-        # Draw black vertical arrow pointing down to invalidation level
+        # Red arrow for invalidation (stop loss)
+        color = "#FF4444"  # Bright red
         arrow = ax.annotate(
             "", xy=(x, fp), xytext=(x, y),
-            arrowprops=dict(arrowstyle="-|>", lw=1.5, color='black', shrinkA=0, shrinkB=0),
+            arrowprops=dict(arrowstyle="-|>", lw=2.0, color=color, shrinkA=0, shrinkB=0),
             zorder=120
         )
 
-        # Add small label for invalidation point
-        label = ax.text(x, fp, f"INV", fontsize=7, color='black',
-                       va="bottom" if fp < y else "top", ha="center",
-                       bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="black", lw=0.5, alpha=0.9),
+        # Add label for invalidation point
+        label = ax.text(x, fp, f"SL: {fp:.5f}", fontsize=8, color=color,
+                       va="bottom" if fp < y else "top", ha="left",
+                       bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
                        zorder=120)
 
         self._arrows.extend([arrow, label])
