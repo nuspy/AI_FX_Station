@@ -249,8 +249,16 @@ class PatternsService(ChartServiceBase):
             if all_events:
                 try:
                     # imports moved to top
-                    # Use a simple dataframe for enrichment if needed
-                    enriched = enrich_events(None, all_events)  # None df is handled in enrich_events
+                    # Use the last detection dataframe for enrichment
+                    enrichment_df = getattr(self, '_last_detection_df', None)
+                    if enrichment_df is None:
+                        # Fallback to current dataframe
+                        enrichment_df = getattr(self, '_current_df', None)
+
+                    df_info = f"shape={enrichment_df.shape}" if enrichment_df is not None else "None"
+                    logger.debug(f"Enriching {len(all_events)} events with dataframe: {df_info}")
+                    enriched = enrich_events(enrichment_df, all_events)
+                    logger.debug(f"After enrichment: {len(enriched)} events remain")
                     tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
 
                     for e in enriched:
@@ -935,6 +943,9 @@ class PatternsService(ChartServiceBase):
                 if dfN is None or dfN.empty:
                     logger.warning("Historical scan: normalization failed or empty dataframe")
                     return
+
+                # Store normalized dataframe for enrichment
+                self._last_detection_df = dfN
 
                 # Prepare detection tasks for historical worker
                 # imports moved to top
