@@ -163,7 +163,11 @@ class PyQtGraphAxesWrapper:
         return self.plot([x, x], [ymin, ymax], **kwargs)
 
     def annotate(self, text, xy, xytext=None, **kwargs):
-        """Add arrow annotation - matplotlib compatible"""
+        """Add arrow annotation - matplotlib compatible
+
+        For PyQtGraph, we simplify arrows to horizontal lines with triangular markers
+        instead of complex ArrowItem which doesn't render well for vertical arrows.
+        """
         import pyqtgraph as pg
         from PySide6.QtGui import QColor, QPen
         from PySide6.QtCore import Qt
@@ -173,7 +177,7 @@ class PyQtGraphAxesWrapper:
             # Just text annotation without arrow
             return self.text(xy[0], xy[1], text, **kwargs)
 
-        # Draw arrow from xytext to xy
+        # Draw simplified arrow indicator using InfiniteLine + symbol
         if xytext is None:
             xytext = xy
 
@@ -191,47 +195,51 @@ class PyQtGraphAxesWrapper:
         pen = QPen(qcolor)
         pen.setWidthF(linewidth)
 
-        # Create arrow
-        arrow = pg.ArrowItem(
-            angle=0,  # Will be rotated based on direction
-            tipAngle=30,
-            headLen=10,
-            tailLen=None,
+        # Draw horizontal dashed line at target price level
+        line = pg.InfiniteLine(
+            pos=y1,  # y position (price level)
+            angle=0,  # horizontal
             pen=pen,
-            brush=qcolor
+            movable=False
         )
+        line.setZValue(119)  # Set z-order
 
-        # Calculate angle and position
-        import math
-        dx = x1 - x0
-        dy = y1 - y0
-        angle = math.degrees(math.atan2(dy, dx))
+        self.plot_item.addItem(line)
+        self._pattern_items.append(line)
 
-        arrow.setPos(x1, y1)
-        arrow.setStyle(angle=angle)
+        # Add small arrow symbol at the x position using scatter plot
+        direction_up = (y1 > y0)
+        symbol_y = y1 + (0.0001 if direction_up else -0.0001)  # Slightly offset
 
-        # Add line from start to arrow (plot returns list with fake line)
-        line_result = self.plot([x0, x1], [y0, y1], color=color, linewidth=linewidth, alpha=alpha)
+        scatter = pg.ScatterPlotItem(
+            x=[x1], y=[symbol_y],
+            size=10,
+            pen=pen,
+            brush=qcolor,
+            symbol='t' if direction_up else 't3'  # Triangle up or down
+        )
+        scatter.setZValue(120)
 
-        # Add arrow to plot
-        self.plot_item.addItem(arrow)
-        self._pattern_items.append(arrow)
+        self.plot_item.addItem(scatter)
+        self._pattern_items.append(scatter)
 
         # Return fake annotation for compatibility
         class FakeAnnotation:
-            def __init__(self, arrow_item):
-                self._arrow = arrow_item
+            def __init__(self, line_item, scatter_item):
+                self._line = line_item
+                self._scatter = scatter_item
             def remove(self):
                 # Cleanup handled by clear_pattern_overlays
                 pass
             def set_visible(self, visible):
                 # Support visibility toggle
                 try:
-                    self._arrow.setVisible(visible)
+                    self._line.setVisible(visible)
+                    self._scatter.setVisible(visible)
                 except Exception:
                     pass
 
-        return FakeAnnotation(arrow)
+        return FakeAnnotation(line, scatter)
 
     def text(self, x, y, text, **kwargs):
         """Add text annotation - matplotlib compatible"""
