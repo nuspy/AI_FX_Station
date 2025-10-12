@@ -166,8 +166,8 @@ class PyQtGraphAxesWrapper:
     def annotate(self, text, xy, xytext=None, **kwargs):
         """Add arrow annotation - matplotlib compatible
 
-        For PyQtGraph, we simplify arrows to horizontal lines with triangular markers
-        instead of complex ArrowItem which doesn't render well for vertical arrows.
+        For PyQtGraph, we draw a simple vertical line with an arrow symbol
+        instead of complex ArrowItem which doesn't render well.
         """
         import pyqtgraph as pg
         from PySide6.QtGui import QColor, QPen
@@ -178,7 +178,7 @@ class PyQtGraphAxesWrapper:
             # Just text annotation without arrow
             return self.text(xy[0], xy[1], text, **kwargs)
 
-        # Draw simplified arrow indicator using InfiniteLine + symbol
+        # Draw simplified arrow: vertical line + triangle symbol
         if xytext is None:
             xytext = xy
 
@@ -195,27 +195,27 @@ class PyQtGraphAxesWrapper:
         qcolor.setAlphaF(alpha)
         pen = QPen(qcolor)
         pen.setWidthF(linewidth)
+        pen.setStyle(Qt.PenStyle.DashLine)  # Dashed line
 
-        # Draw horizontal dashed line at target price level
-        line = pg.InfiniteLine(
-            pos=y1,  # y position (price level)
-            angle=0,  # horizontal
-            pen=pen,
-            movable=False
+        # Draw vertical line from badge to target price
+        line = pg.PlotCurveItem(
+            x=[x1, x1],
+            y=[y0, y1],
+            pen=pen
         )
-        line.setZValue(119)  # Set z-order
+        line.setZValue(119)
 
         self.plot_item.addItem(line)
         self._pattern_items.append(line)
 
-        # Add small arrow symbol at the x position using scatter plot
+        # Add arrow symbol at target price using scatter plot
         direction_up = (y1 > y0)
-        symbol_y = y1 + (0.0001 if direction_up else -0.0001)  # Slightly offset
 
         scatter = pg.ScatterPlotItem(
-            x=[x1], y=[symbol_y],
-            size=10,
-            pen=pen,
+            x=[x1],
+            y=[y1],
+            size=15,
+            pen=QPen(qcolor, 1),
             brush=qcolor,
             symbol='t' if direction_up else 't3'  # Triangle up or down
         )
