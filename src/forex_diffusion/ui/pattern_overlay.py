@@ -30,6 +30,9 @@ class PyQtGraphAxesWrapper:
         self.patches = []
         self.texts = []
         self._pattern_items = []  # Track pattern overlay items
+        self._clickable_items = {}  # Map scatter items to event data for click handling
+        self._tooltip_item = None  # Tooltip text item for hover
+        self._hover_scatter = None  # Currently hovered scatter item
 
     def get_xlim(self):
         """Get x-axis limits from PyQtGraph viewbox"""
@@ -98,6 +101,13 @@ class PyQtGraphAxesWrapper:
                 pen=pen,
                 symbol='o'  # Circle marker
             )
+
+            # Enable click/hover for scatter plots (pattern badges)
+            if picker is not None:
+                # Connect signals for interactivity
+                scatter.sigClicked.connect(self._on_scatter_clicked)
+                scatter.sigHovered.connect(lambda points: self._on_scatter_hovered(scatter, points))
+
             self.plot_item.addItem(scatter)
             self._pattern_items.append(scatter)
             items.append(scatter)
@@ -274,6 +284,85 @@ class PyQtGraphAxesWrapper:
 
         return FakeText()
 
+    def register_scatter_data(self, scatter_item, event_data):
+        """Register event data associated with a scatter item for click/hover handling"""
+        self._clickable_items[id(scatter_item)] = event_data
+
+    def _on_scatter_clicked(self, scatter_item, points):
+        """Handle click on pattern badge scatter plot"""
+        try:
+            # Get associated event data
+            event_data = self._clickable_items.get(id(scatter_item))
+            if event_data is None:
+                return
+
+            # Find the renderer to access info provider and controller
+            # The renderer should have stored a reference when creating this wrapper
+            if not hasattr(self, '_renderer_ref'):
+                logger.debug("No renderer reference for pattern click")
+                return
+
+            renderer = self._renderer_ref
+
+            # Open pattern details dialog
+            parent_widget = None
+            try:
+                parent_widget = self.plot_item.getViewBox().parentWidget()
+            except Exception:
+                pass
+
+            from .pattern_overlay import PatternDetailsDialog
+            dialog = PatternDetailsDialog(parent_widget, event_data, renderer.info)
+            dialog.exec()
+
+        except Exception as e:
+            logger.exception(f"Error handling scatter click: {e}")
+
+    def _on_scatter_hovered(self, scatter_item, points):
+        """Handle hover over pattern badge scatter plot"""
+        try:
+            if len(points) == 0:
+                # Mouse left the scatter - hide tooltip
+                if self._tooltip_item:
+                    self._tooltip_item.setVisible(False)
+                self._hover_scatter = None
+                return
+
+            # Get associated event data
+            event_data = self._clickable_items.get(id(scatter_item))
+            if event_data is None:
+                return
+
+            # Get pattern label
+            if hasattr(self, '_renderer_ref') and self._renderer_ref:
+                label = self._renderer_ref._pattern_label(event_data)
+            else:
+                label = getattr(event_data, 'name', 'Pattern')
+
+            # Create or update tooltip
+            if self._tooltip_item is None:
+                import pyqtgraph as pg
+                from PySide6.QtGui import QColor
+                self._tooltip_item = pg.TextItem(
+                    text=label,
+                    anchor=(0, 1),  # Top-left anchor
+                    color=QColor('white')
+                )
+                self._tooltip_item.setZValue(1000)  # Very high z-order
+                self.plot_item.addItem(self._tooltip_item)
+                self._pattern_items.append(self._tooltip_item)
+            else:
+                self._tooltip_item.setText(label)
+
+            # Position tooltip near the hovered point
+            point = points[0]
+            self._tooltip_item.setPos(point.pos().x(), point.pos().y())
+            self._tooltip_item.setVisible(True)
+            self._hover_scatter = scatter_item
+
+        except Exception as e:
+            logger.debug(f"Error handling scatter hover: {e}")
+
     def clear_pattern_overlays(self):
         """Remove all pattern overlay items"""
         for item in self._pattern_items:
@@ -286,6 +375,9 @@ class PyQtGraphAxesWrapper:
         self.texts.clear()
         self.collections.clear()
         self.patches.clear()
+        self._clickable_items.clear()
+        self._tooltip_item = None
+        self._hover_scatter = None
 
     # Fake figure/canvas for compatibility
     @property
@@ -540,6 +632,8 @@ class PatternOverlayRenderer:
             # Store the PyQtGraph plot wrapped in a compatible object
             if not hasattr(self, '_pyqtgraph_wrapper'):
                 self._pyqtgraph_wrapper = PyQtGraphAxesWrapper(pyqt_plot)
+                # Store renderer reference for mouse event handling
+                self._pyqtgraph_wrapper._renderer_ref = self
             self.ax = self._pyqtgraph_wrapper
             return self.ax
 
@@ -758,6 +852,15 @@ class PatternOverlayRenderer:
         self._badges.extend([ln, txt])
         self._artist_map[ln] = event_obj
         self._artist_map[txt] = event_obj
+
+        # Register scatter data for PyQtGraph click/hover handling
+        if hasattr(ax, 'register_scatter_data') and hasattr(ax, '_pattern_items'):
+            # Find the last added scatter item (it will be the last item in _pattern_items)
+            for item in reversed(ax._pattern_items):
+                # Check if it's a ScatterPlotItem by checking for sigClicked signal
+                if hasattr(item, 'sigClicked'):
+                    ax.register_scatter_data(item, event_obj)
+                    break
 
     def _draw_target_arrow(self, x: float, y: float, direction: str, e: object) -> None:
         target = getattr(e, "target_price", None)
