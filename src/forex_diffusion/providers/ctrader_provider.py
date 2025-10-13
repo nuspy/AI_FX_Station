@@ -563,7 +563,17 @@ class CTraderProvider(BaseProvider):
 
             response = await self._send_and_wait(request, Messages.ProtoOAGetTrendbarsRes)
 
-            if not response or not response.trendbar:
+            # Debug: check response content
+            if not response:
+                logger.warning(f"[{self.name}] No response received for {symbol} {timeframe} {start_ts_ms}-{end_ts_ms}")
+                return None
+
+            if not hasattr(response, 'trendbar'):
+                logger.warning(f"[{self.name}] Response has no 'trendbar' field for {symbol} {timeframe}")
+                return None
+
+            if not response.trendbar:
+                logger.warning(f"[{self.name}] Empty trendbar list for {symbol} {timeframe} {start_ts_ms}-{end_ts_ms} (range: {start_ts_ms / 1000} to {end_ts_ms / 1000} UTC)")
                 return None
 
             # Parse trendbars into DataFrame
