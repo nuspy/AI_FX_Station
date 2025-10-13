@@ -269,8 +269,30 @@ class PositionSizingEngine:
     def calculate_position_size(self, account_balance: float, entry_price: float,
                               stop_loss_price: float, confidence: float = 0.6,
                               win_rate: float = 0.5, avg_win: float = 1.0,
-                              avg_loss: float = -1.0) -> PositionSizingResult:
-        """Calculate optimal position size using multiple methodologies"""
+                              avg_loss: float = -1.0,
+                              dom_metrics: Optional[Dict[str, Any]] = None) -> PositionSizingResult:
+        """
+        Calculate optimal position size using multiple methodologies with DOM awareness.
+
+        Args:
+            account_balance: Available capital
+            entry_price: Entry price for position
+            stop_loss_price: Stop loss price
+            confidence: Trading signal confidence (0-1)
+            win_rate: Historical win rate (0-1)
+            avg_win: Average winning trade size
+            avg_loss: Average losing trade size
+            dom_metrics: Optional DOM data with keys:
+                - spread: Current spread
+                - bid_depth: Available bid volume
+                - ask_depth: Available ask volume
+                - imbalance: Order book imbalance (-1 to +1)
+                - bids: List of [price, volume] pairs
+                - asks: List of [price, volume] pairs
+
+        Returns:
+            PositionSizingResult with sizing recommendation
+        """
 
         # Ensure we have valid inputs
         if entry_price <= 0 or account_balance <= 0:
@@ -312,13 +334,47 @@ class PositionSizingEngine:
         volatility_multiplier = max(0.5, min(2.0, 1 / (confidence if confidence > 0 else 0.5)))
         volatility_adjusted_size = risk_based_size / volatility_multiplier
 
-        # Select recommended size (most conservative)
+        # DOM-BASED CONSTRAINTS
+        liquidity_size = float('inf')  # No limit if DOM not available
+        spread_penalty = 1.0
+        dom_reasoning_parts = []
+
+        if dom_metrics:
+            # 1. Liquidity Size Constraint
+            bid_depth = dom_metrics.get('bid_depth', 0)
+            ask_depth = dom_metrics.get('ask_depth', 0)
+            available_depth = bid_depth + ask_depth
+
+            if available_depth > 0:
+                # Max 50% of available depth
+                liquidity_size = available_depth * 0.5
+                dom_reasoning_parts.append(f"Liquidity constraint: {liquidity_size:.2f} (50% of depth {available_depth:.2f})")
+
+            # 2. Spread Cost Adjustment
+            spread = dom_metrics.get('spread', 0)
+            if spread > 0:
+                spread_bps = (spread / entry_price) * 10000  # Convert to basis points
+
+                if spread_bps > 10:
+                    spread_penalty = 0.6
+                    dom_reasoning_parts.append(f"Spread penalty 0.6x (very wide: {spread_bps:.1f} bps)")
+                elif spread_bps > 3:
+                    spread_penalty = 0.8
+                    dom_reasoning_parts.append(f"Spread penalty 0.8x (wide: {spread_bps:.1f} bps)")
+                else:
+                    dom_reasoning_parts.append(f"Spread normal ({spread_bps:.1f} bps)")
+
+        # Select recommended size (most conservative including liquidity)
         recommended_size = min(
             risk_based_size,
             kelly_size,
             fixed_fractional_size,
-            volatility_adjusted_size
+            volatility_adjusted_size,
+            liquidity_size
         )
+
+        # Apply spread penalty
+        recommended_size *= spread_penalty
 
         # Final validation
         max_allowed_size = (account_balance * self.max_position_size) / entry_price if entry_price > 0 else 0
@@ -336,8 +392,14 @@ class PositionSizingEngine:
             sizing_method = "fixed_fractional"
         elif final_size == volatility_adjusted_size:
             sizing_method = "volatility_adjusted"
+        elif final_size == liquidity_size * spread_penalty:
+            sizing_method = "liquidity_constrained"
 
         reasoning = f"Using {sizing_method} methodology. Risk per share: {risk_per_share:.4f}, Kelly fraction: {kelly_fraction:.3f}"
+
+        # Add DOM reasoning if available
+        if dom_reasoning_parts:
+            reasoning += ". DOM: " + "; ".join(dom_reasoning_parts)
 
         return PositionSizingResult(
             position_size=final_size,
