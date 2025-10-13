@@ -471,7 +471,7 @@ class TrainingOrchestrator:
         Returns:
             OHLC DataFrame
         """
-        from forex_diffusion.training.train_sklearn import fetch_candles_from_db
+        from forex_diffusion.data.data_loader import fetch_candles_from_db
 
         ohlc_data = fetch_candles_from_db(
             symbol=config['symbol'],
