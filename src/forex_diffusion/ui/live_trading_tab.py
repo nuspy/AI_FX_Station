@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QTextEdit,
-    QCheckBox, QTabWidget
+    QCheckBox, QTabWidget, QDialog
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
@@ -39,11 +39,13 @@ class LiveTradingTab(QWidget):
     - Risk management controls
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, dom_service=None, execution_optimizer=None):
         super().__init__(parent)
         self.broker: Optional[CTraderBroker] = None
         self.is_connected = False
         self.positions_cache: Dict[str, Position] = {}
+        self.dom_service = dom_service
+        self.execution_optimizer = execution_optimizer
 
         self._init_ui()
         self._setup_refresh_timer()
@@ -323,14 +325,42 @@ class LiveTradingTab(QWidget):
             self._append_log(f"ERROR: {e}")
 
     async def _place_market_order(self):
-        """Place market order"""
+        """Place market order with pre-trade validation"""
         if not self.broker:
             return
 
         try:
             symbol = self.symbol_combo.currentText()
-            side = OrderSide.BUY if self.side_combo.currentText() == "BUY" else OrderSide.SELL
+            side_text = self.side_combo.currentText()
+            side = OrderSide.BUY if side_text == "BUY" else OrderSide.SELL
             volume = self.volume_spin.value()
+
+            # PRE-TRADE VALIDATION
+            # Show validation dialog before executing order
+            from .pre_trade_validation_dialog import PreTradeValidationDialog
+
+            validation_dialog = PreTradeValidationDialog(
+                parent=self,
+                symbol=symbol.replace("/", ""),  # Convert EUR/USD to EURUSD
+                side=side_text,
+                volume=volume,
+                dom_service=self.dom_service,
+                execution_optimizer=self.execution_optimizer
+            )
+
+            # Show dialog and wait for user decision
+            result = validation_dialog.exec()
+
+            if result != QDialog.Accepted:
+                self._append_log(f"Order cancelled by user after validation check")
+                return
+
+            # Log validation results
+            if validation_dialog.validation_results:
+                risks = ", ".join(
+                    f"{k}={v}" for k, v in validation_dialog.validation_results.items()
+                )
+                self._append_log(f"Pre-trade validation: {risks}")
 
             # Calculate SL/TP prices (simplified - should use current market price)
             stop_loss = None

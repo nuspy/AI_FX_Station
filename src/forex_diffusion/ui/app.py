@@ -176,7 +176,16 @@ def setup_ui(
     )
 
     # Live Trading will be a separate window, stored as attribute
-    live_trading_tab = LiveTradingTab(main_window)
+    # Initialize SmartExecutionOptimizer for pre-trade validation
+    from ..execution.smart_execution import SmartExecutionOptimizer
+    execution_optimizer = SmartExecutionOptimizer()
+    result["execution_optimizer"] = execution_optimizer
+
+    live_trading_tab = LiveTradingTab(
+        main_window,
+        dom_service=dom_aggregator,
+        execution_optimizer=execution_optimizer
+    )
 
     # --- Create Trading Intelligence tab with nested tabs (level_2) ---
     trading_intelligence_container = QTabWidget()
