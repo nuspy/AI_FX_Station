@@ -80,7 +80,8 @@ class TradingConfig:
     position_sizing_method: str = 'kelly'  # Position sizing: fixed_fractional, kelly, optimal_f, volatility_adjusted
     kelly_fraction: float = 0.25  # Kelly fraction (0.25 = quarter Kelly)
     use_dom_data: bool = True  # Use real-time DOM data for spread and liquidity
-    db_engine: Optional[Any] = None  # Database engine for DOM service
+    use_sentiment_data: bool = True  # Use sentiment for signal filtering and position sizing
+    db_engine: Optional[Any] = None  # Database engine for DOM and sentiment services
 
 
 class AutomatedTradingEngine:
@@ -186,6 +187,21 @@ class AutomatedTradingEngine:
             except Exception as e:
                 logger.warning(f"Could not initialize DOM Service: {e}. Using statistical spreads.")
 
+        # Sentiment Aggregator Service
+        self.sentiment_service: Optional[Any] = None
+        if config.use_sentiment_data and config.db_engine:
+            try:
+                from ..services.sentiment_aggregator import SentimentAggregatorService
+                self.sentiment_service = SentimentAggregatorService(
+                    engine=config.db_engine,
+                    symbols=config.symbols,
+                    interval_seconds=30
+                )
+                self.sentiment_service.start()
+                logger.info("✅ Sentiment Aggregator Service initialized and started")
+            except Exception as e:
+                logger.warning(f"Could not initialize Sentiment Service: {e}. Trading without sentiment.")
+
         # Threading
         self.trading_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
@@ -247,6 +263,14 @@ class AutomatedTradingEngine:
 
         if self.trading_thread:
             self.trading_thread.join(timeout=10)
+
+        # Stop sentiment service
+        if self.sentiment_service:
+            try:
+                self.sentiment_service.stop()
+                logger.info("✅ Sentiment service stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping sentiment service: {e}")
 
         # Close all positions
         self._close_all_positions("Engine stopped")
@@ -432,12 +456,15 @@ class AutomatedTradingEngine:
         market_data: Dict[str, pd.DataFrame]
     ) -> tuple[int, float]:
         """
-        Get trading signal from models.
+        Get trading signal from models with sentiment filtering.
 
         Returns:
             (signal, confidence) where signal is -1/0/+1
         """
-        # Use multi-timeframe ensemble if available
+        # Get base signal from models
+        signal = 0
+        confidence = 0.0
+
         if self.mtf_ensemble and self.config.use_multi_timeframe:
             # Prepare data for multiple timeframes
             data_by_tf = {}
@@ -446,10 +473,53 @@ class AutomatedTradingEngine:
                 data_by_tf[tf] = market_data[symbol]
 
             result = self.mtf_ensemble.predict_ensemble(data_by_tf)
-            return result['final_signal'], result['confidence']
+            signal = result['final_signal']
+            confidence = result['confidence']
+        else:
+            # Fallback: no prediction available
+            return 0, 0.0
 
-        # Fallback: simple prediction
-        return 0, 0.0
+        # Apply sentiment filtering (contrarian strategy)
+        if self.sentiment_service:
+            try:
+                sentiment_metrics = self.sentiment_service.get_latest_sentiment_metrics(symbol)
+                if sentiment_metrics:
+                    contrarian_signal = sentiment_metrics.get('contrarian_signal', 0.0)
+
+                    # Contrarian strategy: extreme positioning = fade the crowd
+                    if contrarian_signal > 0 and signal < 0:
+                        # Crowd is short (bearish), our signal is bearish too = reduce confidence
+                        confidence *= 0.7
+                        logger.info(
+                            f"🔄 Sentiment conflict for {symbol}: crowd bearish, signal bearish, "
+                            f"reduced confidence to {confidence:.2f}"
+                        )
+                    elif contrarian_signal < 0 and signal > 0:
+                        # Crowd is long (bullish), our signal is bullish too = reduce confidence
+                        confidence *= 0.7
+                        logger.info(
+                            f"🔄 Sentiment conflict for {symbol}: crowd bullish, signal bullish, "
+                            f"reduced confidence to {confidence:.2f}"
+                        )
+                    elif contrarian_signal > 0 and signal > 0:
+                        # Crowd is short, our signal is bullish = boost confidence (contrarian)
+                        confidence *= 1.3
+                        logger.info(
+                            f"✅ Sentiment alignment for {symbol}: contrarian bullish, "
+                            f"boosted confidence to {confidence:.2f}"
+                        )
+                    elif contrarian_signal < 0 and signal < 0:
+                        # Crowd is long, our signal is bearish = boost confidence (contrarian)
+                        confidence *= 1.3
+                        logger.info(
+                            f"✅ Sentiment alignment for {symbol}: contrarian bearish, "
+                            f"boosted confidence to {confidence:.2f}"
+                        )
+
+            except Exception as e:
+                logger.debug(f"Could not apply sentiment filtering for {symbol}: {e}")
+
+        return signal, confidence
 
     def _detect_regime(self, data: pd.DataFrame) -> Optional[str]:
         """Detect current market regime."""
@@ -471,7 +541,7 @@ class AutomatedTradingEngine:
         regime: Optional[str]
     ) -> float:
         """
-        Calculate optimal position size with liquidity constraints.
+        Calculate optimal position size with multiple constraints.
 
         Implements multiple sizing constraints:
         - Risk-based sizing (Kelly, fixed fractional)
@@ -479,6 +549,7 @@ class AutomatedTradingEngine:
         - Liquidity constraints (from DOM)
         - Order flow alignment
         - Spread cost penalty
+        - Sentiment-based adjustments (contrarian strategy)
         """
         # Map regime
         regime_map = {
@@ -590,6 +661,55 @@ class AutomatedTradingEngine:
 
             except Exception as e:
                 logger.debug(f"Could not apply DOM-based position sizing for {symbol}: {e}")
+
+        # 4. SENTIMENT ADJUSTMENT
+        if self.sentiment_service:
+            try:
+                sentiment_metrics = self.sentiment_service.get_latest_sentiment_metrics(symbol)
+                if sentiment_metrics:
+                    contrarian_signal = sentiment_metrics.get('contrarian_signal', 0.0)
+                    sentiment_confidence = sentiment_metrics.get('confidence', 0.0)
+
+                    # Apply sentiment-based sizing adjustment (contrarian strategy)
+                    sentiment_adjustment = 1.0
+
+                    # Strong sentiment (confidence > 0.6)
+                    if sentiment_confidence > 0.6:
+                        if (contrarian_signal > 0 and signal > 0) or (contrarian_signal < 0 and signal < 0):
+                            # Sentiment agrees with signal = boost size
+                            sentiment_adjustment = 1.2
+                            logger.info(
+                                f"💪 Position size boosted 1.2x due to strong sentiment alignment "
+                                f"(confidence={sentiment_confidence:.2f})"
+                            )
+                        elif (contrarian_signal > 0 and signal < 0) or (contrarian_signal < 0 and signal > 0):
+                            # Sentiment conflicts with signal = reduce size
+                            sentiment_adjustment = 0.8
+                            logger.info(
+                                f"⚠️  Position size reduced 0.8x due to sentiment conflict "
+                                f"(confidence={sentiment_confidence:.2f})"
+                            )
+                    # Moderate sentiment (0.4 < confidence <= 0.6)
+                    elif sentiment_confidence > 0.4:
+                        if (contrarian_signal > 0 and signal > 0) or (contrarian_signal < 0 and signal < 0):
+                            # Moderate agreement = slight boost
+                            sentiment_adjustment = 1.1
+                            logger.info(
+                                f"📊 Position size boosted 1.1x due to moderate sentiment alignment "
+                                f"(confidence={sentiment_confidence:.2f})"
+                            )
+                        elif (contrarian_signal > 0 and signal < 0) or (contrarian_signal < 0 and signal > 0):
+                            # Moderate conflict = slight reduction
+                            sentiment_adjustment = 0.9
+                            logger.info(
+                                f"📊 Position size reduced 0.9x due to moderate sentiment conflict "
+                                f"(confidence={sentiment_confidence:.2f})"
+                            )
+
+                    final_size *= sentiment_adjustment
+
+            except Exception as e:
+                logger.debug(f"Could not apply sentiment-based position sizing for {symbol}: {e}")
 
         # Ensure final size is positive and reasonable
         if final_size < 0:

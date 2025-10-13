@@ -193,6 +193,14 @@ class UIBuilderMixin:
         )
         right_splitter.addWidget(self.order_flow_panel)
 
+        # Add Sentiment Panel below Order Flow Panel
+        from ..sentiment_panel import SentimentPanel
+        self.sentiment_panel = SentimentPanel(
+            parent=self,
+            sentiment_service=getattr(self, 'sentiment_service', None)
+        )
+        right_splitter.addWidget(self.sentiment_panel)
+
         # Minimize splitter handle width
         right_splitter.setHandleWidth(1)
 
