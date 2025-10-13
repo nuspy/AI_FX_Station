@@ -7,6 +7,8 @@ ISSUE-001b: Consolidates _indicators() function that was duplicated across:
 - features/incremental_updater.py (imported)
 
 Provides multi-timeframe indicator computation with caching and efficient data fetching.
+
+HIGH-002: All feature names follow lowercase_underscore convention.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from typing import Dict, Any, List
 import pandas as pd
 import numpy as np
 from loguru import logger
+from .feature_name_utils import standardize_dataframe_columns
 
 # Import TA library if available
 try:
@@ -259,7 +262,10 @@ def compute_indicators(
                 .rename(columns={"ts_utc_x": "ts_utc"})
             )
             frames.append(merged.drop(columns=["ts_utc"], errors="ignore"))
-    return pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
+    # HIGH-002: Standardize all feature names to lowercase_underscore
+    result = pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
+    result = standardize_dataframe_columns(result, inplace=False)
+    return result
 
 
 def _resample(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
