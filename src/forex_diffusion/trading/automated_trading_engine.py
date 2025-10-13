@@ -470,7 +470,16 @@ class AutomatedTradingEngine:
         confidence: float,
         regime: Optional[str]
     ) -> float:
-        """Calculate optimal position size."""
+        """
+        Calculate optimal position size with liquidity constraints.
+
+        Implements multiple sizing constraints:
+        - Risk-based sizing (Kelly, fixed fractional)
+        - Regime adjustments
+        - Liquidity constraints (from DOM)
+        - Order flow alignment
+        - Spread cost penalty
+        """
         # Map regime
         regime_map = {
             'trending_up': MarketRegime.TRENDING_UP,
@@ -484,7 +493,7 @@ class AutomatedTradingEngine:
         stop_distance = price * 0.02
         stop_price = price - stop_distance if signal > 0 else price + stop_distance
 
-        # Calculate size
+        # Calculate base size from existing position sizer
         sizing = self.position_sizer.calculate_position_size(
             account_balance=self.account_balance,
             entry_price=price,
@@ -493,7 +502,108 @@ class AutomatedTradingEngine:
             pattern_confidence=confidence
         )
 
-        return sizing['position_size']
+        base_size = sizing['position_size']
+        final_size = base_size
+
+        # Apply liquidity constraints if DOM data available
+        if self.dom_service:
+            try:
+                # Get DOM metrics
+                dom_metrics = self.dom_service.get_latest_dom_metrics(symbol)
+                if dom_metrics:
+                    # 1. LIQUIDITY CONSTRAINT
+                    # Get full DOM snapshot for depth calculation
+                    from sqlalchemy import text
+                    with self.dom_service.engine.connect() as conn:
+                        query = text(
+                            "SELECT bids, asks FROM market_depth "
+                            "WHERE symbol = :symbol "
+                            "ORDER BY ts_utc DESC LIMIT 1"
+                        )
+                        row = conn.execute(query, {"symbol": symbol}).fetchone()
+
+                        if row:
+                            import json
+                            bids = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                            asks = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+
+                            # Calculate total depth (top 20 levels)
+                            max_levels = min(20, len(bids), len(asks))
+                            bid_depth = sum(vol for _, vol in bids[:max_levels]) if bids else 0.0
+                            ask_depth = sum(vol for _, vol in asks[:max_levels]) if asks else 0.0
+                            total_depth = bid_depth + ask_depth
+
+                            if total_depth > 0:
+                                # Maximum 50% of available depth
+                                max_liquidity_size = total_depth * 0.5
+
+                                if final_size > max_liquidity_size:
+                                    logger.warning(
+                                        f"💧 Position size reduced from {final_size:.2f} to {max_liquidity_size:.2f} "
+                                        f"due to liquidity constraint for {symbol} (depth={total_depth:.2f})"
+                                    )
+                                    final_size = max_liquidity_size
+
+                            # 2. ORDER FLOW ADJUSTMENT
+                            imbalance = dom_metrics.get('imbalance', 0.0)
+                            if imbalance != 0:
+                                # Calculate flow alignment
+                                # Long + strong bids (>0.3): favorable, boost 1.2x
+                                # Long + strong asks (<-0.3): unfavorable, reduce 0.7x
+                                # Short + strong asks (<-0.3): favorable, boost 1.2x
+                                # Short + strong bids (>0.3): unfavorable, reduce 0.7x
+
+                                flow_adjustment = 1.0
+
+                                if signal > 0:  # Long
+                                    if imbalance > 0.3:
+                                        flow_adjustment = 1.2
+                                        logger.info(f"📈 Position size boosted 1.2x due to favorable order flow (bid-heavy: {imbalance:.2f})")
+                                    elif imbalance < -0.3:
+                                        flow_adjustment = 0.7
+                                        logger.info(f"📉 Position size reduced 0.7x due to unfavorable order flow (ask-heavy: {imbalance:.2f})")
+                                else:  # Short
+                                    if imbalance < -0.3:
+                                        flow_adjustment = 1.2
+                                        logger.info(f"📈 Position size boosted 1.2x due to favorable order flow (ask-heavy: {imbalance:.2f})")
+                                    elif imbalance > 0.3:
+                                        flow_adjustment = 0.7
+                                        logger.info(f"📉 Position size reduced 0.7x due to unfavorable order flow (bid-heavy: {imbalance:.2f})")
+
+                                final_size *= flow_adjustment
+
+                            # 3. SPREAD COST PENALTY
+                            spread = dom_metrics.get('spread', 0.0)
+                            if spread > 0:
+                                # Convert spread to pips (assuming 4-decimal pairs)
+                                spread_pips = spread * 10000
+                                spread_penalty = 1.0
+
+                                if spread_pips > 3.0:  # Wide spread (>3 pips)
+                                    spread_penalty = 0.7
+                                    logger.warning(
+                                        f"📊 Position size reduced 0.7x due to wide spread "
+                                        f"({spread_pips:.1f} pips) for {symbol}"
+                                    )
+
+                                final_size *= spread_penalty
+
+            except Exception as e:
+                logger.debug(f"Could not apply DOM-based position sizing for {symbol}: {e}")
+
+        # Ensure final size is positive and reasonable
+        if final_size < 0:
+            final_size = 0.0
+
+        # Log final decision if size was adjusted
+        if abs(final_size - base_size) > 0.01:
+            adjustment_pct = ((final_size - base_size) / base_size * 100) if base_size > 0 else 0
+            logger.info(
+                f"✅ Final position size for {symbol}: {final_size:.2f} "
+                f"(base={base_size:.2f}, adjustment={adjustment_pct:+.1f}%)"
+            )
+
+        return final_size
 
     def _calculate_atr(self, data: pd.DataFrame, period: int = 14) -> float:
         """Calculate Average True Range."""
