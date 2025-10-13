@@ -105,6 +105,8 @@ class PatternConfidenceCalibrator:
 
         # Historical outcomes storage
         self.outcomes: List[PatternOutcome] = []
+        # Index for fast lookup: (pattern_key, direction, regime) -> List[PatternOutcome]
+        self.outcomes_index: Dict[Tuple[str, str, str], List[PatternOutcome]] = {}
 
         # Calibration models (per pattern, per regime)
         self.calibration_models: Dict[str, Dict[str, Any]] = {}
@@ -114,12 +116,19 @@ class PatternConfidenceCalibrator:
 
     def record_outcome(self, outcome: PatternOutcome) -> None:
         """
-        Record a pattern outcome for calibration.
+        Record a pattern outcome for calibration and update index.
 
         Args:
             outcome: PatternOutcome with detection and result info
         """
         self.outcomes.append(outcome)
+        
+        # Update index for O(1) lookup
+        key = (outcome.pattern_key, outcome.direction, outcome.regime or "any")
+        if key not in self.outcomes_index:
+            self.outcomes_index[key] = []
+        self.outcomes_index[key].append(outcome)
+        
         logger.debug(
             f"Recorded outcome for {outcome.pattern_key} {outcome.direction}: "
             f"{outcome.outcome.value}"
