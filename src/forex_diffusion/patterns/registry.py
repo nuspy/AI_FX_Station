@@ -16,7 +16,6 @@ from .hns import make_hns_detectors
 from .elliott_wave import make_elliott_wave_detectors
 from .harmonic_patterns import make_harmonic_pattern_detectors
 from .advanced_chart_patterns import make_advanced_chart_pattern_detectors
-#Pluto from .variants import make_param_variants
 
 class PatternRegistry:
     """
@@ -55,5 +54,4 @@ class PatternRegistry:
 
             # Advanced candlestick patterns
             out.extend(make_advanced_candle_detectors())
-        #pluto    out.extend(make_param_variants())
         return out
