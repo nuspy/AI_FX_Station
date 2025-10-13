@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QComboBox,
     QLineEdit, QPushButton, QLabel, QCheckBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, Slot
 from PySide6.QtGui import QTextCursor, QColor, QTextCharFormat
 from loguru import logger
 
@@ -68,6 +68,7 @@ class LogWidget(QWidget):
         from PySide6.QtCore import QMetaObject, Qt as QtCore
         QMetaObject.invokeMethod(self, "_init_timer", QtCore.ConnectionType.QueuedConnection)
 
+    @Slot()
     def _init_timer(self):
         """Initialize update timer on GUI thread."""
         if self._update_timer is None:
