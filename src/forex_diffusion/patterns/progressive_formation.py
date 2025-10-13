@@ -598,7 +598,7 @@ class ProgressivePatternDetector:
                 )
 
                 if pattern_id not in self.pattern_history:
-                    self.pattern_history[pattern_id] = []
+                    self.pattern_history[pattern_id] = deque(maxlen=self.max_history_per_pattern)
                 self.pattern_history[pattern_id].append(update)
 
             # Update pattern
