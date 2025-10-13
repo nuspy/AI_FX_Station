@@ -36,6 +36,9 @@ from .genetic_algorithm import GeneticAlgorithm, GAConfig
 # Database models
 from ...services.db_service import DBService
 
+# Parameter validator
+from ...patterns.parameter_validator import validate_parameters
+
 @dataclass
 class OptimizationConfig:
     """Configuration for optimization studies"""
@@ -601,7 +604,25 @@ class OptimizationEngine:
 
     def promote_parameters(self, study_id: int, regime_tag: Optional[str] = None,
                           reason: str = "Manual promotion") -> None:
-        """Promote best parameters to production configuration."""
+        """Promote best parameters to production configuration with validation."""
+        # Get parameters before promotion
+        study = self.task_manager.get_study(study_id)
+        if not study:
+            logger.error(f"Study {study_id} not found")
+            return
+        
+        best_params = study.get('best_parameters', {})
+        pattern_key = study.get('pattern_key', 'unknown')
+        
+        # Validate parameters before promotion
+        is_valid, error = validate_parameters(pattern_key, best_params)
+        if not is_valid:
+            logger.error(f"Parameter validation failed for study {study_id}: {error}")
+            raise ValueError(f"Invalid parameters: {error}")
+        
+        logger.info(f"Parameters validated successfully for study {study_id}")
+        
+        # Proceed with promotion
         self.task_manager.promote_best_parameters(study_id, regime_tag, reason)
         logger.info(f"Parameters promoted for study {study_id}")
 
