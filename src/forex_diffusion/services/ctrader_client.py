@@ -216,6 +216,12 @@ class CTraderClient:
         """
         Query cTrader for tick data (both BID and ASK).
 
+        ⚠️ DEPRECATED: This method uses REST API for historical tick data.
+        DO NOT USE for historical data - use get_candles() instead.
+        For real-time data, use WebSocket stream_quotes() method in CTraderProvider.
+
+        This method should ONLY be used if explicitly required for legacy compatibility.
+
         Args:
             symbol: Symbol like "EUR/USD"
             start_date: Start date in YYYY-MM-DD format
@@ -228,6 +234,10 @@ class CTraderClient:
             - ask: ASK price for display in GUI
             - price: Mid price for sampling/analysis
         """
+        logger.warning(
+            f"[{self.__class__.__name__}] get_ticks() called for historical data - "
+            "this is DEPRECATED. Use get_candles() for historical data or WebSocket for realtime."
+        )
         self._ensure_initialized()
 
         try:

@@ -406,7 +406,8 @@ class MarketDataService:
         # Process ONLY the requested timeframe (no cascading to other TFs)
         for tf in tfs_to_process:
             try:
-                # Special handling for 1m: use get_ticks API
+                # NOTE: Use get_candles() for ALL historical data (including 1m)
+                # get_ticks() is ONLY for WebSocket realtime data
                 if tf == "1m":
                     missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
                     for (s_ms, e_ms) in missing_ranges:
@@ -418,8 +419,9 @@ class MarketDataService:
                         for (sub_s, sub_e) in subranges:
                             start_date = sub_s.date().isoformat()
                             end_date = sub_e.date().isoformat()
-                            # PlutoTouch logger.info("MarketData:backfill_symbol_timeframe Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
-                            df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
+                            logger.info("Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
+                            # Use get_candles() with 1min resample for historical data
+                            df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq="1min")
                             if df is not None and not df.empty:
                                 try:
                                     df = df.dropna(subset=["ts_utc"]).copy()
@@ -475,9 +477,9 @@ class MarketDataService:
 
     def _ensure_ticks_then_aggregate(self, symbol: str, start_ms: int, end_ms: int):
         """
-        Download ticks (fallback to 1min) for date ranges missing and upsert them as 1m candles.
-        The aggregator (existing elsewhere) may produce other TFs from ticks in realtime, but for historic backfill
-        we upsert the 1m candles directly so higher TFs can be resampled or fetched separately.
+        Download 1m candles for date ranges missing and upsert them as 1m candles.
+        Note: get_ticks() is ONLY for WebSocket realtime data.
+        For historical data, always use get_candles() with resample_freq="1min".
         """
         # Determine missing 1m candle ranges
         tf = "1m"
@@ -504,9 +506,10 @@ class MarketDataService:
                 start_date = sub_s.date().isoformat()
                 end_date = sub_e.date().isoformat()
                 logger.info("MarketData:_ensure_ticks_then_aggregate Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
-                df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
+                # Use get_candles() with 1min resample for historical data
+                df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq="1min")
                 if df is None or df.empty:
-                    logger.info("No tick/1m data returned for {} {}-{}", symbol, start_date, end_date)
+                    logger.info("No 1m data returned for {} {}-{}", symbol, start_date, end_date)
                     continue
                 # Upsert as 1m timeframe
                 report = data_io.upsert_candles(self.engine, df, symbol, "1m")
