@@ -161,34 +161,59 @@ class CTraderProvider(BaseProvider):
         Connect using application credentials (client_id + client_secret).
         No access_token required for historical data access.
         """
-        # Create cTrader client
-        self.client = Client(self.host, self.port, TcpProtocol)
+        try:
+            # Create cTrader client
+            self.client = Client(self.host, self.port, TcpProtocol)
 
-        # Setup message handlers
-        self.client.setMessageReceivedCallback(self._on_message)
-        self.client.setConnectedCallback(self._on_connected)
-        self.client.setDisconnectedCallback(self._on_disconnected)
+            # Setup message handlers
+            self.client.setMessageReceivedCallback(self._on_message)
+            self.client.setConnectedCallback(self._on_connected)
+            self.client.setDisconnectedCallback(self._on_disconnected)
 
-        # Connect via Twisted
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._connect_twisted)
+            # Connect via Twisted
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._connect_twisted)
 
-        # Start the client service (initiates connection)
-        logger.info(f"[{self.name}] Starting client service...")
-        self.client.startService()
+            # Start the client service (initiates connection)
+            logger.info(f"[{self.name}] Starting client service...")
+            self.client.startService()
 
-        # Wait for connection to establish
-        await asyncio.sleep(2.0)
+            # Wait for connection to establish
+            await asyncio.sleep(2.0)
 
-        # Authenticate with application credentials
-        await self._authenticate_application()
+            # Check if we actually connected
+            if not self.health.is_connected:
+                error_msg = (
+                    f"Failed to connect to cTrader server at {self.host}:{self.port}. "
+                    "Possible causes:\n"
+                    "1. No internet connection\n"
+                    "2. DNS lookup failed (cannot resolve hostname)\n"
+                    "3. Firewall blocking connection\n"
+                    "4. cTrader server is down"
+                )
+                logger.error(f"[{self.name}] {error_msg}")
+                raise RuntimeError(error_msg)
 
-        self.health.is_connected = True
-        self._running = True
-        self._start_time = datetime.now()
+            # Authenticate with application credentials
+            await self._authenticate_application()
 
-        logger.info(f"[{self.name}] Connected and authenticated")
-        return True
+            self.health.is_connected = True
+            self._running = True
+            self._start_time = datetime.now()
+
+            logger.info(f"[{self.name}] Connected and authenticated")
+            return True
+
+        except Exception as e:
+            # Check for DNS-specific errors
+            error_str = str(e).lower()
+            if 'dns' in error_str or 'lookup' in error_str or 'resolve' in error_str:
+                logger.error(
+                    f"[{self.name}] DNS lookup failed for {self.host}. "
+                    "Please check your internet connection and DNS settings."
+                )
+            self.health.is_connected = False
+            raise
 
     def _connect_twisted(self) -> None:
         """
@@ -207,6 +232,38 @@ class CTraderProvider(BaseProvider):
             logger.info(f"[{self.name}] Twisted reactor already running")
             return
 
+        # Install global error handler for unhandled Twisted errors
+        from twisted.python import log as twisted_log
+        def twisted_error_handler(event):
+            """Handle unhandled Twisted errors."""
+            if event.get('isError'):
+                failure = event.get('failure')
+                if failure:
+                    error_msg = str(failure.value) if hasattr(failure, 'value') else str(failure)
+                    error_type = type(failure.value).__name__ if hasattr(failure, 'value') else 'Unknown'
+
+                    # Check for DNS errors
+                    if 'DNS' in error_type or 'DNSLookupError' in error_type:
+                        logger.error(
+                            f"[{self.name}] DNS lookup failed for {self.host}. "
+                            "Cannot resolve hostname. Check internet connection and DNS settings."
+                        )
+                    # Check for connection errors
+                    elif 'Connection' in error_type:
+                        logger.error(
+                            f"[{self.name}] Connection failed to {self.host}:{self.port}. "
+                            f"Error: {error_msg}"
+                        )
+                    else:
+                        logger.error(
+                            f"[{self.name}] Unhandled Twisted error ({error_type}): {error_msg}"
+                        )
+
+                    # Mark as not connected
+                    self.health.is_connected = False
+
+        twisted_log.addObserver(twisted_error_handler)
+
         # Start reactor in a background thread (non-blocking)
         def run_reactor():
             try:
@@ -216,6 +273,7 @@ class CTraderProvider(BaseProvider):
                 logger.info(f"[{self.name}] Twisted reactor stopped")
             except Exception as e:
                 logger.error(f"[{self.name}] Twisted reactor error: {e}")
+                self.health.is_connected = False
 
         # Start reactor thread
         reactor_thread = threading.Thread(target=run_reactor, daemon=True, name="cTrader-Twisted-Reactor")
