@@ -1632,7 +1632,7 @@ class TrainingTab(QWidget):
                 ]
 
                 if self.vsa_check.isChecked():
-                    cmd.extend([
+                    args.extend([
                         '--use_vsa',
                         '--vsa_volume_ma', str(int(self.vsa_volume_ma.value())),
                         '--vsa_spread_ma', str(int(self.vsa_spread_ma.value())),
