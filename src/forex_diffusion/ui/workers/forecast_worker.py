@@ -234,7 +234,26 @@ class ForecastWorker(QRunnable):
         return norm
 
     def _fetch_recent_candles(self, engine, symbol: str, timeframe: str, n_bars: int = 512, end_ts: Optional[int] = None) -> pd.DataFrame:
+        """
+        OPT-003: Lazy loading for inference using centralized data loader.
+        Only fetches the minimum required bars instead of full history.
+        """
         try:
+            # Use centralized lazy loading function from data_loader
+            from ...data.data_loader import fetch_candles_from_db_recent
+
+            # If no end_ts specified, fetch recent bars directly
+            if end_ts is None:
+                df = fetch_candles_from_db_recent(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    n_bars=n_bars,
+                    engine_url=None  # Will use default MarketDataService
+                )
+                logger.debug(f"[OPT-003 Lazy Loading] Fetched {len(df)} recent bars for {symbol} {timeframe}")
+                return df
+
+            # For historical point (end_ts specified), use custom query
             from sqlalchemy import MetaData, select, text
             meta = MetaData()
             meta.reflect(bind=engine, only=["market_data_candles"])
@@ -242,21 +261,16 @@ class ForecastWorker(QRunnable):
             if tbl is None:
                 return pd.DataFrame()
             with engine.connect() as conn:
-                if end_ts is None:
-                    stmt = select(tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume)\
-                        .where(tbl.c.symbol == symbol).where(tbl.c.timeframe == timeframe)\
-                        .order_by(tbl.c.ts_utc.desc()).limit(n_bars)
-                    rows = conn.execute(stmt).fetchall()
-                else:
-                    q = text(
-                        "SELECT ts_utc, open, high, low, close, volume FROM market_data_candles "
-                        "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc <= :end_ts "
-                        "ORDER BY ts_utc DESC LIMIT :limit"
-                    )
-                    rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "end_ts": int(end_ts), "limit": int(n_bars)}).fetchall()
+                q = text(
+                    "SELECT ts_utc, open, high, low, close, volume FROM market_data_candles "
+                    "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc <= :end_ts "
+                    "ORDER BY ts_utc DESC LIMIT :limit"
+                )
+                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "end_ts": int(end_ts), "limit": int(n_bars)}).fetchall()
                 if not rows:
                     return pd.DataFrame()
                 df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
+                logger.debug(f"[OPT-003 Lazy Loading] Fetched {len(df)} bars up to ts={end_ts} for {symbol} {timeframe}")
                 return df.sort_values("ts_utc").reset_index(drop=True)
         except Exception as e:
             logger.exception("Failed to fetch recent candles: {}", e)
