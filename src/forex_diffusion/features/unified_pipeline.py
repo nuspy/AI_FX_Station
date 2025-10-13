@@ -15,10 +15,11 @@ import json
 from loguru import logger
 
 from .pipeline import (
-    log_returns, rolling_std, atr, bollinger, macd, rsi_wilder,
+    log_returns, rolling_std, bollinger, macd, rsi_wilder,
     donchian, hurst_feature, time_cyclic_and_session, Standardizer
 )
 from .indicators import ema, sma
+from .consolidated_indicators import atr
 
 
 class FeatureConfig:

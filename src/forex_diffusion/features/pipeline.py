@@ -346,15 +346,29 @@ def _wilder_ema(series: pd.Series, period: int) -> pd.Series:
 def atr(df: pd.DataFrame, n: int = 14, out_col: str = "atr") -> pd.DataFrame:
     """
     Average True Range (Wilder) computed causally.
+    
+    NOTE: This is now a wrapper around consolidated_indicators.atr()
+    for consistency. The consolidated version uses multiple backend
+    implementations (TA-Lib, TA, NumPy) with automatic fallback.
+    
+    Args:
+        df: DataFrame with OHLC data
+        n: ATR period (default 14)
+        out_col: Output column name (default "atr")
+        
+    Returns:
+        DataFrame with ATR column added
     """
-    tmp = df.copy()
-    prior_close = tmp["close"].shift(1)
-    tr1 = tmp["high"] - tmp["low"]
-    tr2 = (tmp["high"] - prior_close).abs()
-    tr3 = (tmp["low"] - prior_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    tmp[out_col] = _wilder_ema(tr.fillna(0.0), n)
-    return tmp
+    from .consolidated_indicators import atr as atr_calc
+    
+    # Call consolidated implementation (returns Series)
+    atr_series = atr_calc(df, n=n)
+    
+    # Convert to DataFrame format for backward compatibility
+    result = pd.DataFrame(index=df.index)
+    result[out_col] = atr_series
+    
+    return result
 
 
 def bollinger(df: pd.DataFrame, n: int = 20, k: float = 2.0, out_prefix: str = "bb") -> pd.DataFrame:
