@@ -1132,6 +1132,17 @@ def main():
     ap.add_argument("--rv_window", type=int, default=60)
     ap.add_argument("--min_feature_coverage", type=float, default=0.15)
     ap.add_argument("--indicator_tfs", type=str, default="{}")
+    ap.add_argument(
+        "--parallel_indicators",
+        action="store_true",
+        help="OPT-002: Use parallel indicator computation for 2-4x speedup"
+    )
+    ap.add_argument(
+        "--parallel_workers",
+        type=int,
+        default=4,
+        help="Number of parallel workers for indicator computation (default: 4)"
+    )
     ap.add_argument("--use_relative_ohlc", action="store_true", default=True)
     ap.add_argument("--use_temporal_features", action="store_true", default=True)
 
