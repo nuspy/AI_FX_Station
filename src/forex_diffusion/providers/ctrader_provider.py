@@ -446,9 +446,38 @@ class CTraderProvider(BaseProvider):
 
     def _protobuf_to_dict(self, message: Any) -> Dict[str, Any]:
         """Convert Protobuf message to dictionary."""
-        # Placeholder - implement based on message type
+        msg_type = type(message).__name__
+
+        # Handle ProtoOASpotEvent (real-time spot quotes)
+        if msg_type == "ProtoOASpotEvent":
+            try:
+                # Get symbol name from symbolId (reverse lookup)
+                symbol_id = message.symbolId
+                symbol_name = None
+
+                # Find symbol name from cache
+                if hasattr(self, '_symbol_cache'):
+                    for name, sid in self._symbol_cache.items():
+                        if sid == symbol_id:
+                            symbol_name = name
+                            break
+
+                # cTrader uses 100000 multiplier for prices
+                return {
+                    "type": "spot",
+                    "symbol": symbol_name or f"ID:{symbol_id}",
+                    "symbol_id": symbol_id,
+                    "bid": message.bid / 100000 if hasattr(message, 'bid') else None,
+                    "ask": message.ask / 100000 if hasattr(message, 'ask') else None,
+                    "timestamp": message.timestamp if hasattr(message, 'timestamp') else int(time.time() * 1000),
+                }
+            except Exception as e:
+                logger.error(f"[{self.name}] Error converting ProtoOASpotEvent: {e}")
+                return {"type": "error", "error": str(e)}
+
+        # Handle other message types (placeholder)
         return {
-            "type": type(message).__name__,
+            "type": msg_type,
             "timestamp": int(time.time() * 1000),
         }
 
@@ -767,7 +796,7 @@ class CTraderProvider(BaseProvider):
                 await self.connect()
 
             # Subscribe to symbols
-            # await self._subscribe_spots(symbols)
+            await self._subscribe_spots(symbols)
 
             # Stream from queue
             while self._running:
@@ -880,6 +909,50 @@ class CTraderProvider(BaseProvider):
             "1M": 14,  # MN1
         }
         return tf_map.get(timeframe)
+
+    async def _subscribe_spots(self, symbols: List[str]) -> bool:
+        """
+        Subscribe to real-time spot quotes for symbols via WebSocket.
+
+        Args:
+            symbols: List of symbol names (e.g., ["EUR/USD", "GBP/USD"])
+
+        Returns:
+            True if subscription successful, False otherwise
+        """
+        try:
+            # Get symbol IDs for all requested symbols
+            symbol_ids = []
+            for symbol in symbols:
+                try:
+                    symbol_id = await self._get_symbol_id(symbol)
+                    symbol_ids.append(symbol_id)
+                except Exception as e:
+                    logger.warning(f"[{self.name}] Could not get symbol ID for {symbol}: {e}")
+                    continue
+
+            if not symbol_ids:
+                logger.error(f"[{self.name}] No valid symbol IDs found for subscription")
+                return False
+
+            # Send subscription request
+            logger.info(f"[{self.name}] Subscribing to spot quotes for {len(symbol_ids)} symbols")
+            request = Messages.ProtoOASubscribeSpotsReq()
+            request.ctidTraderAccountId = self._account_id
+            request.symbolId.extend(symbol_ids)  # Add all symbol IDs to repeated field
+
+            response = await self._send_and_wait(request, Messages.ProtoOASubscribeSpotsRes)
+
+            if response:
+                logger.info(f"[{self.name}] Successfully subscribed to spot quotes for {symbols}")
+                return True
+            else:
+                logger.error(f"[{self.name}] Failed to subscribe to spot quotes")
+                return False
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Error subscribing to spot quotes: {e}")
+            return False
 
     async def _send_and_wait(self, request: Any, response_type: Any, timeout: float = 10.0) -> Optional[Any]:
         """Send Protobuf request to cTrader and wait for response with matching clientMsgId."""
