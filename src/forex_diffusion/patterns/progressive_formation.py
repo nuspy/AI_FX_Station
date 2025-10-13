@@ -347,9 +347,10 @@ class ProgressivePatternDetector:
                         extreme_points.append(extremes.iloc[i])
 
             if len(extreme_points) >= 2:
-                # Check similarity of last two extremes
+                # Check similarity of last two extremes (with division by zero protection)
                 last_two = extreme_points[-2:]
-                similarity = 1.0 - abs(last_two[0] - last_two[1]) / max(last_two[0], last_two[1])
+                denominator = max(abs(last_two[0]), abs(last_two[1]), 1e-10)
+                similarity = 1.0 - abs(last_two[0] - last_two[1]) / denominator
 
                 if similarity > 0.95:  # Very similar levels
                     return 0.9
