@@ -2029,7 +2029,7 @@ class PlotService(ChartServiceBase):
             return x_dt, y_vals, [], df
 
     def _draw_weekend_markers(self):
-        """Draw yellow dashed lines at weekend boundaries"""
+        """Draw yellow dashed lines at weekend boundaries (PyQtGraph version)"""
         try:
             if not hasattr(self, '_weekend_markers') or not hasattr(self, '_compressed_x_dt'):
                 return
@@ -2040,7 +2040,12 @@ class PlotService(ChartServiceBase):
             # Clear existing weekend lines
             for line in self._weekend_lines:
                 try:
-                    line.remove()
+                    if hasattr(self.ax, 'removeItem'):
+                        # PyQtGraph
+                        self.ax.removeItem(line)
+                    else:
+                        # matplotlib fallback
+                        line.remove()
                 except Exception:
                     pass
             self._weekend_lines = []
@@ -2048,13 +2053,37 @@ class PlotService(ChartServiceBase):
             # Draw new weekend markers
             for marker_pos in self._weekend_markers:
                 if marker_pos < len(self._compressed_x_dt):
-                    x_pos = self._compressed_x_dt.iloc[marker_pos]
+                    x_dt = self._compressed_x_dt.iloc[marker_pos]
+
+                    # Convert datetime to timestamp in seconds for PyQtGraph
                     try:
-                        line = self.ax.axvline(x=x_pos, color='gold', linestyle='--',
-                                             linewidth=1.0, alpha=0.7, zorder=5)
-                        self._weekend_lines.append(line)
+                        # PyQtGraph uses timestamp in seconds (or milliseconds depending on axis)
+                        x_timestamp = x_dt.timestamp()
+
+                        # Try PyQtGraph first (InfiniteLine)
+                        try:
+                            from PySide6.QtCore import Qt
+                            import pyqtgraph as pg
+
+                            line = pg.InfiniteLine(
+                                pos=x_timestamp,
+                                angle=90,  # Vertical line
+                                pen=pg.mkPen(color='gold', style=Qt.DashLine, width=1),
+                                movable=False
+                            )
+                            line.setZValue(5)  # Above candles but below overlays
+                            self.ax.addItem(line)
+                            self._weekend_lines.append(line)
+                            logger.debug(f"Drew weekend marker at timestamp {x_timestamp}")
+                        except Exception as e:
+                            # Fallback to matplotlib if PyQtGraph fails
+                            logger.debug(f"PyQtGraph weekend marker failed, trying matplotlib: {e}")
+                            line = self.ax.axvline(x=x_dt, color='gold', linestyle='--',
+                                                 linewidth=1.0, alpha=0.7, zorder=5)
+                            self._weekend_lines.append(line)
+
                     except Exception as e:
-                        logger.debug(f"Error drawing weekend marker: {e}")
+                        logger.debug(f"Error converting datetime to timestamp: {e}")
 
         except Exception as e:
             logger.debug(f"Error in _draw_weekend_markers: {e}")
