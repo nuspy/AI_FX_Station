@@ -45,11 +45,6 @@ from .....training.optimization.task_manager import TaskManager
 from .....training.optimization.parameter_space import ParameterSpace
 
 # Optional imports (try/except handled in code)
-try:
-    from asyncio_throttle import Throttler
-    HAS_THROTTLER = True
-except ImportError:
-    HAS_THROTTLER = False
 
 OHLC_SYNONYMS: Dict[str, str] = {
     'o': 'open', 'op': 'open', 'open': 'open', 'bidopen': 'open', 'askopen': 'open',
