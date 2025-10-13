@@ -162,7 +162,7 @@ def compute_single_indicator(
                 series = tmp["close"].astype(float)
                 roll = series.rolling(w)
 
-                def _h(x):
+                def _h(x: pd.Series) -> float:
                     vals = x.values
                     if len(vals) < 2:
                         return np.nan

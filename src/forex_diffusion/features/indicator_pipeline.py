@@ -85,6 +85,7 @@ def compute_indicators(
         base_delta = pd.Timedelta("1min")
 
     # OPTIMIZATION (OPT-001): Pre-fetch all timeframes needed (cache to avoid redundant DB queries)
+    # BUG-003 FIX: Cache is local-scope (recreated on each call), no cross-symbol contamination
     timeframe_cache: Dict[str, pd.DataFrame] = {base_tf: df.copy()}
 
     # Collect all unique timeframes needed
@@ -216,7 +217,7 @@ def compute_indicators(
                     series = tmp["close"].astype(float)
                     roll = series.rolling(w)
 
-                    def _h(x):
+                    def _h(x: pd.Series) -> float:
                         vals = x.values
                         if len(vals) < 2:
                             return np.nan
