@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 class ScanWorker(QObject):
     produced = Signal(list)  # List[PatternEvent]
+    error_threshold_exceeded = Signal(str, str)  # kind, error_message
 
     def __init__(self, parent: 'PatternsService', kind: str, interval_ms: int) -> None:
         super().__init__()
@@ -21,6 +22,11 @@ class ScanWorker(QObject):
         self._interval_ms = int(interval_ms)
         self._original_interval = int(interval_ms)  # Store original interval for dynamic adjustment
         self._enabled = False
+        
+        # Error tracking and recovery
+        self._error_count = 0
+        self._max_errors = 5
+        self._backoff_multiplier = 1.0
 
     @Slot()
     def start(self):
@@ -81,5 +87,27 @@ class ScanWorker(QObject):
             # Call the parent's _scan_once method from the worker thread
             evs = self._parent._scan_once(kind=self._kind) or []
             self.produced.emit(evs)
+            
+            # Reset error tracking on success
+            if self._error_count > 0:
+                logger.info(f"{self._kind} scan recovered after {self._error_count} errors")
+            self._error_count = 0
+            self._backoff_multiplier = 1.0
+            
         except Exception as e:
-            logger.debug(f"Error in scan worker tick ({self._kind}): {e}")
+            self._error_count += 1
+            logger.error(f"Error in scan worker tick ({self._kind}): {e}, count={self._error_count}/{self._max_errors}")
+            
+            if self._error_count >= self._max_errors:
+                # Stop worker after repeated failures
+                logger.critical(f"Stopping {self._kind} scan worker after {self._max_errors} consecutive errors")
+                self.stop()
+                # Emit signal to notify GUI
+                self.error_threshold_exceeded.emit(self._kind, str(e))
+            else:
+                # Exponential backoff
+                self._backoff_multiplier *= 1.5
+                new_interval = int(self._original_interval * self._backoff_multiplier)
+                if self._timer:
+                    self._timer.setInterval(min(new_interval, 300000))  # Max 5 min
+                    logger.warning(f"Increased {self._kind} interval to {new_interval}ms due to errors (backoff x{self._backoff_multiplier:.1f})")
