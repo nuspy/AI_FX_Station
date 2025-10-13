@@ -1,392 +1,268 @@
 """
-Realistic Transaction Cost Model
+Standardized Transaction Cost Model
 
-Models all trading costs to avoid overoptimistic backtest results:
-- Spread (bid-ask, time-varying)
-- Commission (fixed or percentage, tiered)
-- Slippage (volume and volatility dependent)
-- Market Impact (for large orders)
+Provides unified transaction cost calculation across all backtest engines.
+Fixes BUG-003 - inconsistent costs between engines.
 
-Reference: "Algorithmic Trading" by Ernest Chan
+Cost Components:
+- Spread (bid-ask difference)
+- Slippage (execution vs expected price)
+- Commission (broker fees)
+- Market impact (for large orders)
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
 from dataclasses import dataclass
-from datetime import datetime, time
+from typing import Dict, Optional
+
 import numpy as np
-import pandas as pd
 from loguru import logger
 
 
 @dataclass
-class TradeExecution:
-    """Execution details with costs"""
-    entry_price: float  # Intended price
-    execution_price: float  # Actual execution after costs
-    spread_cost: float  # Bid-ask spread cost
-    commission_cost: float  # Broker commission
-    slippage_cost: float  # Slippage due to volume/volatility
-    market_impact_cost: float  # Price impact of order
-    total_cost: float  # Sum of all costs
-    cost_bps: float  # Total cost in basis points
-
-
-class CostModel:
+class TransactionCostModel:
     """
-    Realistic transaction cost model for backtesting.
-
-    Ensures backtest results account for all real trading costs.
+    Standardized transaction costs for backtesting.
+    
+    All costs should be measured from real broker data.
+    Default values are conservative estimates for major forex pairs.
     """
+    # Spread (bid-ask, varies by volatility)
+    spread_pips_base: float = 1.0  # Base spread in pips (normal conditions)
+    spread_multiplier_volatile: float = 2.0  # Multiply in high volatility
+    
+    # Commission (fixed per broker)
+    commission_per_lot: float = 0.0  # Most forex brokers: zero commission
+    commission_pct: float = 0.0  # Alternative: % of trade value
+    
+    # Slippage (varies by order type and size)
+    slippage_pips_market: float = 0.5  # Market order slippage
+    slippage_pips_limit: float = 0.0  # Limit order (no slippage if filled)
+    slippage_multiplier_large: float = 1.5  # Multiply for large orders
+    
+    # Market impact (for very large orders)
+    market_impact_threshold_lots: float = 10.0  # Impact starts above this
+    market_impact_pips_per_lot: float = 0.1  # Additional cost per lot
+    
+    # Volatility threshold for spread widening
+    volatility_threshold_atr_multiple: float = 1.5
 
-    def __init__(
-        self,
-        # Spread parameters
-        base_spread_bps: float = 1.0,  # Base spread in basis points
-        offhours_spread_mult: float = 1.5,  # Spread multiplier outside trading hours
-        news_spread_mult: float = 2.0,  # Spread multiplier during news
 
-        # Commission parameters
-        commission_type: str = "percentage",  # "fixed" or "percentage"
-        commission_rate: float = 0.0002,  # 0.02% = 2 bps
-        commission_fixed: float = 0.0,  # Fixed cost per trade
-        commission_tiers: Optional[Dict[float, float]] = None,  # Volume tiers
-
-        # Slippage parameters
-        slippage_k: float = 0.1,  # Slippage coefficient
-        min_slippage_bps: float = 0.1,  # Minimum slippage
-        max_slippage_bps: float = 10.0,  # Maximum slippage cap
-
-        # Market impact parameters
-        impact_enabled: bool = True,
-        impact_coefficient: float = 0.5,  # Impact coefficient for square-root law
-        adv_window: int = 20,  # Average daily volume window
-    ):
-        """
-        Initialize cost model.
-
-        Args:
-            base_spread_bps: Base bid-ask spread in basis points
-            offhours_spread_mult: Spread multiplier for off-hours trading
-            news_spread_mult: Spread multiplier during high-impact news
-            commission_type: "fixed" or "percentage"
-            commission_rate: Commission as % of trade value
-            commission_fixed: Fixed commission per trade
-            commission_tiers: Optional volume-based tiers {volume: rate}
-            slippage_k: Slippage sensitivity coefficient
-            min_slippage_bps: Minimum slippage in bps
-            max_slippage_bps: Maximum slippage cap in bps
-            impact_enabled: Enable market impact modeling
-            impact_coefficient: Square-root law coefficient
-            adv_window: Window for average daily volume calculation
-        """
-        self.base_spread_bps = base_spread_bps
-        self.offhours_spread_mult = offhours_spread_mult
-        self.news_spread_mult = news_spread_mult
-
-        self.commission_type = commission_type
-        self.commission_rate = commission_rate
-        self.commission_fixed = commission_fixed
-        self.commission_tiers = commission_tiers or {}
-
-        self.slippage_k = slippage_k
-        self.min_slippage_bps = min_slippage_bps
-        self.max_slippage_bps = max_slippage_bps
-
-        self.impact_enabled = impact_enabled
-        self.impact_coefficient = impact_coefficient
-        self.adv_window = adv_window
-
-        # Cache for ADV calculation
-        self._adv_cache: Dict[str, float] = {}
-
-    def calculate_spread(
-        self,
-        price: float,
-        timestamp: datetime,
-        is_news_period: bool = False,
-    ) -> float:
-        """
-        Calculate bid-ask spread cost.
-
-        Args:
-            price: Current market price
-            timestamp: Execution timestamp
-            is_news_period: True if during high-impact news
-
-        Returns:
-            Spread cost in currency units
-        """
-        # Base spread in bps
-        spread_bps = self.base_spread_bps
-
-        # Adjust for off-hours (outside 8:00-17:00 UTC)
-        if timestamp.time() < time(8, 0) or timestamp.time() > time(17, 0):
-            spread_bps *= self.offhours_spread_mult
-
-        # Adjust for news events
-        if is_news_period:
-            spread_bps *= self.news_spread_mult
-
-        # Convert bps to currency
-        spread_cost = price * (spread_bps / 10000.0)
-
-        return spread_cost
-
-    def calculate_commission(
-        self,
-        trade_value: float,
-        cumulative_volume: float = 0.0,
-    ) -> float:
-        """
-        Calculate broker commission.
-
-        Args:
-            trade_value: Absolute value of trade (price * quantity)
-            cumulative_volume: Cumulative trading volume (for tiered pricing)
-
-        Returns:
-            Commission cost in currency units
-        """
-        if self.commission_type == "fixed":
-            return self.commission_fixed
-
-        # Check for tiered pricing
-        commission_rate = self.commission_rate
-        if self.commission_tiers:
-            for volume_threshold, tier_rate in sorted(self.commission_tiers.items()):
-                if cumulative_volume >= volume_threshold:
-                    commission_rate = tier_rate
-
-        return trade_value * commission_rate
-
-    def calculate_slippage(
-        self,
-        price: float,
-        order_size: float,
-        avg_volume: float,
-        volatility: float,
-    ) -> float:
-        """
-        Calculate slippage cost.
-
-        Slippage formula: slippage_bps = k * sqrt(order_size / avg_volume) * volatility
-
-        Args:
-            price: Execution price
-            order_size: Size of order (in currency units)
-            avg_volume: Average recent volume
-            volatility: Recent price volatility (e.g., ATR or stddev)
-
-        Returns:
-            Slippage cost in currency units
-        """
-        if avg_volume <= 0 or order_size <= 0:
-            slippage_bps = self.min_slippage_bps
-        else:
-            # Square-root scaling with order size
-            size_ratio = order_size / avg_volume
-            vol_factor = max(1.0, volatility)  # Normalize volatility
-
-            slippage_bps = self.slippage_k * np.sqrt(size_ratio) * vol_factor * 100
-
-        # Clamp to min/max
-        slippage_bps = np.clip(slippage_bps, self.min_slippage_bps, self.max_slippage_bps)
-
-        # Convert to currency
-        slippage_cost = price * (slippage_bps / 10000.0)
-
-        return slippage_cost
-
-    def calculate_market_impact(
-        self,
-        price: float,
-        order_size: float,
-        avg_daily_volume: float,
-    ) -> float:
-        """
-        Calculate market impact cost (permanent price movement).
-
-        Uses square-root law: impact ∝ sqrt(order_size / ADV)
-
-        Args:
-            price: Current market price
-            order_size: Size of order (in shares/lots)
-            avg_daily_volume: Average daily volume
-
-        Returns:
-            Market impact cost in currency units
-        """
-        if not self.impact_enabled or avg_daily_volume <= 0:
-            return 0.0
-
-        # Participation rate (what % of ADV is our order)
-        participation_rate = order_size / avg_daily_volume
-
-        # Square-root law
-        impact_bps = self.impact_coefficient * np.sqrt(participation_rate) * 10000
-
-        # Convert to currency
-        impact_cost = price * (impact_bps / 10000.0)
-
-        return impact_cost
-
+class TransactionCostCalculator:
+    """
+    Calculate realistic transaction costs for backtesting.
+    
+    Usage:
+        calculator = TransactionCostCalculator(model)
+        cost = calculator.calculate_total_cost(
+            order_type='market',
+            size_lots=2.0,
+            price=1.1000,
+            volatility=0.0015,
+            avg_volatility=0.0010
+        )
+    """
+    
+    def __init__(self, model: Optional[TransactionCostModel] = None):
+        self.model = model or TransactionCostModel()
+        logger.info(
+            f"TransactionCostCalculator initialized: "
+            f"spread={self.model.spread_pips_base} pips, "
+            f"slippage_market={self.model.slippage_pips_market} pips"
+        )
+    
     def calculate_total_cost(
         self,
-        entry_price: float,
-        quantity: float,
-        timestamp: datetime,
-        is_news_period: bool = False,
-        avg_volume: float = 1000000.0,
-        volatility: float = 1.0,
-        avg_daily_volume: float = 10000000.0,
-        cumulative_volume: float = 0.0,
-    ) -> TradeExecution:
-        """
-        Calculate all costs for a trade execution.
-
-        Args:
-            entry_price: Intended entry price
-            quantity: Trade quantity (positive for buy, negative for sell)
-            timestamp: Execution timestamp
-            is_news_period: True if during news event
-            avg_volume: Recent average volume
-            volatility: Recent price volatility
-            avg_daily_volume: Average daily volume for impact calculation
-            cumulative_volume: Cumulative trading volume for tiered commission
-
-        Returns:
-            TradeExecution with detailed cost breakdown
-        """
-        trade_value = abs(entry_price * quantity)
-        order_size_value = trade_value
-
-        # 1. Spread cost (always half-spread for taker)
-        spread_cost = self.calculate_spread(entry_price, timestamp, is_news_period) / 2.0
-
-        # 2. Commission cost
-        commission_cost = self.calculate_commission(trade_value, cumulative_volume)
-
-        # 3. Slippage cost
-        slippage_cost = self.calculate_slippage(
-            entry_price, order_size_value, avg_volume, volatility
-        )
-
-        # 4. Market impact cost
-        impact_cost = self.calculate_market_impact(
-            entry_price, abs(quantity), avg_daily_volume
-        )
-
-        # Total cost
-        total_cost = spread_cost + commission_cost + slippage_cost + impact_cost
-
-        # Execution price (worse price due to costs)
-        # For buy: execution price is higher
-        # For sell: execution price is lower
-        direction = 1 if quantity > 0 else -1
-        execution_price = entry_price + (total_cost * direction)
-
-        # Cost in basis points (relative to entry price)
-        cost_bps = (total_cost / entry_price) * 10000 if entry_price > 0 else 0
-
-        return TradeExecution(
-            entry_price=entry_price,
-            execution_price=execution_price,
-            spread_cost=spread_cost,
-            commission_cost=commission_cost,
-            slippage_cost=slippage_cost,
-            market_impact_cost=impact_cost,
-            total_cost=total_cost,
-            cost_bps=cost_bps,
-        )
-
-    def get_cost_summary(
-        self,
-        executions: list[TradeExecution],
+        order_type: str,  # 'market' or 'limit'
+        size_lots: float,
+        price: float,
+        volatility: Optional[float] = None,
+        avg_volatility: Optional[float] = None,
+        pip_size: float = 0.0001
     ) -> Dict[str, float]:
         """
-        Get summary statistics for a list of executions.
-
+        Calculate total transaction cost.
+        
         Args:
-            executions: List of TradeExecution objects
-
+            order_type: 'market' or 'limit'
+            size_lots: Position size in lots
+            price: Entry/exit price
+            volatility: Current volatility (ATR or similar)
+            avg_volatility: Average volatility (for comparison)
+            pip_size: Pip size for the instrument
+            
         Returns:
-            Dictionary with cost statistics
+            Dict with breakdown:
+                - spread_pips: Spread cost in pips
+                - slippage_pips: Slippage cost in pips
+                - commission: Commission cost in currency
+                - market_impact_pips: Market impact in pips
+                - total_pips: Total cost in pips
+                - total_currency: Total cost in currency
         """
-        if not executions:
-            return {
-                "total_spread": 0.0,
-                "total_commission": 0.0,
-                "total_slippage": 0.0,
-                "total_impact": 0.0,
-                "total_cost": 0.0,
-                "avg_cost_bps": 0.0,
-                "num_trades": 0,
-            }
-
+        # 1. Calculate spread
+        spread_pips = self._calculate_spread(volatility, avg_volatility)
+        
+        # 2. Calculate slippage
+        slippage_pips = self._calculate_slippage(order_type, size_lots)
+        
+        # 3. Calculate commission
+        commission = self._calculate_commission(size_lots, price)
+        
+        # 4. Calculate market impact
+        market_impact_pips = self._calculate_market_impact(size_lots)
+        
+        # 5. Total costs
+        total_pips = spread_pips + slippage_pips + market_impact_pips
+        
+        # Convert pips to currency
+        pip_value_per_lot = pip_size * 100000  # Standard lot
+        total_currency_from_pips = total_pips * pip_value_per_lot * size_lots
+        total_currency = total_currency_from_pips + commission
+        
         return {
-            "total_spread": sum(e.spread_cost for e in executions),
-            "total_commission": sum(e.commission_cost for e in executions),
-            "total_slippage": sum(e.slippage_cost for e in executions),
-            "total_impact": sum(e.market_impact_cost for e in executions),
-            "total_cost": sum(e.total_cost for e in executions),
-            "avg_cost_bps": np.mean([e.cost_bps for e in executions]),
-            "num_trades": len(executions),
+            'spread_pips': spread_pips,
+            'slippage_pips': slippage_pips,
+            'commission': commission,
+            'market_impact_pips': market_impact_pips,
+            'total_pips': total_pips,
+            'total_currency': total_currency,
+            'cost_pct': (total_currency / (price * 100000 * size_lots)) * 100
         }
+    
+    def _calculate_spread(
+        self,
+        volatility: Optional[float],
+        avg_volatility: Optional[float]
+    ) -> float:
+        """Calculate spread cost in pips"""
+        spread = self.model.spread_pips_base
+        
+        # Widen spread in high volatility
+        if volatility and avg_volatility:
+            volatility_ratio = volatility / avg_volatility
+            if volatility_ratio > self.model.volatility_threshold_atr_multiple:
+                spread *= self.model.spread_multiplier_volatile
+                logger.debug(
+                    f"Widened spread due to high volatility: "
+                    f"{self.model.spread_pips_base} → {spread} pips"
+                )
+        
+        return spread
+    
+    def _calculate_slippage(self, order_type: str, size_lots: float) -> float:
+        """Calculate slippage cost in pips"""
+        if order_type == 'limit':
+            # Limit orders don't have slippage (if filled)
+            return self.model.slippage_pips_limit
+        
+        # Market orders
+        slippage = self.model.slippage_pips_market
+        
+        # Increase slippage for large orders
+        if size_lots > 5.0:  # Arbitrary threshold
+            slippage *= self.model.slippage_multiplier_large
+            logger.debug(
+                f"Increased slippage for large order ({size_lots} lots): "
+                f"{self.model.slippage_pips_market} → {slippage} pips"
+            )
+        
+        return slippage
+    
+    def _calculate_commission(self, size_lots: float, price: float) -> float:
+        """Calculate commission cost in currency"""
+        # Per-lot commission
+        commission = size_lots * self.model.commission_per_lot
+        
+        # Or percentage-based
+        if self.model.commission_pct > 0:
+            trade_value = price * 100000 * size_lots  # Standard lot
+            commission += trade_value * self.model.commission_pct
+        
+        return commission
+    
+    def _calculate_market_impact(self, size_lots: float) -> float:
+        """Calculate market impact cost in pips"""
+        if size_lots <= self.model.market_impact_threshold_lots:
+            return 0.0
+        
+        # Impact above threshold
+        excess_lots = size_lots - self.model.market_impact_threshold_lots
+        impact = excess_lots * self.model.market_impact_pips_per_lot
+        
+        logger.debug(
+            f"Market impact for large order ({size_lots} lots): {impact} pips"
+        )
+        
+        return impact
+    
+    def get_total_cost_pips(
+        self,
+        order_type: str,
+        size_lots: float,
+        price: float,
+        **kwargs
+    ) -> float:
+        """Convenience method to get total cost in pips only"""
+        result = self.calculate_total_cost(
+            order_type=order_type,
+            size_lots=size_lots,
+            price=price,
+            **kwargs
+        )
+        return result['total_pips']
+    
+    def get_total_cost_currency(
+        self,
+        order_type: str,
+        size_lots: float,
+        price: float,
+        **kwargs
+    ) -> float:
+        """Convenience method to get total cost in currency only"""
+        result = self.calculate_total_cost(
+            order_type=order_type,
+            size_lots=size_lots,
+            price=price,
+            **kwargs
+        )
+        return result['total_currency']
 
 
-# Preset cost models for common broker types
-COST_PRESETS = {
-    "retail_ecn": CostModel(
-        base_spread_bps=0.5,  # Tight ECN spreads
-        commission_type="percentage",
-        commission_rate=0.00005,  # $0.50 per $10k = 0.5 bps
-        slippage_k=0.05,  # Low slippage
-        impact_enabled=False,  # Retail orders don't move market
-    ),
+# Default models for common asset classes
+FOREX_MAJOR_MODEL = TransactionCostModel(
+    spread_pips_base=1.0,
+    slippage_pips_market=0.5,
+    commission_per_lot=0.0
+)
 
-    "retail_market_maker": CostModel(
-        base_spread_bps=1.5,  # Wider spreads
-        commission_type="fixed",
-        commission_fixed=0.0,  # No commission but wider spread
-        slippage_k=0.1,
-        impact_enabled=False,
-    ),
+FOREX_MINOR_MODEL = TransactionCostModel(
+    spread_pips_base=2.0,
+    slippage_pips_market=1.0,
+    commission_per_lot=0.0
+)
 
-    "institutional": CostModel(
-        base_spread_bps=0.3,  # Best pricing
-        commission_type="percentage",
-        commission_rate=0.00002,  # $0.20 per $10k = 0.2 bps
-        commission_tiers={
-            1000000: 0.00001,  # $0.10 per $10k above $1M volume
-        },
-        slippage_k=0.02,  # Very low slippage
-        impact_enabled=True,  # Large orders move market
-        impact_coefficient=0.3,
-    ),
+FOREX_EXOTIC_MODEL = TransactionCostModel(
+    spread_pips_base=5.0,
+    slippage_pips_market=2.0,
+    commission_per_lot=0.0
+)
 
-    "high_cost_broker": CostModel(
-        base_spread_bps=3.0,  # Wide spreads
-        commission_type="percentage",
-        commission_rate=0.0005,  # 5 bps = expensive
-        slippage_k=0.2,  # High slippage
-        impact_enabled=False,
-    ),
-}
-
-
-def get_cost_model(preset: str = "retail_ecn") -> CostModel:
+# Factory function
+def get_cost_model(asset_class: str = 'forex_major') -> TransactionCostModel:
     """
-    Get a preset cost model.
-
+    Get standard cost model for asset class.
+    
     Args:
-        preset: One of "retail_ecn", "retail_market_maker", "institutional", "high_cost_broker"
-
+        asset_class: 'forex_major', 'forex_minor', 'forex_exotic'
+        
     Returns:
-        CostModel instance
+        TransactionCostModel
     """
-    if preset not in COST_PRESETS:
-        logger.warning(f"Unknown preset '{preset}', using 'retail_ecn'")
-        preset = "retail_ecn"
-
-    return COST_PRESETS[preset]
+    models = {
+        'forex_major': FOREX_MAJOR_MODEL,
+        'forex_minor': FOREX_MINOR_MODEL,
+        'forex_exotic': FOREX_EXOTIC_MODEL
+    }
+    
+    return models.get(asset_class, FOREX_MAJOR_MODEL)
