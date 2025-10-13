@@ -166,9 +166,33 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.debug(f"Error checking market status: {e}")
             return False  # Assume open if check fails
+    
+    def _generate_cache_key(self, kind: str) -> Optional[str]:
+        """Generate cache key based on dataframe hash + detector configs"""
+        try:
+            if self._df is None or len(self._df) == 0:
+                return None
+            
+            # Create hash from dataframe tail (last 500 rows for efficiency)
+            df_tail = self._df.tail(500)
+            df_hash = hashlib.md5(
+                df_tail[['open', 'high', 'low', 'close']].to_csv().encode()
+            ).hexdigest()
+            
+            # Include symbol, timeframe, kind in key
+            symbol = getattr(self, '_symbol', 'unknown')
+            timeframe = getattr(self, '_timeframe', '5m')
+            
+            return f"pattern_{symbol}_{timeframe}_{kind}_{df_hash}"
+        except Exception as e:
+            logger.debug(f"Error generating cache key: {e}")
+            return None
 
         # Persistent cache (per symbol) and multi-timeframe scan state
         self._cache: Dict[tuple, object] = {}
+        
+        # Pre-detection result cache (5 min TTL)
+        self._detection_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_symbol: Optional[str] = None
         self._scanned_tfs_by_symbol: Dict[str, set] = {}
         self._scanning_multi: bool = False
