@@ -444,60 +444,104 @@ def _coerce_indicator_tfs(raw: Any) -> Dict[str, List[str]]:
     return {}
 
 
-def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
+def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2):
     """
-    Standardize training and validation sets ensuring NO look-ahead bias.
+    Standardize training, validation, and test sets ensuring NO look-ahead bias.
 
-    CRITICAL: Computes mean/std ONLY on training set, then applies to validation.
+    CRITICAL: Computes mean/std ONLY on training set, then applies to val/test.
     This prevents information leakage from future data.
 
+    PROC-001: Implements proper 3-way split:
+    - Train (60%): For model training
+    - Val (20%): For early stopping and hyperparameter selection
+    - Test (20%): For final evaluation ONLY (never used during training)
+
+    Args:
+        X: Feature DataFrame
+        y: Target Series
+        val_frac: Validation fraction (default 0.2)
+        test_frac: Test fraction (default 0.2)
+
     Returns:
-        Tuple of ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
+        Tuple of ((Xtr_scaled, ytr), (Xva_scaled, yva), (Xte_scaled, yte), (mu, sigma, scaler_metadata))
     """
     from scipy import stats
 
-    # Split WITHOUT shuffling to maintain temporal order (prevent look-ahead bias)
-    Xtr, Xva, ytr, yva = train_test_split(X.values, y.values, test_size=val_frac, shuffle=False)
+    # First split: separate test set from train+val
+    # test_frac is relative to total, so test_size = test_frac
+    train_val_size = 1.0 - test_frac
+    Xtr_val, Xte, ytr_val, yte = train_test_split(
+        X.values, y.values, test_size=test_frac, shuffle=False
+    )
+
+    # Second split: separate validation from training
+    # val_frac is relative to train+val, so test_size = val_frac / train_val_size
+    val_relative = val_frac / train_val_size
+    Xtr, Xva, ytr, yva = train_test_split(
+        Xtr_val, ytr_val, test_size=val_relative, shuffle=False
+    )
 
     # Compute statistics ONLY on training set (NO look-ahead bias)
     mu = Xtr.mean(axis=0)
     sigma = Xtr.std(axis=0)
     sigma[sigma == 0] = 1.0  # Prevent division by zero (BUG-001 fix)
 
-    # Apply standardization
+    # Apply standardization to all splits
     Xtr_scaled = (Xtr - mu) / sigma
     Xva_scaled = (Xva - mu) / sigma
+    Xte_scaled = (Xte - mu) / sigma
 
     # VERIFICATION: Statistical test for look-ahead bias detection
-    # If train and validation distributions are too similar, likely bias present
-    p_values = []
+    p_values_val = []
+    p_values_test = []
+
     for i in range(min(10, Xtr_scaled.shape[1])):  # Test first 10 features
         if Xtr_scaled.shape[0] > 20 and Xva_scaled.shape[0] > 20:
-            # Kolmogorov-Smirnov test: different distributions should have low p-value
+            # KS test train vs val
             _, p_val = stats.ks_2samp(Xtr_scaled[:, i], Xva_scaled[:, i])
-            p_values.append(p_val)
+            p_values_val.append(p_val)
+
+        if Xtr_scaled.shape[0] > 20 and Xte_scaled.shape[0] > 20:
+            # KS test train vs test
+            _, p_val = stats.ks_2samp(Xtr_scaled[:, i], Xte_scaled[:, i])
+            p_values_test.append(p_val)
 
     # Metadata for debugging
     scaler_metadata = {
         "train_size": Xtr.shape[0],
         "val_size": Xva.shape[0],
+        "test_size": Xte.shape[0],
+        "train_frac": Xtr.shape[0] / len(X),
+        "val_frac": Xva.shape[0] / len(X),
+        "test_frac": Xte.shape[0] / len(X),
         "train_mean": mu.tolist(),
         "train_std": sigma.tolist(),
-        "ks_test_p_values": p_values,
-        "ks_test_median_p": float(np.median(p_values)) if p_values else None,
+        "ks_test_p_values_val": p_values_val,
+        "ks_test_p_values_test": p_values_test,
+        "ks_test_median_p_val": float(np.median(p_values_val)) if p_values_val else None,
+        "ks_test_median_p_test": float(np.median(p_values_test)) if p_values_test else None,
     }
 
     # WARNING: If distributions too similar, potential look-ahead bias
-    if scaler_metadata["ks_test_median_p"] is not None:
-        if scaler_metadata["ks_test_median_p"] > 0.8:
+    if scaler_metadata["ks_test_median_p_val"] is not None:
+        if scaler_metadata["ks_test_median_p_val"] > 0.8:
             warnings.warn(
-                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED!\n"
-                f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p']:.3f}).\n"
-                f"Expected p < 0.5 for different time periods. Verify train_test_split has shuffle=False.",
+                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Val)!\n"
+                f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_val']:.3f}).\n"
+                f"Expected p < 0.5 for different time periods.",
                 RuntimeWarning
             )
 
-    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
+    if scaler_metadata["ks_test_median_p_test"] is not None:
+        if scaler_metadata["ks_test_median_p_test"] > 0.8:
+            warnings.warn(
+                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Test)!\n"
+                f"Train/Test distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_test']:.3f}).\n"
+                f"Expected p < 0.5 for different time periods.",
+                RuntimeWarning
+            )
+
+    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (Xte_scaled, yte), (mu, sigma, scaler_metadata))
 
 
 def _fit_model(algo: str, Xtr, ytr, args):
@@ -540,6 +584,7 @@ def main():
     # Model arguments
     ap.add_argument("--pca", type=int, default=0, help="PCA components (0 = disabled)")
     ap.add_argument("--val_frac", type=float, default=0.2, help="Validation fraction")
+    ap.add_argument("--test_frac", type=float, default=0.2, help="Test fraction (PROC-001)")
     ap.add_argument("--alpha", type=float, default=0.001, help="Regularization alpha")
     ap.add_argument("--l1_ratio", type=float, default=0.5, help="ElasticNet L1 ratio")
     ap.add_argument("--n_estimators", type=int, default=400, help="RF n_estimators")
@@ -591,15 +636,21 @@ def main():
     print(f"✅ Created {X.shape[1]} features from {len(candles)} candles")
     print(f"   Final dataset: {len(X)} samples")
 
-    # Standardize and split
-    print(f"📊 Splitting and standardizing data...")
-    (Xtr, ytr), (Xva, yva), (mu, sigma, scaler_metadata) = _standardize_train_val(X, y, args.val_frac)
-    print(f"   Training: {len(Xtr)} samples")
-    print(f"   Validation: {len(Xva)} samples")
+    # Standardize and split (PROC-001: 60/20/20 train/val/test split)
+    print(f"📊 Splitting and standardizing data (60% train / 20% val / 20% test)...")
+    test_frac = getattr(args, 'test_frac', 0.2)  # Default 20% test
+    (Xtr, ytr), (Xva, yva), (Xte, yte), (mu, sigma, scaler_metadata) = _standardize_train_val_test(
+        X, y, val_frac=args.val_frac, test_frac=test_frac
+    )
+    print(f"   Training: {len(Xtr)} samples ({scaler_metadata['train_frac']:.1%})")
+    print(f"   Validation: {len(Xva)} samples ({scaler_metadata['val_frac']:.1%}) - for early stopping")
+    print(f"   Test: {len(Xte)} samples ({scaler_metadata['test_frac']:.1%}) - for final evaluation")
 
     # Log KS test results for look-ahead bias detection
-    if scaler_metadata.get('ks_test_median_p') is not None:
-        print(f"   KS test median p-value: {scaler_metadata['ks_test_median_p']:.4f} (< 0.5 expected for no bias)")
+    if scaler_metadata.get('ks_test_median_p_val') is not None:
+        print(f"   KS test (train vs val) median p-value: {scaler_metadata['ks_test_median_p_val']:.4f}")
+    if scaler_metadata.get('ks_test_median_p_test') is not None:
+        print(f"   KS test (train vs test) median p-value: {scaler_metadata['ks_test_median_p_test']:.4f}")
 
     # Apply PCA if requested
     pca_model = None
@@ -608,22 +659,29 @@ def main():
         pca_model = PCA(n_components=args.pca, random_state=args.random_state)
         Xtr = pca_model.fit_transform(Xtr)
         Xva = pca_model.transform(Xva)
+        Xte = pca_model.transform(Xte)
         print(f"✅ PCA: {X.shape[1]} → {args.pca} dimensions")
 
     # Train model
     print(f"🤖 Training {args.algo} model...")
     model = _fit_model(args.algo, Xtr, ytr, args)
 
-    # Evaluate
+    # Evaluate on train and validation (validation used for model selection)
     ytr_pred = model.predict(Xtr)
     yva_pred = model.predict(Xva)
     mae_tr = mean_absolute_error(ytr, ytr_pred)
     mae_va = mean_absolute_error(yva, yva_pred)
 
+    # Evaluate on test set (PROC-001: test set for final evaluation ONLY)
+    yte_pred = model.predict(Xte)
+    mae_te = mean_absolute_error(yte, yte_pred)
+
     print(f"📊 Training Results:")
     print(f"   Training MAE: {mae_tr:.6f}")
-    print(f"   Validation MAE: {mae_va:.6f}")
-    print(f"   Overfitting ratio: {mae_va/mae_tr:.3f}")
+    print(f"   Validation MAE: {mae_va:.6f} (for model selection)")
+    print(f"   Test MAE: {mae_te:.6f} (final evaluation)")
+    print(f"   Train/Val ratio: {mae_va/mae_tr:.3f}")
+    print(f"   Train/Test ratio: {mae_te/mae_tr:.3f}")
 
     # Save artifacts
     artifacts_dir = Path(args.artifacts_dir)
@@ -649,12 +707,17 @@ def main():
         "training_results": {
             "mae_train": mae_tr,
             "mae_validation": mae_va,
-            "overfitting_ratio": mae_va / mae_tr,
+            "mae_test": mae_te,
+            "train_val_ratio": mae_va / mae_tr,
+            "train_test_ratio": mae_te / mae_tr,
             "n_features_final": Xtr.shape[1],
             "n_samples_train": len(Xtr),
-            "n_samples_validation": len(Xva)
+            "n_samples_validation": len(Xva),
+            "n_samples_test": len(Xte),
+            "split_info": "60% train / 20% val / 20% test (PROC-001)"
         },
-        "indicators_summary": summary
+        "indicators_summary": summary,
+        "scaler_metadata": scaler_metadata  # Include split verification info
     })
 
     meta_path = artifacts_dir / "metadata.json"
@@ -664,7 +727,8 @@ def main():
 
     print(f"🎉 Training completed successfully!")
     print(f"   Enhanced with {summary.get('enabled_indicators', 0)} bta-lib indicators")
-    print(f"   Final performance: {mae_va:.6f} MAE")
+    print(f"   Validation performance: {mae_va:.6f} MAE")
+    print(f"   Test performance: {mae_te:.6f} MAE (final evaluation)")
 
 
 if __name__ == "__main__":
