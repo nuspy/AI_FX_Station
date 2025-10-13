@@ -52,9 +52,6 @@ def fit_line_indices(y: np.ndarray, i0: int, i1: int) -> Tuple[float, float]:
     return float(slope), float(intercept)
 
 
-import pandas as pd
-import numpy as np
-
 def time_array(df):
     if df is None or len(df)==0:
         return np.array([], dtype='datetime64[ns]')
