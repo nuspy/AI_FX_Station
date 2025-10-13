@@ -53,14 +53,36 @@ def to_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
 
 def realized_volatility(df: pd.DataFrame, col: str = "close", window: int = 60, out_col: str = "rv") -> pd.DataFrame:
     """
-    Realized volatility computed as sqrt(sum(returns^2)) over window (per-bar log returns).
-    window expressed in bars (e.g., 60 for 1 hour at 1m bars).
+    Realized volatility computed using standard financial formula.
+    
+    NOTE: This is now a wrapper around feature_engineering.realized_volatility_feature()
+    for consistency. The new version uses std() * sqrt(window) which is the standard
+    financial formula for annualized realized volatility.
+    
+    Args:
+        df: DataFrame with OHLC data
+        col: Column to compute volatility on (default: "close")
+        window: Rolling window size in bars
+        out_col: Output column name
+    
+    Returns:
+        DataFrame with single volatility column
     """
-    tmp = df.copy()
-    r = np.log(tmp[col]).diff().fillna(0.0)
-    rv = r.pow(2).rolling(window=window, min_periods=1).sum().apply(np.sqrt)
-    tmp[out_col] = rv
-    return tmp
+    from .feature_engineering import realized_volatility_feature
+    
+    # If col is not "close", we need to create temporary df with renamed column
+    if col != "close":
+        temp_df = df.copy()
+        temp_df["close"] = temp_df[col]
+        result = realized_volatility_feature(temp_df, window=window)
+        result.columns = [out_col]
+        return result
+    else:
+        result = realized_volatility_feature(df, window=window)
+        # Rename column if different from default
+        if f"rv_{window}" != out_col:
+            result.columns = [out_col]
+        return result
 
 
 

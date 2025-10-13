@@ -160,11 +160,20 @@ def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
 def _resample_ohlc(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """Resample OHLC data to specified timeframe."""
     if timeframe.endswith("m"):
-        rule = f"{int(timeframe[:-1])}T"
+        minutes = int(timeframe[:-1])
+        if minutes <= 0:
+            raise ValueError(f"Invalid timeframe: {timeframe} (must be positive)")
+        rule = f"{minutes}T"
     elif timeframe.endswith("h"):
-        rule = f"{int(timeframe[:-1])}H"
+        hours = int(timeframe[:-1])
+        if hours <= 0:
+            raise ValueError(f"Invalid timeframe: {timeframe} (must be positive)")
+        rule = f"{hours}H"
     elif timeframe.endswith("d"):
-        rule = f"{int(timeframe[:-1])}D"
+        days = int(timeframe[:-1])
+        if days <= 0:
+            raise ValueError(f"Invalid timeframe: {timeframe} (must be positive)")
+        rule = f"{days}D"
     else:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
 
@@ -191,21 +200,13 @@ def _relative_ohlc_normalization(df: pd.DataFrame) -> pd.DataFrame:
     """
     Apply relative OHLC normalization as used in training.
     This ensures inference uses the same normalization as training.
+    
+    NOTE: This is a wrapper around feature_engineering.relative_ohlc()
+    to maintain API compatibility. Use the centralized version directly
+    for new code to avoid duplication.
     """
-    eps = 1e-12
-    prev_close = df["close"].shift(1).astype(float).clip(lower=eps)
-    o = df["open"].astype(float).clip(lower=eps)
-    h = df["high"].astype(float).clip(lower=eps)
-    l = df["low"].astype(float).clip(lower=eps)
-    c = df["close"].astype(float).clip(lower=eps)
-
-    result = df.copy()
-    result["r_open"] = np.log(o / prev_close)
-    result["r_high"] = np.log(h / o)
-    result["r_low"] = np.log(l / o)
-    result["r_close"] = np.log(c / o)
-
-    return result
+    from .feature_engineering import relative_ohlc
+    return relative_ohlc(df)
 
 
 def _compute_multi_timeframe_indicators(
