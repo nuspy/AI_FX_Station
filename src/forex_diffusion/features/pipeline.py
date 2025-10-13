@@ -1,6 +1,35 @@
 """
-Feature pipeline for MagicForex.
+Feature pipeline for MagicForex - DEPRECATED
 
+⚠️ DEPRECATION WARNING ⚠️
+==========================
+
+This module is DEPRECATED as of 2025-01-08.
+Use feature_pipeline.py instead for all new code.
+
+Migration Guide:
+    OLD: from forex_diffusion.features.pipeline import atr, bollinger
+    NEW: from forex_diffusion.features.feature_pipeline import compute_features
+
+    OLD: features_df = pipeline_process(df, config)
+    NEW: features_df, scaler = compute_features(df, config)
+
+Why deprecated?
+- Code duplication with unified_pipeline.py and feature_engineering.py
+- Inconsistent function signatures
+- Multiple "pipeline" files cause confusion
+- No clear entry point
+
+Use instead:
+- feature_pipeline.py (main entry point)
+- feature_engineering.py (core feature functions)
+- consolidated_indicators.py (indicator computation)
+
+This file is kept for backward compatibility only and will be removed
+in a future version.
+
+Original Description:
+=====================
 Contains:
 - causal resampling (resample_candles -> uses pandas resample with right-closed bins)
 - technical indicators computed in a causal way (many: realized vol, ATR, Bollinger width, MACD, RSI, StochRSI, Keltner, Garman-Klass, Yang-Zhang, Hurst/Katz fractal, autocorr, tick rate, spread, bid-ask, EMA slope, Donchian position, round-number proximity, NN regime helper)
