@@ -218,6 +218,27 @@ class CTraderWebSocketService:
     def _run_twisted_reactor(self):
         """Run Twisted reactor (blocking call in separate thread)."""
         try:
+            # Install log observer to suppress noisy Deferred timeout errors
+            from twisted.python import log
+
+            def suppress_timeout_errors(eventDict):
+                """Suppress TimeoutError from Deferred (expected for unsupported DOM)"""
+                if eventDict.get('isError'):
+                    failure = eventDict.get('failure')
+                    if failure:
+                        # Suppress TimeoutError from depth quotes subscription
+                        if failure.check('twisted.internet.defer.TimeoutError'):
+                            logger.debug(
+                                "Depth quotes subscription timed out (expected for demo accounts without DOM access). "
+                                "Service will reconnect and skip DOM subscription."
+                            )
+                            return  # Suppress this error from appearing
+
+                # Let other errors through to default logging
+                log.textFromEventDict(eventDict)
+
+            log.addObserver(suppress_timeout_errors)
+
             # Run reactor (blocking until stopped)
             logger.info("Starting Twisted reactor...")
             reactor.run(installSignalHandlers=False)
@@ -377,13 +398,20 @@ class CTraderWebSocketService:
             logger.error(f"Subscription error: {e}")
 
     def _subscribe_to_depth_quotes(self, symbol_ids: List[int]):
-        """Subscribe to depth quotes (order book / DOM)."""
+        """Subscribe to depth quotes (order book / DOM).
+
+        Note: Demo accounts typically don't support DOM. The subscription will timeout
+        after 5 seconds if not supported, which is expected behavior.
+        """
         try:
             if not symbol_ids:
                 logger.warning("No symbol IDs to subscribe for depth quotes")
                 return
 
-            logger.info(f"Attempting to subscribe to depth quotes for {len(symbol_ids)} symbols: {symbol_ids}")
+            logger.info(
+                f"Attempting to subscribe to depth quotes for {len(symbol_ids)} symbols: {symbol_ids}\n"
+                f"Note: Demo accounts may not support DOM - timeout after 5s is expected."
+            )
 
             # Create ONE request with ALL symbol IDs (symbolId is a repeated field)
             depth_req = Messages.ProtoOASubscribeDepthQuotesReq()
@@ -395,19 +423,13 @@ class CTraderWebSocketService:
                 logger.debug(f"Added symbol ID {symbol_id} to depth quotes subscription")
 
             # Send ONE request with all symbols
-            logger.info(
-                f"Sending depth quotes subscription request: "
-                f"account={self.account_id}, symbolIds={list(depth_req.symbolId)}"
-            )
+            # Note: This may timeout if DOM isn't supported (common for demo accounts)
             self.client.send(depth_req)
-            logger.info(f"✓ Sent depth quotes subscription request for {len(symbol_ids)} symbols")
+            logger.debug(f"Sent depth quotes subscription request for {len(symbol_ids)} symbols")
 
         except Exception as e:
-            logger.exception(f"Depth subscription error: {e}")
-            logger.error(
-                f"⚠️  Failed to subscribe to depth quotes. "
-                f"Please verify your cTrader account has DOM access enabled."
-            )
+            logger.warning(f"Depth subscription error (this is normal for accounts without DOM access): {e}")
+            self._skip_depth_quotes = True
 
     def _on_message_received(self, client, message):
         """

@@ -367,20 +367,30 @@ def setup_ui(
                                     get_setting("ctrader_client_secret", ""))
                     access_token = (get_setting("provider.ctrader.access_token", "") or
                                    get_setting("ctrader_access_token", ""))
-                    account_id_raw = (get_setting("provider.ctrader.account_id", "") or
-                                     get_setting("ctrader_account_id", ""))
                     environment = (get_setting("provider.ctrader.environment", "demo") or
                                   get_setting("ctrader_environment", "demo"))
+
+                    # IMPORTANT: Get the authenticated account_id from CTraderProvider
+                    # CTraderProvider has already connected and fetched the numeric account ID
+                    # from cTrader API, so we reuse it instead of creating a new connection
+                    account_id = None
+                    if hasattr(market_service, 'provider') and hasattr(market_service.provider, '_account_id'):
+                        account_id = market_service.provider._account_id
+                        logger.info(f"Using authenticated account ID from CTraderProvider: {account_id}")
+                    else:
+                        # Fallback: try to get from config, but this may be a username
+                        account_id_raw = (get_setting("provider.ctrader.account_id", "") or
+                                         get_setting("ctrader_account_id", ""))
+                        if account_id_raw:
+                            account_id = account_id_raw
+                            logger.warning(f"Using account_id from config (may need auto-fetch): {account_id}")
 
                     logger.info(f"cTrader WebSocket initialization: "
                                f"client_id={'set' if client_id else 'missing'}, "
                                f"client_secret={'set' if client_secret else 'missing'}, "
                                f"access_token={'set' if access_token else 'missing'}, "
-                               f"account_id_raw={account_id_raw}, "
+                               f"account_id={account_id}, "
                                f"environment={environment}")
-
-                    # Convert account_id - cTrader API expects string account ID (e.g., "a.taini")
-                    account_id = str(account_id_raw) if account_id_raw else None
 
                     if client_id and client_secret and access_token and account_id:
                         logger.info(f"Starting cTrader WebSocket with account: {account_id}")
@@ -388,7 +398,7 @@ def setup_ui(
                             client_id=client_id,
                             client_secret=client_secret,
                             access_token=access_token,
-                            account_id=account_id,  # Pass as string - library will handle conversion
+                            account_id=account_id,  # Use authenticated account ID from provider
                             db_engine=db_service.engine,
                             environment=environment,
                             symbols=["EURUSD", "GBPUSD", "USDJPY"]
