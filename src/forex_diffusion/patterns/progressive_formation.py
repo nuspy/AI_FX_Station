@@ -83,7 +83,9 @@ class ProgressivePatternDetector:
 
         # Pattern tracking
         self.active_patterns: Dict[str, ProgressivePattern] = {}
-        self.pattern_history: Dict[str, List[FormationUpdate]] = {}
+        # Pattern history with bounded size (max 100 updates per pattern)
+        self.pattern_history: Dict[str, deque] = {}
+        self.max_history_per_pattern = 100
 
         # Formation thresholds for each stage
         self.stage_thresholds = {
