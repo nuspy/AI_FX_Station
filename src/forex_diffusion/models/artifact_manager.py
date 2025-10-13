@@ -379,6 +379,108 @@ class ArtifactManager:
 
         return export_path
 
+    def cleanup_old_artifacts(self, max_saved: int = 10, keep_best: bool = True):
+        """
+        Enforce artifact cleanup policy by removing oldest artifacts.
+
+        PROC-003: Implements automatic cleanup to prevent disk space issues.
+
+        Args:
+            max_saved: Maximum number of artifacts to keep (default: 10)
+            keep_best: If True, keep artifacts tagged with 'best' or 'production'
+
+        Returns:
+            Number of artifacts deleted
+        """
+        artifacts = self.catalog['artifacts']
+
+        if len(artifacts) <= max_saved:
+            logger.debug(f"Artifact count ({len(artifacts)}) within limit ({max_saved})")
+            return 0
+
+        # Separate protected artifacts (tagged as 'best' or 'production')
+        protected = []
+        deletable = []
+
+        for artifact in artifacts:
+            tags = artifact.get('tags', [])
+            if keep_best and any(tag in ['best', 'production', 'protected'] for tag in tags):
+                protected.append(artifact)
+            else:
+                deletable.append(artifact)
+
+        # Sort deletable by creation time (oldest first)
+        deletable.sort(key=lambda x: x['created_at'])
+
+        # Calculate how many to delete
+        total_artifacts = len(protected) + len(deletable)
+        num_to_delete = total_artifacts - max_saved
+
+        if num_to_delete <= 0:
+            logger.info(f"No cleanup needed: {total_artifacts} artifacts ({len(protected)} protected)")
+            return 0
+
+        # Ensure we don't delete more than available deletable artifacts
+        num_to_delete = min(num_to_delete, len(deletable))
+
+        # Delete oldest artifacts
+        deleted_count = 0
+        for artifact in deletable[:num_to_delete]:
+            try:
+                self.delete_artifact(artifact['id'], remove_files=True)
+                deleted_count += 1
+                logger.info(f"Cleaned up old artifact: {artifact['id']}")
+            except Exception as e:
+                logger.error(f"Failed to delete artifact {artifact['id']}: {e}")
+
+        logger.info(
+            f"Artifact cleanup complete: deleted {deleted_count}/{num_to_delete} artifacts "
+            f"(kept {len(protected)} protected, {len(deletable) - deleted_count} recent)"
+        )
+
+        return deleted_count
+
+    def get_artifacts_disk_usage(self) -> Dict[str, Any]:
+        """
+        Calculate total disk usage of artifacts directory.
+
+        PROC-003: Provides disk usage information for GUI warnings.
+
+        Returns:
+            Dictionary with disk usage statistics
+        """
+        total_size = 0
+        file_count = 0
+        artifact_count = len(self.catalog['artifacts'])
+
+        # Calculate size of all artifacts
+        for artifact_entry in self.catalog['artifacts']:
+            checkpoint_path = Path(artifact_entry['checkpoint_path'])
+
+            # Check all associated files
+            try:
+                artifact = ModelArtifact.load(checkpoint_path)
+                for path in [checkpoint_path, artifact.meta_path, artifact.config_path,
+                             artifact.stats_path, artifact.history_path]:
+                    if path.exists():
+                        total_size += path.stat().st_size
+                        file_count += 1
+            except Exception as e:
+                logger.debug(f"Could not calculate size for {artifact_entry['id']}: {e}")
+
+        # Convert to human-readable format
+        size_mb = total_size / (1024 * 1024)
+        size_gb = total_size / (1024 * 1024 * 1024)
+
+        return {
+            'total_bytes': total_size,
+            'total_mb': round(size_mb, 2),
+            'total_gb': round(size_gb, 2),
+            'file_count': file_count,
+            'artifact_count': artifact_count,
+            'artifacts_dir': str(self.artifacts_dir)
+        }
+
 
 def create_artifact_from_checkpoint(
     checkpoint_path: Path,
