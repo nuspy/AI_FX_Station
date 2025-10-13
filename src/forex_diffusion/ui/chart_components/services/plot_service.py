@@ -665,6 +665,62 @@ class PlotService(ChartServiceBase):
                     self._chart_items[ax_price] = []
                 self._chart_items[ax_price].append(line_item)
 
+            # Plot volume bars on volume subplot (1/10 height, 66% opacity)
+            if hasattr(self.view, 'volume_plot') and 'volume' in df2.columns:
+                ax_volume = self.view.volume_plot
+
+                # Clear existing volume bars
+                if hasattr(self.view, 'volume_bars') and self.view.volume_bars is not None:
+                    ax_volume.removeItem(self.view.volume_bars)
+                    self.view.volume_bars = None
+
+                # Prepare volume data
+                x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
+                volume_data = df2['volume'].values
+
+                # Determine bar colors based on price movement (green=up, red=down)
+                # Compare close vs open (or close vs previous close if open not available)
+                if 'close' in df2.columns and 'open' in df2.columns:
+                    colors = np.where(df2['close'] >= df2['open'],
+                                     '#2ecc71',  # Green for up
+                                     '#e74c3c')  # Red for down
+                elif 'close' in df2.columns:
+                    # Use close vs previous close
+                    close_diff = df2['close'].diff()
+                    colors = np.where(close_diff >= 0,
+                                     '#2ecc71',  # Green for up
+                                     '#e74c3c')  # Red for down
+                else:
+                    colors = ['#2196F3'] * len(x_data)  # Default blue
+
+                # Create volume bars with 66% opacity
+                # Calculate bar width (spacing between timestamps)
+                if len(x_data) > 1:
+                    bar_width = (x_data[-1] - x_data[-2]) * 0.8  # 80% of spacing
+                else:
+                    bar_width = 60  # Default 60 seconds
+
+                # Create individual bars with colors and 66% opacity
+                brushes = []
+                for color in colors:
+                    qcolor = QColor(color)
+                    qcolor.setAlphaF(0.66)  # 66% opacity
+                    brushes.append(qcolor)
+
+                # Use BarGraphItem for volume bars
+                volume_bars = pg.BarGraphItem(
+                    x=x_data,
+                    height=volume_data,
+                    width=bar_width,
+                    brushes=brushes,
+                    pen=None  # No border for cleaner look
+                )
+                ax_volume.addItem(volume_bars)
+                self.view.volume_bars = volume_bars
+
+                # Auto-scale volume axis
+                ax_volume.enableAutoRange(axis='y')
+
             # Plot indicators
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
                 indicators_system = BTALibIndicators()

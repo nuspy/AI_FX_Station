@@ -158,8 +158,9 @@ class UIBuilderMixin:
         self.date_axis = DateAxisItem(orientation='bottom')
         self.date_axis.set_date_format(date_format)
 
-        # Create initial plot with custom date axis
-        self.main_plot = self.graphics_layout.addPlot(row=0, col=0, axisItems={'bottom': self.date_axis})
+        # Create main price plot WITHOUT bottom axis (will be on volume plot)
+        self.main_plot = self.graphics_layout.addPlot(row=0, col=0)
+        self.main_plot.hideAxis('bottom')  # Hide x-axis labels on main plot
         self.finplot_axes.append(self.main_plot)
 
         # Add PyQtGraph legend (native support)
@@ -170,6 +171,20 @@ class UIBuilderMixin:
         self.provider_label = pg.TextItem(text="Provider: ...", color=(200, 200, 200), anchor=(1, 0))
         self.main_plot.addItem(self.provider_label)
         # Position will be updated when data is loaded
+
+        # Create volume subplot below main plot (1/10 height, 66% opacity)
+        # Move to next row
+        self.graphics_layout.nextRow()
+        self.volume_plot = self.graphics_layout.addPlot(row=1, col=0, axisItems={'bottom': self.date_axis})
+        self.volume_plot.setLabel('left', 'Volume')
+        self.volume_plot.setMaximumHeight(80)  # Approximately 1/10 of typical chart height
+        self.finplot_axes.append(self.volume_plot)
+
+        # Link x-axis of volume plot to main plot for synchronized zoom/pan
+        self.volume_plot.setXLink(self.main_plot)
+
+        # Store reference for volume bars rendering
+        self.volume_bars = None
 
         chart_container_layout.addWidget(self.graphics_layout)
         self.chart_container = chart_container  # keep reference for overlays

@@ -1180,7 +1180,7 @@ class PatternOverlayRenderer:
         # Draw text label at target price
         lab = ax.text(x, ty, f"TP: {ty:.5f}", fontsize=8, color=color,
                       va="bottom" if dy>0 else "top", ha="left",
-                      bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
+                      bbox=dict(boxstyle="round,pad=0.2", fc="none", ec=color, lw=0.8, alpha=0.7),
                       zorder=119)
         self._arrows.append(lab)
         logger.debug(f"Added TP label to _arrows list (now {len(self._arrows)} arrows total)")
@@ -1223,7 +1223,7 @@ class PatternOverlayRenderer:
         # Draw text label at invalidation price
         label = ax.text(x, fp, f"SL: {fp:.5f}", fontsize=8, color=color,
                        va="bottom" if fp < y else "top", ha="left",
-                       bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
+                       bbox=dict(boxstyle="round,pad=0.2", fc="none", ec=color, lw=0.8, alpha=0.7),
                        zorder=120)
 
         self._arrows.append(label)
