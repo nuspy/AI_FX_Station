@@ -33,6 +33,7 @@ try:
     from ..risk.position_sizer import PositionSizer, BacktestTradeHistory
     from ..execution.smart_execution import SmartExecutionOptimizer
     from ..services.parameter_loader import ParameterLoaderService
+    from ..services.dom_aggregator import DOMAggreg atorService
 except ImportError:
     pass
 
@@ -78,6 +79,8 @@ class TradingConfig:
     use_adaptive_stops: bool = True  # Use adaptive stop loss manager
     position_sizing_method: str = 'kelly'  # Position sizing: fixed_fractional, kelly, optimal_f, volatility_adjusted
     kelly_fraction: float = 0.25  # Kelly fraction (0.25 = quarter Kelly)
+    use_dom_data: bool = True  # Use real-time DOM data for spread and liquidity
+    db_engine: Optional[Any] = None  # Database engine for DOM service
 
 
 class AutomatedTradingEngine:
@@ -171,6 +174,18 @@ class AutomatedTradingEngine:
             except Exception as e:
                 logger.warning(f"Could not initialize Parameter Loader: {e}. Using defaults.")
 
+        # DOM Aggregator Service
+        self.dom_service: Optional[DOMAggreg atorService] = None
+        if config.use_dom_data and config.db_engine:
+            try:
+                self.dom_service = DOMAggreg atorService(
+                    engine=config.db_engine,
+                    symbols=config.symbols
+                )
+                logger.info("✅ DOM Aggregator Service initialized")
+            except Exception as e:
+                logger.warning(f"Could not initialize DOM Service: {e}. Using statistical spreads.")
+
         # Threading
         self.trading_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
@@ -181,6 +196,10 @@ class AutomatedTradingEngine:
 
         # ATR cache for parameter loading
         self._last_atr: Dict[str, float] = {}
+
+        # Spread history cache for anomaly detection (symbol -> list of spreads)
+        self._spread_history: Dict[str, List[float]] = {}
+        self._spread_history_size = 720  # 1 hour of data at 5-second intervals
 
         logger.info("Automated Trading Engine initialized")
 
@@ -491,6 +510,130 @@ class AutomatedTradingEngine:
 
         return atr if not np.isnan(atr) else 0.001
 
+    def _get_real_spread(self, symbol: str, price: float) -> Dict[str, Any]:
+        """
+        Get real-time spread from DOM service with anomaly detection.
+
+        Args:
+            symbol: Trading symbol
+            price: Current price (for fallback calculation)
+
+        Returns:
+            Dictionary with:
+                - current_spread: Real-time spread
+                - avg_spread: Historical average spread
+                - is_anomaly: Whether spread is abnormally wide
+                - anomaly_level: 'normal', 'elevated', 'high', 'extreme'
+                - used_fallback: Whether fallback was used
+        """
+        # Try to get real spread from DOM service
+        if self.dom_service:
+            try:
+                dom_metrics = self.dom_service.get_latest_dom_metrics(symbol)
+                if dom_metrics and dom_metrics.get('spread') is not None:
+                    current_spread = dom_metrics['spread']
+
+                    # Update spread history for this symbol
+                    if symbol not in self._spread_history:
+                        self._spread_history[symbol] = []
+
+                    self._spread_history[symbol].append(current_spread)
+
+                    # Keep only recent history
+                    if len(self._spread_history[symbol]) > self._spread_history_size:
+                        self._spread_history[symbol] = self._spread_history[symbol][-self._spread_history_size:]
+
+                    # Calculate historical average
+                    if len(self._spread_history[symbol]) >= 10:
+                        avg_spread = sum(self._spread_history[symbol]) / len(self._spread_history[symbol])
+                    else:
+                        # Not enough history, use current as average
+                        avg_spread = current_spread
+
+                    # Detect anomaly
+                    ratio = current_spread / avg_spread if avg_spread > 0 else 1.0
+                    is_anomaly = ratio > 2.0
+                    anomaly_level = 'normal'
+
+                    if ratio > 3.0:
+                        anomaly_level = 'extreme'
+                        logger.warning(
+                            f"⚠️  EXTREME spread for {symbol}: {current_spread:.5f} "
+                            f"({ratio:.1f}x avg {avg_spread:.5f})"
+                        )
+                    elif ratio > 2.0:
+                        anomaly_level = 'high'
+                        logger.warning(
+                            f"⚠️  HIGH spread for {symbol}: {current_spread:.5f} "
+                            f"({ratio:.1f}x avg {avg_spread:.5f})"
+                        )
+                    elif ratio > 1.5:
+                        anomaly_level = 'elevated'
+                        logger.info(
+                            f"📊 Elevated spread for {symbol}: {current_spread:.5f} "
+                            f"({ratio:.1f}x avg {avg_spread:.5f})"
+                        )
+
+                    return {
+                        'current_spread': current_spread,
+                        'avg_spread': avg_spread,
+                        'is_anomaly': is_anomaly,
+                        'anomaly_level': anomaly_level,
+                        'ratio': ratio,
+                        'used_fallback': False
+                    }
+
+            except Exception as e:
+                logger.debug(f"Could not get DOM spread for {symbol}: {e}")
+
+        # Fallback: Use statistical model based on symbol
+        # Different symbols have different typical spreads
+        fallback_spread = self._get_statistical_spread(symbol, price)
+
+        logger.debug(f"Using fallback spread for {symbol}: {fallback_spread:.5f}")
+
+        return {
+            'current_spread': fallback_spread,
+            'avg_spread': fallback_spread,
+            'is_anomaly': False,
+            'anomaly_level': 'normal',
+            'ratio': 1.0,
+            'used_fallback': True
+        }
+
+    def _get_statistical_spread(self, symbol: str, price: float) -> float:
+        """
+        Calculate statistical spread based on symbol and time-of-day.
+
+        Args:
+            symbol: Trading symbol
+            price: Current price
+
+        Returns:
+            Estimated spread
+        """
+        # Typical spreads for major forex pairs (in absolute price terms)
+        # These are reasonable estimates based on market averages
+        typical_spreads = {
+            'EURUSD': 0.00015,  # 1.5 pips
+            'GBPUSD': 0.00020,  # 2.0 pips
+            'USDJPY': 0.002,    # 0.2 pips (JPY quoted)
+            'AUDUSD': 0.00020,  # 2.0 pips
+            'USDCAD': 0.00020,  # 2.0 pips
+            'USDCHF': 0.00020,  # 2.0 pips
+            'NZDUSD': 0.00025,  # 2.5 pips
+            'EURGBP': 0.00020,  # 2.0 pips
+            'EURJPY': 0.002,    # 0.2 pips (JPY quoted)
+            'GBPJPY': 0.003,    # 0.3 pips (JPY quoted)
+        }
+
+        # Try to find exact match
+        if symbol in typical_spreads:
+            return typical_spreads[symbol]
+
+        # Default fallback: 0.01% of price (1 pip for most pairs)
+        return price * 0.0001
+
     def _open_position(
         self,
         symbol: str,
@@ -547,9 +690,17 @@ class AutomatedTradingEngine:
             # Use percentage-based fallback
             atr = price * 0.01
 
-        # Get current spread (simulated for now - should come from broker)
-        current_spread = price * 0.0001  # 1 pip
-        avg_spread = current_spread  # Would be calculated from historical data
+        # Get current spread from DOM service (with fallback to statistical model)
+        spread_data = self._get_real_spread(symbol, price)
+        current_spread = spread_data['current_spread']
+        avg_spread = spread_data['avg_spread']
+
+        # Log spread anomaly warnings
+        if spread_data['is_anomaly']:
+            logger.warning(
+                f"⚠️  Spread anomaly detected for {symbol}: {spread_data['anomaly_level']}, "
+                f"ratio={spread_data['ratio']:.2f}x"
+            )
 
         if self.adaptive_sl_manager:
             # Use adaptive stop loss manager
