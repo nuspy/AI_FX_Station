@@ -2333,13 +2333,8 @@ class PatternsService(ChartServiceBase):
 
             # Enrich events with pattern information
             if events:
-                # Get pattern_info.json path
-                import os
-                pattern_info_path = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
-                    'configs', 'pattern_info.json'
-                )
-                events = enrich_events(events, PatternInfoProvider(pattern_info_path))
+                # Enrich events with DataFrame (adds timestamps, targets, etc.)
+                events = enrich_events(dfN, events)
 
                 # Update events safely on main thread
                 self._events = (self._events or []) + events
@@ -2408,13 +2403,8 @@ class PatternsService(ChartServiceBase):
 
             # Enrich events with pattern information
             if events:
-                # Get pattern_info.json path
-                import os
-                pattern_info_path = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
-                    'configs', 'pattern_info.json'
-                )
-                events = enrich_events(events, PatternInfoProvider(pattern_info_path))
+                # Enrich events with DataFrame (adds timestamps, targets, etc.)
+                events = enrich_events(dfN, events)
 
                 # Update events safely
                 self._events = (self._events or []) + events
