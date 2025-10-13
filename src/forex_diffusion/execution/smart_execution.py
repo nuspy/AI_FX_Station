@@ -124,7 +124,8 @@ class SmartExecutionOptimizer:
         current_spread: Optional[float] = None,
         volatility: Optional[float] = None,
         current_hour: Optional[int] = None,
-        average_volume: Optional[float] = None
+        average_volume: Optional[float] = None,
+        dom_snapshot: Optional[Dict] = None
     ) -> ExecutionCost:
         """
         Estimate total execution cost for an order.
@@ -133,40 +134,66 @@ class SmartExecutionOptimizer:
             order_size: Size of order (in base currency)
             current_price: Current market price
             direction: 'buy' or 'sell'
-            current_spread: Current bid-ask spread (optional)
+            current_spread: Current bid-ask spread (optional, overridden by DOM)
             volatility: Current volatility (optional)
             current_hour: Hour of day (0-23, optional)
             average_volume: Recent average volume (optional)
+            dom_snapshot: Real-time order book snapshot (optional) with keys:
+                - bids: [[price, volume], ...] (sorted descending)
+                - asks: [[price, volume], ...] (sorted ascending)
+                - spread: float
+                - depth: Dict with bid_depth, ask_depth
 
         Returns:
             ExecutionCost breakdown
         """
-        # 1. Estimate spread cost
-        spread = self._estimate_spread(
-            current_price,
-            current_spread,
-            volatility,
-            current_hour
-        )
+        # Check if DOM data is available for enhanced estimation
+        use_dom = dom_snapshot is not None and 'bids' in dom_snapshot and 'asks' in dom_snapshot
+
+        # 1. Estimate spread cost (prefer real DOM spread)
+        if use_dom and 'spread' in dom_snapshot:
+            spread = dom_snapshot['spread']
+        else:
+            spread = self._estimate_spread(
+                current_price,
+                current_spread,
+                volatility,
+                current_hour
+            )
 
         spread_cost = spread * order_size / 2  # Half-spread crossing
 
-        # 2. Estimate slippage
-        slippage = self._estimate_slippage(
-            order_size,
-            current_price,
-            volatility,
-            average_volume
-        )
+        # 2. Estimate slippage (use DOM-based calculation if available)
+        if use_dom:
+            slippage = self._calculate_dom_slippage(
+                order_size,
+                direction,
+                dom_snapshot['bids'],
+                dom_snapshot['asks']
+            )
+        else:
+            slippage = self._estimate_slippage(
+                order_size,
+                current_price,
+                volatility,
+                average_volume
+            )
 
         slippage_cost = slippage * order_size
 
-        # 3. Estimate market impact
-        impact = self._estimate_market_impact(
-            order_size,
-            current_price,
-            average_volume
-        )
+        # 3. Estimate market impact (use liquidity-based if DOM available)
+        if use_dom:
+            impact = self._calculate_liquidity_based_impact(
+                order_size,
+                current_price,
+                dom_snapshot
+            )
+        else:
+            impact = self._estimate_market_impact(
+                order_size,
+                current_price,
+                average_volume
+            )
 
         market_impact_cost = impact * order_size
 
@@ -301,6 +328,201 @@ class SmartExecutionOptimizer:
         market_impact = base_impact * impact_multiplier
 
         return market_impact
+
+    def _calculate_dom_slippage(
+        self,
+        order_size: float,
+        direction: str,
+        bids: List[List[float]],
+        asks: List[List[float]]
+    ) -> float:
+        """
+        Calculate slippage by walking through order book levels.
+
+        Args:
+            order_size: Size of order
+            direction: 'buy' or 'sell'
+            bids: List of [price, volume] for bids (descending)
+            asks: List of [price, volume] for asks (ascending)
+
+        Returns:
+            Slippage per unit (difference from best price)
+        """
+        if not bids or not asks:
+            # Fallback if no DOM data
+            return 0.0
+
+        # Get best bid/ask
+        best_bid = bids[0][0] if bids else 0.0
+        best_ask = asks[0][0] if asks else 0.0
+
+        if direction == 'buy':
+            # Buying: walk up the ask side
+            levels = asks
+            reference_price = best_ask
+        else:
+            # Selling: walk down the bid side
+            levels = bids
+            reference_price = best_bid
+
+        # Walk through levels and fill order
+        remaining_size = order_size
+        total_cost = 0.0
+
+        for price, volume in levels:
+            if remaining_size <= 0:
+                break
+
+            fill_size = min(remaining_size, volume)
+            total_cost += fill_size * price
+            remaining_size -= fill_size
+
+        # If order couldn't be fully filled from available depth
+        if remaining_size > 0:
+            # Use last level price plus penalty
+            last_price = levels[-1][0] if levels else reference_price
+            penalty = abs(last_price - reference_price) * 0.5  # 50% penalty
+            total_cost += remaining_size * (last_price + penalty)
+
+        # Calculate average fill price
+        avg_fill_price = total_cost / order_size
+
+        # Slippage is difference from best price
+        slippage_per_unit = abs(avg_fill_price - reference_price)
+
+        return slippage_per_unit
+
+    def _calculate_liquidity_based_impact(
+        self,
+        order_size: float,
+        current_price: float,
+        dom_snapshot: Dict
+    ) -> float:
+        """
+        Calculate market impact based on available liquidity in order book.
+
+        Args:
+            order_size: Size of order
+            current_price: Current market price
+            dom_snapshot: Order book snapshot
+
+        Returns:
+            Market impact per unit
+        """
+        bids = dom_snapshot.get('bids', [])
+        asks = dom_snapshot.get('asks', [])
+
+        if not bids or not asks:
+            # Fallback to statistical model
+            return current_price * (self.market_impact_coef / 10000)
+
+        # Calculate total depth (top 10 levels)
+        max_levels = min(10, len(bids), len(asks))
+        bid_depth = sum(vol for _, vol in bids[:max_levels])
+        ask_depth = sum(vol for _, vol in asks[:max_levels])
+        total_depth = bid_depth + ask_depth
+
+        if total_depth == 0:
+            # No liquidity, high impact
+            return current_price * (self.market_impact_coef * 5 / 10000)
+
+        # Calculate impact ratio: order size relative to available liquidity
+        impact_ratio = order_size / total_depth
+
+        # Impact increases non-linearly with ratio
+        if impact_ratio < 0.1:
+            # Small order, minimal impact
+            impact_multiplier = impact_ratio
+        elif impact_ratio < 0.5:
+            # Medium order, moderate impact
+            impact_multiplier = 0.1 + (impact_ratio - 0.1) * 2.0
+        else:
+            # Large order, high impact
+            impact_multiplier = 0.9 + (impact_ratio - 0.5) * 3.0
+
+        # Base impact scaled by liquidity ratio
+        base_impact = current_price * (self.market_impact_coef / 10000)
+        liquidity_impact = base_impact * impact_multiplier
+
+        return liquidity_impact
+
+    def check_high_impact_order(
+        self,
+        order_size: float,
+        current_price: float,
+        dom_snapshot: Optional[Dict] = None
+    ) -> Dict:
+        """
+        Check if order would have high market impact.
+
+        Args:
+            order_size: Size of order
+            current_price: Current price
+            dom_snapshot: Order book snapshot (optional)
+
+        Returns:
+            Dict with:
+                - high_impact: bool
+                - impact_ratio: float (order size / depth)
+                - recommendation: str
+                - suggested_split: int (number of slices)
+        """
+        if not dom_snapshot or 'bids' not in dom_snapshot:
+            # Can't determine without DOM data
+            return {
+                'high_impact': False,
+                'impact_ratio': 0.0,
+                'recommendation': 'Execute normally (no DOM data)',
+                'suggested_split': 1
+            }
+
+        bids = dom_snapshot.get('bids', [])
+        asks = dom_snapshot.get('asks', [])
+
+        # Calculate top-5 depth
+        top5_bid_depth = sum(vol for _, vol in bids[:5]) if len(bids) >= 5 else sum(vol for _, vol in bids)
+        top5_ask_depth = sum(vol for _, vol in asks[:5]) if len(asks) >= 5 else sum(vol for _, vol in asks)
+        top5_depth = top5_bid_depth + top5_ask_depth
+
+        if top5_depth == 0:
+            return {
+                'high_impact': True,
+                'impact_ratio': float('inf'),
+                'recommendation': 'CRITICAL: No liquidity available',
+                'suggested_split': 10
+            }
+
+        impact_ratio = order_size / top5_depth
+
+        # Thresholds from specs
+        if impact_ratio > 0.5:
+            return {
+                'high_impact': True,
+                'impact_ratio': impact_ratio,
+                'recommendation': 'SEVERE impact (>50% of depth). Reject or heavily reduce size.',
+                'suggested_split': 10
+            }
+        elif impact_ratio > 0.2:
+            return {
+                'high_impact': True,
+                'impact_ratio': impact_ratio,
+                'recommendation': 'HIGH impact (20-50% of depth). Consider splitting order.',
+                'suggested_split': 5
+            }
+        elif impact_ratio > 0.1:
+            return {
+                'high_impact': False,
+                'impact_ratio': impact_ratio,
+                'recommendation': 'MODERATE impact (10-20% of depth). Acceptable with caution.',
+                'suggested_split': 3
+            }
+        else:
+            return {
+                'high_impact': False,
+                'impact_ratio': impact_ratio,
+                'recommendation': 'LOW impact (<10% of depth). Execute normally.',
+                'suggested_split': 1
+            }
 
     def optimize_execution_timing(
         self,
