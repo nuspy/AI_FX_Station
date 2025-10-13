@@ -35,6 +35,10 @@ try:
     from ..execution.smart_execution import SmartExecutionOptimizer
     from ..services.parameter_loader import ParameterLoaderService
     from ..services.dom_aggregator import DOMAggregatorService
+    from ..patterns.registry import PatternRegistry
+    from ..patterns.engine import PatternEvent
+    from ..intelligence.unified_signal_fusion import UnifiedSignalFusion, FusedSignal
+    from ..intelligence.signal_quality_scorer import SignalQualityScorer
 except ImportError:
     pass
 
@@ -132,6 +136,29 @@ class AutomatedTradingEngine:
         self.ml_ensemble: Optional[StackedMLEnsemble] = None
         self.regime_detector: Optional[HMMRegimeDetector] = None
         self.risk_manager = MultiLevelStopLoss()
+        
+        # CRITICAL-001: Pattern Recognition Integration
+        self.pattern_registry: Optional[PatternRegistry] = None
+        self.pattern_detectors: List = []
+        try:
+            self.pattern_registry = PatternRegistry()
+            self.pattern_detectors = self.pattern_registry.detectors(kinds=["chart", "candle"])
+            logger.info(f"✅ Pattern Engine initialized: {len(self.pattern_detectors)} detectors enabled")
+        except Exception as e:
+            logger.warning(f"Pattern Engine initialization failed: {e}")
+        
+        # CRITICAL-002: Signal Fusion Integration
+        self.signal_fusion: Optional[UnifiedSignalFusion] = None
+        try:
+            self.signal_fusion = UnifiedSignalFusion(
+                quality_scorer=SignalQualityScorer(),
+                regime_detector=None,
+                default_quality_threshold=config.signal_quality_threshold if hasattr(config, 'signal_quality_threshold') else 0.65,
+                max_signals_per_regime=config.max_signals_per_regime if hasattr(config, 'max_signals_per_regime') else 5
+            )
+            logger.info("✅ Unified Signal Fusion initialized")
+        except Exception as e:
+            logger.warning(f"Signal Fusion initialization failed: {e}")
 
         # Old position sizer (keeping for backward compatibility)
         self.position_sizer = RegimePositionSizer(
@@ -457,31 +484,99 @@ class AutomatedTradingEngine:
         market_data: Dict[str, pd.DataFrame]
     ) -> tuple[int, float]:
         """
-        Get trading signal from models with sentiment filtering.
+        Get trading signal from models and patterns with signal fusion.
+        
+        CRITICAL-001: Integrates pattern detection
+        CRITICAL-002: Uses unified signal fusion
 
         Returns:
             (signal, confidence) where signal is -1/0/+1
         """
-        # Get base signal from models
-        signal = 0
-        confidence = 0.0
-
+        data = market_data[symbol]
+        
+        # 1. Get AI forecast signals
+        ai_signal = 0
+        ai_confidence = 0.0
+        
         if self.mtf_ensemble and self.config.use_multi_timeframe:
             # Prepare data for multiple timeframes
             data_by_tf = {}
             # For now, use same data (in production, fetch different TFs)
             for tf in [Timeframe.M5, Timeframe.H1]:
-                data_by_tf[tf] = market_data[symbol]
+                data_by_tf[tf] = data
 
             result = self.mtf_ensemble.predict_ensemble(data_by_tf)
-            signal = result['final_signal']
-            confidence = result['confidence']
+            ai_signal = result['final_signal']
+            ai_confidence = result['confidence']
+        
+        # 2. Detect patterns (CRITICAL-001)
+        pattern_events = self._detect_patterns(data)
+        
+        # 3. Use signal fusion if available (CRITICAL-002)
+        if self.signal_fusion and (pattern_events or ai_signal != 0):
+            try:
+                # Convert AI forecast to list format for fusion
+                ensemble_predictions = [{
+                    'signal': ai_signal,
+                    'confidence': ai_confidence,
+                    'source': 'ai_ensemble'
+                }] if ai_signal != 0 else None
+                
+                # Fuse signals with quality scoring
+                fused_signals = self.signal_fusion.fuse_signals(
+                    pattern_signals=pattern_events if pattern_events else None,
+                    ensemble_predictions=ensemble_predictions,
+                    market_data=data,
+                    symbol=symbol
+                )
+                
+                if fused_signals:
+                    # Take best quality signal
+                    best_signal = max(fused_signals, key=lambda s: s.quality_score.composite_score)
+                    
+                    # Convert direction to signal
+                    if best_signal.direction == 'bull':
+                        signal = 1
+                    elif best_signal.direction == 'bear':
+                        signal = -1
+                    else:
+                        signal = 0
+                    
+                    confidence = best_signal.quality_score.composite_score
+                    
+                    logger.info(
+                        f"✅ Signal fusion for {symbol}: direction={best_signal.direction}, "
+                        f"confidence={confidence:.2f}, source={best_signal.source.value}"
+                    )
+                else:
+                    # No high-quality signals
+                    signal = 0
+                    confidence = 0.0
+            except Exception as e:
+                logger.warning(f"Signal fusion failed for {symbol}: {e}, falling back to AI signal")
+                signal = ai_signal
+                confidence = ai_confidence
         else:
-            # Fallback: no prediction available
-            return 0, 0.0
+            # Fallback: use AI signal directly or strongest pattern
+            if ai_signal != 0:
+                signal = ai_signal
+                confidence = ai_confidence
+            elif pattern_events:
+                # Use strongest pattern
+                strongest_pattern = max(pattern_events, key=lambda p: p.score)
+                if strongest_pattern.direction == 'bull':
+                    signal = 1
+                elif strongest_pattern.direction == 'bear':
+                    signal = -1
+                else:
+                    signal = 0
+                confidence = strongest_pattern.score
+                logger.info(f"Using pattern signal: {strongest_pattern.pattern_key}, score={confidence:.2f}")
+            else:
+                return 0, 0.0
 
         # Apply sentiment filtering (contrarian strategy)
-        if self.sentiment_service:
+        if self.sentiment_service and signal != 0:
             try:
                 sentiment_metrics = self.sentiment_service.get_latest_sentiment_metrics(symbol)
                 if sentiment_metrics:
@@ -532,6 +627,36 @@ class AutomatedTradingEngine:
             except:
                 return None
         return None
+
+    def _detect_patterns(self, data: pd.DataFrame) -> List[PatternEvent]:
+        """
+        Detect chart and candlestick patterns.
+        
+        Args:
+            data: OHLCV dataframe
+            
+        Returns:
+            List of detected pattern events
+        """
+        if not self.pattern_detectors:
+            return []
+        
+        all_patterns = []
+        for detector in self.pattern_detectors:
+            try:
+                events = detector.detect(data)
+                if events:
+                    all_patterns.extend(events)
+            except Exception as e:
+                logger.debug(f"Pattern detection failed for {detector.key}: {e}")
+        
+        # Filter to only confirmed patterns
+        confirmed_patterns = [p for p in all_patterns if p.state == "confirmed"]
+        
+        if confirmed_patterns:
+            logger.info(f"✅ Detected {len(confirmed_patterns)} confirmed patterns")
+        
+        return confirmed_patterns
 
     def _calculate_position_size(
         self,
