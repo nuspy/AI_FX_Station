@@ -107,7 +107,20 @@ def _infer_name(e: Any) -> str:
     n = getattr(e, "name", None) or getattr(e, "pattern_key", None) or getattr(e, "key", None) or e.__class__.__name__
     return str(n)
 
-def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 50) -> List[Any]:
+def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 50, dom_service=None, symbol: str = None) -> List[Any]:
+    """
+    Enrich pattern events with timestamps, targets, and optional DOM confirmation.
+
+    Args:
+        df: OHLC dataframe
+        events: List of pattern events
+        default_lookback: Default lookback bars for patterns without start_ts
+        dom_service: Optional DOM aggregator service for confidence adjustment
+        symbol: Trading symbol for DOM lookup
+
+    Returns:
+        List of enriched events with adjusted confidence scores
+    """
     out: List[Any] = []
     for e in events:
         try:
@@ -184,6 +197,27 @@ def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 5
                     setattr(e, "target_price", float(tgt))
             except Exception:
                 pass
+
+            # Apply DOM confirmation if available
+            if dom_service and symbol:
+                try:
+                    from .....patterns.dom_confirmation import DOMPatternConfirmation
+                    confirmer = DOMPatternConfirmation(dom_service)
+
+                    # Get original score
+                    original_score = getattr(e, 'score', 0.5)
+
+                    # Get DOM confirmation
+                    confirmation = confirmer.confirm_pattern(direction, symbol, original_score)
+
+                    # Update score and add confirmation metadata
+                    setattr(e, 'score', confirmation['adjusted_score'])
+                    setattr(e, 'dom_confirmation', confirmation)
+                    setattr(e, 'dom_aligned', confirmation['dom_aligned'])
+
+                except Exception as dom_err:
+                    # Silently continue if DOM confirmation fails
+                    pass
 
             out.append(e)
         except Exception:

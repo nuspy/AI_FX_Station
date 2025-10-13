@@ -65,7 +65,7 @@ use_async = False
 
 
 class PatternsService(ChartServiceBase):
-    def __init__(self, view, controller) -> None:
+    def __init__(self, view, controller, dom_service=None) -> None:
         super().__init__(view, controller)
         self._enabled_chart = False
         self._enabled_candle = False
@@ -74,6 +74,7 @@ class PatternsService(ChartServiceBase):
         self.registry = PatternRegistry()
         self.info = PatternInfoProvider(self._default_info_path())
         self.renderer = PatternOverlayRenderer(controller, self.info)
+        self.dom_service = dom_service  # Store DOM service for pattern confirmation
 
         # Strategy selection for real-time scanning
         self._current_strategy = "balanced"  # Default: balanced strategy
@@ -257,7 +258,12 @@ class PatternsService(ChartServiceBase):
 
                     df_info = f"shape={enrichment_df.shape}" if enrichment_df is not None else "None"
                     logger.debug(f"Enriching {len(all_events)} events with dataframe: {df_info}")
-                    enriched = enrich_events(enrichment_df, all_events)
+
+                    # Get symbol for DOM confirmation
+                    symbol = getattr(self.view, 'symbol', None) or getattr(self.controller, 'symbol', None)
+
+                    # Enrich with DOM confirmation if available
+                    enriched = enrich_events(enrichment_df, all_events, dom_service=self.dom_service, symbol=symbol)
                     logger.debug(f"After enrichment: {len(enriched)} events remain")
                     tf_hint = getattr(self.view, "_patterns_scan_tf_hint", None) or getattr(self.controller, "timeframe", None)
 
