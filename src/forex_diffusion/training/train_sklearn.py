@@ -546,14 +546,71 @@ def _build_features(candles: pd.DataFrame, args):
     if "hurst" in indicator_tfs:
         ind_cfg["hurst"] = {"window": int(args.hurst_window)}
     if ind_cfg:
-        ind_feats = _indicators(
-            candles,
-            ind_cfg,
-            indicator_tfs,
-            args.timeframe,
-            symbol=args.symbol,
-            days_history=args.days_history,
-        )
+        # OPT-002b: Use parallel indicators if flag enabled
+        use_parallel = getattr(args, "parallel_indicators", False)
+
+        if use_parallel:
+            # Use parallel computation for 2-4x speedup
+            try:
+                from ..features.parallel_indicators import indicators_parallel
+
+                max_workers = int(getattr(args, "parallel_workers", 4))
+                logger.info(f"[OPT-002] Using parallel indicator computation with {max_workers} workers")
+
+                # Pre-fetch timeframe cache for parallel computation
+                timeframe_cache: Dict[str, pd.DataFrame] = {args.timeframe: candles.copy()}
+
+                # Collect all unique timeframes needed
+                unique_tfs = set([args.timeframe])
+                for name in ind_cfg.keys():
+                    key = str(name).lower()
+                    tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [args.timeframe]
+                    unique_tfs.update(tfs)
+
+                # Pre-fetch all non-base timeframes
+                for tf in unique_tfs:
+                    if tf != args.timeframe and tf not in timeframe_cache:
+                        try:
+                            logger.info(f"[OPT-002] Pre-fetching {tf} for parallel computation")
+                            timeframe_cache[tf] = fetch_candles_from_db(
+                                args.symbol, tf, args.days_history
+                            )
+                        except Exception as e:
+                            logger.warning(f"[OPT-002] Failed to pre-fetch {tf}: {e}")
+
+                # Use parallel computation
+                ind_feats = indicators_parallel(
+                    df=candles,
+                    ind_cfg=ind_cfg,
+                    indicator_tfs=indicator_tfs,
+                    base_tf=args.timeframe,
+                    timeframe_cache=timeframe_cache,
+                    max_workers=max_workers
+                )
+                logger.info(f"[OPT-002] Parallel computation completed: {len(ind_feats.columns)} features")
+
+            except Exception as e:
+                logger.warning(f"[OPT-002] Parallel indicators failed: {e}, falling back to sequential")
+                # Fallback to sequential computation
+                ind_feats = _indicators(
+                    candles,
+                    ind_cfg,
+                    indicator_tfs,
+                    args.timeframe,
+                    symbol=args.symbol,
+                    days_history=args.days_history,
+                )
+        else:
+            # Sequential computation (default)
+            ind_feats = _indicators(
+                candles,
+                ind_cfg,
+                indicator_tfs,
+                args.timeframe,
+                symbol=args.symbol,
+                days_history=args.days_history,
+            )
+
         feats.append(ind_feats)
         feature_groups["indicators"] = list(ind_feats.columns)
         logger.debug(f"[Features] Indicators: {list(ind_feats.columns)}")
