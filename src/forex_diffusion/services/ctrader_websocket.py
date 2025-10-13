@@ -617,6 +617,9 @@ class CTraderWebSocketService:
 
             self.sentiment_buffer[symbol] = sentiment_data
 
+            # Store to database (non-blocking)
+            reactor.callInThread(self._store_sentiment, sentiment_data)
+
             # Callback
             if self.on_sentiment_update:
                 reactor.callInThread(self.on_sentiment_update, sentiment_data)
@@ -650,6 +653,44 @@ class CTraderWebSocketService:
 
         except Exception as e:
             logger.error(f"Error storing order book: {e}")
+
+    def _store_sentiment(self, sentiment_data: Dict[str, Any]):
+        """Store sentiment data to database (called from thread pool)."""
+        try:
+            with self.db_engine.begin() as conn:
+                query = text(
+                    "INSERT INTO sentiment_data (symbol, ts_utc, sentiment, ratio, "
+                    "buy_volume, sell_volume, confidence, long_pct, short_pct, provider, ts_created_ms) "
+                    "VALUES (:symbol, :ts_utc, :sentiment, :ratio, :buy_volume, "
+                    ":sell_volume, :confidence, :long_pct, :short_pct, :provider, :ts_created_ms)"
+                )
+
+                # Calculate long/short percentages from volumes
+                total_volume = sentiment_data['buy_volume'] + sentiment_data['sell_volume']
+                long_pct = (sentiment_data['buy_volume'] / total_volume * 100) if total_volume > 0 else 50.0
+                short_pct = 100.0 - long_pct
+
+                conn.execute(query, {
+                    'symbol': sentiment_data['symbol'],
+                    'ts_utc': sentiment_data['timestamp'],
+                    'sentiment': sentiment_data['sentiment'],
+                    'ratio': sentiment_data['ratio'],
+                    'buy_volume': sentiment_data['buy_volume'],
+                    'sell_volume': sentiment_data['sell_volume'],
+                    'confidence': sentiment_data['confidence'],
+                    'long_pct': long_pct,
+                    'short_pct': short_pct,
+                    'provider': 'ctrader_orderflow',
+                    'ts_created_ms': sentiment_data['timestamp']
+                })
+
+            logger.debug(
+                f"Stored sentiment for {sentiment_data['symbol']}: "
+                f"{sentiment_data['sentiment']} (ratio={sentiment_data['ratio']:.2f})"
+            )
+
+        except Exception as e:
+            logger.error(f"Error storing sentiment: {e}")
 
     def _on_error(self, error):
         """Handle connection error."""

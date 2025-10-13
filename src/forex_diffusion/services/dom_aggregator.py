@@ -22,7 +22,7 @@ from sqlalchemy import text
 from .db_service import DBService
 
 
-class DOMAggreg atorService:
+class DOMAggregatorService:
     """
     Background service that processes DOM snapshots and calculates metrics.
     """
