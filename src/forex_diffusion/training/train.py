@@ -80,10 +80,13 @@ def _build_arrays(df: pd.DataFrame, patch_len: int, horizon: int, warmup: int) -
 
 def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """
-    Standardize patches ensuring NO look-ahead bias.
+    Standardize patches ensuring NO look-ahead bias (2-way split).
 
     CRITICAL: Computes mean/std ONLY on training set, then applies to validation.
     This prevents information leakage from future data.
+
+    NOTE: This function is kept for backward compatibility. New code should use
+    _standardize_train_val_test() for proper 60/20/20 split (PROC-001).
 
     Returns:
         Tuple of (train_norm, val_norm, mu, sigma, scaler_metadata)
@@ -138,6 +141,97 @@ def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.nda
         )
 
     return train_norm, val_norm, mu.squeeze(), sigma.squeeze(), scaler_metadata
+
+
+def _standardize_train_val_test(patches: np.ndarray, val_frac: float = 0.2, test_frac: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+    """
+    Standardize patches with 3-way split ensuring NO look-ahead bias.
+
+    CRITICAL: Computes mean/std ONLY on training set, then applies to val/test.
+    This prevents information leakage from future data.
+
+    PROC-001: Implements proper 3-way split:
+    - Train (60%): For model training
+    - Val (20%): For early stopping
+    - Test (20%): For final evaluation ONLY (never used during training)
+
+    Args:
+        patches: Input patches (N, C, L) where N=samples, C=channels, L=sequence length
+        val_frac: Validation fraction (default 0.2)
+        test_frac: Test fraction (default 0.2)
+
+    Returns:
+        Tuple of (train_norm, val_norm, test_norm, mu, sigma, scaler_metadata)
+    """
+    from scipy import stats
+
+    n = patches.shape[0]
+    test_size = max(1, int(n * test_frac))
+    val_size = max(1, int(n * val_frac))
+    train_size = n - val_size - test_size
+
+    if train_size <= 1:
+        raise RuntimeError("Split training/validation/test troppo piccolo: riduci val_frac/test_frac o aumenta dati")
+
+    # Temporal split: train first, val middle, test last (NO shuffling)
+    train = patches[:train_size]
+    val = patches[train_size:train_size + val_size]
+    test = patches[train_size + val_size:]
+
+    # Compute statistics ONLY on training set (NO look-ahead bias)
+    mu = train.mean(axis=(0, 2), keepdims=True)
+    sigma = train.std(axis=(0, 2), keepdims=True)
+    sigma[sigma == 0] = 1.0
+
+    # Apply standardization to all splits
+    train_norm = (train - mu) / sigma
+    val_norm = (val - mu) / sigma
+    test_norm = (test - mu) / sigma
+
+    # VERIFICATION: Statistical test for look-ahead bias detection
+    train_flat = train_norm[:, 0, :].flatten()
+    val_flat = val_norm[:, 0, :].flatten()
+    test_flat = test_norm[:, 0, :].flatten()
+
+    p_value_val = None
+    p_value_test = None
+
+    if len(train_flat) > 20 and len(val_flat) > 20:
+        _, p_value_val = stats.ks_2samp(train_flat, val_flat)
+
+    if len(train_flat) > 20 and len(test_flat) > 20:
+        _, p_value_test = stats.ks_2samp(train_flat, test_flat)
+
+    # Metadata for debugging
+    scaler_metadata = {
+        "train_size": int(train_size),
+        "val_size": int(val_size),
+        "test_size": int(test_size),
+        "train_frac": train_size / n,
+        "val_frac": val_size / n,
+        "test_frac": test_size / n,
+        "train_mean_shape": list(mu.shape),
+        "train_std_shape": list(sigma.shape),
+        "ks_test_p_value_val": float(p_value_val) if p_value_val is not None else None,
+        "ks_test_p_value_test": float(p_value_test) if p_value_test is not None else None,
+    }
+
+    # WARNING: If distributions too similar, potential look-ahead bias
+    if p_value_val is not None and p_value_val > 0.8:
+        logger.warning(
+            f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Val)!\n"
+            f"Train/Val distributions suspiciously similar (KS p-value={p_value_val:.3f}).\n"
+            f"Expected p < 0.5 for different time periods."
+        )
+
+    if p_value_test is not None and p_value_test > 0.8:
+        logger.warning(
+            f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Test)!\n"
+            f"Train/Test distributions suspiciously similar (KS p-value={p_value_test:.3f}).\n"
+            f"Expected p < 0.5 for different time periods."
+        )
+
+    return train_norm, val_norm, test_norm, mu.squeeze(), sigma.squeeze(), scaler_metadata
 
 
 def parse_args() -> argparse.Namespace:
