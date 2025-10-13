@@ -10,7 +10,11 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateMonitor,
+)
 from loguru import logger
 
 from forex_diffusion.train.loop import ForexDiffusionLit
@@ -21,11 +25,15 @@ CHANNEL_ORDER = ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos
 
 
 class CandlePatchDataset(Dataset):
-    def __init__(self, patches: np.ndarray, targets: np.ndarray, cond: np.ndarray | None = None):
+    def __init__(
+        self, patches: np.ndarray, targets: np.ndarray, cond: np.ndarray | None = None
+    ):
         super().__init__()
         self.patches = torch.from_numpy(patches.astype(np.float32))
         self.targets = torch.from_numpy(targets.astype(np.float32))
-        self.cond = torch.from_numpy(cond.astype(np.float32)) if cond is not None else None
+        self.cond = (
+            torch.from_numpy(cond.astype(np.float32)) if cond is not None else None
+        )
 
     def __len__(self) -> int:
         return int(self.patches.shape[0])
@@ -49,7 +57,9 @@ def _add_time_features(df):
     return df
 
 
-def _build_arrays(df: pd.DataFrame, patch_len: int, horizon: int, warmup: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _build_arrays(
+    df: pd.DataFrame, patch_len: int, horizon: int, warmup: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     values = df[CHANNEL_ORDER].astype(float).to_numpy()
     closes = df["close"].astype(float).to_numpy()
     cond_cols = [col for col in df.columns if col.startswith("cond_")]
@@ -78,7 +88,9 @@ def _build_arrays(df: pd.DataFrame, patch_len: int, horizon: int, warmup: int) -
     return patches, y, cond
 
 
-def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+def _standardize_train_val(
+    patches: np.ndarray, val_frac: float
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Standardize patches ensuring NO look-ahead bias (2-way split).
 
@@ -98,7 +110,9 @@ def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.nda
     train_size = n - val_size
 
     if train_size <= 1:
-        raise RuntimeError("Split training/validation troppo piccolo: riduci val_frac o aumenta dati")
+        raise RuntimeError(
+            "Split training/validation troppo piccolo: riduci val_frac o aumenta dati"
+        )
 
     # Temporal split: train first, val last (NO shuffling)
     train = patches[:train_size]
@@ -143,7 +157,17 @@ def _standardize_train_val(patches: np.ndarray, val_frac: float) -> Tuple[np.nda
     return train_norm, val_norm, mu.squeeze(), sigma.squeeze(), scaler_metadata
 
 
-def _standardize_train_val_test(patches: np.ndarray, val_frac: float = 0.2, test_frac: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+def _standardize_train_val_test(
+    patches: np.ndarray, val_frac: float = 0.2, test_frac: float = 0.2
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    Dict[str, Any],
+]:
     """
     Standardize patches with 3-way split ensuring NO look-ahead bias.
 
@@ -171,12 +195,14 @@ def _standardize_train_val_test(patches: np.ndarray, val_frac: float = 0.2, test
     train_size = n - val_size - test_size
 
     if train_size <= 1:
-        raise RuntimeError("Split training/validation/test troppo piccolo: riduci val_frac/test_frac o aumenta dati")
+        raise RuntimeError(
+            "Split training/validation/test troppo piccolo: riduci val_frac/test_frac o aumenta dati"
+        )
 
     # Temporal split: train first, val middle, test last (NO shuffling)
     train = patches[:train_size]
-    val = patches[train_size:train_size + val_size]
-    test = patches[train_size + val_size:]
+    val = patches[train_size : train_size + val_size]
+    test = patches[train_size + val_size :]
 
     # Compute statistics ONLY on training set (NO look-ahead bias)
     mu = train.mean(axis=(0, 2), keepdims=True)
@@ -213,7 +239,9 @@ def _standardize_train_val_test(patches: np.ndarray, val_frac: float = 0.2, test
         "train_mean_shape": list(mu.shape),
         "train_std_shape": list(sigma.shape),
         "ks_test_p_value_val": float(p_value_val) if p_value_val is not None else None,
-        "ks_test_p_value_test": float(p_value_test) if p_value_test is not None else None,
+        "ks_test_p_value_test": (
+            float(p_value_test) if p_value_test is not None else None
+        ),
     }
 
     # WARNING: If distributions too similar, potential look-ahead bias
@@ -231,7 +259,14 @@ def _standardize_train_val_test(patches: np.ndarray, val_frac: float = 0.2, test
             f"Expected p < 0.5 for different time periods."
         )
 
-    return train_norm, val_norm, test_norm, mu.squeeze(), sigma.squeeze(), scaler_metadata
+    return (
+        train_norm,
+        val_norm,
+        test_norm,
+        mu.squeeze(),
+        sigma.squeeze(),
+        scaler_metadata,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -262,20 +297,42 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--fast_dev_run", action="store_true")
 
     # NVIDIA Optimization Stack parameters
-    ap.add_argument("--use_nvidia_opts", action="store_true",
-                   help="Enable NVIDIA optimization stack (AMP, compile, fused optimizers)")
-    ap.add_argument("--use_amp", action="store_true",
-                   help="Enable Automatic Mixed Precision (AMP)")
-    ap.add_argument("--precision", type=str, default="fp16", choices=["fp16", "bf16", "fp32"],
-                   help="Training precision (fp16, bf16, or fp32)")
-    ap.add_argument("--compile_model", action="store_true",
-                   help="Use torch.compile for model optimization (PyTorch 2.0+)")
-    ap.add_argument("--use_fused_optimizer", action="store_true",
-                   help="Use NVIDIA APEX fused optimizer (if available)")
-    ap.add_argument("--use_flash_attention", action="store_true",
-                   help="Use Flash Attention 2 (if available and GPU supports it)")
-    ap.add_argument("--gradient_accumulation_steps", type=int, default=1,
-                   help="Number of gradient accumulation steps")
+    ap.add_argument(
+        "--use_nvidia_opts",
+        action="store_true",
+        help="Enable NVIDIA optimization stack (AMP, compile, fused optimizers)",
+    )
+    ap.add_argument(
+        "--use_amp", action="store_true", help="Enable Automatic Mixed Precision (AMP)"
+    )
+    ap.add_argument(
+        "--precision",
+        type=str,
+        default="fp16",
+        choices=["fp16", "bf16", "fp32"],
+        help="Training precision (fp16, bf16, or fp32)",
+    )
+    ap.add_argument(
+        "--compile_model",
+        action="store_true",
+        help="Use torch.compile for model optimization (PyTorch 2.0+)",
+    )
+    ap.add_argument(
+        "--use_fused_optimizer",
+        action="store_true",
+        help="Use NVIDIA APEX fused optimizer (if available)",
+    )
+    ap.add_argument(
+        "--use_flash_attention",
+        action="store_true",
+        help="Use Flash Attention 2 (if available and GPU supports it)",
+    )
+    ap.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Number of gradient accumulation steps",
+    )
 
     return ap.parse_args()
 
@@ -288,16 +345,24 @@ def main() -> None:
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
     candles = _add_time_features(candles)
 
-    patches, targets, cond = _build_arrays(candles, args.patch_len, int(args.horizon), args.warmup_bars)
-    train_x, val_x, mu, sigma, scaler_metadata = _standardize_train_val(patches, args.val_frac)
+    patches, targets, cond = _build_arrays(
+        candles, args.patch_len, int(args.horizon), args.warmup_bars
+    )
+    train_x, val_x, mu, sigma, scaler_metadata = _standardize_train_val(
+        patches, args.val_frac
+    )
 
     # Log scaler metadata for debugging
-    logger.info(f"[Scaler] Train size: {scaler_metadata['train_size']}, Val size: {scaler_metadata['val_size']}")
-    if scaler_metadata.get('ks_test_p_value') is not None:
-        logger.info(f"[Scaler] KS test p-value: {scaler_metadata['ks_test_p_value']:.4f} (< 0.5 expected for no bias)")
+    logger.info(
+        f"[Scaler] Train size: {scaler_metadata['train_size']}, Val size: {scaler_metadata['val_size']}"
+    )
+    if scaler_metadata.get("ks_test_p_value") is not None:
+        logger.info(
+            f"[Scaler] KS test p-value: {scaler_metadata['ks_test_p_value']:.4f} (< 0.5 expected for no bias)"
+        )
 
     # Split targets and conditions based on train_size
-    train_size = scaler_metadata['train_size']
+    train_size = scaler_metadata["train_size"]
     train_y = targets[:train_size]
     val_y = targets[train_size:]
     cond_train = cond[:train_size] if cond is not None else None
@@ -306,8 +371,20 @@ def main() -> None:
     train_ds = CandlePatchDataset(train_x, train_y, cond_train)
     val_ds = CandlePatchDataset(val_x, val_y, cond_val)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=max(0, args.num_workers // 2), pin_memory=True)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=max(0, args.num_workers // 2),
+        pin_memory=True,
+    )
 
     model = ForexDiffusionLit()
     model.dataset_stats = {
@@ -317,18 +394,26 @@ def main() -> None:
         "scaler_metadata": scaler_metadata,  # NEW: metadata for bias verification
     }
     try:
-        model.save_hyperparameters({
-            "symbol": args.symbol,
-            "timeframe": args.timeframe,
-            "horizon": int(args.horizon),
-            "patch_len": args.patch_len,
-        })
+        model.save_hyperparameters(
+            {
+                "symbol": args.symbol,
+                "timeframe": args.timeframe,
+                "horizon": int(args.horizon),
+                "patch_len": args.patch_len,
+            }
+        )
     except Exception:
         pass
 
     out_dir = Path(args.artifacts_dir).resolve() / "lightning"
     out_dir.mkdir(parents=True, exist_ok=True)
-    monitor = ModelCheckpoint(dirpath=out_dir, monitor="val/loss", save_top_k=3, mode="min", filename=f"{args.symbol.replace('/', '')}-{args.timeframe}-{{epoch:02d}}-{{val/loss:.4f}}")
+    monitor = ModelCheckpoint(
+        dirpath=out_dir,
+        monitor="val/loss",
+        save_top_k=3,
+        mode="min",
+        filename=f"{args.symbol.replace('/', '')}-{args.timeframe}-{{epoch:02d}}-{{val/loss:.4f}}",
+    )
     early = EarlyStopping(monitor="val/loss", patience=10, mode="min", verbose=True)
     lr_mon = LearningRateMonitor(logging_interval="epoch")
 
@@ -338,7 +423,12 @@ def main() -> None:
     # Add NVIDIA optimization callback if requested
     if args.use_nvidia_opts or args.use_amp or args.compile_model:
         from .optimized_trainer import OptimizedTrainingCallback
-        from .optimization_config import OptimizationConfig, HardwareInfo, PrecisionMode, CompileMode
+        from .optimization_config import (
+            OptimizationConfig,
+            HardwareInfo,
+            PrecisionMode,
+            CompileMode,
+        )
 
         # Detect hardware capabilities
         hw_info = HardwareInfo.detect()
@@ -347,7 +437,7 @@ def main() -> None:
         precision_map = {
             "fp16": PrecisionMode.FP16,
             "bf16": PrecisionMode.BF16,
-            "fp32": PrecisionMode.FP32
+            "fp32": PrecisionMode.FP32,
         }
 
         # Create optimization config
@@ -385,7 +475,11 @@ def main() -> None:
         fast_dev_run=args.fast_dev_run,
     )
 
-    logger.info("[train] starting Lightning fit on {} batches (val {})", len(train_loader), len(val_loader))
+    logger.info(
+        "[train] starting Lightning fit on {} batches (val {})",
+        len(train_loader),
+        len(val_loader),
+    )
     trainer.fit(model, train_loader, val_loader)
 
     ckpt_path = monitor.best_model_path or (out_dir / "last.ckpt")

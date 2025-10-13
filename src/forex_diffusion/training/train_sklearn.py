@@ -1,4 +1,3 @@
-
 import argparse, json, math, warnings
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
@@ -32,7 +31,10 @@ except Exception:
 import datetime
 from sqlalchemy import text
 
-def fetch_candles_from_db(symbol: str, timeframe: str, days_history: int) -> pd.DataFrame:
+
+def fetch_candles_from_db(
+    symbol: str, timeframe: str, days_history: int
+) -> pd.DataFrame:
     """
     Fetch candles using SQLAlchemy engine from MarketDataService.
     Returns DataFrame with columns ['ts_utc','open','high','low','close','volume'] ordered ASC.
@@ -64,7 +66,9 @@ def fetch_candles_from_db(symbol: str, timeframe: str, days_history: int) -> pd.
                     "WHERE symbol = :symbol AND timeframe = :timeframe "
                     "ORDER BY ts_utc ASC"
                 )
-                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe}).fetchall()
+                rows = conn.execute(
+                    q, {"symbol": symbol, "timeframe": timeframe}
+                ).fetchall()
             else:
                 q = text(
                     "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
@@ -72,27 +76,46 @@ def fetch_candles_from_db(symbol: str, timeframe: str, days_history: int) -> pd.
                     "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc >= :start_ms "
                     "ORDER BY ts_utc ASC"
                 )
-                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "start_ms": int(start_ms)}).fetchall()
+                rows = conn.execute(
+                    q,
+                    {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "start_ms": int(start_ms),
+                    },
+                ).fetchall()
     except Exception as e:
         raise RuntimeError(f"Failed to query market_data_candles: {e}")
 
     if not rows:
-        raise RuntimeError(f"No candles found for {symbol} {timeframe} in last {days_history} days")
+        raise RuntimeError(
+            f"No candles found for {symbol} {timeframe} in last {days_history} days"
+        )
 
-    df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(
+        rows, columns=["ts_utc", "open", "high", "low", "close", "volume"]
+    )
     df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("int64")
     for c in ["open", "high", "low", "close", "volume"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-    df = df.dropna(subset=["ts_utc", "open", "high", "low", "close"]).sort_values("ts_utc").reset_index(drop=True)
+    df = (
+        df.dropna(subset=["ts_utc", "open", "high", "low", "close"])
+        .sort_values("ts_utc")
+        .reset_index(drop=True)
+    )
     return df[["ts_utc", "open", "high", "low", "close", "volume"]]
+
 
 try:
     import ta
+
     _HAS_TA = True
 except Exception:
     _HAS_TA = False
-    warnings.warn("Package 'ta' non trovato: indicatori avanzati limitati.", RuntimeWarning)
+    warnings.warn(
+        "Package 'ta' non trovato: indicatori avanzati limitati.", RuntimeWarning
+    )
 
 
 def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
@@ -126,7 +149,9 @@ def _coerce_indicator_tfs(raw_value: Any) -> Dict[str, List[str]]:
         try:
             data = json.loads(str(raw_value))
         except Exception:
-            warnings.warn("indicator_tfs non parseable; uso dizionario vuoto", RuntimeWarning)
+            warnings.warn(
+                "indicator_tfs non parseable; uso dizionario vuoto", RuntimeWarning
+            )
             return {}
     out: Dict[str, List[str]] = {}
     for k, v in data.items():
@@ -150,23 +175,37 @@ def _coerce_indicator_tfs(raw_value: Any) -> Dict[str, List[str]]:
 def _realized_vol_feature(df: pd.DataFrame, window: int) -> pd.DataFrame:
     if window <= 1:
         return pd.DataFrame(index=df.index)
-    close = pd.to_numeric(df["close"], errors="coerce").replace(0.0, np.nan).fillna(method="ffill")
+    close = (
+        pd.to_numeric(df["close"], errors="coerce")
+        .replace(0.0, np.nan)
+        .fillna(method="ffill")
+    )
     log_ret = np.log(close).diff().fillna(0.0)
     rv = log_ret.pow(2).rolling(window=window, min_periods=2).sum().pow(0.5)
     feature = pd.DataFrame({f"rv_{window}": rv}, index=df.index)
     return feature
 
+
 def _resample(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-    if timeframe.endswith("m"): rule = f"{int(timeframe[:-1])}min"
-    elif timeframe.endswith("h"): rule = f"{int(timeframe[:-1])}h"
-    else: raise ValueError(f"Timeframe non supportato: {timeframe}")
-    x = df.copy(); x.index = pd.to_datetime(x["ts_utc"], unit="ms", utc=True)
-    ohlc = x[["open","high","low","close"]].astype(float).resample(rule, label="right").agg(
-        {"open":"first","high":"max","low":"min","close":"last"}
+    if timeframe.endswith("m"):
+        rule = f"{int(timeframe[:-1])}min"
+    elif timeframe.endswith("h"):
+        rule = f"{int(timeframe[:-1])}h"
+    else:
+        raise ValueError(f"Timeframe non supportato: {timeframe}")
+    x = df.copy()
+    x.index = pd.to_datetime(x["ts_utc"], unit="ms", utc=True)
+    ohlc = (
+        x[["open", "high", "low", "close"]]
+        .astype(float)
+        .resample(rule, label="right")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
     )
-    if "volume" in x.columns: ohlc["volume"] = x["volume"].astype(float).resample(rule, label="right").sum()
-    ohlc["ts_utc"] = (ohlc.index.view("int64") // 10**6)
+    if "volume" in x.columns:
+        ohlc["volume"] = x["volume"].astype(float).resample(rule, label="right").sum()
+    ohlc["ts_utc"] = ohlc.index.view("int64") // 10**6
     return ohlc.reset_index(drop=True)
+
 
 def _relative_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     eps = 1e-12
@@ -176,23 +215,35 @@ def _relative_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     l = df["low"].astype(float).clip(lower=eps)
     c = df["close"].astype(float).clip(lower=eps)
     out = pd.DataFrame(index=df.index)
-    out["r_open"]  = np.log(o / prev_close)
-    out["r_high"]  = np.log(h / o)
-    out["r_low"]   = np.log(l / o)
+    out["r_open"] = np.log(o / prev_close)
+    out["r_high"] = np.log(h / o)
+    out["r_low"] = np.log(l / o)
     out["r_close"] = np.log(c / o)
     return out
 
+
 def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
     ts = pd.to_datetime(df["ts_utc"], unit="ms", utc=True)
-    hour = ts.dt.hour; dow = ts.dt.dayofweek
+    hour = ts.dt.hour
+    dow = ts.dt.dayofweek
     out = pd.DataFrame(index=df.index)
-    out["hour_sin"] = np.sin(2*np.pi*hour/24.0); out["hour_cos"] = np.cos(2*np.pi*hour/24.0)
-    out["dow_sin"]  = np.sin(2*np.pi*dow/7.0);   out["dow_cos"]  = np.cos(2*np.pi*dow/7.0)
+    out["hour_sin"] = np.sin(2 * np.pi * hour / 24.0)
+    out["hour_cos"] = np.cos(2 * np.pi * hour / 24.0)
+    out["dow_sin"] = np.sin(2 * np.pi * dow / 7.0)
+    out["dow_cos"] = np.cos(2 * np.pi * dow / 7.0)
     return out
 
 
-def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[str, List[str]], base_tf: str, symbol: str = None, days_history: int = None) -> pd.DataFrame:
+def _indicators(
+    df: pd.DataFrame,
+    ind_cfg: Dict[str, Any],
+    indicator_tfs: Dict[str, List[str]],
+    base_tf: str,
+    symbol: str = None,
+    days_history: int = None,
+) -> pd.DataFrame:
     from loguru import logger
+
     logger.debug(f"_indicators called with df shape: {df.shape}, base_tf: {base_tf}")
     frames: List[pd.DataFrame] = []
     base = _ensure_dt_index(df)
@@ -217,18 +268,28 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
         if tf != base_tf and tf not in timeframe_cache:
             try:
                 if symbol and days_history:
-                    logger.info(f"[CACHE] Pre-fetching {tf} candles from DB (will be reused for all indicators)")
-                    timeframe_cache[tf] = fetch_candles_from_db(symbol, tf, days_history)
-                    logger.debug(f"[CACHE] Cached {tf}: {timeframe_cache[tf].shape[0]} rows")
+                    logger.info(
+                        f"[CACHE] Pre-fetching {tf} candles from DB (will be reused for all indicators)"
+                    )
+                    timeframe_cache[tf] = fetch_candles_from_db(
+                        symbol, tf, days_history
+                    )
+                    logger.debug(
+                        f"[CACHE] Cached {tf}: {timeframe_cache[tf].shape[0]} rows"
+                    )
                 else:
                     # Fallback to resample if symbol/days_history not provided
-                    logger.warning(f"Symbol/days_history not provided, falling back to resample for {tf}")
+                    logger.warning(
+                        f"Symbol/days_history not provided, falling back to resample for {tf}"
+                    )
                     timeframe_cache[tf] = _resample(df, tf)
             except Exception as e:
                 logger.exception(f"Failed to pre-fetch {tf} candles: {e}")
                 # Don't cache failed fetches
 
-    logger.info(f"[CACHE] Pre-fetched {len(timeframe_cache)} timeframes: {list(timeframe_cache.keys())}")
+    logger.info(
+        f"[CACHE] Pre-fetched {len(timeframe_cache)} timeframes: {list(timeframe_cache.keys())}"
+    )
 
     # Now process indicators using cached data
     for name, params in ind_cfg.items():
@@ -242,11 +303,15 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                 tmp = timeframe_cache[tf].copy()
                 logger.debug(f"[CACHE HIT] Using cached {tf} data for {key}")
             else:
-                logger.warning(f"[CACHE MISS] TF {tf} not in cache, skipping indicator {key}_{tf}")
+                logger.warning(
+                    f"[CACHE MISS] TF {tf} not in cache, skipping indicator {key}_{tf}"
+                )
                 continue
 
             tmp = _ensure_dt_index(tmp)
-            logger.debug(f"Indicator {key}_{tf}: final tmp shape = {tmp.shape} (need ≥14 for ATR/RSI)")
+            logger.debug(
+                f"Indicator {key}_{tf}: final tmp shape = {tmp.shape} (need ≥14 for ATR/RSI)"
+            )
             cols: Dict[str, pd.Series] = {}
 
             if not _HAS_TA:
@@ -255,7 +320,7 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                     delta = tmp["close"].diff()
                     up = delta.clip(lower=0.0).rolling(n).mean()
                     down = (-delta.clip(upper=0.0)).rolling(n).mean()
-                    rs = (up / (down + 1e-12))
+                    rs = up / (down + 1e-12)
                     cols[f"rsi_{tf}_{n}"] = 100 - (100 / (1 + rs))
                 elif key == "atr":
                     n = int(params.get("n", 14))
@@ -267,7 +332,9 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
             else:
                 if key == "rsi":
                     n = int(params.get("n", 14))
-                    cols[f"rsi_{tf}_{n}"] = ta.momentum.RSIIndicator(close=tmp["close"], window=n).rsi()
+                    cols[f"rsi_{tf}_{n}"] = ta.momentum.RSIIndicator(
+                        close=tmp["close"], window=n
+                    ).rsi()
                 elif key == "atr":
                     n = int(params.get("n", 14))
                     cols[f"atr_{tf}_{n}"] = ta.volatility.AverageTrueRange(
@@ -276,7 +343,9 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                 elif key == "bollinger":
                     n = int(params.get("n", 20))
                     dev = float(params.get("dev", 2.0))
-                    bb = ta.volatility.BollingerBands(close=tmp["close"], window=n, window_dev=dev)
+                    bb = ta.volatility.BollingerBands(
+                        close=tmp["close"], window=n, window_dev=dev
+                    )
                     cols[f"bb_m_{tf}_{n}_{dev}"] = bb.bollinger_mavg()
                     cols[f"bb_h_{tf}_{n}_{dev}"] = bb.bollinger_hband()
                     cols[f"bb_l_{tf}_{n}_{dev}"] = bb.bollinger_lband()
@@ -284,7 +353,12 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                     f = int(params.get("fast", 12))
                     s = int(params.get("slow", 26))
                     sig = int(params.get("signal", 9))
-                    macd = ta.trend.MACD(close=tmp["close"], window_fast=f, window_slow=s, window_sign=sig)
+                    macd = ta.trend.MACD(
+                        close=tmp["close"],
+                        window_fast=f,
+                        window_slow=s,
+                        window_sign=sig,
+                    )
                     cols[f"macd_{tf}_{f}_{s}_{sig}"] = macd.macd()
                     cols[f"macd_sig_{tf}_{f}_{s}_{sig}"] = macd.macd_signal()
                     cols[f"macd_diff_{tf}_{f}_{s}_{sig}"] = macd.macd_diff()
@@ -310,6 +384,7 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                     w = int(params.get("window", 128))
                     series = tmp["close"].astype(float)
                     roll = series.rolling(w)
+
                     def _h(x):
                         vals = x.values
                         if len(vals) < 2:
@@ -319,6 +394,7 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                         R = z.max() - z.min()
                         S = vals.std() + 1e-12
                         return math.log((R / S) + 1e-12) / math.log(len(vals) + 1e-12)
+
                     cols[f"hurst_{tf}_{w}"] = roll.apply(_h, raw=False)
                 elif key == "ema":
                     fast = int(params.get("fast", 12))
@@ -331,7 +407,7 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
             if not cols:
                 continue
             feat = pd.DataFrame(cols)
-            feat["ts_utc"] = (tmp.index.view("int64") // 10**6)
+            feat["ts_utc"] = tmp.index.view("int64") // 10**6
             right = _ensure_dt_index(feat)
             try:
                 tol = max(_timeframe_to_timedelta(tf), base_delta)
@@ -343,12 +419,15 @@ def _indicators(df: pd.DataFrame, ind_cfg: Dict[str, Any], indicator_tfs: Dict[s
                 left_index=True,
                 right_index=True,
                 direction="nearest",
-                tolerance=tol
+                tolerance=tol,
             )
-            merged = merged.reset_index(drop=True).drop(columns=["ts_utc_y"], errors="ignore").rename(columns={"ts_utc_x": "ts_utc"})
+            merged = (
+                merged.reset_index(drop=True)
+                .drop(columns=["ts_utc_y"], errors="ignore")
+                .rename(columns={"ts_utc_x": "ts_utc"})
+            )
             frames.append(merged.drop(columns=["ts_utc"], errors="ignore"))
     return pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
-
 
 
 def _build_features(candles: pd.DataFrame, args):
@@ -395,6 +474,7 @@ def _build_features(candles: pd.DataFrame, args):
     vp_bins = int(getattr(args, "vp_bins", 50))
     if vp_window > 1 and "volume" in candles.columns:
         from forex_diffusion.features.volume_profile import VolumeProfile
+
         vp_calculator = VolumeProfile(n_bins=vp_bins)
         vp_feats = vp_calculator.calculate_rolling(candles, window=vp_window, step=1)
         feats.append(vp_feats)
@@ -405,6 +485,7 @@ def _build_features(candles: pd.DataFrame, args):
     use_vsa = getattr(args, "use_vsa", False)
     if use_vsa and "volume" in candles.columns:
         from forex_diffusion.features.vsa import VSAAnalyzer
+
         vsa_analyzer = VSAAnalyzer(
             volume_ma_period=int(getattr(args, "vsa_volume_ma", 20)),
             spread_ma_period=int(getattr(args, "vsa_spread_ma", 20)),
@@ -418,6 +499,7 @@ def _build_features(candles: pd.DataFrame, args):
     use_smart_money = getattr(args, "use_smart_money", False)
     if use_smart_money and "volume" in candles.columns:
         from forex_diffusion.features.smart_money import SmartMoneyDetector
+
         sm_detector = SmartMoneyDetector(
             volume_ma_period=int(getattr(args, "sm_volume_ma", 20)),
             volume_std_threshold=float(getattr(args, "sm_volume_threshold", 2.0)),
@@ -431,6 +513,7 @@ def _build_features(candles: pd.DataFrame, args):
     use_regime = getattr(args, "use_regime_detection", False)
     if use_regime:
         from forex_diffusion.regime import HMMRegimeDetector
+
         regime_detector = HMMRegimeDetector(
             n_regimes=int(getattr(args, "n_regimes", 4)),
             min_history=int(getattr(args, "regime_min_history", 100)),
@@ -442,7 +525,9 @@ def _build_features(candles: pd.DataFrame, args):
             feature_groups["regime"] = list(regime_feats.columns)
             logger.debug(f"[Features] Regime Detection: {list(regime_feats.columns)}")
         else:
-            logger.warning(f"Not enough data for regime detection ({len(candles)} < {regime_detector.min_history})")
+            logger.warning(
+                f"Not enough data for regime detection ({len(candles)} < {regime_detector.min_history})"
+            )
 
     indicator_tfs = _coerce_indicator_tfs(getattr(args, "indicator_tfs", {}))
     ind_cfg: Dict[str, Dict[str, Any]] = {}
@@ -461,7 +546,14 @@ def _build_features(candles: pd.DataFrame, args):
     if "hurst" in indicator_tfs:
         ind_cfg["hurst"] = {"window": int(args.hurst_window)}
     if ind_cfg:
-        ind_feats = _indicators(candles, ind_cfg, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days_history)
+        ind_feats = _indicators(
+            candles,
+            ind_cfg,
+            indicator_tfs,
+            args.timeframe,
+            symbol=args.symbol,
+            days_history=args.days_history,
+        )
         feats.append(ind_feats)
         feature_groups["indicators"] = list(ind_feats.columns)
         logger.debug(f"[Features] Indicators: {list(ind_feats.columns)}")
@@ -471,7 +563,9 @@ def _build_features(candles: pd.DataFrame, args):
 
     # Log total features before concatenation
     total_features_expected = sum(len(cols) for cols in feature_groups.values())
-    logger.info(f"[Features] Total expected: {total_features_expected} features from {len(feature_groups)} groups")
+    logger.info(
+        f"[Features] Total expected: {total_features_expected} features from {len(feature_groups)} groups"
+    )
 
     X = pd.concat(feats, axis=1)
     X = X.replace([np.inf, -np.inf], np.nan)
@@ -485,7 +579,10 @@ def _build_features(candles: pd.DataFrame, args):
         if not low_cov.empty:
             dropped_feats = list(low_cov.index)
             X = X.drop(columns=dropped_feats, errors="ignore")
-            warnings.warn(f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}", RuntimeWarning)
+            warnings.warn(
+                f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}",
+                RuntimeWarning,
+            )
 
     X = X.dropna()
     y = y.loc[X.index].dropna()
@@ -494,10 +591,12 @@ def _build_features(candles: pd.DataFrame, args):
     X = X.loc[common_idx]
     y = y.loc[common_idx]
     if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
-        X = X.iloc[int(args.warmup_bars):]
-        y = y.iloc[int(args.warmup_bars):]
+        X = X.iloc[int(args.warmup_bars) :]
+        y = y.iloc[int(args.warmup_bars) :]
     if X.empty or y.empty:
-        raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
+        raise RuntimeError(
+            "Dataset vuoto dopo il preprocessing; controlla warmup/horizon"
+        )
 
     # VALIDATION (TASK 1.3): Verify all expected features survived
     final_features = set(X.columns)
@@ -510,7 +609,9 @@ def _build_features(candles: pd.DataFrame, args):
 
     if missing_features:
         # CRITICAL: Some features were silently dropped
-        logger.error(f"❌ FEATURE LOSS DETECTED! {len(missing_features)} features missing:")
+        logger.error(
+            f"❌ FEATURE LOSS DETECTED! {len(missing_features)} features missing:"
+        )
         logger.error(f"   Missing: {sorted(missing_features)}")
         logger.error(f"   Expected groups: {list(feature_groups.keys())}")
         logger.error(f"   Dropped (low coverage): {dropped_feats}")
@@ -529,7 +630,7 @@ def _build_features(candles: pd.DataFrame, args):
         "dropped_features": dropped_feats,
         "total_expected": total_features_expected,
         "total_saved": len(X.columns),
-        "args_used": vars(args)
+        "args_used": vars(args),
     }
     return X, y, meta
 
@@ -550,7 +651,9 @@ def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
     from scipy import stats
 
     # Split WITHOUT shuffling to maintain temporal order
-    Xtr, Xva, ytr, yva = train_test_split(X.values, y.values, test_size=val_frac, shuffle=False)
+    Xtr, Xva, ytr, yva = train_test_split(
+        X.values, y.values, test_size=val_frac, shuffle=False
+    )
 
     # Compute statistics ONLY on training set (NO look-ahead bias)
     mu = Xtr.mean(axis=0)
@@ -587,13 +690,15 @@ def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
                 f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED!\n"
                 f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p']:.3f}).\n"
                 f"Expected p < 0.5 for different time periods. Verify train_test_split has shuffle=False.",
-                RuntimeWarning
+                RuntimeWarning,
             )
 
     return ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
 
 
-def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2):
+def _standardize_train_val_test(
+    X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2
+):
     """
     Standardize training, validation, and test sets ensuring NO look-ahead bias (3-way split).
 
@@ -663,8 +768,12 @@ def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float =
         "train_std": sigma.tolist(),
         "ks_test_p_values_val": p_values_val,
         "ks_test_p_values_test": p_values_test,
-        "ks_test_median_p_val": float(np.median(p_values_val)) if p_values_val else None,
-        "ks_test_median_p_test": float(np.median(p_values_test)) if p_values_test else None,
+        "ks_test_median_p_val": (
+            float(np.median(p_values_val)) if p_values_val else None
+        ),
+        "ks_test_median_p_test": (
+            float(np.median(p_values_test)) if p_values_test else None
+        ),
     }
 
     # WARNING: If distributions too similar, potential look-ahead bias
@@ -674,7 +783,7 @@ def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float =
                 f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Val)!\n"
                 f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_val']:.3f}).\n"
                 f"Expected p < 0.5 for different time periods.",
-                RuntimeWarning
+                RuntimeWarning,
             )
 
     if scaler_metadata["ks_test_median_p_test"] is not None:
@@ -683,17 +792,38 @@ def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float =
                 f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Test)!\n"
                 f"Train/Test distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_test']:.3f}).\n"
                 f"Expected p < 0.5 for different time periods.",
-                RuntimeWarning
+                RuntimeWarning,
             )
 
-    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (Xte_scaled, yte), (mu, sigma, scaler_metadata))
+    return (
+        (Xtr_scaled, ytr),
+        (Xva_scaled, yva),
+        (Xte_scaled, yte),
+        (mu, sigma, scaler_metadata),
+    )
+
 
 def _fit_model(algo: str, Xtr, ytr, args):
-    if   algo == "ridge":      return Ridge(alpha=float(args.alpha), random_state=args.random_state)
-    elif algo == "lasso":      return Lasso(alpha=float(args.alpha), random_state=args.random_state)
-    elif algo == "elasticnet": return ElasticNet(alpha=float(args.alpha), l1_ratio=float(args.l1_ratio), random_state=args.random_state)
-    elif algo == "rf":         return RandomForestRegressor(n_estimators=int(args.n_estimators), max_depth=None, min_samples_leaf=2, n_jobs=-1, random_state=args.random_state)
-    else: raise ValueError(f"Algo non supportato: {algo}")
+    if algo == "ridge":
+        return Ridge(alpha=float(args.alpha), random_state=args.random_state)
+    elif algo == "lasso":
+        return Lasso(alpha=float(args.alpha), random_state=args.random_state)
+    elif algo == "elasticnet":
+        return ElasticNet(
+            alpha=float(args.alpha),
+            l1_ratio=float(args.l1_ratio),
+            random_state=args.random_state,
+        )
+    elif algo == "rf":
+        return RandomForestRegressor(
+            n_estimators=int(args.n_estimators),
+            max_depth=None,
+            min_samples_leaf=2,
+            n_jobs=-1,
+            random_state=args.random_state,
+        )
+    else:
+        raise ValueError(f"Algo non supportato: {algo}")
 
 
 def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
@@ -704,7 +834,9 @@ def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
     """
     from scipy.optimize import differential_evolution
 
-    print(f"[Optimization] Running genetic-basic for {algo} (gen={args.gen}, pop={args.pop})")
+    print(
+        f"[Optimization] Running genetic-basic for {algo} (gen={args.gen}, pop={args.pop})"
+    )
 
     # Define search space based on algorithm
     if algo == "ridge":
@@ -717,7 +849,11 @@ def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
         bounds = [(1e-6, 10.0), (0.01, 0.99)]  # alpha, l1_ratio
         param_names = ["alpha", "l1_ratio"]
     elif algo == "rf":
-        bounds = [(50, 500), (2, 20), (2, 50)]  # n_estimators, max_depth, min_samples_leaf
+        bounds = [
+            (50, 500),
+            (2, 20),
+            (2, 50),
+        ]  # n_estimators, max_depth, min_samples_leaf
         param_names = ["n_estimators", "max_depth", "min_samples_leaf"]
     else:
         raise ValueError(f"Optimization not supported for algo: {algo}")
@@ -730,14 +866,16 @@ def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
             elif algo == "lasso":
                 model = Lasso(alpha=params[0], random_state=args.random_state)
             elif algo == "elasticnet":
-                model = ElasticNet(alpha=params[0], l1_ratio=params[1], random_state=args.random_state)
+                model = ElasticNet(
+                    alpha=params[0], l1_ratio=params[1], random_state=args.random_state
+                )
             elif algo == "rf":
                 model = RandomForestRegressor(
                     n_estimators=int(params[0]),
                     max_depth=int(params[1]) if params[1] < 50 else None,
                     min_samples_leaf=int(params[2]),
                     n_jobs=-1,
-                    random_state=args.random_state
+                    random_state=args.random_state,
                 )
 
             model.fit(Xtr, ytr)
@@ -757,7 +895,7 @@ def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
         seed=args.random_state,
         polish=False,
         workers=1,
-        updating='deferred'
+        updating="deferred",
     )
 
     best_params = result.x
@@ -769,14 +907,18 @@ def _optimize_genetic_basic(algo: str, Xtr, ytr, Xva, yva, args):
     elif algo == "lasso":
         best_model = Lasso(alpha=best_params[0], random_state=args.random_state)
     elif algo == "elasticnet":
-        best_model = ElasticNet(alpha=best_params[0], l1_ratio=best_params[1], random_state=args.random_state)
+        best_model = ElasticNet(
+            alpha=best_params[0],
+            l1_ratio=best_params[1],
+            random_state=args.random_state,
+        )
     elif algo == "rf":
         best_model = RandomForestRegressor(
             n_estimators=int(best_params[0]),
             max_depth=int(best_params[1]) if best_params[1] < 50 else None,
             min_samples_leaf=int(best_params[2]),
             n_jobs=-1,
-            random_state=args.random_state
+            random_state=args.random_state,
         )
 
     best_model.fit(Xtr, ytr)
@@ -837,6 +979,7 @@ def _optimize_nsga2(algo: str, Xtr, ytr, Xva, yva, args):
             # RF: complexity ≈ n_estimators × max_depth / min_samples_leaf
             n_est, max_d, min_leaf = params
             return (n_est * max_d) / (min_leaf + 1e-9)
+
     else:
         raise ValueError(f"NSGA-II not supported for algo: {algo}")
 
@@ -853,14 +996,16 @@ def _optimize_nsga2(algo: str, Xtr, ytr, Xva, yva, args):
                 elif algo == "lasso":
                     model = Lasso(alpha=x[0], random_state=args.random_state)
                 elif algo == "elasticnet":
-                    model = ElasticNet(alpha=x[0], l1_ratio=x[1], random_state=args.random_state)
+                    model = ElasticNet(
+                        alpha=x[0], l1_ratio=x[1], random_state=args.random_state
+                    )
                 elif algo == "rf":
                     model = RandomForestRegressor(
                         n_estimators=int(x[0]),
                         max_depth=int(x[1]) if x[1] < 50 else None,
                         min_samples_leaf=int(x[2]),
                         n_jobs=-1,
-                        random_state=args.random_state
+                        random_state=args.random_state,
                     )
 
                 model.fit(Xtr, ytr)
@@ -882,16 +1027,12 @@ def _optimize_nsga2(algo: str, Xtr, ytr, Xva, yva, args):
         sampling=FloatRandomSampling(),
         crossover=SBX(prob=0.9, eta=15),
         mutation=PM(eta=20),
-        eliminate_duplicates=True
+        eliminate_duplicates=True,
     )
 
     # Run optimization
     res = minimize(
-        problem,
-        algorithm,
-        ('n_gen', args.gen),
-        seed=args.random_state,
-        verbose=False
+        problem, algorithm, ("n_gen", args.gen), seed=args.random_state, verbose=False
     )
 
     # Extract Pareto front
@@ -924,14 +1065,18 @@ def _optimize_nsga2(algo: str, Xtr, ytr, Xva, yva, args):
     elif algo == "lasso":
         best_model = Lasso(alpha=best_params[0], random_state=args.random_state)
     elif algo == "elasticnet":
-        best_model = ElasticNet(alpha=best_params[0], l1_ratio=best_params[1], random_state=args.random_state)
+        best_model = ElasticNet(
+            alpha=best_params[0],
+            l1_ratio=best_params[1],
+            random_state=args.random_state,
+        )
     elif algo == "rf":
         best_model = RandomForestRegressor(
             n_estimators=int(best_params[0]),
             max_depth=int(best_params[1]) if best_params[1] < 50 else None,
             min_samples_leaf=int(best_params[2]),
             n_jobs=-1,
-            random_state=args.random_state
+            random_state=args.random_state,
         )
 
     best_model.fit(Xtr, ytr)
@@ -943,16 +1088,35 @@ def _optimize_nsga2(algo: str, Xtr, ytr, Xva, yva, args):
 
     return best_model, params_dict, best_score
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", required=True)
     ap.add_argument("--timeframe", required=True)
     ap.add_argument("--horizon", type=int, required=True)
-    ap.add_argument("--algo", choices=["ridge","lasso","elasticnet","rf"], required=True)
+    ap.add_argument(
+        "--algo", choices=["ridge", "lasso", "elasticnet", "rf"], required=True
+    )
     ap.add_argument("--pca", type=int, default=0, help="PCA components (0=disabled)")
-    ap.add_argument("--encoder", type=str, choices=["none", "pca", "autoencoder", "vae", "latents"], default="none", help="Encoder type")
-    ap.add_argument("--latent_dim", type=int, default=16, help="Latent dimension for autoencoder/VAE")
-    ap.add_argument("--encoder_epochs", type=int, default=50, help="Training epochs for neural encoders")
+    ap.add_argument(
+        "--encoder",
+        type=str,
+        choices=["none", "pca", "autoencoder", "vae", "latents"],
+        default="none",
+        help="Encoder type",
+    )
+    ap.add_argument(
+        "--latent_dim",
+        type=int,
+        default=16,
+        help="Latent dimension for autoencoder/VAE",
+    )
+    ap.add_argument(
+        "--encoder_epochs",
+        type=int,
+        default=50,
+        help="Training epochs for neural encoders",
+    )
     ap.add_argument("--artifacts_dir", required=True)
     ap.add_argument("--warmup_bars", type=int, default=64)
     ap.add_argument("--val_frac", type=float, default=0.2)
@@ -972,43 +1136,104 @@ def main():
     ap.add_argument("--use_temporal_features", action="store_true", default=True)
 
     # Additional feature parameters (from new training tab)
-    ap.add_argument("--returns_window", type=int, default=5, help="Window for returns calculation")
-    ap.add_argument("--session_overlap", type=int, default=30, help="Session overlap in minutes")
-    ap.add_argument("--higher_tf", type=str, default="15m", help="Higher timeframe for candlestick patterns")
-    ap.add_argument("--vp_bins", type=int, default=50, help="Number of bins for volume profile")
-    ap.add_argument("--vp_window", type=int, default=100, help="Window size for volume profile calculation")
-    ap.add_argument("--use_vsa", action="store_true", help="Enable Volume Spread Analysis (VSA)")
-    ap.add_argument("--vsa_volume_ma", type=int, default=20, help="Volume MA period for VSA")
-    ap.add_argument("--vsa_spread_ma", type=int, default=20, help="Spread MA period for VSA")
-    ap.add_argument("--use_smart_money", action="store_true", help="Enable Smart Money Detection")
-    ap.add_argument("--sm_volume_ma", type=int, default=20, help="Volume MA period for smart money")
-    ap.add_argument("--sm_volume_threshold", type=float, default=2.0, help="Volume z-score threshold")
-    ap.add_argument("--use_regime_detection", action="store_true", help="Enable HMM Regime Detection")
+    ap.add_argument(
+        "--returns_window", type=int, default=5, help="Window for returns calculation"
+    )
+    ap.add_argument(
+        "--session_overlap", type=int, default=30, help="Session overlap in minutes"
+    )
+    ap.add_argument(
+        "--higher_tf",
+        type=str,
+        default="15m",
+        help="Higher timeframe for candlestick patterns",
+    )
+    ap.add_argument(
+        "--vp_bins", type=int, default=50, help="Number of bins for volume profile"
+    )
+    ap.add_argument(
+        "--vp_window",
+        type=int,
+        default=100,
+        help="Window size for volume profile calculation",
+    )
+    ap.add_argument(
+        "--use_vsa", action="store_true", help="Enable Volume Spread Analysis (VSA)"
+    )
+    ap.add_argument(
+        "--vsa_volume_ma", type=int, default=20, help="Volume MA period for VSA"
+    )
+    ap.add_argument(
+        "--vsa_spread_ma", type=int, default=20, help="Spread MA period for VSA"
+    )
+    ap.add_argument(
+        "--use_smart_money", action="store_true", help="Enable Smart Money Detection"
+    )
+    ap.add_argument(
+        "--sm_volume_ma", type=int, default=20, help="Volume MA period for smart money"
+    )
+    ap.add_argument(
+        "--sm_volume_threshold",
+        type=float,
+        default=2.0,
+        help="Volume z-score threshold",
+    )
+    ap.add_argument(
+        "--use_regime_detection",
+        action="store_true",
+        help="Enable HMM Regime Detection",
+    )
     ap.add_argument("--n_regimes", type=int, default=4, help="Number of market regimes")
-    ap.add_argument("--regime_min_history", type=int, default=100, help="Min bars for regime training")
+    ap.add_argument(
+        "--regime_min_history",
+        type=int,
+        default=100,
+        help="Min bars for regime training",
+    )
 
     # Optimization parameters
-    ap.add_argument("--optimization", type=str, choices=["none", "genetic-basic", "nsga2"], default="none", help="Hyperparameter optimization strategy")
-    ap.add_argument("--gen", type=int, default=5, help="Number of generations for genetic algorithm")
-    ap.add_argument("--pop", type=int, default=8, help="Population size for genetic algorithm")
+    ap.add_argument(
+        "--optimization",
+        type=str,
+        choices=["none", "genetic-basic", "nsga2"],
+        default="none",
+        help="Hyperparameter optimization strategy",
+    )
+    ap.add_argument(
+        "--gen", type=int, default=5, help="Number of generations for genetic algorithm"
+    )
+    ap.add_argument(
+        "--pop", type=int, default=8, help="Population size for genetic algorithm"
+    )
 
     # GPU Support
-    ap.add_argument("--use-gpu", action="store_true", default=False, help="Use GPU for encoder training (requires CUDA)")
+    ap.add_argument(
+        "--use-gpu",
+        action="store_true",
+        default=False,
+        help="Use GPU for encoder training (requires CUDA)",
+    )
 
     args = ap.parse_args()
 
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
-    req = {"ts_utc","open","high","low","close"}
+    req = {"ts_utc", "open", "high", "low", "close"}
     if not isinstance(candles, pd.DataFrame) or not req.issubset(candles.columns):
         raise ValueError(f"Candles mancanti colonne: {req}")
 
     X, y, meta = _build_features(candles, args)
-    (Xtr, ytr), (Xva, yva), (mu, sigma, scaler_metadata) = _standardize_train_val(X, y, args.val_frac)
+    (Xtr, ytr), (Xva, yva), (mu, sigma, scaler_metadata) = _standardize_train_val(
+        X, y, args.val_frac
+    )
 
     # Log scaler metadata for debugging
-    print(f"[Scaler] Train size: {scaler_metadata['train_size']}, Val size: {scaler_metadata['val_size']}")
-    if scaler_metadata.get('ks_test_median_p') is not None:
-        print(f"[Scaler] KS test median p-value: {scaler_metadata['ks_test_median_p']:.4f} (< 0.5 expected for no bias)")
+    print(
+        f"[Scaler] Train size: {scaler_metadata['train_size']}, Val size: {scaler_metadata['val_size']}"
+    )
+    if scaler_metadata.get("ks_test_median_p") is not None:
+        print(
+            f"[Scaler] KS test median p-value: {scaler_metadata['ks_test_median_p']:.4f} (< 0.5 expected for no bias)"
+        )
 
     # Ensure numpy arrays
     Xtr = np.asarray(Xtr, dtype=float)
@@ -1033,22 +1258,32 @@ def main():
     removed_tr = Xtr.shape[0] - Xtr_f.shape[0]
     removed_va = Xva.shape[0] - Xva_f.shape[0]
     if removed_tr > 0:
-        warnings.warn(f"Removed {removed_tr} training rows containing NaN/Inf after standardization.", RuntimeWarning)
+        warnings.warn(
+            f"Removed {removed_tr} training rows containing NaN/Inf after standardization.",
+            RuntimeWarning,
+        )
     if removed_va > 0:
-        warnings.warn(f"Removed {removed_va} validation rows containing NaN/Inf after standardization.", RuntimeWarning)
+        warnings.warn(
+            f"Removed {removed_va} validation rows containing NaN/Inf after standardization.",
+            RuntimeWarning,
+        )
 
     # Validate enough data remains
     if Xtr_f.shape[0] < 2:
-        raise RuntimeError("Not enough training rows after NaN/Inf filtering; aborting training.")
+        raise RuntimeError(
+            "Not enough training rows after NaN/Inf filtering; aborting training."
+        )
     if Xva_f.shape[0] < 1:
-        raise RuntimeError("Not enough validation rows after NaN/Inf filtering; aborting training.")
+        raise RuntimeError(
+            "Not enough validation rows after NaN/Inf filtering; aborting training."
+        )
 
     Xtr, ytr = Xtr_f, ytr_f
     Xva, yva = Xva_f, yva_f
 
     # Apply encoder/dimensionality reduction
     encoder_model = None
-    encoder_type = args.encoder if hasattr(args, 'encoder') else "none"
+    encoder_type = args.encoder if hasattr(args, "encoder") else "none"
 
     # Legacy support: if --pca is set but --encoder is "none", use PCA
     if int(args.pca) > 0 and encoder_type == "none":
@@ -1056,13 +1291,15 @@ def main():
 
     if encoder_type == "pca":
         # PCA encoder
-        ncomp = int(args.latent_dim) if hasattr(args, 'latent_dim') else int(args.pca)
+        ncomp = int(args.latent_dim) if hasattr(args, "latent_dim") else int(args.pca)
         if ncomp <= 0:
             ncomp = 16  # Default
         ncomp = min(ncomp, Xtr.shape[1], Xtr.shape[0])
         if ncomp > 0:
             print(f"[Encoder] Training PCA with {ncomp} components...")
-            encoder_model = PCA(n_components=ncomp, whiten=False, random_state=args.random_state)
+            encoder_model = PCA(
+                n_components=ncomp, whiten=False, random_state=args.random_state
+            )
             Xtr = encoder_model.fit_transform(Xtr)
             Xva = encoder_model.transform(Xva)
             print(f"[Encoder] PCA reduced features: {Xtr_f.shape[1]} -> {Xtr.shape[1]}")
@@ -1070,13 +1307,17 @@ def main():
     elif encoder_type == "autoencoder":
         # Autoencoder
         if SklearnAutoencoder is None:
-            raise RuntimeError("Autoencoder not available. Install PyTorch: pip install torch")
+            raise RuntimeError(
+                "Autoencoder not available. Install PyTorch: pip install torch"
+            )
 
-        latent_dim = int(args.latent_dim) if hasattr(args, 'latent_dim') else 16
-        epochs = int(args.encoder_epochs) if hasattr(args, 'encoder_epochs') else 50
-        use_gpu = getattr(args, 'use_gpu', False)
+        latent_dim = int(args.latent_dim) if hasattr(args, "latent_dim") else 16
+        epochs = int(args.encoder_epochs) if hasattr(args, "encoder_epochs") else 50
+        use_gpu = getattr(args, "use_gpu", False)
         device_str = "cuda" if use_gpu else "cpu"
-        print(f"[Encoder] Training Autoencoder with {latent_dim} latent dimensions for {epochs} epochs on {device_str.upper()}...")
+        print(
+            f"[Encoder] Training Autoencoder with {latent_dim} latent dimensions for {epochs} epochs on {device_str.upper()}..."
+        )
         encoder_model = SklearnAutoencoder(
             latent_dim=latent_dim,
             hidden_dims=[128, 64],
@@ -1084,22 +1325,26 @@ def main():
             batch_size=64,
             learning_rate=0.001,
             device=device_str,
-            verbose=True
+            verbose=True,
         )
         Xtr = encoder_model.fit_transform(Xtr)
         Xva = encoder_model.transform(Xva)
-        print(f"[Encoder] Autoencoder reduced features: {Xtr_f.shape[1]} -> {Xtr.shape[1]}")
+        print(
+            f"[Encoder] Autoencoder reduced features: {Xtr_f.shape[1]} -> {Xtr.shape[1]}"
+        )
 
     elif encoder_type == "vae":
         # Variational Autoencoder
         if SklearnVAE is None:
             raise RuntimeError("VAE not available. Install PyTorch: pip install torch")
 
-        latent_dim = int(args.latent_dim) if hasattr(args, 'latent_dim') else 16
-        epochs = int(args.encoder_epochs) if hasattr(args, 'encoder_epochs') else 50
-        use_gpu = getattr(args, 'use_gpu', False)
+        latent_dim = int(args.latent_dim) if hasattr(args, "latent_dim") else 16
+        epochs = int(args.encoder_epochs) if hasattr(args, "encoder_epochs") else 50
+        use_gpu = getattr(args, "use_gpu", False)
         device_str = "cuda" if use_gpu else "cpu"
-        print(f"[Encoder] Training VAE with {latent_dim} latent dimensions for {epochs} epochs on {device_str.upper()}...")
+        print(
+            f"[Encoder] Training VAE with {latent_dim} latent dimensions for {epochs} epochs on {device_str.upper()}..."
+        )
         encoder_model = SklearnVAE(
             latent_dim=latent_dim,
             hidden_dims=[128, 64],
@@ -1108,7 +1353,7 @@ def main():
             learning_rate=0.001,
             device=device_str,
             beta=1.0,
-            verbose=True
+            verbose=True,
         )
         Xtr = encoder_model.fit_transform(Xtr)
         Xva = encoder_model.transform(Xva)
@@ -1116,7 +1361,9 @@ def main():
 
     elif encoder_type == "latents":
         # Placeholder for pre-trained encoder (user must load separately)
-        print("[Encoder] Using 'latents' mode - no encoder training, expecting pre-trained encoder at inference time")
+        print(
+            "[Encoder] Using 'latents' mode - no encoder training, expecting pre-trained encoder at inference time"
+        )
         encoder_model = None
 
     else:
@@ -1124,24 +1371,31 @@ def main():
         encoder_model = None
 
     # Train model with or without optimization
-    optimization_strategy = getattr(args, 'optimization', 'none')
+    optimization_strategy = getattr(args, "optimization", "none")
     optimized_params = {}
 
-    if optimization_strategy == 'genetic-basic':
+    if optimization_strategy == "genetic-basic":
         print(f"[Training] Using genetic-basic optimization")
-        model, optimized_params, mae = _optimize_genetic_basic(args.algo, Xtr, ytr, Xva, yva, args)
-    elif optimization_strategy == 'nsga2':
+        model, optimized_params, mae = _optimize_genetic_basic(
+            args.algo, Xtr, ytr, Xva, yva, args
+        )
+    elif optimization_strategy == "nsga2":
         print(f"[Training] Using NSGA-II multi-objective optimization")
-        model, optimized_params, mae = _optimize_nsga2(args.algo, Xtr, ytr, Xva, yva, args)
+        model, optimized_params, mae = _optimize_nsga2(
+            args.algo, Xtr, ytr, Xva, yva, args
+        )
     else:
         # Standard training without optimization
-        print(f"[Training] Training {args.algo} with default parameters (no optimization)")
+        print(
+            f"[Training] Training {args.algo} with default parameters (no optimization)"
+        )
         model = _fit_model(args.algo, Xtr, ytr, args)
         model.fit(Xtr, ytr)
         val_pred = model.predict(Xva)
         mae = float(mean_absolute_error(yva, val_pred))
 
-    out_dir = Path(args.artifacts_dir) / "models"; out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.artifacts_dir) / "models"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Build run name with encoder info
     encoder_suffix = ""
@@ -1165,18 +1419,24 @@ def main():
         "scaler_sigma": sigma,
         "scaler_metadata": scaler_metadata,  # NEW: metadata for bias verification
         "encoder": encoder_model,  # Generic 'encoder' key instead of just 'pca'
-        "pca": encoder_model if encoder_type == "pca" else None,  # Keep 'pca' for backward compatibility
+        "pca": (
+            encoder_model if encoder_type == "pca" else None
+        ),  # Keep 'pca' for backward compatibility
         "encoder_type": encoder_type,
         "features": meta["features"],
         "indicator_tfs": meta["indicator_tfs"],
         "params_used": meta["args_used"],
         "val_mae": mae,
         "optimization_strategy": optimization_strategy,
-        "optimized_params": optimized_params if optimization_strategy != 'none' else None
+        "optimized_params": (
+            optimized_params if optimization_strategy != "none" else None
+        ),
     }
 
     out_path = out_dir / f"{run_name}.pkl"
     dump(payload, out_path, compress=3)
     print(f"[OK] saved model to {out_path} (val_mae={mae:.6f}, encoder={encoder_type})")
 
-if __name__ == "__main__": main()
+
+if __name__ == "__main__":
+    main()

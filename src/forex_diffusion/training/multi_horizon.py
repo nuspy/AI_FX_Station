@@ -9,6 +9,7 @@ Trains models to predict multiple time horizons simultaneously:
 
 Reference: "Multi-Task Learning" by Caruana (1997)
 """
+
 from __future__ import annotations
 
 from typing import List, Dict, Optional, Tuple, Any
@@ -146,7 +147,9 @@ class MultiHorizonModel(BaseEstimator, RegressorMixin):
             Predictions for specified horizon
         """
         if horizon not in self.horizons:
-            raise ValueError(f"Horizon {horizon} not in trained horizons {self.horizons}")
+            raise ValueError(
+                f"Horizon {horizon} not in trained horizons {self.horizons}"
+            )
 
         horizon_idx = self.horizons.index(horizon)
         predictions = self.predict(X)
@@ -214,7 +217,7 @@ class AdaptiveHorizonSelector:
         High volatility → shorter horizons
         """
         # Calculate recent volatility
-        recent = df.iloc[max(0, current_idx - window):current_idx + 1]
+        recent = df.iloc[max(0, current_idx - window) : current_idx + 1]
         returns = np.log(recent["close"] / recent["close"].shift(1)).dropna()
         volatility = returns.std()
 
@@ -250,10 +253,9 @@ class AdaptiveHorizonSelector:
         """
         # Check if regime features available
         if "regime_trending_up" in df.columns or "regime_trending_down" in df.columns:
-            is_trending = (
-                df.iloc[current_idx].get("regime_trending_up", 0) or
-                df.iloc[current_idx].get("regime_trending_down", 0)
-            )
+            is_trending = df.iloc[current_idx].get("regime_trending_up", 0) or df.iloc[
+                current_idx
+            ].get("regime_trending_down", 0)
 
             if is_trending:
                 # Trending: use longer horizon
@@ -356,9 +358,7 @@ def evaluate_multi_horizon(
         rmse = np.sqrt(mse)
 
         # Directional accuracy
-        direction_correct = (
-            (y_pred_valid > 0) == (y_actual_valid > 0)
-        ).mean()
+        direction_correct = ((y_pred_valid > 0) == (y_actual_valid > 0)).mean()
 
         results[horizon] = {
             "mae": float(mae),

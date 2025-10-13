@@ -3,6 +3,7 @@ Neural network encoders for dimensionality reduction.
 
 Provides VAE and Autoencoder implementations for feature compression.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -51,11 +52,9 @@ class Autoencoder(nn.Module):
         encoder_layers = []
         prev_dim = input_dim
         for h_dim in hidden_dims:
-            encoder_layers.extend([
-                nn.Linear(prev_dim, h_dim),
-                nn.ReLU(),
-                nn.Dropout(0.1)
-            ])
+            encoder_layers.extend(
+                [nn.Linear(prev_dim, h_dim), nn.ReLU(), nn.Dropout(0.1)]
+            )
             prev_dim = h_dim
         encoder_layers.append(nn.Linear(prev_dim, latent_dim))
         self.encoder = nn.Sequential(*encoder_layers)
@@ -64,11 +63,9 @@ class Autoencoder(nn.Module):
         decoder_layers = []
         prev_dim = latent_dim
         for h_dim in reversed(hidden_dims):
-            decoder_layers.extend([
-                nn.Linear(prev_dim, h_dim),
-                nn.ReLU(),
-                nn.Dropout(0.1)
-            ])
+            decoder_layers.extend(
+                [nn.Linear(prev_dim, h_dim), nn.ReLU(), nn.Dropout(0.1)]
+            )
             prev_dim = h_dim
         decoder_layers.append(nn.Linear(prev_dim, input_dim))
         self.decoder = nn.Sequential(*decoder_layers)
@@ -116,12 +113,14 @@ class VAE(nn.Module):
         encoder_layers = []
         prev_dim = input_dim
         for h_dim in hidden_dims:
-            encoder_layers.extend([
-                nn.Linear(prev_dim, h_dim),
-                nn.ReLU(),
-                nn.BatchNorm1d(h_dim),
-                nn.Dropout(0.1)
-            ])
+            encoder_layers.extend(
+                [
+                    nn.Linear(prev_dim, h_dim),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(h_dim),
+                    nn.Dropout(0.1),
+                ]
+            )
             prev_dim = h_dim
         self.encoder_base = nn.Sequential(*encoder_layers)
 
@@ -133,12 +132,14 @@ class VAE(nn.Module):
         decoder_layers = []
         prev_dim = latent_dim
         for h_dim in reversed(hidden_dims):
-            decoder_layers.extend([
-                nn.Linear(prev_dim, h_dim),
-                nn.ReLU(),
-                nn.BatchNorm1d(h_dim),
-                nn.Dropout(0.1)
-            ])
+            decoder_layers.extend(
+                [
+                    nn.Linear(prev_dim, h_dim),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(h_dim),
+                    nn.Dropout(0.1),
+                ]
+            )
             prev_dim = h_dim
         decoder_layers.append(nn.Linear(prev_dim, input_dim))
         self.decoder = nn.Sequential(*decoder_layers)
@@ -169,7 +170,9 @@ class VAE(nn.Module):
         """Decode from latent space to reconstruction."""
         return self.decoder(z)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass through VAE.
 
@@ -198,7 +201,7 @@ class SklearnAutoencoder:
         batch_size: int = 64,
         learning_rate: float = 0.001,
         device: str = "auto",
-        verbose: bool = True
+        verbose: bool = True,
     ):
         """
         Args:
@@ -221,11 +224,15 @@ class SklearnAutoencoder:
         if DeviceManager:
             self.device = DeviceManager.get_device(device)
             if self.verbose and self.device.type == "cuda":
-                logger.info(f"[GPU] Autoencoder will use GPU: {torch.cuda.get_device_name(0)}")
+                logger.info(
+                    f"[GPU] Autoencoder will use GPU: {torch.cuda.get_device_name(0)}"
+                )
         else:
             # Fallback to legacy logic
             if device == "auto" or device is None:
-                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                self.device = torch.device(
+                    "cuda" if torch.cuda.is_available() else "cpu"
+                )
             else:
                 self.device = torch.device(device)
 
@@ -234,7 +241,7 @@ class SklearnAutoencoder:
         self.scaler_mean_ = None
         self.scaler_std_ = None
 
-    def fit(self, X: np.ndarray, y=None) -> 'SklearnAutoencoder':
+    def fit(self, X: np.ndarray, y=None) -> "SklearnAutoencoder":
         """
         Fit autoencoder to data.
 
@@ -254,7 +261,7 @@ class SklearnAutoencoder:
         self.model = Autoencoder(
             input_dim=self.input_dim_,
             latent_dim=self.latent_dim,
-            hidden_dims=self.hidden_dims
+            hidden_dims=self.hidden_dims,
         ).to(self.device)
 
         # Prepare data
@@ -279,7 +286,9 @@ class SklearnAutoencoder:
 
             avg_loss = total_loss / len(dataloader)
             if self.verbose and (epoch + 1) % 10 == 0:
-                logger.info(f"Autoencoder Epoch {epoch+1}/{self.epochs}, Loss: {avg_loss:.6f}")
+                logger.info(
+                    f"Autoencoder Epoch {epoch+1}/{self.epochs}, Loss: {avg_loss:.6f}"
+                )
 
         return self
 
@@ -340,7 +349,7 @@ class SklearnVAE:
         learning_rate: float = 0.001,
         beta: float = 1.0,
         device: str = "auto",
-        verbose: bool = True
+        verbose: bool = True,
     ):
         """
         Args:
@@ -369,7 +378,9 @@ class SklearnVAE:
         else:
             # Fallback to legacy logic
             if device == "auto" or device is None:
-                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                self.device = torch.device(
+                    "cuda" if torch.cuda.is_available() else "cpu"
+                )
             else:
                 self.device = torch.device(device)
 
@@ -380,11 +391,11 @@ class SklearnVAE:
 
     def _vae_loss(self, recon_x, x, mu, logvar):
         """VAE loss = Reconstruction loss + KL divergence."""
-        recon_loss = F.mse_loss(recon_x, x, reduction='sum')
+        recon_loss = F.mse_loss(recon_x, x, reduction="sum")
         kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return recon_loss + self.beta * kld
 
-    def fit(self, X: np.ndarray, y=None) -> 'SklearnVAE':
+    def fit(self, X: np.ndarray, y=None) -> "SklearnVAE":
         """
         Fit VAE to data.
 
@@ -404,7 +415,7 @@ class SklearnVAE:
         self.model = VAE(
             input_dim=self.input_dim_,
             latent_dim=self.latent_dim,
-            hidden_dims=self.hidden_dims
+            hidden_dims=self.hidden_dims,
         ).to(self.device)
 
         # Prepare data

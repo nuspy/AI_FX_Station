@@ -10,6 +10,7 @@ Complete training pipeline for SSSD model including:
 - Logging (TensorBoard/WandB)
 - Mixed precision training
 """
+
 from __future__ import annotations
 
 import torch
@@ -37,7 +38,9 @@ from ..features.unified_pipeline import unified_feature_pipeline, FeatureConfig
 class EarlyStopping:
     """Early stopping handler."""
 
-    def __init__(self, patience: int = 15, min_delta: float = 0.0001, mode: str = "min"):
+    def __init__(
+        self, patience: int = 15, min_delta: float = 0.0001, mode: str = "min"
+    ):
         self.patience = patience
         self.min_delta = min_delta
         self.mode = mode
@@ -77,7 +80,7 @@ class SSSDTrainer:
             lr=config.training.optimizer.learning_rate,
             weight_decay=config.training.optimizer.weight_decay,
             betas=config.training.optimizer.betas,
-            eps=config.training.optimizer.eps
+            eps=config.training.optimizer.eps,
         )
 
         # Learning rate scheduler
@@ -88,11 +91,15 @@ class SSSDTrainer:
         self.scaler = GradScaler() if self.use_amp else None
 
         # Early stopping
-        self.early_stopping = EarlyStopping(
-            patience=config.training.early_stopping.patience,
-            min_delta=config.training.early_stopping.min_delta,
-            mode="min"
-        ) if config.training.early_stopping.enabled else None
+        self.early_stopping = (
+            EarlyStopping(
+                patience=config.training.early_stopping.patience,
+                min_delta=config.training.early_stopping.min_delta,
+                mode="min",
+            )
+            if config.training.early_stopping.enabled
+            else None
+        )
 
         # Logging
         self.tensorboard_writer = None
@@ -143,8 +150,7 @@ class SSSDTrainer:
                 if self.config.training.gradient_clip_norm > 0:
                     self.scaler.unscale_(self.optimizer)
                     nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        self.config.training.gradient_clip_norm
+                        self.model.parameters(), self.config.training.gradient_clip_norm
                     )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
@@ -152,8 +158,7 @@ class SSSDTrainer:
                 loss.backward()
                 if self.config.training.gradient_clip_norm > 0:
                     nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        self.config.training.gradient_clip_norm
+                        self.model.parameters(), self.config.training.gradient_clip_norm
                     )
                 self.optimizer.step()
 
@@ -170,12 +175,16 @@ class SSSDTrainer:
             pbar.set_postfix({"loss": loss.item()})
 
             # Log to TensorBoard
-            if self.tensorboard_writer and self.global_step % self.config.training.logging.log_every_n_steps == 0:
-                self.tensorboard_writer.add_scalar("train/loss", loss.item(), self.global_step)
+            if (
+                self.tensorboard_writer
+                and self.global_step % self.config.training.logging.log_every_n_steps
+                == 0
+            ):
                 self.tensorboard_writer.add_scalar(
-                    "train/lr",
-                    self.optimizer.param_groups[0]["lr"],
-                    self.global_step
+                    "train/loss", loss.item(), self.global_step
+                )
+                self.tensorboard_writer.add_scalar(
+                    "train/lr", self.optimizer.param_groups[0]["lr"], self.global_step
                 )
 
         avg_loss = epoch_loss / num_batches
@@ -214,7 +223,7 @@ class SSSDTrainer:
             path=checkpoint_path,
             epoch=self.current_epoch,
             optimizer_state=self.optimizer.state_dict(),
-            metrics=metrics or {}
+            metrics=metrics or {},
         )
 
         # Save best model
@@ -224,9 +233,11 @@ class SSSDTrainer:
                 path=best_path,
                 epoch=self.current_epoch,
                 optimizer_state=self.optimizer.state_dict(),
-                metrics=metrics or {}
+                metrics=metrics or {},
             )
-            logger.info(f"Saved best model with val_loss={metrics.get('val_loss', 'N/A'):.6f}")
+            logger.info(
+                f"Saved best model with val_loss={metrics.get('val_loss', 'N/A'):.6f}"
+            )
 
         # Clean up old checkpoints if keep_best_only
         if self.config.training.checkpoint.keep_best_only and not is_best:
@@ -257,7 +268,7 @@ class SSSDTrainer:
         self.scheduler = CosineAnnealingLR(
             self.optimizer,
             T_max=total_steps,
-            eta_min=self.config.training.scheduler.lr_min
+            eta_min=self.config.training.scheduler.lr_min,
         )
 
         logger.info(
@@ -279,8 +290,12 @@ class SSSDTrainer:
 
             # Log to TensorBoard
             if self.tensorboard_writer:
-                self.tensorboard_writer.add_scalar("epoch/train_loss", train_metrics["loss"], epoch)
-                self.tensorboard_writer.add_scalar("epoch/val_loss", val_metrics["loss"], epoch)
+                self.tensorboard_writer.add_scalar(
+                    "epoch/train_loss", train_metrics["loss"], epoch
+                )
+                self.tensorboard_writer.add_scalar(
+                    "epoch/val_loss", val_metrics["loss"], epoch
+                )
 
             # Check for best model
             is_best = val_metrics["loss"] < self.best_val_loss
@@ -288,11 +303,13 @@ class SSSDTrainer:
                 self.best_val_loss = val_metrics["loss"]
 
             # Save checkpoint
-            if (epoch + 1) % self.config.training.checkpoint.save_every_n_epochs == 0 or is_best:
+            if (
+                epoch + 1
+            ) % self.config.training.checkpoint.save_every_n_epochs == 0 or is_best:
                 metrics = {
                     "train_loss": train_metrics["loss"],
                     "val_loss": val_metrics["loss"],
-                    "epoch": epoch
+                    "epoch": epoch,
                 }
                 self.save_checkpoint(is_best=is_best, metrics=metrics)
 
@@ -312,14 +329,14 @@ class SSSDTrainer:
             "train_loss": train_metrics["loss"],
             "val_loss": val_metrics["loss"],
             "epoch": self.current_epoch,
-            "best_val_loss": self.best_val_loss
+            "best_val_loss": self.best_val_loss,
         }
         final_path = self.checkpoint_dir / "final_model.pt"
         self.model.save_checkpoint(
             path=final_path,
             epoch=self.current_epoch,
             optimizer_state=self.optimizer.state_dict(),
-            metrics=final_metrics
+            metrics=final_metrics,
         )
 
         logger.info(
@@ -335,9 +352,7 @@ class SSSDTrainer:
         logger.info(f"Loading checkpoint from {checkpoint_path}")
 
         model, epoch, optimizer_state, metrics = SSSDModel.load_checkpoint(
-            checkpoint_path,
-            config=self.config,
-            map_location=str(self.device)
+            checkpoint_path, config=self.config, map_location=str(self.device)
         )
 
         self.model = model.to(self.device)
@@ -348,14 +363,16 @@ class SSSDTrainer:
 
         self.best_val_loss = metrics.get("val_loss", float("inf"))
 
-        logger.info(f"Resumed from epoch {epoch}, best_val_loss={self.best_val_loss:.6f}")
+        logger.info(
+            f"Resumed from epoch {epoch}, best_val_loss={self.best_val_loss:.6f}"
+        )
 
 
 def train_sssd_cli(
     config_path: str,
     asset_config_path: Optional[str] = None,
     resume_from: Optional[str] = None,
-    overrides: Optional[Dict[str, Any]] = None
+    overrides: Optional[Dict[str, Any]] = None,
 ):
     """
     Main entry point for SSSD training CLI.
@@ -385,7 +402,7 @@ def train_sssd_cli(
     data_module = SSSDDataModule(
         data_path=Path(config.system.checkpoint_dir).parent / "features",
         config=config,
-        feature_pipeline=None
+        feature_pipeline=None,
     )
 
     # Create trainer
@@ -402,9 +419,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Train SSSD model")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
-    parser.add_argument("--asset-config", type=str, help="Path to asset-specific config")
+    parser.add_argument(
+        "--asset-config", type=str, help="Path to asset-specific config"
+    )
     parser.add_argument("--resume", type=str, help="Path to checkpoint to resume from")
-    parser.add_argument("--override", type=str, nargs="+", help="Config overrides (key=value)")
+    parser.add_argument(
+        "--override", type=str, nargs="+", help="Config overrides (key=value)"
+    )
 
     args = parser.parse_args()
 
@@ -424,5 +445,5 @@ if __name__ == "__main__":
         config_path=args.config,
         asset_config_path=args.asset_config,
         resume_from=args.resume,
-        overrides=overrides
+        overrides=overrides,
     )

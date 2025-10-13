@@ -8,6 +8,7 @@ Handles:
 - Hyperparameter search state
 - Automatic resume from last completed step
 """
+
 from __future__ import annotations
 
 import json
@@ -26,6 +27,7 @@ from ..utils.user_settings import SETTINGS_DIR
 
 class WorkflowStage(Enum):
     """Stages in optimization workflow"""
+
     SETUP = "setup"
     TRAINING = "training"
     BACKTEST = "backtest"
@@ -36,6 +38,7 @@ class WorkflowStage(Enum):
 
 class TaskStatus(Enum):
     """Status of individual task"""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -46,6 +49,7 @@ class TaskStatus(Enum):
 @dataclass
 class TaskCheckpoint:
     """Checkpoint for a single task (e.g., train model #100)"""
+
     task_id: str
     task_type: str  # 'training', 'backtest', 'validation'
     status: TaskStatus
@@ -59,20 +63,21 @@ class TaskCheckpoint:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         data = asdict(self)
-        data['status'] = self.status.value
+        data["status"] = self.status.value
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'TaskCheckpoint':
+    def from_dict(cls, data: Dict[str, Any]) -> "TaskCheckpoint":
         """Create from dictionary"""
         data = data.copy()
-        data['status'] = TaskStatus(data['status'])
+        data["status"] = TaskStatus(data["status"])
         return cls(**data)
 
 
 @dataclass
 class WorkflowCheckpoint:
     """Checkpoint for entire optimization workflow"""
+
     workflow_id: str
     stage: WorkflowStage
     config: Dict[str, Any]
@@ -84,21 +89,21 @@ class WorkflowCheckpoint:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
-            'workflow_id': self.workflow_id,
-            'stage': self.stage.value,
-            'config': self.config,
-            'tasks': [t.to_dict() for t in self.tasks],
-            'started_at': self.started_at,
-            'updated_at': self.updated_at,
-            'metadata': self.metadata,
+            "workflow_id": self.workflow_id,
+            "stage": self.stage.value,
+            "config": self.config,
+            "tasks": [t.to_dict() for t in self.tasks],
+            "started_at": self.started_at,
+            "updated_at": self.updated_at,
+            "metadata": self.metadata,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'WorkflowCheckpoint':
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowCheckpoint":
         """Create from dictionary"""
         data = data.copy()
-        data['stage'] = WorkflowStage(data['stage'])
-        data['tasks'] = [TaskCheckpoint.from_dict(t) for t in data['tasks']]
+        data["stage"] = WorkflowStage(data["stage"])
+        data["tasks"] = [TaskCheckpoint.from_dict(t) for t in data["tasks"]]
         return cls(**data)
 
 
@@ -119,7 +124,7 @@ class CheckpointManager:
         workflow_id: str,
         checkpoint_dir: Optional[Path] = None,
         max_backups: int = 5,
-        auto_save_interval: int = 60  # seconds
+        auto_save_interval: int = 60,  # seconds
     ):
         """
         Initialize checkpoint manager.
@@ -152,7 +157,7 @@ class CheckpointManager:
         """Load existing checkpoint if available"""
         try:
             if self.checkpoint_file.exists():
-                with open(self.checkpoint_file, 'r') as f:
+                with open(self.checkpoint_file, "r") as f:
                     data = json.load(f)
                     self.workflow = WorkflowCheckpoint.from_dict(data)
 
@@ -169,7 +174,9 @@ class CheckpointManager:
     def initialize_workflow(
         self,
         config: Dict[str, Any],
-        task_plan: List[Tuple[str, str, Dict[str, Any]]]  # (task_id, task_type, params)
+        task_plan: List[
+            Tuple[str, str, Dict[str, Any]]
+        ],  # (task_id, task_type, params)
     ) -> WorkflowCheckpoint:
         """
         Initialize a new workflow or resume existing one.
@@ -191,7 +198,7 @@ class CheckpointManager:
                 task_id=task_id,
                 task_type=task_type,
                 status=TaskStatus.PENDING,
-                params=params
+                params=params,
             )
             for task_id, task_type, params in task_plan
         ]
@@ -208,8 +215,7 @@ class CheckpointManager:
         self._save_checkpoint()
 
         logger.info(
-            f"Initialized new workflow '{self.workflow_id}' "
-            f"with {len(tasks)} tasks"
+            f"Initialized new workflow '{self.workflow_id}' " f"with {len(tasks)} tasks"
         )
 
         return self.workflow
@@ -246,7 +252,9 @@ class CheckpointManager:
             return False
 
         if task.status != TaskStatus.PENDING:
-            logger.warning(f"Task '{task_id}' already started (status: {task.status.value})")
+            logger.warning(
+                f"Task '{task_id}' already started (status: {task.status.value})"
+            )
             return False
 
         task.status = TaskStatus.IN_PROGRESS
@@ -262,7 +270,7 @@ class CheckpointManager:
         self,
         task_id: str,
         result: Dict[str, Any],
-        artifacts: Optional[Dict[str, str]] = None
+        artifacts: Optional[Dict[str, str]] = None,
     ) -> bool:
         """
         Mark task as completed with results.
@@ -352,26 +360,30 @@ class CheckpointManager:
             Dictionary with progress info
         """
         if not self.workflow:
-            return {'total': 0, 'completed': 0, 'progress': 0.0}
+            return {"total": 0, "completed": 0, "progress": 0.0}
 
         total = len(self.workflow.tasks)
-        completed = sum(1 for t in self.workflow.tasks if t.status == TaskStatus.COMPLETED)
-        in_progress = sum(1 for t in self.workflow.tasks if t.status == TaskStatus.IN_PROGRESS)
+        completed = sum(
+            1 for t in self.workflow.tasks if t.status == TaskStatus.COMPLETED
+        )
+        in_progress = sum(
+            1 for t in self.workflow.tasks if t.status == TaskStatus.IN_PROGRESS
+        )
         failed = sum(1 for t in self.workflow.tasks if t.status == TaskStatus.FAILED)
         skipped = sum(1 for t in self.workflow.tasks if t.status == TaskStatus.SKIPPED)
 
         return {
-            'workflow_id': self.workflow_id,
-            'stage': self.workflow.stage.value,
-            'total': total,
-            'completed': completed,
-            'in_progress': in_progress,
-            'failed': failed,
-            'skipped': skipped,
-            'pending': total - completed - in_progress - failed - skipped,
-            'progress': completed / total if total > 0 else 0.0,
-            'started_at': self.workflow.started_at,
-            'updated_at': self.workflow.updated_at,
+            "workflow_id": self.workflow_id,
+            "stage": self.workflow.stage.value,
+            "total": total,
+            "completed": completed,
+            "in_progress": in_progress,
+            "failed": failed,
+            "skipped": skipped,
+            "pending": total - completed - in_progress - failed - skipped,
+            "progress": completed / total if total > 0 else 0.0,
+            "started_at": self.workflow.started_at,
+            "updated_at": self.workflow.updated_at,
         }
 
     def get_results(self) -> List[Dict[str, Any]]:
@@ -387,13 +399,15 @@ class CheckpointManager:
         results = []
         for task in self.workflow.tasks:
             if task.status == TaskStatus.COMPLETED and task.result:
-                results.append({
-                    'task_id': task.task_id,
-                    'task_type': task.task_type,
-                    'params': task.params,
-                    'result': task.result,
-                    'artifacts': task.artifacts,
-                })
+                results.append(
+                    {
+                        "task_id": task.task_id,
+                        "task_type": task.task_type,
+                        "params": task.params,
+                        "result": task.result,
+                        "artifacts": task.artifacts,
+                    }
+                )
 
         return results
 
@@ -443,11 +457,11 @@ class CheckpointManager:
         elif in_progress:
             # Determine stage based on current task type
             current_task = in_progress[0]
-            if current_task.task_type == 'training':
+            if current_task.task_type == "training":
                 self.workflow.stage = WorkflowStage.TRAINING
-            elif current_task.task_type == 'backtest':
+            elif current_task.task_type == "backtest":
                 self.workflow.stage = WorkflowStage.BACKTEST
-            elif current_task.task_type == 'validation':
+            elif current_task.task_type == "validation":
                 self.workflow.stage = WorkflowStage.VALIDATION
 
     def _save_checkpoint(self):
@@ -462,10 +476,10 @@ class CheckpointManager:
             self._backup_checkpoint()
 
         # Atomic write: write to temp file, then rename
-        temp_file = self.checkpoint_file.with_suffix('.tmp')
+        temp_file = self.checkpoint_file.with_suffix(".tmp")
 
         try:
-            with open(temp_file, 'w') as f:
+            with open(temp_file, "w") as f:
                 json.dump(self.workflow.to_dict(), f, indent=2)
 
             # Atomic rename
@@ -483,7 +497,7 @@ class CheckpointManager:
         if not self.checkpoint_file.exists():
             return
 
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_file = self.backup_dir / f"{self.workflow_id}_{timestamp}.json"
 
         try:
@@ -500,11 +514,11 @@ class CheckpointManager:
         backups = sorted(
             self.backup_dir.glob(f"{self.workflow_id}_*.json"),
             key=lambda p: p.stat().st_mtime,
-            reverse=True
+            reverse=True,
         )
 
         # Remove old backups
-        for backup in backups[self.max_backups:]:
+        for backup in backups[self.max_backups :]:
             try:
                 backup.unlink()
             except Exception as e:
@@ -527,7 +541,7 @@ def resume_or_create_workflow(
     workflow_id: str,
     config: Dict[str, Any],
     task_generator: callable,  # Function that returns List[Tuple[task_id, task_type, params]]
-    checkpoint_dir: Optional[Path] = None
+    checkpoint_dir: Optional[Path] = None,
 ) -> Tuple[CheckpointManager, bool]:
     """
     Convenience function to resume existing workflow or create new one.

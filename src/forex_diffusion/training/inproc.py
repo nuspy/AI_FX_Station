@@ -6,6 +6,7 @@ helpers from src.forex_diffusion.training.train_sklearn.py while taking
 a `fetch_candles` callable provided by the caller (UI), so DB access is
 delegated to the application context.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,8 +40,12 @@ def _make_args_from_cfg(cfg: Dict[str, Any]) -> SimpleNamespace:
     a.horizon = int(cfg.get("horizon", cfg.get("horizon_bars", 5)))
     a.algo = cfg.get("algo", cfg.get("model_type", "ridge"))
     a.pca = int(cfg.get("pca", cfg.get("pca_components", 0) or 0))
-    a.artifacts_dir = str(cfg.get("artifacts_dir", cfg.get("artifacts_dir", "./artifacts")))
-    a.warmup_bars = int(cfg.get("warmup_bars", cfg.get("advanced_params", {}).get("warmup_bars", 16)))
+    a.artifacts_dir = str(
+        cfg.get("artifacts_dir", cfg.get("artifacts_dir", "./artifacts"))
+    )
+    a.warmup_bars = int(
+        cfg.get("warmup_bars", cfg.get("advanced_params", {}).get("warmup_bars", 16))
+    )
     a.val_frac = float(cfg.get("val_frac", 0.2))
     a.alpha = float(cfg.get("alpha", 0.001))
     a.l1_ratio = float(cfg.get("l1_ratio", 0.5))
@@ -50,9 +55,18 @@ def _make_args_from_cfg(cfg: Dict[str, Any]) -> SimpleNamespace:
     a.atr_n = int(cfg.get("atr_n", cfg.get("advanced_params", {}).get("atr_n", 14)))
     a.rsi_n = int(cfg.get("rsi_n", cfg.get("advanced_params", {}).get("rsi_n", 14)))
     a.bb_n = int(cfg.get("bb_n", cfg.get("advanced_params", {}).get("bb_n", 20)))
-    a.hurst_window = int(cfg.get("hurst_window", cfg.get("advanced_params", {}).get("hurst_window", 64)))
-    a.rv_window = int(cfg.get("rv_window", cfg.get("advanced_params", {}).get("rv_window", 60)))
-    a.min_feature_coverage = float(cfg.get("min_feature_coverage", cfg.get("advanced_params", {}).get("min_feature_coverage", 0.15)))
+    a.hurst_window = int(
+        cfg.get("hurst_window", cfg.get("advanced_params", {}).get("hurst_window", 64))
+    )
+    a.rv_window = int(
+        cfg.get("rv_window", cfg.get("advanced_params", {}).get("rv_window", 60))
+    )
+    a.min_feature_coverage = float(
+        cfg.get(
+            "min_feature_coverage",
+            cfg.get("advanced_params", {}).get("min_feature_coverage", 0.15),
+        )
+    )
     raw_tfs = cfg.get("indicator_tfs", {})
     if isinstance(raw_tfs, str):
         a.indicator_tfs = raw_tfs
@@ -97,10 +111,14 @@ def train_sklearn_inproc(
 
         args = _make_args_from_cfg(cfg)
 
-        log(f"[train] preparing training for {args.symbol} {args.timeframe} horizon={args.horizon}")
+        log(
+            f"[train] preparing training for {args.symbol} {args.timeframe} horizon={args.horizon}"
+        )
         if progress:
-            try: progress(-1)
-            except Exception: pass
+            try:
+                progress(-1)
+            except Exception:
+                pass
 
         # 1) fetch candles via provided callable
         try:
@@ -113,7 +131,9 @@ def train_sklearn_inproc(
 
         req = {"ts_utc", "open", "high", "low", "close"}
         if not req.issubset(set(candles.columns)):
-            raise RuntimeError(f"Candles missing required columns: {req} (got {list(candles.columns)})")
+            raise RuntimeError(
+                f"Candles missing required columns: {req} (got {list(candles.columns)})"
+            )
 
         log("[train] computing features")
         # 2) build features using trainer helper (expects (candles, args))
@@ -121,11 +141,15 @@ def train_sklearn_inproc(
 
         log(f"[train] features shape {X.shape}, labels {y.shape}")
         # 3) standardize and split
-        (Xtr, ytr), (Xva, yva), (mu, sigma) = trainer_mod._standardize_train_val(X, y, args.val_frac)
+        (Xtr, ytr), (Xva, yva), (mu, sigma) = trainer_mod._standardize_train_val(
+            X, y, args.val_frac
+        )
 
         if progress:
-            try: progress(30)
-            except Exception: pass
+            try:
+                progress(30)
+            except Exception:
+                pass
 
         # 4) optional PCA
         pca_model = None
@@ -133,13 +157,18 @@ def train_sklearn_inproc(
             ncomp = min(int(args.pca), Xtr.shape[1], Xtr.shape[0])
             if ncomp > 0:
                 from sklearn.decomposition import PCA
-                pca_model = PCA(n_components=ncomp, whiten=False, random_state=args.random_state)
+
+                pca_model = PCA(
+                    n_components=ncomp, whiten=False, random_state=args.random_state
+                )
                 Xtr = pca_model.fit_transform(Xtr)
                 Xva = pca_model.transform(Xva)
 
         if progress:
-            try: progress(55)
-            except Exception: pass
+            try:
+                progress(55)
+            except Exception:
+                pass
 
         # 5) fit model
         log(f"[train] fitting model algo={args.algo}")
@@ -149,12 +178,15 @@ def train_sklearn_inproc(
         # 6) validate
         val_pred = model.predict(Xva)
         from sklearn.metrics import mean_absolute_error
+
         mae = float(mean_absolute_error(yva, val_pred))
         log(f"[train] validation MAE={mae:.6f}")
 
         if progress:
-            try: progress(80)
-            except Exception: pass
+            try:
+                progress(80)
+            except Exception:
+                pass
 
         # 7) save artifact
         out_dir = Path(args.artifacts_dir) / "models"
@@ -175,16 +207,20 @@ def train_sklearn_inproc(
         # use joblib.dump for sklearn objects
         try:
             from joblib import dump
+
             dump(payload, out_path, compress=3)
         except Exception:
             import pickle
+
             with open(out_path, "wb") as f:
                 pickle.dump(payload, f)
 
         log(f"[OK] saved model to {out_path} (val_mae={mae:.6f})")
         if progress:
-            try: progress(100)
-            except Exception: pass
+            try:
+                progress(100)
+            except Exception:
+                pass
 
         return {"ok": True, "path": str(out_path), "val_mae": mae, "msg": "trained"}
     except Exception as e:
@@ -194,6 +230,8 @@ def train_sklearn_inproc(
         except Exception:
             pass
         if progress:
-            try: progress(0)
-            except Exception: pass
+            try:
+                progress(0)
+            except Exception:
+                pass
         return {"ok": False, "path": None, "val_mae": None, "msg": str(e)}

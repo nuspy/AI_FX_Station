@@ -11,6 +11,7 @@ Includes A/B testing framework to validate new models before promotion.
 
 Reference: "Continuous Delivery for Machine Learning" by Sato et al. (2019)
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Callable, Any
@@ -28,6 +29,7 @@ from ..monitoring.drift_detector import DriftDetector, DriftAlert, DriftSeverity
 
 class RetrainTriggerType(Enum):
     """Types of retraining triggers"""
+
     DRIFT_DETECTED = "drift_detected"
     PERFORMANCE_DEGRADATION = "performance_degradation"
     SCHEDULED = "scheduled"
@@ -37,6 +39,7 @@ class RetrainTriggerType(Enum):
 
 class ModelStatus(Enum):
     """Model deployment status"""
+
     TRAINING = "training"
     TESTING = "testing"
     CANDIDATE = "candidate"
@@ -80,6 +83,7 @@ class RetrainConfig:
 @dataclass
 class RetrainEvent:
     """Record of a retraining event"""
+
     event_id: str
     timestamp: datetime
     trigger_type: RetrainTriggerType
@@ -105,6 +109,7 @@ class RetrainEvent:
 @dataclass
 class ModelVersion:
     """Metadata for a model version"""
+
     model_id: str
     created_at: datetime
     status: ModelStatus
@@ -319,11 +324,13 @@ class AutoRetrainingPipeline:
         accuracy = correct / len(predictions)
 
         # Record in history
-        self.performance_history.append({
-            "timestamp": datetime.now(),
-            "accuracy": accuracy,
-            "sample_size": len(predictions),
-        })
+        self.performance_history.append(
+            {
+                "timestamp": datetime.now(),
+                "accuracy": accuracy,
+                "sample_size": len(predictions),
+            }
+        )
 
         # Check against thresholds
         if accuracy < self.config.min_accuracy_absolute:
@@ -341,7 +348,9 @@ class AutoRetrainingPipeline:
             avg_recent = np.mean(recent_accuracy)
 
             if len(self.performance_history) >= 20:
-                historical_accuracy = [h["accuracy"] for h in self.performance_history[-20:-10]]
+                historical_accuracy = [
+                    h["accuracy"] for h in self.performance_history[-20:-10]
+                ]
                 avg_historical = np.mean(historical_accuracy)
 
                 degradation = avg_historical - avg_recent
@@ -364,7 +373,8 @@ class AutoRetrainingPipeline:
 
         # Check for critical or high severity
         critical_alerts = [
-            a for a in alerts
+            a
+            for a in alerts
             if a.severity in [DriftSeverity.CRITICAL, DriftSeverity.HIGH]
         ]
 
@@ -384,7 +394,9 @@ class AutoRetrainingPipeline:
 
         # Check relative degradation
         if len(self.performance_history) >= 20:
-            historical_accuracy = [h["accuracy"] for h in self.performance_history[-20:-10]]
+            historical_accuracy = [
+                h["accuracy"] for h in self.performance_history[-20:-10]
+            ]
             avg_historical = np.mean(historical_accuracy)
 
             if avg_historical - avg_recent > self.config.accuracy_drop_threshold:
@@ -455,8 +467,7 @@ class AutoRetrainingPipeline:
             self.model_versions[model_id] = version
 
             logger.info(
-                f"Model {model_id} trained: samples={len(data)}, "
-                f"metrics={metrics}"
+                f"Model {model_id} trained: samples={len(data)}, " f"metrics={metrics}"
             )
 
             return version
@@ -583,7 +594,9 @@ class AutoRetrainingPipeline:
             return
 
         # Sort by deployed_at, get most recent
-        retired_models.sort(key=lambda x: x[1].deployed_at or datetime.min, reverse=True)
+        retired_models.sort(
+            key=lambda x: x[1].deployed_at or datetime.min, reverse=True
+        )
         rollback_model_id, rollback_version = retired_models[0]
 
         logger.warning(f"Rolling back to model {rollback_model_id}")
@@ -607,10 +620,13 @@ class AutoRetrainingPipeline:
             "candidate_model": self.candidate_model_id,
             "total_model_versions": len(self.model_versions),
             "total_retrain_events": len(self.retrain_events),
-            "last_retrain": self.last_retrain_time.isoformat() if self.last_retrain_time else None,
+            "last_retrain": (
+                self.last_retrain_time.isoformat() if self.last_retrain_time else None
+            ),
             "performance_history_size": len(self.performance_history),
             "recent_accuracy": (
                 self.performance_history[-1]["accuracy"]
-                if self.performance_history else None
+                if self.performance_history
+                else None
             ),
         }

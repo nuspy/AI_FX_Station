@@ -4,6 +4,7 @@ NVIDIA DALI DataLoader integration for GPU-accelerated data preprocessing.
 DALI (Data Loading Library) offloads data preprocessing to GPU, reducing
 CPU bottleneck and improving training throughput.
 """
+
 from __future__ import annotations
 
 from typing import Optional, List, Tuple, Iterator
@@ -28,7 +29,7 @@ class DALIWrapper:
         num_threads: int = 4,
         device_id: int = 0,
         shuffle: bool = True,
-        seed: int = 0
+        seed: int = 0,
     ):
         self.data_path = Path(data_path)
         self.batch_size = batch_size
@@ -50,6 +51,7 @@ class DALIWrapper:
 
         try:
             import nvidia.dali
+
             return True
         except ImportError:
             logger.warning("nvidia-dali library not installed")
@@ -81,7 +83,7 @@ class DALIWrapper:
                     random_shuffle=self.shuffle,
                     seed=self.seed,
                     shard_id=0,
-                    num_shards=1
+                    num_shards=1,
                 )
 
                 # Move to GPU
@@ -96,7 +98,7 @@ class DALIWrapper:
             pipe = time_series_pipeline(
                 batch_size=self.batch_size,
                 num_threads=self.num_threads,
-                device_id=self.device_id
+                device_id=self.device_id,
             )
             pipe.build()
 
@@ -126,7 +128,7 @@ class DALIGenericIterator:
         size: int = -1,
         auto_reset: bool = True,
         fill_last_batch: bool = True,
-        last_batch_padded: bool = False
+        last_batch_padded: bool = False,
     ):
         """
         Initialize DALI iterator.
@@ -149,6 +151,7 @@ class DALIGenericIterator:
         # Import DALI iterator
         try:
             from nvidia.dali.plugin.pytorch import DALIGenericIterator as _DALIIterator
+
             self.iterator_class = _DALIIterator
         except ImportError:
             raise ImportError("nvidia-dali library required for DALIGenericIterator")
@@ -164,7 +167,7 @@ class DALIGenericIterator:
             size=self.size,
             auto_reset=self.auto_reset,
             fill_last_batch=self.fill_last_batch,
-            last_batch_padded=self.last_batch_padded
+            last_batch_padded=self.last_batch_padded,
         )
 
     def __iter__(self) -> Iterator:
@@ -200,7 +203,7 @@ def create_dali_loader(
     num_workers: int = 4,
     device_id: int = 0,
     shuffle: bool = True,
-    seed: int = 0
+    seed: int = 0,
 ) -> Optional[DALIGenericIterator]:
     """
     Create a DALI DataLoader for PyTorch dataset.
@@ -239,7 +242,7 @@ def create_dali_loader(
 def benchmark_dataloader(
     dataloader: torch.utils.data.DataLoader,
     num_batches: int = 100,
-    device: str = "cuda"
+    device: str = "cuda",
 ) -> dict:
     """
     Benchmark DataLoader performance.
@@ -287,7 +290,7 @@ def benchmark_dataloader(
         "std_batch_time": np.std(times),
         "min_batch_time": np.min(times),
         "max_batch_time": np.max(times),
-        "throughput_batches_per_sec": num_batches / total_time
+        "throughput_batches_per_sec": num_batches / total_time,
     }
 
     logger.info("DataLoader Benchmark Results:")
@@ -305,7 +308,7 @@ def create_financial_dali_pipeline(
     num_threads: int = 4,
     device_id: int = 0,
     sequence_length: int = 64,
-    num_features: int = 7
+    num_features: int = 7,
 ):
     """
     Template for creating DALI pipeline for financial time series.
@@ -344,7 +347,7 @@ def create_financial_dali_pipeline(
                 file_root=str(data_dir),
                 file_filter="*.npy",
                 random_shuffle=True,
-                pad_last_batch=True
+                pad_last_batch=True,
             )
 
             # Move to GPU
@@ -360,9 +363,7 @@ def create_financial_dali_pipeline(
 
         # Build pipeline
         pipe = financial_pipeline(
-            batch_size=batch_size,
-            num_threads=num_threads,
-            device_id=device_id
+            batch_size=batch_size, num_threads=num_threads, device_id=device_id
         )
         pipe.build()
 

@@ -4,6 +4,7 @@ Optimized training wrapper with NVIDIA optimization stack.
 Integrates all GPU optimizations (AMP, compile, fused optimizers, etc.)
 with existing PyTorch Lightning training loop.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Callable
@@ -36,7 +37,9 @@ class OptimizedTrainingCallback(Callback):
         self.scaler: Optional[torch.cuda.amp.GradScaler] = None
         self.compiled_model: Optional[nn.Module] = None
 
-    def setup(self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str) -> None:
+    def setup(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str
+    ) -> None:
         """Setup optimizations before training starts."""
         if stage != "fit":
             return
@@ -75,15 +78,19 @@ class OptimizedTrainingCallback(Callback):
             try:
                 # Enable gradient checkpointing for supported modules
                 # This trades compute for memory
-                if hasattr(pl_module, 'vae') and hasattr(pl_module.vae, 'encoder'):
+                if hasattr(pl_module, "vae") and hasattr(pl_module.vae, "encoder"):
                     # Apply to VAE encoder if it has gradient_checkpointing method
-                    if hasattr(pl_module.vae.encoder, 'gradient_checkpointing_enable'):
+                    if hasattr(pl_module.vae.encoder, "gradient_checkpointing_enable"):
                         pl_module.vae.encoder.gradient_checkpointing_enable()
                         logger.info("Enabled gradient checkpointing for VAE encoder")
-                if hasattr(pl_module, 'diffusion_model'):
-                    if hasattr(pl_module.diffusion_model, 'gradient_checkpointing_enable'):
+                if hasattr(pl_module, "diffusion_model"):
+                    if hasattr(
+                        pl_module.diffusion_model, "gradient_checkpointing_enable"
+                    ):
                         pl_module.diffusion_model.gradient_checkpointing_enable()
-                        logger.info("Enabled gradient checkpointing for diffusion model")
+                        logger.info(
+                            "Enabled gradient checkpointing for diffusion model"
+                        )
             except Exception as e:
                 logger.warning(f"Could not enable gradient checkpointing: {e}")
 
@@ -91,46 +98,50 @@ class OptimizedTrainingCallback(Callback):
         if self.opt_config.compile_model:
             try:
                 import torch._dynamo
+
                 torch._dynamo.config.suppress_errors = True
 
                 # Compile individual modules for better flexibility
-                if hasattr(pl_module, 'vae'):
+                if hasattr(pl_module, "vae"):
                     pl_module.vae.encoder = torch.compile(
-                        pl_module.vae.encoder,
-                        mode=self.opt_config.compile_mode.value
+                        pl_module.vae.encoder, mode=self.opt_config.compile_mode.value
                     )
                     pl_module.vae.decoder = torch.compile(
-                        pl_module.vae.decoder,
-                        mode=self.opt_config.compile_mode.value
+                        pl_module.vae.decoder, mode=self.opt_config.compile_mode.value
                     )
-                    logger.info(f"Compiled VAE with mode: {self.opt_config.compile_mode.value}")
+                    logger.info(
+                        f"Compiled VAE with mode: {self.opt_config.compile_mode.value}"
+                    )
 
-                if hasattr(pl_module, 'diffusion_model'):
+                if hasattr(pl_module, "diffusion_model"):
                     pl_module.diffusion_model = torch.compile(
                         pl_module.diffusion_model,
-                        mode=self.opt_config.compile_mode.value
+                        mode=self.opt_config.compile_mode.value,
                     )
-                    logger.info(f"Compiled diffusion model with mode: {self.opt_config.compile_mode.value}")
+                    logger.info(
+                        f"Compiled diffusion model with mode: {self.opt_config.compile_mode.value}"
+                    )
 
             except Exception as e:
                 logger.warning(f"torch.compile failed: {e}")
                 logger.warning("Continuing without compilation")
 
         # 6. Replace optimizer with fused version (APEX)
-        if self.opt_config.use_fused_optimizer and self.opt_config.hardware_info.has_apex:
+        if (
+            self.opt_config.use_fused_optimizer
+            and self.opt_config.hardware_info.has_apex
+        ):
             try:
                 import apex.optimizers as apex_optim
 
                 # Get current optimizer config
                 opt_config = trainer.optimizers[0].defaults
-                lr = opt_config.get('lr', 2e-4)
-                weight_decay = opt_config.get('weight_decay', 1e-6)
+                lr = opt_config.get("lr", 2e-4)
+                weight_decay = opt_config.get("weight_decay", 1e-6)
 
                 # Replace with fused AdamW
                 fused_opt = apex_optim.FusedAdam(
-                    pl_module.parameters(),
-                    lr=lr,
-                    weight_decay=weight_decay
+                    pl_module.parameters(), lr=lr, weight_decay=weight_decay
                 )
 
                 # Replace optimizer in trainer
@@ -143,14 +154,16 @@ class OptimizedTrainingCallback(Callback):
                 logger.warning(f"Could not apply fused optimizer: {e}")
 
         logger.info("=== Optimization Setup Complete ===")
-        logger.info(f"Effective batch size: {self.opt_config.get_effective_batch_size()}")
+        logger.info(
+            f"Effective batch size: {self.opt_config.get_effective_batch_size()}"
+        )
 
     def on_train_batch_start(
         self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
         batch: Any,
-        batch_idx: int
+        batch_idx: int,
     ) -> None:
         """Handle per-batch optimizations."""
         # Convert batch to channels_last if needed
@@ -178,7 +191,7 @@ class OptimizedDataLoader:
         batch_size: int,
         opt_config: OptimizationConfig,
         shuffle: bool = True,
-        is_validation: bool = False
+        is_validation: bool = False,
     ) -> DataLoader:
         """
         Create an optimized DataLoader.
@@ -217,7 +230,9 @@ class OptimizedDataLoader:
             pin_memory=pin_memory,
             prefetch_factor=prefetch_factor,
             persistent_workers=persistent_workers,
-            drop_last=True if shuffle else False  # Drop last incomplete batch in training
+            drop_last=(
+                True if shuffle else False
+            ),  # Drop last incomplete batch in training
         )
 
         logger.info(
@@ -234,7 +249,7 @@ def create_optimized_trainer(
     max_epochs: int,
     output_dir: Path,
     callbacks: list = None,
-    **trainer_kwargs
+    **trainer_kwargs,
 ) -> pl.Trainer:
     """
     Create a PyTorch Lightning Trainer with all optimizations applied.
@@ -305,7 +320,7 @@ def create_optimized_trainer(
         log_every_n_steps=10,
         enable_progress_bar=True,
         enable_model_summary=True,
-        **trainer_kwargs
+        **trainer_kwargs,
     )
 
     logger.info("=== Trainer Configuration ===")
@@ -325,7 +340,7 @@ def estimate_training_time(
     batch_size: int,
     num_epochs: int,
     opt_config: OptimizationConfig,
-    seconds_per_batch_baseline: float = 0.5
+    seconds_per_batch_baseline: float = 0.5,
 ) -> Dict[str, float]:
     """
     Estimate training time with and without optimizations.
@@ -363,7 +378,7 @@ def estimate_training_time(
 
     # DDP multi-GPU: ~(num_gpus * 0.85) speedup (85% efficiency)
     if opt_config.use_ddp and opt_config.num_gpus > 1:
-        speedup *= (opt_config.num_gpus * 0.85)
+        speedup *= opt_config.num_gpus * 0.85
 
     # Fused optimizer: ~1.15x speedup
     if opt_config.use_fused_optimizer:
@@ -386,5 +401,5 @@ def estimate_training_time(
         "speedup": speedup,
         "time_saved_hours": (baseline_time_seconds - optimized_time_seconds) / 3600,
         "batches_per_epoch": batches_per_epoch,
-        "total_batches": total_batches
+        "total_batches": total_batches,
     }

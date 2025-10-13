@@ -4,6 +4,7 @@ Flash Attention 2 integration for optimized attention mechanisms.
 Provides drop-in replacement for standard attention with O(N) memory complexity.
 Requires Ampere+ GPU (compute capability >= 8.0) and flash-attn library.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -26,7 +27,7 @@ class FlashAttentionWrapper(nn.Module):
         num_heads: int,
         dropout: float = 0.0,
         bias: bool = True,
-        batch_first: bool = True
+        batch_first: bool = True,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -40,6 +41,7 @@ class FlashAttentionWrapper(nn.Module):
         if self.use_flash_attn:
             try:
                 from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+
                 self.flash_attn_func = flash_attn_func
                 logger.info("Flash Attention 2 enabled")
             except ImportError:
@@ -53,7 +55,7 @@ class FlashAttentionWrapper(nn.Module):
                 num_heads=num_heads,
                 dropout=dropout,
                 bias=bias,
-                batch_first=batch_first
+                batch_first=batch_first,
             )
             logger.info("Using standard PyTorch attention")
 
@@ -62,7 +64,9 @@ class FlashAttentionWrapper(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
         self.head_dim = embed_dim // num_heads
-        assert self.head_dim * num_heads == embed_dim, "embed_dim must be divisible by num_heads"
+        assert (
+            self.head_dim * num_heads == embed_dim
+        ), "embed_dim must be divisible by num_heads"
 
     def _check_flash_attention(self) -> bool:
         """Check if Flash Attention can be used."""
@@ -83,6 +87,7 @@ class FlashAttentionWrapper(nn.Module):
         # Check if library is installed
         try:
             import flash_attn
+
             return True
         except ImportError:
             logger.warning("flash-attn library not installed")
@@ -94,7 +99,7 @@ class FlashAttentionWrapper(nn.Module):
         key: Optional[torch.Tensor] = None,
         value: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
-        need_weights: bool = False
+        need_weights: bool = False,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Forward pass with Flash Attention or standard attention.
@@ -118,13 +123,12 @@ class FlashAttentionWrapper(nn.Module):
         if self.use_flash_attn and not need_weights and attn_mask is None:
             return self._flash_attention_forward(query, key, value)
         else:
-            return self._standard_attention_forward(query, key, value, attn_mask, need_weights)
+            return self._standard_attention_forward(
+                query, key, value, attn_mask, need_weights
+            )
 
     def _flash_attention_forward(
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor
+        self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
     ) -> tuple[torch.Tensor, None]:
         """Flash Attention forward pass."""
         # Ensure batch_first format
@@ -144,10 +148,12 @@ class FlashAttentionWrapper(nn.Module):
 
         # Flash Attention expects (B, L, H, D_h)
         output = self.flash_attn_func(
-            q, k, v,
+            q,
+            k,
+            v,
             dropout_p=self.dropout if self.training else 0.0,
             softmax_scale=None,  # Use default 1/sqrt(d_k)
-            causal=False
+            causal=False,
         )  # (B, L, H, D_h)
 
         # Reshape output
@@ -168,19 +174,16 @@ class FlashAttentionWrapper(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         attn_mask: Optional[torch.Tensor],
-        need_weights: bool
+        need_weights: bool,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Standard PyTorch attention forward pass."""
         return self.attn(
-            query, key, value,
-            attn_mask=attn_mask,
-            need_weights=need_weights
+            query, key, value, attn_mask=attn_mask, need_weights=need_weights
         )
 
 
 def replace_attention_with_flash(
-    module: nn.Module,
-    recursive: bool = True
+    module: nn.Module, recursive: bool = True
 ) -> nn.Module:
     """
     Replace all MultiheadAttention modules with FlashAttentionWrapper.
@@ -201,16 +204,19 @@ def replace_attention_with_flash(
                 num_heads=child.num_heads,
                 dropout=child.dropout,
                 bias=child.in_proj_bias is not None,
-                batch_first=child.batch_first
+                batch_first=child.batch_first,
             )
 
             # Copy weights if possible
             try:
-                if hasattr(child, 'in_proj_weight') and child.in_proj_weight is not None:
+                if (
+                    hasattr(child, "in_proj_weight")
+                    and child.in_proj_weight is not None
+                ):
                     flash_attn.qkv_proj.weight.data.copy_(child.in_proj_weight)
-                if hasattr(child, 'in_proj_bias') and child.in_proj_bias is not None:
+                if hasattr(child, "in_proj_bias") and child.in_proj_bias is not None:
                     flash_attn.qkv_proj.bias.data.copy_(child.in_proj_bias)
-                if hasattr(child, 'out_proj'):
+                if hasattr(child, "out_proj"):
                     flash_attn.out_proj.weight.data.copy_(child.out_proj.weight)
                     if child.out_proj.bias is not None:
                         flash_attn.out_proj.bias.data.copy_(child.out_proj.bias)
@@ -240,7 +246,7 @@ class FlashSelfAttention(nn.Module):
         num_heads: int = 8,
         qkv_bias: bool = False,
         attn_drop: float = 0.0,
-        proj_drop: float = 0.0
+        proj_drop: float = 0.0,
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim must be divisible by num_heads"
@@ -248,7 +254,7 @@ class FlashSelfAttention(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
 
         # Check Flash Attention availability
         self.use_flash_attn = self._check_flash_attention()
@@ -265,8 +271,11 @@ class FlashSelfAttention(nn.Module):
 
         if self.use_flash_attn:
             from flash_attn import flash_attn_qkvpacked_func
+
             self.flash_attn_func = flash_attn_qkvpacked_func
-            logger.info(f"FlashSelfAttention initialized with dim={dim}, heads={num_heads}")
+            logger.info(
+                f"FlashSelfAttention initialized with dim={dim}, heads={num_heads}"
+            )
 
     def _check_flash_attention(self) -> bool:
         """Check if Flash Attention can be used."""
@@ -280,6 +289,7 @@ class FlashSelfAttention(nn.Module):
 
         try:
             import flash_attn
+
             return True
         except ImportError:
             return False
@@ -306,7 +316,7 @@ class FlashSelfAttention(nn.Module):
                 qkv,
                 dropout_p=0.0,  # Flash Attn doesn't support attention dropout
                 softmax_scale=self.scale,
-                causal=False
+                causal=False,
             )  # (B, L, H, D_h)
 
             # Reshape

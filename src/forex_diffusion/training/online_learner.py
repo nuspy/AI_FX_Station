@@ -12,6 +12,7 @@ Supports:
 
 Reference: "Online Learning and Stochastic Approximations" by Bottou (1998)
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Any
@@ -61,6 +62,7 @@ class OnlineLearningConfig:
 @dataclass
 class OnlineMetrics:
     """Metrics for online learning performance"""
+
     total_updates: int = 0
     total_samples_seen: int = 0
     current_learning_rate: float = 0.01
@@ -79,12 +81,10 @@ class OnlineMetrics:
     def get_recent_performance(self, window: int = 50) -> Dict[str, float]:
         """Get recent performance metrics"""
         recent_loss = (
-            np.mean(self.recent_losses[-window:])
-            if self.recent_losses else 0.0
+            np.mean(self.recent_losses[-window:]) if self.recent_losses else 0.0
         )
         recent_acc = (
-            np.mean(self.recent_accuracies[-window:])
-            if self.recent_accuracies else 0.0
+            np.mean(self.recent_accuracies[-window:]) if self.recent_accuracies else 0.0
         )
 
         return {
@@ -202,7 +202,7 @@ class OnlineLearner:
             sample_weights = self._calculate_recency_weights(len(X))
 
         # Update model
-        if hasattr(self.model, 'partial_fit'):
+        if hasattr(self.model, "partial_fit"):
             self.model.partial_fit(X_scaled, y, sample_weight=sample_weights)
         else:
             logger.error("Model does not support partial_fit()")
@@ -227,7 +227,7 @@ class OnlineLearner:
             self.metrics.recent_losses = self.metrics.recent_losses[-500:]
 
         # Update learning rate (for adaptive decay)
-        if hasattr(self.model, 'learning_rate_'):
+        if hasattr(self.model, "learning_rate_"):
             self.metrics.current_learning_rate = self.model.learning_rate_
 
         # Add to sample buffer (for sliding window)
@@ -243,8 +243,10 @@ class OnlineLearner:
                 self.metrics.samples_forgotten += n_to_remove
 
         # Periodic validation
-        if (self.metrics.total_updates % self.config.validation_frequency == 0 and
-            self.validation_X is not None):
+        if (
+            self.metrics.total_updates % self.config.validation_frequency == 0
+            and self.validation_X is not None
+        ):
             val_metrics = self._validate()
             return {**{"train_loss": loss}, **val_metrics}
 
@@ -324,7 +326,7 @@ class OnlineLearner:
 
         X_scaled = self.scaler.transform(X)
 
-        if hasattr(self.model, 'predict_proba'):
+        if hasattr(self.model, "predict_proba"):
             return self.model.predict_proba(X_scaled)
         else:
             raise AttributeError("Model does not support predict_proba")
@@ -433,7 +435,7 @@ class OnlineLearner:
         weights_replay *= self.config.forgetting_factor
 
         # Update model
-        if hasattr(self.model, 'partial_fit'):
+        if hasattr(self.model, "partial_fit"):
             self.model.partial_fit(X_replay, y_replay, sample_weight=weights_replay)
 
         logger.debug(f"Replayed {len(replay_samples)} samples from buffer")
@@ -449,7 +451,8 @@ class OnlineLearner:
             "drift_detected_count": self.metrics.drift_detected_count,
             "last_drift": (
                 self.metrics.last_drift_detection.isoformat()
-                if self.metrics.last_drift_detection else None
+                if self.metrics.last_drift_detection
+                else None
             ),
             "samples_forgotten": self.metrics.samples_forgotten,
             "buffer_size": len(self.sample_buffer),
@@ -483,7 +486,9 @@ class OnlineLearner:
 
         self.scaler = StandardScaler()
         self.is_fitted = False
-        self.metrics = OnlineMetrics(current_learning_rate=self.config.initial_learning_rate)
+        self.metrics = OnlineMetrics(
+            current_learning_rate=self.config.initial_learning_rate
+        )
         self.sample_buffer.clear()
 
         logger.info("Online learner reset to initial state")

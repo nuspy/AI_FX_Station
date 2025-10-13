@@ -16,12 +16,25 @@ from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
 
 # Import new indicators system
-from ..features.indicators_btalib import BTALibIndicators, IndicatorConfig, IndicatorCategories, DataRequirement
+from ..features.indicators_btalib import (
+    BTALibIndicators,
+    IndicatorConfig,
+    IndicatorCategories,
+    DataRequirement,
+)
 
 # Import centralized modules (ISSUE-001)
 from ..data.data_loader import fetch_candles_from_db
-from ..features.feature_utils import ensure_dt_index as _ensure_dt_index, timeframe_to_timedelta as _timeframe_to_timedelta, coerce_indicator_tfs as _coerce_indicator_tfs
-from ..features.feature_engineering import relative_ohlc as _relative_ohlc, temporal_features as _temporal_feats, realized_volatility_feature as _realized_vol_feature
+from ..features.feature_utils import (
+    ensure_dt_index as _ensure_dt_index,
+    timeframe_to_timedelta as _timeframe_to_timedelta,
+    coerce_indicator_tfs as _coerce_indicator_tfs,
+)
+from ..features.feature_engineering import (
+    relative_ohlc as _relative_ohlc,
+    temporal_features as _temporal_feats,
+    realized_volatility_feature as _realized_vol_feature,
+)
 
 
 class BTALibIndicatorsTraining:
@@ -38,19 +51,25 @@ class BTALibIndicatorsTraining:
             indicators_config: Configuration dict with available_data and indicators settings
         """
         self.indicators_config = indicators_config or {}
-        self.available_data = self.indicators_config.get('available_data', ['open', 'high', 'low', 'close'])
+        self.available_data = self.indicators_config.get(
+            "available_data", ["open", "high", "low", "close"]
+        )
         self.indicators_system = BTALibIndicators(self.available_data)
 
         # Load indicators configuration if provided
-        if 'indicators' in self.indicators_config:
-            self.indicators_system.load_config_dict(self.indicators_config['indicators'])
+        if "indicators" in self.indicators_config:
+            self.indicators_system.load_config_dict(
+                self.indicators_config["indicators"]
+            )
 
-    def calculate_indicators_multi_timeframe(self,
-                                           df: pd.DataFrame,
-                                           timeframes: Dict[str, List[str]],
-                                           base_tf: str,
-                                           symbol: str = None,
-                                           days_history: int = None) -> pd.DataFrame:
+    def calculate_indicators_multi_timeframe(
+        self,
+        df: pd.DataFrame,
+        timeframes: Dict[str, List[str]],
+        base_tf: str,
+        symbol: str = None,
+        days_history: int = None,
+    ) -> pd.DataFrame:
         """
         Calculate indicators across multiple timeframes using bta-lib
 
@@ -65,6 +84,7 @@ class BTALibIndicatorsTraining:
             DataFrame with all calculated indicators
         """
         from loguru import logger
+
         frames: List[pd.DataFrame] = []
         base = _ensure_dt_index(df)
         base_lookup = base[["ts_utc"]].copy()
@@ -84,10 +104,16 @@ class BTALibIndicatorsTraining:
                 try:
                     if symbol and days_history:
                         logger.info(f"[CACHE] Pre-fetching {tf} candles from DB")
-                        timeframe_cache[tf] = fetch_candles_from_db(symbol, tf, days_history)
-                        logger.debug(f"[CACHE] Cached {tf}: {timeframe_cache[tf].shape[0]} rows")
+                        timeframe_cache[tf] = fetch_candles_from_db(
+                            symbol, tf, days_history
+                        )
+                        logger.debug(
+                            f"[CACHE] Cached {tf}: {timeframe_cache[tf].shape[0]} rows"
+                        )
                     else:
-                        logger.warning(f"[CACHE] Cannot pre-fetch {tf}: symbol/days_history not provided")
+                        logger.warning(
+                            f"[CACHE] Cannot pre-fetch {tf}: symbol/days_history not provided"
+                        )
                 except Exception as e:
                     logger.warning(f"[CACHE] Failed to pre-fetch {tf}: {e}")
                     # Don't add to cache - will try resample fallback later
@@ -104,26 +130,36 @@ class BTALibIndicatorsTraining:
                 logger.debug(f"[CACHE MISS] Fetching {tf}")
                 try:
                     if symbol and days_history:
-                        logger.info(f"Fetching {tf} candles directly from DB (cache miss)")
+                        logger.info(
+                            f"Fetching {tf} candles directly from DB (cache miss)"
+                        )
                         tf_data = fetch_candles_from_db(symbol, tf, days_history)
                         timeframe_cache[tf] = tf_data  # Add to cache for future use
                         logger.debug(f"After DB fetch for {tf}, shape: {tf_data.shape}")
                     else:
                         # Fallback to resample if symbol/days_history not provided (backward compatibility)
-                        logger.warning(f"Symbol/days_history not provided, falling back to resample for {tf}")
+                        logger.warning(
+                            f"Symbol/days_history not provided, falling back to resample for {tf}"
+                        )
                         tf_delta = _timeframe_to_timedelta(tf)
-                        resampled = base.resample(tf_delta).agg({
-                            'open': 'first',
-                            'high': 'max',
-                            'low': 'min',
-                            'close': 'last',
-                            'volume': 'sum'
-                        }).dropna()
+                        resampled = (
+                            base.resample(tf_delta)
+                            .agg(
+                                {
+                                    "open": "first",
+                                    "high": "max",
+                                    "low": "min",
+                                    "close": "last",
+                                    "volume": "sum",
+                                }
+                            )
+                            .dropna()
+                        )
 
                         # Convert back to expected format
                         tf_data = resampled.reset_index()
-                        tf_data['ts_utc'] = (tf_data['index'].view('int64') // 10**6)
-                        tf_data = tf_data.drop('index', axis=1)
+                        tf_data["ts_utc"] = tf_data["index"].view("int64") // 10**6
+                        tf_data = tf_data.drop("index", axis=1)
                         timeframe_cache[tf] = tf_data  # Cache resampled data too
                 except Exception as e:
                     logger.exception(f"Failed to fetch {tf} candles from DB: {e}")
@@ -135,7 +171,9 @@ class BTALibIndicatorsTraining:
 
             for indicator_name in indicator_names:
                 if indicator_name not in enabled_indicators:
-                    warnings.warn(f"Indicator {indicator_name} not enabled or available")
+                    warnings.warn(
+                        f"Indicator {indicator_name} not enabled or available"
+                    )
                     continue
 
                 config = enabled_indicators[indicator_name]
@@ -160,7 +198,11 @@ class BTALibIndicatorsTraining:
 
             # Create feature DataFrame
             feat = pd.DataFrame(cols)
-            feat["ts_utc"] = (tf_data.index.view("int64") // 10**6) if hasattr(tf_data, 'index') else tf_data["ts_utc"]
+            feat["ts_utc"] = (
+                (tf_data.index.view("int64") // 10**6)
+                if hasattr(tf_data, "index")
+                else tf_data["ts_utc"]
+            )
             right = _ensure_dt_index(feat)
 
             try:
@@ -175,15 +217,21 @@ class BTALibIndicatorsTraining:
                 left_index=True,
                 right_index=True,
                 direction="nearest",
-                tolerance=tol
+                tolerance=tol,
             )
 
-            merged = merged.reset_index(drop=True).drop(columns=["ts_utc_y"], errors="ignore").rename(columns={"ts_utc_x": "ts_utc"})
+            merged = (
+                merged.reset_index(drop=True)
+                .drop(columns=["ts_utc_y"], errors="ignore")
+                .rename(columns={"ts_utc_x": "ts_utc"})
+            )
             frames.append(merged.drop(columns=["ts_utc"], errors="ignore"))
 
         return pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
 
-    def build_features(self, candles: pd.DataFrame, args) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
+    def build_features(
+        self, candles: pd.DataFrame, args
+    ) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
         """
         Build comprehensive feature set including bta-lib indicators
 
@@ -224,7 +272,11 @@ class BTALibIndicatorsTraining:
         if indicator_tfs and self.indicators_system:
             try:
                 indicators_df = self.calculate_indicators_multi_timeframe(
-                    candles, indicator_tfs, args.timeframe, symbol=args.symbol, days_history=args.days
+                    candles,
+                    indicator_tfs,
+                    args.timeframe,
+                    symbol=args.symbol,
+                    days_history=args.days,
                 )
                 if not indicators_df.empty:
                     feats.append(indicators_df)
@@ -247,7 +299,10 @@ class BTALibIndicatorsTraining:
             if not low_cov.empty:
                 dropped_feats = list(low_cov.index)
                 X = X.drop(columns=dropped_feats, errors="ignore")
-                warnings.warn(f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}", RuntimeWarning)
+                warnings.warn(
+                    f"Feature con coverage < {min_cov:.2f} drop: {dropped_feats}",
+                    RuntimeWarning,
+                )
 
         X = X.dropna()
         y = y.loc[X.index].dropna()
@@ -259,11 +314,13 @@ class BTALibIndicatorsTraining:
 
         # Apply warmup
         if getattr(args, "warmup_bars", 0) > 0 and len(X) > args.warmup_bars:
-            X = X.iloc[int(args.warmup_bars):]
-            y = y.iloc[int(args.warmup_bars):]
+            X = X.iloc[int(args.warmup_bars) :]
+            y = y.iloc[int(args.warmup_bars) :]
 
         if X.empty or y.empty:
-            raise RuntimeError("Dataset vuoto dopo il preprocessing; controlla warmup/horizon")
+            raise RuntimeError(
+                "Dataset vuoto dopo il preprocessing; controlla warmup/horizon"
+            )
 
         # Create comprehensive metadata
         enabled_indicators = self.indicators_system.get_enabled_indicators()
@@ -277,12 +334,12 @@ class BTALibIndicatorsTraining:
                     "enabled": config.enabled,
                     "weight": config.weight,
                     "data_requirement": config.data_requirement.value,
-                    "category": config.category
+                    "category": config.category,
                 }
                 for name, config in enabled_indicators.items()
             },
             "indicators_config": self.indicators_config,
-            "args_used": vars(args)
+            "args_used": vars(args),
         }
 
         return X, y, meta
@@ -302,16 +359,26 @@ class BTALibIndicatorsTraining:
             "available_indicators": len([c for c in available.values() if c.enabled]),
             "data_requirements": data_summary,
             "categories": {
-                category: len(self.indicators_system.get_indicators_by_category(category))
-                for category in [IndicatorCategories.OVERLAP, IndicatorCategories.MOMENTUM,
-                               IndicatorCategories.VOLATILITY, IndicatorCategories.TREND,
-                               IndicatorCategories.VOLUME, IndicatorCategories.PRICE_TRANSFORM,
-                               IndicatorCategories.STATISTICS, IndicatorCategories.CYCLE]
-            }
+                category: len(
+                    self.indicators_system.get_indicators_by_category(category)
+                )
+                for category in [
+                    IndicatorCategories.OVERLAP,
+                    IndicatorCategories.MOMENTUM,
+                    IndicatorCategories.VOLATILITY,
+                    IndicatorCategories.TREND,
+                    IndicatorCategories.VOLUME,
+                    IndicatorCategories.PRICE_TRANSFORM,
+                    IndicatorCategories.STATISTICS,
+                    IndicatorCategories.CYCLE,
+                ]
+            },
         }
 
 
-def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2):
+def _standardize_train_val_test(
+    X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2
+):
     """
     Standardize training, validation, and test sets ensuring NO look-ahead bias.
 
@@ -385,8 +452,12 @@ def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float =
         "train_std": sigma.tolist(),
         "ks_test_p_values_val": p_values_val,
         "ks_test_p_values_test": p_values_test,
-        "ks_test_median_p_val": float(np.median(p_values_val)) if p_values_val else None,
-        "ks_test_median_p_test": float(np.median(p_values_test)) if p_values_test else None,
+        "ks_test_median_p_val": (
+            float(np.median(p_values_val)) if p_values_val else None
+        ),
+        "ks_test_median_p_test": (
+            float(np.median(p_values_test)) if p_values_test else None
+        ),
     }
 
     # WARNING: If distributions too similar, potential look-ahead bias
@@ -396,7 +467,7 @@ def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float =
                 f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Val)!\n"
                 f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_val']:.3f}).\n"
                 f"Expected p < 0.5 for different time periods.",
-                RuntimeWarning
+                RuntimeWarning,
             )
 
     if scaler_metadata["ks_test_median_p_test"] is not None:
@@ -405,79 +476,130 @@ def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float =
                 f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Test)!\n"
                 f"Train/Test distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_test']:.3f}).\n"
                 f"Expected p < 0.5 for different time periods.",
-                RuntimeWarning
+                RuntimeWarning,
             )
 
-    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (Xte_scaled, yte), (mu, sigma, scaler_metadata))
+    return (
+        (Xtr_scaled, ytr),
+        (Xva_scaled, yva),
+        (Xte_scaled, yte),
+        (mu, sigma, scaler_metadata),
+    )
 
 
 def _fit_model(algo: str, Xtr, ytr, args):
     """Fit model based on algorithm choice"""
     if algo == "ridge":
-        return Ridge(alpha=float(args.alpha), random_state=args.random_state).fit(Xtr, ytr)
+        return Ridge(alpha=float(args.alpha), random_state=args.random_state).fit(
+            Xtr, ytr
+        )
     elif algo == "lasso":
-        return Lasso(alpha=float(args.alpha), random_state=args.random_state).fit(Xtr, ytr)
+        return Lasso(alpha=float(args.alpha), random_state=args.random_state).fit(
+            Xtr, ytr
+        )
     elif algo == "elasticnet":
-        return ElasticNet(alpha=float(args.alpha), l1_ratio=float(args.l1_ratio), random_state=args.random_state).fit(Xtr, ytr)
+        return ElasticNet(
+            alpha=float(args.alpha),
+            l1_ratio=float(args.l1_ratio),
+            random_state=args.random_state,
+        ).fit(Xtr, ytr)
     elif algo == "rf":
-        return RandomForestRegressor(n_estimators=int(args.n_estimators), max_depth=None, min_samples_leaf=2, n_jobs=-1, random_state=args.random_state).fit(Xtr, ytr)
+        return RandomForestRegressor(
+            n_estimators=int(args.n_estimators),
+            max_depth=None,
+            min_samples_leaf=2,
+            n_jobs=-1,
+            random_state=args.random_state,
+        ).fit(Xtr, ytr)
     else:
         raise ValueError(f"Algo non supportato: {algo}")
 
 
 def main():
     """Main training function with enhanced bta-lib indicators"""
-    ap = argparse.ArgumentParser(description="Enhanced training with bta-lib indicators")
+    ap = argparse.ArgumentParser(
+        description="Enhanced training with bta-lib indicators"
+    )
 
     # Core arguments
     ap.add_argument("--symbol", required=True, help="Trading symbol")
     ap.add_argument("--timeframe", required=True, help="Base timeframe")
     ap.add_argument("--horizon", type=int, required=True, help="Prediction horizon")
-    ap.add_argument("--algo", choices=["ridge", "lasso", "elasticnet", "rf"], required=True, help="Algorithm")
+    ap.add_argument(
+        "--algo",
+        choices=["ridge", "lasso", "elasticnet", "rf"],
+        required=True,
+        help="Algorithm",
+    )
     ap.add_argument("--artifacts_dir", required=True, help="Output directory")
 
     # Data arguments
-    ap.add_argument("--days_history", type=int, default=60, help="Days of history to fetch")
-    ap.add_argument("--available_data", nargs='+', default=['open', 'high', 'low', 'close'],
-                   help="Available data columns")
+    ap.add_argument(
+        "--days_history", type=int, default=60, help="Days of history to fetch"
+    )
+    ap.add_argument(
+        "--available_data",
+        nargs="+",
+        default=["open", "high", "low", "close"],
+        help="Available data columns",
+    )
 
     # Feature arguments
-    ap.add_argument("--use_relative_ohlc", type=bool, default=True, help="Use relative OHLC features")
-    ap.add_argument("--use_temporal_features", type=bool, default=True, help="Use temporal features")
-    ap.add_argument("--rv_window", type=int, default=60, help="Realized volatility window")
+    ap.add_argument(
+        "--use_relative_ohlc",
+        type=bool,
+        default=True,
+        help="Use relative OHLC features",
+    )
+    ap.add_argument(
+        "--use_temporal_features", type=bool, default=True, help="Use temporal features"
+    )
+    ap.add_argument(
+        "--rv_window", type=int, default=60, help="Realized volatility window"
+    )
     ap.add_argument("--warmup_bars", type=int, default=64, help="Warmup bars")
-    ap.add_argument("--min_feature_coverage", type=float, default=0.15, help="Minimum feature coverage")
+    ap.add_argument(
+        "--min_feature_coverage",
+        type=float,
+        default=0.15,
+        help="Minimum feature coverage",
+    )
 
     # Model arguments
     ap.add_argument("--pca", type=int, default=0, help="PCA components (0 = disabled)")
     ap.add_argument("--val_frac", type=float, default=0.2, help="Validation fraction")
-    ap.add_argument("--test_frac", type=float, default=0.2, help="Test fraction (PROC-001)")
+    ap.add_argument(
+        "--test_frac", type=float, default=0.2, help="Test fraction (PROC-001)"
+    )
     ap.add_argument("--alpha", type=float, default=0.001, help="Regularization alpha")
     ap.add_argument("--l1_ratio", type=float, default=0.5, help="ElasticNet L1 ratio")
     ap.add_argument("--n_estimators", type=int, default=400, help="RF n_estimators")
     ap.add_argument("--random_state", type=int, default=0, help="Random state")
 
     # Indicators arguments
-    ap.add_argument("--indicators_config", type=str, help="Path to indicators configuration JSON")
-    ap.add_argument("--indicator_tfs", type=str, default='{}', help="Indicator timeframes JSON")
+    ap.add_argument(
+        "--indicators_config", type=str, help="Path to indicators configuration JSON"
+    )
+    ap.add_argument(
+        "--indicator_tfs", type=str, default="{}", help="Indicator timeframes JSON"
+    )
 
     args = ap.parse_args()
 
     print(f"🚀 Starting enhanced training with bta-lib indicators...")
-    print(f"Symbol: {args.symbol}, Timeframe: {args.timeframe}, Horizon: {args.horizon}")
+    print(
+        f"Symbol: {args.symbol}, Timeframe: {args.timeframe}, Horizon: {args.horizon}"
+    )
 
     # Load indicators configuration
     indicators_config = {}
     if args.indicators_config and Path(args.indicators_config).exists():
-        with open(args.indicators_config, 'r') as f:
+        with open(args.indicators_config, "r") as f:
             indicators_config = json.load(f)
             print(f"📊 Loaded indicators config from {args.indicators_config}")
     else:
         # Default configuration
-        indicators_config = {
-            'available_data': args.available_data,
-            'indicators': {}
-        }
+        indicators_config = {"available_data": args.available_data, "indicators": {}}
 
     # Parse indicator timeframes
     indicator_tfs = _coerce_indicator_tfs(args.indicator_tfs)
@@ -505,19 +627,27 @@ def main():
 
     # Standardize and split (PROC-001: 60/20/20 train/val/test split)
     print(f"📊 Splitting and standardizing data (60% train / 20% val / 20% test)...")
-    test_frac = getattr(args, 'test_frac', 0.2)  # Default 20% test
-    (Xtr, ytr), (Xva, yva), (Xte, yte), (mu, sigma, scaler_metadata) = _standardize_train_val_test(
-        X, y, val_frac=args.val_frac, test_frac=test_frac
+    test_frac = getattr(args, "test_frac", 0.2)  # Default 20% test
+    (Xtr, ytr), (Xva, yva), (Xte, yte), (mu, sigma, scaler_metadata) = (
+        _standardize_train_val_test(X, y, val_frac=args.val_frac, test_frac=test_frac)
     )
     print(f"   Training: {len(Xtr)} samples ({scaler_metadata['train_frac']:.1%})")
-    print(f"   Validation: {len(Xva)} samples ({scaler_metadata['val_frac']:.1%}) - for early stopping")
-    print(f"   Test: {len(Xte)} samples ({scaler_metadata['test_frac']:.1%}) - for final evaluation")
+    print(
+        f"   Validation: {len(Xva)} samples ({scaler_metadata['val_frac']:.1%}) - for early stopping"
+    )
+    print(
+        f"   Test: {len(Xte)} samples ({scaler_metadata['test_frac']:.1%}) - for final evaluation"
+    )
 
     # Log KS test results for look-ahead bias detection
-    if scaler_metadata.get('ks_test_median_p_val') is not None:
-        print(f"   KS test (train vs val) median p-value: {scaler_metadata['ks_test_median_p_val']:.4f}")
-    if scaler_metadata.get('ks_test_median_p_test') is not None:
-        print(f"   KS test (train vs test) median p-value: {scaler_metadata['ks_test_median_p_test']:.4f}")
+    if scaler_metadata.get("ks_test_median_p_val") is not None:
+        print(
+            f"   KS test (train vs val) median p-value: {scaler_metadata['ks_test_median_p_val']:.4f}"
+        )
+    if scaler_metadata.get("ks_test_median_p_test") is not None:
+        print(
+            f"   KS test (train vs test) median p-value: {scaler_metadata['ks_test_median_p_test']:.4f}"
+        )
 
     # Apply PCA if requested
     pca_model = None
@@ -560,35 +690,33 @@ def main():
     print(f"✅ Model saved to {model_path}")
 
     # Save preprocessing info
-    preprocessing = {
-        "mu": mu.tolist(),
-        "sigma": sigma.tolist(),
-        "pca_model": pca_model
-    }
+    preprocessing = {"mu": mu.tolist(), "sigma": sigma.tolist(), "pca_model": pca_model}
     preprocessing_path = artifacts_dir / "preprocessing.joblib"
     dump(preprocessing, preprocessing_path)
     print(f"✅ Preprocessing saved to {preprocessing_path}")
 
     # Save enhanced metadata
-    meta.update({
-        "training_results": {
-            "mae_train": mae_tr,
-            "mae_validation": mae_va,
-            "mae_test": mae_te,
-            "train_val_ratio": mae_va / mae_tr,
-            "train_test_ratio": mae_te / mae_tr,
-            "n_features_final": Xtr.shape[1],
-            "n_samples_train": len(Xtr),
-            "n_samples_validation": len(Xva),
-            "n_samples_test": len(Xte),
-            "split_info": "60% train / 20% val / 20% test (PROC-001)"
-        },
-        "indicators_summary": summary,
-        "scaler_metadata": scaler_metadata  # Include split verification info
-    })
+    meta.update(
+        {
+            "training_results": {
+                "mae_train": mae_tr,
+                "mae_validation": mae_va,
+                "mae_test": mae_te,
+                "train_val_ratio": mae_va / mae_tr,
+                "train_test_ratio": mae_te / mae_tr,
+                "n_features_final": Xtr.shape[1],
+                "n_samples_train": len(Xtr),
+                "n_samples_validation": len(Xva),
+                "n_samples_test": len(Xte),
+                "split_info": "60% train / 20% val / 20% test (PROC-001)",
+            },
+            "indicators_summary": summary,
+            "scaler_metadata": scaler_metadata,  # Include split verification info
+        }
+    )
 
     meta_path = artifacts_dir / "metadata.json"
-    with open(meta_path, 'w') as f:
+    with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2, default=str)
     print(f"✅ Enhanced metadata saved to {meta_path}")
 
