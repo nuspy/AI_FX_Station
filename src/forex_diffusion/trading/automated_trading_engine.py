@@ -13,15 +13,16 @@ Connects to broker API and executes trades automatically.
 """
 from __future__ import annotations
 
+import threading
 import time
-import pandas as pd
-import numpy as np
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from loguru import logger
-import threading
 from enum import Enum
+from typing import Dict, List, Optional, Any
+
+import numpy as np
+import pandas as pd
+from loguru import logger
 
 try:
     from ..models.multi_timeframe_ensemble import MultiTimeframeEnsemble, Timeframe
