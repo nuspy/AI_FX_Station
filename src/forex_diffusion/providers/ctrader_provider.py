@@ -549,17 +549,18 @@ class CTraderProvider(BaseProvider):
 
             symbol_id = await self._get_symbol_id(symbol)
 
-            # cTrader uses microseconds for timestamps
-            start_us = start_ts_ms * 1000
-            end_us = end_ts_ms * 1000
+            # cTrader ProtoOAGetTrendbarsReq uses MILLISECONDS for timestamps
+            # (confirmed from cTrader API docs - NOT microseconds!)
+            start_ms = start_ts_ms
+            end_ms = end_ts_ms
 
             # Request historical trendbars
             request = Messages.ProtoOAGetTrendbarsReq()
             request.ctidTraderAccountId = self._account_id
             request.symbolId = symbol_id
             request.period = ct_timeframe
-            request.fromTimestamp = start_us
-            request.toTimestamp = end_us
+            request.fromTimestamp = start_ms
+            request.toTimestamp = end_ms
 
             response = await self._send_and_wait(request, Messages.ProtoOAGetTrendbarsRes)
 
@@ -577,17 +578,41 @@ class CTraderProvider(BaseProvider):
                 return None
 
             # Parse trendbars into DataFrame
+            # ProtoOATrendbar structure uses delta encoding for prices:
+            # - utcTimestampInMinutes: timestamp in minutes (not ms!)
+            # - low: direct low price
+            # - deltaOpen, deltaHigh, deltaClose: deltas from low price
+            # All prices divided by 100000
             bars = []
             for bar in response.trendbar:
+                # Timestamp: convert from minutes to milliseconds
+                ts_minutes = getattr(bar, 'utcTimestampInMinutes', 0)
+                ts_utc_ms = int(ts_minutes * 60 * 1000)
+
+                # Low price (direct)
+                low_price = getattr(bar, 'low', 0) / 100000
+
+                # Calculate open, high, close from deltas
+                delta_open = getattr(bar, 'deltaOpen', 0)
+                delta_high = getattr(bar, 'deltaHigh', 0)
+                delta_close = getattr(bar, 'deltaClose', 0)
+
+                open_price = (low_price * 100000 + delta_open) / 100000
+                high_price = (low_price * 100000 + delta_high) / 100000
+                close_price = (low_price * 100000 + delta_close) / 100000
+
+                # Volume (tick volume)
+                volume = getattr(bar, 'volume', 0)
+
                 bars.append({
-                    "ts_utc": int(bar.utcTimestamp / 1000),  # Convert to ms
-                    "open": bar.open / 100000,
-                    "high": bar.high / 100000,
-                    "low": bar.low / 100000,
-                    "close": bar.close / 100000,
-                    "volume": bar.volume if hasattr(bar, "volume") else None,
-                    "tick_volume": bar.tickVolume if hasattr(bar, "tickVolume") else None,
-                    "real_volume": bar.volume if hasattr(bar, "volume") else None,
+                    "ts_utc": ts_utc_ms,
+                    "open": open_price,
+                    "high": high_price,
+                    "low": low_price,
+                    "close": close_price,
+                    "volume": volume,
+                    "tick_volume": volume,  # cTrader trendbars use tick volume
+                    "real_volume": volume,
                 })
 
             df = pd.DataFrame(bars)
