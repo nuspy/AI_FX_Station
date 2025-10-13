@@ -44,7 +44,7 @@ def prepare_ohlcv_dataframe(
         DataFrame with columns: Open, High, Low, Close, Volume
         and DatetimeIndex
     """
-    from ..training.train_sklearn import fetch_candles_from_db
+    from ..data.data_loader import fetch_candles_from_db
 
     # Fetch data from database
     candles = fetch_candles_from_db(symbol, timeframe, days_history)

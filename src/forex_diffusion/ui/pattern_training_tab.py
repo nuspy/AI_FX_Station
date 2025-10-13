@@ -462,7 +462,7 @@ class PatternTrainingTab(QWidget):
                 try:
                     import torch
                     import numpy as np
-                    from ..training.train_sklearn import fetch_candles_from_db
+                    from ..data.data_loader import fetch_candles_from_db
                     from ..training.train import _add_time_features, CHANNEL_ORDER
                     from ..models.pattern_autoencoder import train_pattern_vae, PatternDetector
 

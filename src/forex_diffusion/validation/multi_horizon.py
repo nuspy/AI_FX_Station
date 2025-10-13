@@ -404,7 +404,7 @@ def validate_model_across_horizons(
         Dictionary mapping horizon -> results
     """
     from ..train.loop import ForexDiffusionLit
-    from ..training.train_sklearn import fetch_candles_from_db
+    from ..data.data_loader import fetch_candles_from_db
 
     # Default horizons
     if horizons is None:
