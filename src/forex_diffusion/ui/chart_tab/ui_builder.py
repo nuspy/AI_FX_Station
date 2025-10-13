@@ -94,11 +94,37 @@ class UIBuilderMixin:
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter = main_splitter
 
+        # Left panel split into Market Watch (top) and Order Books (bottom)
         market_panel = QWidget()
         market_layout = QVBoxLayout(market_panel)
-        market_layout.setContentsMargins(0,0,0,0)
+        market_layout.setContentsMargins(5, 5, 5, 5)
+        market_layout.setSpacing(5)
+
+        # Market Watch section
+        market_watch_label = QLabel("📊 Market Watch")
+        market_watch_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
+        market_layout.addWidget(market_watch_label)
+
         self.market_watch = QListWidget()
-        market_layout.addWidget(self.market_watch)
+        market_layout.addWidget(self.market_watch, stretch=3)  # 60% of space
+
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: #555555;")
+        market_layout.addWidget(separator)
+
+        # Order Books section
+        books_label = QLabel("📖 Order Books")
+        books_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
+        market_layout.addWidget(books_label)
+
+        # Import and create order books widget
+        from ..order_books_widget import OrderBooksWidget
+        self.order_books_widget = OrderBooksWidget()
+        market_layout.addWidget(self.order_books_widget, stretch=2)  # 40% of space
+
         main_splitter.addWidget(market_panel)
 
         right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -157,6 +183,16 @@ class UIBuilderMixin:
         self.orders_table.verticalHeader().setVisible(False)
         self.orders_table.setContentsMargins(0, 0, 0, 0)
         right_splitter.addWidget(self.orders_table)
+
+        # Add Order Flow Panel below orders table
+        from ..order_flow_panel import OrderFlowPanel
+        self.order_flow_panel = OrderFlowPanel(
+            parent=self,
+            dom_service=getattr(self, 'dom_service', None),
+            order_flow_analyzer=getattr(self, 'order_flow_analyzer', None)
+        )
+        right_splitter.addWidget(self.order_flow_panel)
+
         # Minimize splitter handle width
         right_splitter.setHandleWidth(1)
 

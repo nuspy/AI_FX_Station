@@ -190,3 +190,66 @@ class DOMAggreg atorService:
         except Exception as e:
             logger.error(f"Failed to get DOM metrics for {symbol}: {e}")
             return None
+
+    def get_latest_dom_snapshot(self, symbol: str) -> Optional[Dict]:
+        """
+        Get complete DOM snapshot with full order book data.
+
+        Returns:
+            Dictionary with bids, asks arrays and computed metrics,
+            or None if no data available.
+        """
+        try:
+            with self.engine.connect() as conn:
+                query = text(
+                    "SELECT ts_utc, bids, asks, mid_price, spread, imbalance "
+                    "FROM market_depth "
+                    "WHERE symbol = :symbol "
+                    "ORDER BY ts_utc DESC LIMIT 1"
+                )
+                row = conn.execute(query, {"symbol": symbol}).fetchone()
+
+            if not row:
+                return None
+
+            ts_utc, bids, asks, mid_price, spread, imbalance = row
+
+            # Parse JSON bids/asks
+            import json
+            bids_list = json.loads(bids) if isinstance(bids, str) else bids
+            asks_list = json.loads(asks) if isinstance(asks, str) else asks
+
+            if not bids_list or not asks_list:
+                return None
+
+            # Calculate additional metrics
+            best_bid = bids_list[0][0] if bids_list else 0.0
+            best_ask = asks_list[0][0] if asks_list else 0.0
+
+            # Calculate depth (top 20 levels)
+            max_levels = min(20, len(bids_list), len(asks_list))
+            bid_depth = sum(vol for _, vol in bids_list[:max_levels])
+            ask_depth = sum(vol for _, vol in asks_list[:max_levels])
+
+            # Calculate order flow imbalance (-1 to +1)
+            total_depth = bid_depth + ask_depth
+            depth_imbalance = (bid_depth - ask_depth) / total_depth if total_depth > 0 else 0.0
+
+            return {
+                "symbol": symbol,
+                "timestamp": ts_utc,
+                "bids": bids_list,
+                "asks": asks_list,
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "mid_price": mid_price or (best_bid + best_ask) / 2.0,
+                "spread": spread or (best_ask - best_bid),
+                "bid_depth": bid_depth,
+                "ask_depth": ask_depth,
+                "depth_imbalance": depth_imbalance,
+                "imbalance": imbalance or 0.0,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get DOM snapshot for {symbol}: {e}")
+            return None

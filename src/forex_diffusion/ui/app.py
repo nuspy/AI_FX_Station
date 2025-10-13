@@ -112,6 +112,25 @@ def setup_ui(
     aggregator.start()
     result["aggregator"] = aggregator
 
+    # --- DOM Aggregator Service ---
+    from ..services.dom_aggregator import DOMAggregatorService
+    dom_symbols = ["EURUSD", "GBPUSD", "USDJPY"]  # DOM monitoring symbols
+    dom_aggregator = DOMAggregatorService(engine=db_service.engine, symbols=dom_symbols, interval_seconds=2)
+    dom_aggregator.start()
+    result["dom_aggregator"] = dom_aggregator
+    logger.info(f"DOM Aggreg ator Service started for {dom_symbols}")
+
+    # --- Order Flow Analyzer ---
+    from ..analysis.order_flow_analyzer import OrderFlowAnalyzer
+    order_flow_analyzer = OrderFlowAnalyzer(
+        rolling_window=20,
+        imbalance_threshold=0.3,
+        zscore_threshold=2.0,
+        large_order_percentile=0.95
+    )
+    result["order_flow_analyzer"] = order_flow_analyzer
+    logger.info("Order Flow Analyzer initialized")
+
     # --- UI Tabs and Controller ---
     controller = UIController(main_window=main_window, market_service=market_service, db_writer=db_writer)
     controller.bind_menu_signals(menu_bar.signals)
@@ -150,7 +169,11 @@ def setup_ui(
 
     # --- Create Chart tab (level_1, no nested tabs) ---
     # Chart content is shown directly without nested tabs
-    chart_tab = ChartTabUI(main_window)
+    chart_tab = ChartTabUI(
+        main_window,
+        dom_service=dom_aggregator,
+        order_flow_analyzer=order_flow_analyzer
+    )
 
     # Live Trading will be a separate window, stored as attribute
     live_trading_tab = LiveTradingTab(main_window)
@@ -379,6 +402,7 @@ def setup_ui(
         logger.info("Shutting down services...")
         if connector: connector.stop()
         if aggregator: aggregator.stop()
+        if dom_aggregator: dom_aggregator.stop()
         if db_writer: db_writer.stop()
     if app: app.aboutToQuit.connect(_graceful_shutdown)
 

@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 from typing import Dict, List, Optional, Any
 import numpy as np
+from loguru import logger
 
 
 class OrderFlowPanel(QWidget):
@@ -24,10 +25,17 @@ class OrderFlowPanel(QWidget):
     - Order flow signals
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, dom_service=None, order_flow_analyzer=None):
         super().__init__(parent)
         self.current_metrics: Dict[str, Any] = {}
         self.signals_data: List[Dict[str, Any]] = []
+        self.dom_service = dom_service
+        self.order_flow_analyzer = order_flow_analyzer
+        self.current_symbol = 'EURUSD'
+
+        # Track historical data for volume calculations
+        self.last_snapshot = None
+
         self.init_ui()
 
     def init_ui(self):
@@ -372,17 +380,118 @@ class OrderFlowPanel(QWidget):
         self.signals_table.resizeColumnsToContents()
 
     def refresh_display(self):
-        """Refresh display (called by timer)"""
-        # This would be called by timer to refresh data
-        # In production, would fetch latest metrics from backend
-        pass
+        """Refresh display (called by timer) - fetches real-time DOM data"""
+        if not self.dom_service:
+            return
+
+        try:
+            # Get latest DOM snapshot from database
+            snapshot = self.dom_service.get_latest_dom_snapshot(self.current_symbol)
+            if not snapshot:
+                logger.debug(f"No DOM data available for {self.current_symbol}")
+                return
+
+            # Compute order flow metrics using analyzer
+            if self.order_flow_analyzer:
+                # Estimate volume (would normally come from tick data)
+                # For now, use depth as proxy
+                buy_volume = snapshot['bid_depth'] * 0.5 if self.last_snapshot is None else \
+                    max(0, snapshot['bid_depth'] - self.last_snapshot.get('bid_depth', 0))
+                sell_volume = snapshot['ask_depth'] * 0.5 if self.last_snapshot is None else \
+                    max(0, snapshot['ask_depth'] - self.last_snapshot.get('ask_depth', 0))
+
+                # Compute detailed metrics
+                metrics = self.order_flow_analyzer.compute_metrics(
+                    timestamp=int(snapshot['timestamp'].timestamp() * 1000) if hasattr(snapshot['timestamp'], 'timestamp') else int(snapshot['timestamp']),
+                    symbol=self.current_symbol,
+                    timeframe='1m',
+                    bid_price=snapshot['best_bid'],
+                    ask_price=snapshot['best_ask'],
+                    bid_size=snapshot['bid_depth'],
+                    ask_size=snapshot['ask_depth'],
+                    buy_volume=buy_volume,
+                    sell_volume=sell_volume,
+                    current_price=snapshot['mid_price']
+                )
+
+                # Convert to dict format for update_metrics
+                metrics_dict = {
+                    'spread': metrics.bid_ask_spread,
+                    'spread_zscore': metrics.spread_zscore,
+                    'bid_depth': metrics.bid_depth,
+                    'ask_depth': metrics.ask_depth,
+                    'buy_volume': metrics.buy_volume,
+                    'sell_volume': metrics.sell_volume,
+                    'depth_imbalance': metrics.depth_imbalance,
+                    'volume_imbalance': metrics.volume_imbalance,
+                    'large_order_detected': metrics.large_order_count > 0,
+                    'large_order_direction': 'BUY' if metrics.volume_imbalance > 0 else 'SELL',
+                    'absorption_detected': metrics.absorption_detected,
+                    'exhaustion_detected': metrics.exhaustion_detected,
+                }
+
+                self.update_metrics(metrics_dict)
+
+                # Generate and display signals
+                if snapshot['mid_price'] > 0:
+                    # Estimate ATR as 0.5% of price for forex
+                    atr = snapshot['mid_price'] * 0.005
+                    signals = self.order_flow_analyzer.generate_signals(
+                        metrics, snapshot['mid_price'], atr
+                    )
+
+                    # Convert signals to dict format
+                    signals_data = []
+                    for sig in signals[-5:]:  # Show last 5 signals
+                        signals_data.append({
+                            'timestamp': sig.timestamp,
+                            'signal_type': sig.signal_type.value,
+                            'direction': sig.direction,
+                            'strength': sig.strength,
+                            'confidence': sig.confidence,
+                            'status': 'active'
+                        })
+                    if signals_data:
+                        self.update_signals(signals_data)
+
+            else:
+                # Fallback: use basic metrics from snapshot
+                metrics_dict = {
+                    'spread': snapshot['spread'],
+                    'spread_zscore': 0.0,
+                    'bid_depth': snapshot['bid_depth'],
+                    'ask_depth': snapshot['ask_depth'],
+                    'buy_volume': 0.0,
+                    'sell_volume': 0.0,
+                    'depth_imbalance': snapshot['depth_imbalance'],
+                    'volume_imbalance': 0.0,
+                    'large_order_detected': False,
+                    'absorption_detected': False,
+                    'exhaustion_detected': False,
+                }
+                self.update_metrics(metrics_dict)
+
+            # Store for next iteration
+            self.last_snapshot = snapshot
+
+        except Exception as e:
+            logger.error(f"Error refreshing order flow display: {e}", exc_info=True)
 
     def on_symbol_changed(self, symbol: str):
         """Handle symbol change"""
-        # Clear current data and request new data for symbol
+        self.current_symbol = symbol
         self.current_metrics = {}
         self.signals_data = []
-        # In production, would emit signal to request data for new symbol
+        self.last_snapshot = None
+
+        # Reset analyzer state if available
+        if self.order_flow_analyzer:
+            self.order_flow_analyzer.reset()
+
+        # Immediately fetch new data
+        self.refresh_display()
+
+        logger.info(f"Order Flow Panel switched to {symbol}")
 
     def clear_data(self):
         """Clear all data"""
