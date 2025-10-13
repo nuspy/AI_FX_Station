@@ -44,6 +44,13 @@ def setup_ui(
     from .log_widget import install_log_handler
     install_log_handler()
 
+    # --- Log Device Info (GPU/CPU) ---
+    try:
+        from ..utils.device_manager import log_device_info_once
+        log_device_info_once()
+    except Exception as e:
+        logger.debug(f"Device info logging failed: {e}")
+
     # --- Core Services ---
     db_service = DBService()
     market_service = MarketDataService(database_url=db_service.engine.url)

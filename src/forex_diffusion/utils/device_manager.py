@@ -199,9 +199,15 @@ def get_device(preference: DeviceType = "auto") -> torch.device:
     return DeviceManager.get_device(preference)
 
 
-# Auto-log device info on import (only in debug mode)
-if __name__ != "__main__":
-    try:
-        DeviceManager.log_device_info()
-    except Exception:
-        pass  # Silent fail if no GPU
+# Singleton guard to prevent multiple logs
+_device_info_logged = False
+
+def log_device_info_once():
+    """Log device info only once (singleton pattern)."""
+    global _device_info_logged
+    if not _device_info_logged:
+        try:
+            DeviceManager.log_device_info()
+            _device_info_logged = True
+        except Exception:
+            pass  # Silent fail if no GPU
