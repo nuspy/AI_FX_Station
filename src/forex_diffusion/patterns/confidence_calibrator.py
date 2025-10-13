@@ -498,19 +498,13 @@ class PatternConfidenceCalibrator:
         Returns:
             List of PatternOutcome matching criteria
         """
-        # Filter by pattern and direction
-        filtered = [
-            o for o in self.outcomes
-            if o.pattern_key == pattern_key and o.direction == direction
-        ]
-
-        # Optional regime filter
-        if regime:
-            filtered = [o for o in filtered if o.regime == regime]
-
-        # Filter by time window
+        # Use index for O(1) lookup (much faster than linear search)
+        key = (pattern_key, direction, regime or "any")
+        indexed_outcomes = self.outcomes_index.get(key, [])
+        
+        # Filter by time window only (index already filtered by pattern/direction/regime)
         cutoff_date = datetime.now() - self.calibration_window
-        filtered = [o for o in filtered if o.detection_date >= cutoff_date]
+        filtered = [o for o in indexed_outcomes if o.detection_date >= cutoff_date]
 
         return filtered
 
