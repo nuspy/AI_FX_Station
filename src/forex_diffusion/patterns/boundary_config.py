@@ -147,11 +147,42 @@ class PatternBoundaryConfig:
             2.5 for tick data boundaries
         """
         return 2.5
+    
+    def _get_fast_patterns(self) -> set:
+        """Patterns that form quickly (candles)"""
+        return {
+            "hammer", "doji", "shooting_star", "engulfing", "harami",
+            "morning_star", "evening_star", "piercing", "dark_cloud",
+            "three_white_soldiers", "three_black_crows"
+        }
+    
+    def _get_slow_patterns(self) -> set:
+        """Patterns that form slowly (harmonics, Elliott)"""
+        return {
+            "elliott_impulse", "elliott_corrective", 
+            "harmonic_gartley_bull", "harmonic_gartley_bear",
+            "harmonic_butterfly_bull", "harmonic_butterfly_bear",
+            "harmonic_crab_bull", "harmonic_crab_bear",
+            "harmonic_bat_bull", "harmonic_bat_bear",
+            "harmonic_cypher_bull", "harmonic_cypher_bear",
+            "harmonic_shark_bull", "harmonic_shark_bear",
+            "rounding_top", "rounding_bottom"
+        }
 
     def get_boundary(self, pattern_key: str, timeframe: str) -> int:
-        """Get boundary for specific pattern and timeframe"""
+        """Get boundary for specific pattern and timeframe with pattern-aware fallback"""
         pattern_boundaries = self.boundaries.get(pattern_key, {})
-        return pattern_boundaries.get(timeframe, self._get_default_for_timeframe(timeframe))
+        if timeframe in pattern_boundaries:
+            return pattern_boundaries[timeframe]
+        
+        # Pattern-aware fallback
+        default = self._get_default_for_timeframe(timeframe)
+        if pattern_key in self._get_fast_patterns():
+            return default // 2  # Half for fast patterns (candles)
+        elif pattern_key in self._get_slow_patterns():
+            return default * 2  # Double for slow patterns (harmonics, Elliott)
+        else:
+            return default  # Standard for chart patterns
 
     def _get_default_for_timeframe(self, timeframe: str) -> int:
         """Fallback default boundaries by timeframe"""
