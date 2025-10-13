@@ -431,7 +431,7 @@ class MarketDataService:
                                         logger.info("Dedup 1m: {} -> {} rows for {} {}-{}", before, len(df), symbol, start_date, end_date)
                                 except Exception:
                                     pass
-                                report = data_io.upsert_candles(self.engine, df, symbol, "1m")
+                                report = data_io.upsert_candles(self.engine, df, symbol, "1m", provider_source=self.provider_name.lower())
                             processed += 1
                             _emit_progress()
                     continue
@@ -465,7 +465,7 @@ class MarketDataService:
                                     logger.info("Dedup {}: {} -> {} rows for {} {}-{}", tf, before, len(df), symbol, start_date, end_date)
                             except Exception:
                                 pass
-                            report = data_io.upsert_candles(self.engine, df, symbol, tf)
+                            report = data_io.upsert_candles(self.engine, df, symbol, tf, provider_source=self.provider_name.lower())
                         processed += 1
                         _emit_progress()
             except Exception as e:
@@ -512,7 +512,7 @@ class MarketDataService:
                     logger.info("No 1m data returned for {} {}-{}", symbol, start_date, end_date)
                     continue
                 # Upsert as 1m timeframe
-                report = data_io.upsert_candles(self.engine, df, symbol, "1m")
+                report = data_io.upsert_candles(self.engine, df, symbol, "1m", provider_source=self.provider_name.lower())
                 # logger.info("Upsert 1m report: %s", report)
 
     def _backfill_timeframe_autonomous(self, symbol: str, timeframe: str, global_start_ms: int, global_end_ms: int):
@@ -542,7 +542,7 @@ class MarketDataService:
                     logger.info("Tiingo returned no data for {} {} {}-{}", symbol, timeframe, start_date, end_date)
                     continue
                 # Upsert into DB
-                report = data_io.upsert_candles(self.engine, df, symbol, timeframe)
+                report = data_io.upsert_candles(self.engine, df, symbol, timeframe, provider_source=self.provider_name.lower())
                 # logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
 
     def _backfill_weekly(self, symbol: str, start_ms: int, end_ms: int, use_monthly_split: bool):
@@ -618,7 +618,7 @@ class MarketDataService:
 
             if weekly_candles:
                 df_weekly = pd.DataFrame(weekly_candles)
-                report = data_io.upsert_candles(self.engine, df_weekly, symbol, "1w")
+                report = data_io.upsert_candles(self.engine, df_weekly, symbol, "1w", provider_source=self.provider_name.lower())
                 logger.info("Upserted {} weekly candles for {}", len(df_weekly), symbol)
 
     def _tf_to_tiingo_resample(self, tf: str) -> str:
