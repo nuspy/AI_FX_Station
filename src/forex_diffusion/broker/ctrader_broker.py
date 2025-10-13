@@ -17,21 +17,36 @@ from loguru import logger
 # cTrader Open API imports
 try:
     from ctrader_open_api import Client, Protobuf, EndPoints
-    from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import (
-        ProtoOAPayloadType,
-        ProtoOAOrderType,
-        ProtoOATradeSide,
-        ProtoOAPositionStatus
-    )
     from ctrader_open_api.messages.OpenApiMessages_pb2 import (
         ProtoOANewOrderReq,
         ProtoOAClosePositionReq,
         ProtoOAAmendPositionSLTPReq
     )
     CTRADER_AVAILABLE = True
-except ImportError:
+
+    # cTrader API constants (these are integers, not enum classes)
+    # Based on ProtoOA protocol specification
+    class ProtoOAOrderType:
+        """cTrader order type constants."""
+        MARKET = 1
+        LIMIT = 2
+        STOP = 3
+        STOP_LIMIT = 4
+        MARKET_RANGE = 5
+
+    class ProtoOATradeSide:
+        """cTrader trade side constants."""
+        BUY = 1
+        SELL = 2
+
+    class ProtoOAPayloadType:
+        """cTrader payload type constants (for message handling)."""
+        PROTO_OA_EXECUTION_EVENT = 2124
+        PROTO_OA_SPOT_EVENT = 2128
+
+except ImportError as e:
     CTRADER_AVAILABLE = False
-    logger.warning("ctrader-open-api not available - install with: pip install ctrader-open-api")
+    logger.warning(f"ctrader-open-api not available - install with: pip install ctrader-open-api (error: {e})")
 
 
 class OrderType(Enum):
