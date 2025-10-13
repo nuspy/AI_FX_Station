@@ -11,6 +11,18 @@ Implements complex chart formations including:
 - Five-wave patterns
 """
 
+Advanced chart patterns for forex markets.
+
+Implements complex chart formations including:
+- Rounding bottom/top (Saucer patterns)
+- Island reversals
+- Gap patterns
+- Price channels with breakouts
+- Measured moves
+- Three drives pattern
+- Five-wave patterns
+"""
+
 from __future__ import annotations
 from typing import List, Optional, Tuple
 import numpy as np
