@@ -662,9 +662,15 @@ class PatternOverlayRenderer:
                     event_times.append(str(ts))
             logger.debug(f"PatternOverlay: Sample event timestamps: {event_times}")
 
+        # PRE-FILTER by timestamp BEFORE expensive coordinate conversion
+        # This prevents GUI freeze when thousands of patterns are detected
+        filtered_evs = self._pre_filter_by_timestamp_range(evs, xmin, xmax)
+        if len(filtered_evs) < len(evs):
+            logger.info(f"PatternOverlay: pre-filtered {len(evs)} patterns down to {len(filtered_evs)} based on timestamp range")
+
         # Normalizza e filtra densità
-        norm = self._normalize_events(ax, evs)
-        logger.debug(f"PatternOverlay: {len(norm)} events normalized (from {len(evs)} input events)")
+        norm = self._normalize_events(ax, filtered_evs)
+        logger.debug(f"PatternOverlay: {len(norm)} events normalized (from {len(filtered_evs)} input events)")
 
         kept = self._density_filter(ax, norm)
         mode = self._axis_mode(ax)
@@ -812,6 +818,56 @@ class PatternOverlayRenderer:
         # Will be reported in summary by _normalize_events()
 
         return x
+
+    def _pre_filter_by_timestamp_range(self, events: List, xmin: float, xmax: float) -> List:
+        """
+        Pre-filter patterns by timestamp range BEFORE expensive coordinate conversion.
+        This dramatically improves performance when thousands of patterns are detected.
+
+        Adds a buffer (30% of range on each side) to ensure patterns near edges are included.
+        """
+        if len(events) < 100:  # No need to optimize for small lists
+            return events
+
+        # Calculate buffer (30% of visible range on each side)
+        range_width = xmax - xmin
+        buffer = range_width * 0.3
+        filter_xmin = xmin - buffer
+        filter_xmax = xmax + buffer
+
+        filtered = []
+        for e in events:
+            ts = getattr(e, "confirm_ts", getattr(e, "ts", None))
+            if ts is None:
+                # Keep events without timestamp (rare)
+                filtered.append(e)
+                continue
+
+            # Quick timestamp check without full coordinate conversion
+            # Try both timestamp formats (ms and seconds)
+            try:
+                if isinstance(ts, (int, float)):
+                    # Assume milliseconds if > 1e11, otherwise seconds
+                    if ts > 1e11:
+                        ts_seconds = ts / 1000
+                    else:
+                        ts_seconds = ts
+
+                    # Check if timestamp falls within visible range (with buffer)
+                    # Chart x-axis could be in ms, seconds, or matplotlib date format
+                    # Test both ms and seconds against the range
+                    if filter_xmin <= ts <= filter_xmax:  # ms format
+                        filtered.append(e)
+                    elif filter_xmin <= ts_seconds <= filter_xmax:  # seconds format
+                        filtered.append(e)
+                else:
+                    # Keep if we can't determine timestamp format
+                    filtered.append(e)
+            except Exception:
+                # Keep events we can't parse
+                filtered.append(e)
+
+        return filtered
 
     # ---------- Event normalization & density ----------
     def _pattern_label(self, e: object) -> str:
