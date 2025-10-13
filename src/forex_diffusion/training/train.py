@@ -14,7 +14,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Learning
 from loguru import logger
 
 from forex_diffusion.train.loop import ForexDiffusionLit
-from .train_sklearn import fetch_candles_from_db, _coerce_indicator_tfs
+from ..data.data_loader import fetch_candles_from_db
+from ..features.feature_utils import coerce_indicator_tfs
 
 CHANNEL_ORDER = ["open", "high", "low", "close", "volume", "hour_sin", "hour_cos"]
 
@@ -307,7 +308,7 @@ def main() -> None:
         "channel_order": CHANNEL_ORDER,
         "mu": model.dataset_stats["mu"],
         "sigma": model.dataset_stats["sigma"],
-        "indicator_tfs": _coerce_indicator_tfs(args.indicator_tfs),
+        "indicator_tfs": coerce_indicator_tfs(args.indicator_tfs),
         "warmup_bars": args.warmup_bars,
         "rv_window": args.rv_window,
     }

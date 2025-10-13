@@ -412,7 +412,9 @@ class ForecastWorker(QRunnable):
             logger.debug(f"Parallel inference: {len(df_candles_full)} total candles for feature calculation")
 
             # Prepare features using the same system as single model inference
-            from ...training.train_sklearn import _relative_ohlc, _temporal_feats, _realized_vol_feature, _indicators, _coerce_indicator_tfs
+            from ...features.feature_engineering import relative_ohlc, temporal_features, realized_volatility_feature
+            from ...features.feature_utils import coerce_indicator_tfs
+            from ...training.train_sklearn import _indicators  # TODO: Consolidate indicators after completing ISSUE-001
             from ...features.feature_cache import get_feature_cache
 
             # Feature cache and config (reuse from single model logic)
@@ -473,17 +475,17 @@ class ForecastWorker(QRunnable):
 
                 # Build features using same logic as single model
                 if cache_config["use_relative_ohlc"]:
-                    feats_list.append(_relative_ohlc(df_candles_full))
+                    feats_list.append(relative_ohlc(df_candles_full))
 
                 if cache_config["use_temporal_features"]:
-                    feats_list.append(_temporal_feats(df_candles_full))
+                    feats_list.append(temporal_features(df_candles_full))
 
                 if cache_config["rv_window"] > 1:
-                    feats_list.append(_realized_vol_feature(df_candles_full, cache_config["rv_window"]))
+                    feats_list.append(realized_volatility_feature(df_candles_full, cache_config["rv_window"]))
 
                 # Multi-timeframe indicators - MUST use full dataframe for resampling
                 indicator_tfs_raw = cache_config["indicator_tfs"]
-                indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
+                indicator_tfs = coerce_indicator_tfs(indicator_tfs_raw)
 
                 if indicator_tfs:
                     # Build full indicator config from model metadata
@@ -535,8 +537,8 @@ class ForecastWorker(QRunnable):
 
                 if not feats_list:
                     # Fallback to basic features
-                    feats_list.append(_relative_ohlc(df_candles))
-                    feats_list.append(_temporal_feats(df_candles))
+                    feats_list.append(relative_ohlc(df_candles))
+                    feats_list.append(temporal_features(df_candles))
 
                 # Combine features
                 feats_df = pd.concat(feats_list, axis=1)
