@@ -536,10 +536,13 @@ def _build_features(candles: pd.DataFrame, args):
 
 def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
     """
-    Standardize features ensuring NO look-ahead bias.
+    Standardize features ensuring NO look-ahead bias (2-way split).
 
     CRITICAL: Computes mean/std ONLY on training set, then applies to validation.
     This prevents information leakage from future data.
+
+    NOTE: This function is kept for backward compatibility. New code should use
+    _standardize_train_val_test() for proper 60/20/20 split (PROC-001).
 
     Returns:
         Tuple of ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
@@ -588,6 +591,102 @@ def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
             )
 
     return ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
+
+
+def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2):
+    """
+    Standardize training, validation, and test sets ensuring NO look-ahead bias (3-way split).
+
+    CRITICAL: Computes mean/std ONLY on training set, then applies to val/test.
+    This prevents information leakage from future data.
+
+    PROC-001: Implements proper 3-way split:
+    - Train (60%): For model training
+    - Val (20%): For early stopping and hyperparameter selection
+    - Test (20%): For final evaluation ONLY (never used during training)
+
+    Args:
+        X: Feature DataFrame
+        y: Target Series
+        val_frac: Validation fraction (default 0.2)
+        test_frac: Test fraction (default 0.2)
+
+    Returns:
+        Tuple of ((Xtr_scaled, ytr), (Xva_scaled, yva), (Xte_scaled, yte), (mu, sigma, scaler_metadata))
+    """
+    from scipy import stats
+
+    # First split: separate test set from train+val
+    train_val_size = 1.0 - test_frac
+    Xtr_val, Xte, ytr_val, yte = train_test_split(
+        X.values, y.values, test_size=test_frac, shuffle=False
+    )
+
+    # Second split: separate validation from training
+    val_relative = val_frac / train_val_size
+    Xtr, Xva, ytr, yva = train_test_split(
+        Xtr_val, ytr_val, test_size=val_relative, shuffle=False
+    )
+
+    # Compute statistics ONLY on training set (NO look-ahead bias)
+    mu = Xtr.mean(axis=0)
+    sigma = Xtr.std(axis=0)
+    sigma[sigma == 0] = 1.0  # Prevent division by zero (BUG-001 fix)
+
+    # Apply standardization to all splits
+    Xtr_scaled = (Xtr - mu) / sigma
+    Xva_scaled = (Xva - mu) / sigma
+    Xte_scaled = (Xte - mu) / sigma
+
+    # VERIFICATION: Statistical test for look-ahead bias detection
+    p_values_val = []
+    p_values_test = []
+
+    for i in range(min(10, Xtr_scaled.shape[1])):  # Test first 10 features
+        if Xtr_scaled.shape[0] > 20 and Xva_scaled.shape[0] > 20:
+            _, p_val = stats.ks_2samp(Xtr_scaled[:, i], Xva_scaled[:, i])
+            p_values_val.append(p_val)
+
+        if Xtr_scaled.shape[0] > 20 and Xte_scaled.shape[0] > 20:
+            _, p_val = stats.ks_2samp(Xtr_scaled[:, i], Xte_scaled[:, i])
+            p_values_test.append(p_val)
+
+    # Metadata for debugging
+    scaler_metadata = {
+        "train_size": Xtr.shape[0],
+        "val_size": Xva.shape[0],
+        "test_size": Xte.shape[0],
+        "train_frac": Xtr.shape[0] / len(X),
+        "val_frac": Xva.shape[0] / len(X),
+        "test_frac": Xte.shape[0] / len(X),
+        "train_mean": mu.tolist(),
+        "train_std": sigma.tolist(),
+        "ks_test_p_values_val": p_values_val,
+        "ks_test_p_values_test": p_values_test,
+        "ks_test_median_p_val": float(np.median(p_values_val)) if p_values_val else None,
+        "ks_test_median_p_test": float(np.median(p_values_test)) if p_values_test else None,
+    }
+
+    # WARNING: If distributions too similar, potential look-ahead bias
+    if scaler_metadata["ks_test_median_p_val"] is not None:
+        if scaler_metadata["ks_test_median_p_val"] > 0.8:
+            warnings.warn(
+                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Val)!\n"
+                f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_val']:.3f}).\n"
+                f"Expected p < 0.5 for different time periods.",
+                RuntimeWarning
+            )
+
+    if scaler_metadata["ks_test_median_p_test"] is not None:
+        if scaler_metadata["ks_test_median_p_test"] > 0.8:
+            warnings.warn(
+                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED (Train vs Test)!\n"
+                f"Train/Test distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p_test']:.3f}).\n"
+                f"Expected p < 0.5 for different time periods.",
+                RuntimeWarning
+            )
+
+    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (Xte_scaled, yte), (mu, sigma, scaler_metadata))
 
 def _fit_model(algo: str, Xtr, ytr, args):
     if   algo == "ridge":      return Ridge(alpha=float(args.alpha), random_state=args.random_state)
