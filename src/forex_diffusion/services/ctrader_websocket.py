@@ -101,6 +101,7 @@ class CTraderWebSocketService:
 
         # Data buffers
         self.order_book_buffer: Dict[str, Dict] = {}  # symbol -> latest DOM
+        self.depth_quotes: Dict[str, Dict[int, Dict]] = {}  # symbol -> {quote_id -> quote_data}
         self.volume_buffer: Dict[str, deque] = {s: deque(maxlen=100) for s in self.symbols}
         self.sentiment_buffer: Dict[str, Dict] = {}  # symbol -> sentiment metrics
 
@@ -264,18 +265,19 @@ class CTraderWebSocketService:
         except Exception as e:
             logger.error(f"Subscription error: {e}")
 
-    def _subscribe_to_spots(self, symbol_ids: List[int]):
-        """Subscribe to spot quotes."""
+    def _subscribe_to_depth_quotes(self, symbol_ids: List[int]):
+        """Subscribe to depth quotes (order book / DOM)."""
         try:
-            spot_req = Messages.ProtoOASubscribeSpotsReq()
-            spot_req.ctidTraderAccountId = self.account_id
-            spot_req.symbolId.extend(symbol_ids)
+            for symbol_id in symbol_ids:
+                depth_req = Messages.ProtoOASubscribeDepthQuotesReq()
+                depth_req.ctidTraderAccountId = self.account_id
+                depth_req.symbolId.append(symbol_id)
 
-            self.client.send(spot_req)
-            logger.info(f"Subscribed to spot quotes for {len(symbol_ids)} symbols")
+                self.client.send(depth_req)
+                logger.info(f"Subscribed to depth quotes for symbol ID {symbol_id}")
 
         except Exception as e:
-            logger.error(f"Spot subscription error: {e}")
+            logger.error(f"Depth subscription error: {e}")
 
     def _on_message_received(self, client, message):
         """
@@ -305,12 +307,12 @@ class CTraderWebSocketService:
             elif payload_type == Messages.ProtoOASymbolsListRes:
                 self._handle_symbols_list(message)
 
-            # Spot event (price + volume update)
-            elif payload_type == Messages.ProtoOASpotEvent:
-                self._handle_spot_event(message)
+            # Depth quotes subscription response
+            elif payload_type == Messages.ProtoOASubscribeDepthQuotesRes:
+                logger.info("✓ Subscribed to depth quotes")
 
-            # Depth event (order book update) - if available
-            elif hasattr(Messages, 'ProtoOADepthEvent') and payload_type == Messages.ProtoOADepthEvent:
+            # Depth event (order book update)
+            elif payload_type == Messages.ProtoOADepthEvent:
                 self._handle_depth_event(message)
 
             # Execution event (for sentiment tracking)
@@ -346,8 +348,8 @@ class CTraderWebSocketService:
                         break
 
             if symbol_ids:
-                # Subscribe to spots for these symbols
-                reactor.callLater(0, lambda: self._subscribe_to_spots(symbol_ids))
+                # Subscribe to depth quotes (order books) for these symbols
+                reactor.callLater(0, lambda: self._subscribe_to_depth_quotes(symbol_ids))
 
         except Exception as e:
             logger.error(f"Error handling symbols list: {e}")
@@ -443,10 +445,22 @@ class CTraderWebSocketService:
             logger.error(f"Error handling spot event: {e}")
 
     def _handle_depth_event(self, message):
-        """Handle true DOM depth event (if available from cTrader)."""
+        """
+        Handle DOM depth event from cTrader.
+
+        ProtoOADepthEvent contains:
+        - symbolId: symbol identifier
+        - newQuotes: list of ProtoOADepthQuote (new or updated quotes)
+        - deletedQuotes: list of quote IDs to remove
+
+        ProtoOADepthQuote structure:
+        - id: unique quote identifier (uint64)
+        - size: volume in cents (uint64) - divide by 100 for actual volume
+        - bid: optional bid price (uint64) - divide by 100000 for actual price
+        - ask: optional ask price (uint64) - divide by 100000 for actual price
+        """
         try:
             symbol_id = message.symbolId
-            timestamp = message.timestamp
 
             # Find symbol name
             symbol_name = None
@@ -458,42 +472,97 @@ class CTraderWebSocketService:
             if not symbol_name:
                 return
 
-            # Parse depth levels
+            # Initialize depth quotes for this symbol if needed
+            if symbol_name not in self.depth_quotes:
+                self.depth_quotes[symbol_name] = {}
+
+            # Process deleted quotes
+            if hasattr(message, 'deletedQuotes'):
+                for quote_id in message.deletedQuotes:
+                    self.depth_quotes[symbol_name].pop(quote_id, None)
+                    logger.debug(f"Deleted quote {quote_id} for {symbol_name}")
+
+            # Process new/updated quotes
+            if hasattr(message, 'newQuotes'):
+                for quote in message.newQuotes:
+                    quote_id = quote.id
+                    size = quote.size / 100.0  # Convert from cents to actual volume
+
+                    # Extract bid/ask prices (divide by 100000)
+                    bid_price = quote.bid / 100000.0 if hasattr(quote, 'bid') and quote.bid else None
+                    ask_price = quote.ask / 100000.0 if hasattr(quote, 'ask') and quote.ask else None
+
+                    # Store quote
+                    self.depth_quotes[symbol_name][quote_id] = {
+                        'id': quote_id,
+                        'size': size,
+                        'bid': bid_price,
+                        'ask': ask_price
+                    }
+
+                    logger.debug(
+                        f"Updated quote {quote_id} for {symbol_name}: "
+                        f"bid={bid_price}, ask={ask_price}, size={size}"
+                    )
+
+            # Rebuild order book from quotes
             bids = []
             asks = []
 
-            if hasattr(message, 'bid'):
-                for bid_level in message.bid:
-                    price = bid_level.price / 100000.0
-                    volume = bid_level.volume
-                    bids.append([price, volume])
+            for quote in self.depth_quotes[symbol_name].values():
+                if quote['bid'] is not None:
+                    bids.append([quote['bid'], quote['size']])
+                if quote['ask'] is not None:
+                    asks.append([quote['ask'], quote['size']])
 
-            if hasattr(message, 'ask'):
-                for ask_level in message.ask:
-                    price = ask_level.price / 100000.0
-                    volume = ask_level.volume
-                    asks.append([price, volume])
+            # Sort: bids descending (highest first), asks ascending (lowest first)
+            bids.sort(reverse=True, key=lambda x: x[0])
+            asks.sort(key=lambda x: x[0])
 
+            # Calculate DOM metrics
+            mid_price = None
+            spread = None
+            imbalance = 0.0
+
+            if bids and asks:
+                best_bid = bids[0][0]
+                best_ask = asks[0][0]
+                mid_price = (best_bid + best_ask) / 2
+                spread = best_ask - best_bid
+
+                total_bid_volume = sum(b[1] for b in bids)
+                total_ask_volume = sum(a[1] for a in asks)
+
+                if total_bid_volume + total_ask_volume > 0:
+                    imbalance = (total_bid_volume - total_ask_volume) / (total_bid_volume + total_ask_volume)
+
+            # Create DOM data
             dom_data = {
                 'symbol': symbol_name,
-                'timestamp': int(timestamp / 1000),
+                'timestamp': int(time.time() * 1000),  # Current time in ms
                 'bids': bids,
                 'asks': asks,
-                'mid_price': (bids[0][0] + asks[0][0]) / 2 if (bids and asks) else None,
-                'spread': (asks[0][0] - bids[0][0]) if (bids and asks) else None,
-                'imbalance': (sum(b[1] for b in bids) - sum(a[1] for a in asks)) /
-                            (sum(b[1] for b in bids) + sum(a[1] for a in asks))
-                            if (bids and asks) else 0.0
+                'mid_price': mid_price,
+                'spread': spread,
+                'imbalance': imbalance
             }
 
             # Update buffer and store
             self.order_book_buffer[symbol_name] = dom_data
             reactor.callInThread(self._store_order_book, dom_data)
 
-            logger.debug(f"Processed depth event for {symbol_name}: {len(bids)} bids, {len(asks)} asks")
+            # Callback for order book update
+            if self.on_order_book_update:
+                reactor.callInThread(self.on_order_book_update, dom_data)
+
+            logger.debug(
+                f"Processed depth event for {symbol_name}: "
+                f"{len(bids)} bids, {len(asks)} asks, "
+                f"spread={spread:.5f if spread else 0}"
+            )
 
         except Exception as e:
-            logger.error(f"Error handling depth event: {e}")
+            logger.exception(f"Error handling depth event: {e}")
 
     def _handle_execution_event(self, message):
         """Handle execution event (for sentiment tracking from order flow)."""
