@@ -1,185 +1,101 @@
 """
-Standardize import patterns across pattern detection modules.
+Import Standardization Script
 
-PEP 8 ordering:
-1. Future imports
-2. Standard library (alphabetical)
-3. Third-party (alphabetical) 
-4. Local application/library (alphabetical, prefer relative)
+Applies PEP 8 import ordering to all Python files.
+Part of IMPORT-001 implementation.
+
+Uses isort for automatic import sorting.
 """
-import os
-import re
+import subprocess
+import sys
 from pathlib import Path
-from typing import List, Tuple
 
-
-def parse_imports(content: str) -> Tuple[List[str], List[str], List[str], List[str], str]:
+def standardize_imports(directory: str = "src/forex_diffusion"):
     """
-    Parse imports from file content.
+    Standardize imports in all Python files.
     
-    Returns:
-        (future_imports, stdlib_imports, third_party_imports, local_imports, rest_of_code)
+    Order (PEP 8):
+    1. Future imports
+    2. Standard library
+    3. Third-party
+    4. Local/relative imports
     """
-    lines = content.split('\n')
+    root = Path(directory)
     
-    future = []
-    stdlib = []
-    third_party = []
-    local = []
-    rest_start = 0
+    if not root.exists():
+        print(f"Error: Directory {directory} does not exist")
+        return False
     
-    # Standard library modules (common ones)
-    stdlib_modules = {
-        'os', 'sys', 'time', 'json', 'datetime', 'collections', 'typing', 
-        'dataclasses', 'enum', 'pathlib', 'asyncio', 'hashlib', 're',
-        'concurrent', 'functools', 'itertools', 'copy'
-    }
+    # Find all Python files
+    py_files = list(root.rglob("*.py"))
     
-    # Third-party modules
-    third_party_modules = {
-        'numpy', 'pandas', 'loguru', 'sqlalchemy', 'pydantic', 'fastapi',
-        'pytest', 'matplotlib', 'scipy', 'sklearn', 'optuna', 'psutil'
-    }
+    print(f"Found {len(py_files)} Python files in {directory}")
+    print("Standardizing imports with isort...")
     
-    in_imports = True
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        
-        # Skip empty lines and docstrings at the top
-        if not stripped or stripped.startswith('"""') or stripped.startswith("'''"):
-            if in_imports and i < 20:  # Allow docstrings in first 20 lines
-                continue
-        
-        # Future imports
-        if stripped.startswith('from __future__'):
-            future.append(line)
-            continue
-        
-        # Import statements
-        if stripped.startswith('import ') or stripped.startswith('from '):
-            # Determine import type
-            if stripped.startswith('from .') or stripped.startswith('from ..'):
-                local.append(line)
-            else:
-                # Extract module name
-                if stripped.startswith('import '):
-                    module = stripped.split()[1].split('.')[0]
-                else:  # from X import Y
-                    module = stripped.split()[1].split('.')[0]
-                
-                if module in stdlib_modules:
-                    stdlib.append(line)
-                elif module in third_party_modules:
-                    third_party.append(line)
-                else:
-                    # Guess: if starts with capital letter, likely third-party
-                    if module[0].isupper():
-                        third_party.append(line)
-                    else:
-                        # Default to local
-                        local.append(line)
-            continue
-        
-        # Non-import line found
-        if stripped and not stripped.startswith('#'):
-            in_imports = False
-            rest_start = i
-            break
-    
-    rest_of_code = '\n'.join(lines[rest_start:])
-    
-    return future, stdlib, third_party, local, rest_of_code
-
-
-def standardize_file_imports(filepath: Path) -> bool:
-    """
-    Standardize imports in a single file.
-    
-    Returns:
-        True if file was modified
-    """
+    # Run isort
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
+        result = subprocess.run(
+            ["python", "-m", "isort", str(root), "--profile", "black"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
         
-        # Skip if already has "# Imports standardized" comment
-        if '# Imports standardized' in content:
-            return False
-        
-        # Parse imports
-        future, stdlib, third_party, local, rest = parse_imports(content)
-        
-        # Rebuild with standardized order
-        new_content_parts = []
-        
-        # Extract docstring if present
-        docstring_match = re.match(r'^(""".*?"""|\'\'\'.*?\'\'\')\s*', content, re.DOTALL)
-        if docstring_match:
-            new_content_parts.append(docstring_match.group(1))
-            new_content_parts.append('')
-        
-        # Add imports in order
-        if future:
-            new_content_parts.extend(future)
-            new_content_parts.append('')
-        
-        if stdlib:
-            new_content_parts.extend(sorted(stdlib))
-            new_content_parts.append('')
-        
-        if third_party:
-            new_content_parts.extend(sorted(third_party))
-            new_content_parts.append('')
-        
-        if local:
-            new_content_parts.extend(sorted(local))
-            new_content_parts.append('')
-        
-        # Add rest of code
-        new_content_parts.append(rest)
-        
-        new_content = '\n'.join(new_content_parts)
-        
-        # Only write if changed
-        if new_content != content:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(new_content)
+        if result.returncode == 0:
+            print("✓ Import standardization complete")
+            print(result.stdout)
             return True
-        
-        return False
-        
-    except Exception as e:
-        print(f"Error processing {filepath}: {e}")
-        return False
-
-
-def main():
-    """Standardize imports in pattern detection modules"""
-    # Target directories
-    pattern_dir = Path(__file__).parent.parent / 'src' / 'forex_diffusion' / 'patterns'
-    
-    if not pattern_dir.exists():
-        print(f"Pattern directory not found: {pattern_dir}")
-        return
-    
-    # Get all Python files
-    py_files = list(pattern_dir.glob('*.py'))
-    
-    print(f"Found {len(py_files)} Python files in {pattern_dir}")
-    
-    modified = 0
-    for filepath in py_files:
-        if filepath.name.startswith('_') and filepath.name != '__init__.py':
-            continue  # Skip private files except __init__
-        
-        if standardize_file_imports(filepath):
-            print(f"✓ Standardized: {filepath.name}")
-            modified += 1
         else:
-            print(f"  Skipped: {filepath.name}")
+            print("⚠ Some files may need manual review")
+            print(result.stderr)
+            return False
+            
+    except FileNotFoundError:
+        print("Error: isort not installed")
+        print("Install with: pip install isort")
+        return False
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+
+def check_imports(directory: str = "src/forex_diffusion"):
+    """Check if imports need standardization"""
+    root = Path(directory)
     
-    print(f"\nModified {modified}/{len(py_files)} files")
+    try:
+        result = subprocess.run(
+            ["python", "-m", "isort", str(root), "--check-only", "--profile", "black"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        if result.returncode == 0:
+            print("✓ All imports already standardized")
+            return True
+        else:
+            print("⚠ Some imports need standardization:")
+            print(result.stdout)
+            return False
+            
+    except FileNotFoundError:
+        print("Error: isort not installed")
+        return False
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Standardize Python imports")
+    parser.add_argument("--check", action="store_true", help="Check only, don't modify")
+    parser.add_argument("--directory", default="src/forex_diffusion", help="Directory to process")
+    
+    args = parser.parse_args()
+    
+    if args.check:
+        success = check_imports(args.directory)
+    else:
+        success = standardize_imports(args.directory)
+    
+    sys.exit(0 if success else 1)
