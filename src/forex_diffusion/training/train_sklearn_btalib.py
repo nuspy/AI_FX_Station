@@ -18,128 +18,10 @@ from sklearn.model_selection import train_test_split
 # Import new indicators system
 from ..features.indicators_btalib import BTALibIndicators, IndicatorConfig, IndicatorCategories, DataRequirement
 
-# Use project's MarketDataService (SQLAlchemy) to load candles for training.
-try:
-    from forex_diffusion.services.marketdata import MarketDataService  # type: ignore
-except Exception:
-    from ..services.marketdata import MarketDataService  # type: ignore
-
-import datetime
-from sqlalchemy import text
-
-
-def fetch_candles_from_db(symbol: str, timeframe: str, days_history: int) -> pd.DataFrame:
-    """
-    Fetch candles using SQLAlchemy engine from MarketDataService.
-    Returns DataFrame with columns ['ts_utc','open','high','low','close','volume'] ordered ASC.
-    """
-    try:
-        ms = MarketDataService()
-        engine = getattr(ms, "engine", None)
-    except Exception as e:
-        raise RuntimeError(f"Failed to instantiate MarketDataService: {e}")
-
-    if engine is None:
-        raise RuntimeError("Database engine not available from MarketDataService")
-
-    # compute start timestamp (ms)
-    try:
-        now_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
-        start_ms = now_ms - int(max(0, int(days_history)) * 24 * 3600 * 1000)
-    except Exception:
-        start_ms = None
-
-    # Query DB
-    try:
-        with engine.connect() as conn:
-            if start_ms is None:
-                q = text(
-                    "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
-                    "FROM market_data_candles "
-                    "WHERE symbol = :symbol AND timeframe = :timeframe "
-                    "ORDER BY ts_utc ASC"
-                )
-                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe}).fetchall()
-            else:
-                q = text(
-                    "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
-                    "FROM market_data_candles "
-                    "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc >= :start_ms "
-                    "ORDER BY ts_utc ASC"
-                )
-                rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "start_ms": int(start_ms)}).fetchall()
-    except Exception as e:
-        raise RuntimeError(f"Failed to query market_data_candles: {e}")
-
-    if not rows:
-        raise RuntimeError(f"No candles found for {symbol} {timeframe} in last {days_history} days")
-
-    df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
-    df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("int64")
-    for c in ["open", "high", "low", "close", "volume"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-    df = df.dropna(subset=["ts_utc", "open", "high", "low", "close"]).sort_values("ts_utc").reset_index(drop=True)
-    return df[["ts_utc", "open", "high", "low", "close", "volume"]]
-
-
-def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure DataFrame has datetime index"""
-    out = df.copy()
-    out.index = pd.to_datetime(out["ts_utc"], unit="ms", utc=True)
-    return out
-
-
-def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
-    """Convert timeframe string to pandas Timedelta"""
-    tf = str(tf).strip().lower()
-    if tf.endswith("ms"):
-        return pd.Timedelta(milliseconds=int(tf[:-2]))
-    if tf.endswith("s") and not tf.endswith("ms"):
-        return pd.Timedelta(seconds=int(tf[:-1]))
-    if tf.endswith("m"):
-        return pd.Timedelta(minutes=int(tf[:-1]))
-    if tf.endswith("h"):
-        return pd.Timedelta(hours=int(tf[:-1]))
-    if tf.endswith("d"):
-        return pd.Timedelta(days=int(tf[:-1]))
-    if tf.endswith("w"):
-        return pd.Timedelta(weeks=int(tf[:-1]))
-    try:
-        return pd.Timedelta(minutes=int(tf))
-    except Exception:
-        return pd.Timedelta(minutes=5)
-
-
-def _relative_ohlc(df: pd.DataFrame) -> pd.DataFrame:
-    """Create relative OHLC features"""
-    return pd.DataFrame({
-        "rel_high": (df["high"] / df["close"]) - 1.0,
-        "rel_low": (df["low"] / df["close"]) - 1.0,
-        "rel_open": (df["open"] / df["close"]) - 1.0,
-        "hl_pct": (df["high"] - df["low"]) / df["close"],
-        "oc_pct": (df["open"] - df["close"]) / df["close"],
-    }, index=df.index)
-
-
-def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
-    """Create temporal features"""
-    dt_idx = _ensure_dt_index(df).index
-    return pd.DataFrame({
-        "hour": dt_idx.hour,
-        "dow": dt_idx.dayofweek,
-        "dom": dt_idx.day,
-        "month": dt_idx.month,
-        "is_weekend": (dt_idx.dayofweek >= 5).astype(int),
-    }, index=df.index)
-
-
-def _realized_vol_feature(df: pd.DataFrame, window: int) -> pd.DataFrame:
-    """Create realized volatility feature"""
-    c = df["close"].astype(float)
-    log_returns = np.log(c / c.shift(1))
-    rv = log_returns.rolling(window).std() * np.sqrt(window)
-    return pd.DataFrame({"realized_vol": rv}, index=df.index)
+# Import centralized modules (ISSUE-001)
+from ..data.data_loader import fetch_candles_from_db
+from ..features.feature_utils import ensure_dt_index as _ensure_dt_index, timeframe_to_timedelta as _timeframe_to_timedelta, coerce_indicator_tfs as _coerce_indicator_tfs
+from ..features.feature_engineering import relative_ohlc as _relative_ohlc, temporal_features as _temporal_feats, realized_volatility_feature as _realized_vol_feature
 
 
 class BTALibIndicatorsTraining:
@@ -427,21 +309,6 @@ class BTALibIndicatorsTraining:
                                IndicatorCategories.STATISTICS, IndicatorCategories.CYCLE]
             }
         }
-
-
-def _coerce_indicator_tfs(raw: Any) -> Dict[str, List[str]]:
-    """Coerce indicator timeframes configuration"""
-    if not raw:
-        return {}
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-            return {k: v if isinstance(v, list) else [v] for k, v in parsed.items()}
-        except Exception:
-            return {}
-    if isinstance(raw, dict):
-        return {k: v if isinstance(v, list) else [v] for k, v in raw.items()}
-    return {}
 
 
 def _standardize_train_val_test(X: pd.DataFrame, y: pd.Series, val_frac: float = 0.2, test_frac: float = 0.2):
