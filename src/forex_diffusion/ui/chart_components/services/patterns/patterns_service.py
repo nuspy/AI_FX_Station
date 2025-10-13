@@ -132,6 +132,40 @@ class PatternsService(ChartServiceBase):
             pass
 
         logger.debug("PatternsService initialized")
+    
+    def _is_market_likely_closed(self) -> bool:
+        """
+        Check if forex market is likely closed (weekends).
+        Forex is open 24/5 (Sunday evening to Friday evening EST).
+        """
+        try:
+            import pytz
+            from datetime import datetime
+            
+            # Get current time in EST
+            est = pytz.timezone('America/New_York')
+            now_est = datetime.now(est)
+            
+            # Weekday: 0=Monday, 4=Friday, 5=Saturday, 6=Sunday
+            weekday = now_est.weekday()
+            hour = now_est.hour
+            
+            # Saturday all day
+            if weekday == 5:
+                return True
+            
+            # Sunday before 5 PM EST
+            if weekday == 6 and hour < 17:
+                return True
+            
+            # Friday after 5 PM EST
+            if weekday == 4 and hour >= 17:
+                return True
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking market status: {e}")
+            return False  # Assume open if check fails
 
         # Persistent cache (per symbol) and multi-timeframe scan state
         self._cache: Dict[tuple, object] = {}
