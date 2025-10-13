@@ -4,14 +4,14 @@ import numpy as np
 import pandas as pd
 
 def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
-    high = df["high"].astype(float).to_numpy()
-    low = df["low"].astype(float).to_numpy()
-    close = df["close"].astype(float).to_numpy()
-    prev_close = np.roll(close, 1)
-    tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
-    tr[0] = high[0] - low[0]
-    atr_vals = pd.Series(tr).rolling(n, min_periods=1).mean().astype(float)
-    return atr_vals
+    """
+    Average True Range (ATR).
+    
+    HIGH-001: Use consolidated implementation from features.consolidated_indicators
+    """
+    # Import here to avoid circular dependencies
+    from ..features.consolidated_indicators import atr as consolidated_atr
+    return consolidated_atr(df, n=n)
 
 def zigzag_pivots(df: pd.DataFrame, atr_mult: float = 2.0, n_atr: int = 14) -> List[Tuple[int,int]]:
     """
