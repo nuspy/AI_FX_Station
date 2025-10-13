@@ -116,7 +116,8 @@ class DetectionWorker(QObject):
             else:
                 return "1w"
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to detect timeframe from dataframe: {e}, using default '5m'")
             return "5m"  # Safe fallback
 
     def _apply_boundary_to_df(self, df, detector_key, timeframe, boundary_config):
