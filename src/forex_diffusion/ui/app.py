@@ -353,6 +353,64 @@ def setup_ui(
             connector.start()
             result["tiingo_ws_connector"] = connector
             logger.info("Tiingo WebSocket connector started (primary provider: tiingo)")
+        # cTrader WebSocket for primary provider
+        elif primary_provider == "ctrader":
+            ctrader_enabled = get_setting("ctrader_enabled", False)
+            if ctrader_enabled:
+                try:
+                    from ..services.ctrader_websocket import CTraderWebSocketService
+
+                    # Get cTrader credentials - try both prefixed and non-prefixed keys
+                    client_id = (get_setting("provider.ctrader.client_id", "") or
+                                get_setting("ctrader_client_id", ""))
+                    client_secret = (get_setting("provider.ctrader.client_secret", "") or
+                                    get_setting("ctrader_client_secret", ""))
+                    access_token = (get_setting("provider.ctrader.access_token", "") or
+                                   get_setting("ctrader_access_token", ""))
+                    account_id_raw = (get_setting("provider.ctrader.account_id", "") or
+                                     get_setting("ctrader_account_id", ""))
+                    environment = (get_setting("provider.ctrader.environment", "demo") or
+                                  get_setting("ctrader_environment", "demo"))
+
+                    logger.info(f"cTrader WebSocket initialization: "
+                               f"client_id={'set' if client_id else 'missing'}, "
+                               f"client_secret={'set' if client_secret else 'missing'}, "
+                               f"access_token={'set' if access_token else 'missing'}, "
+                               f"account_id_raw={account_id_raw}, "
+                               f"environment={environment}")
+
+                    # Convert account_id - cTrader API expects string account ID (e.g., "a.taini")
+                    account_id = str(account_id_raw) if account_id_raw else None
+
+                    if client_id and client_secret and access_token and account_id:
+                        logger.info(f"Starting cTrader WebSocket with account: {account_id}")
+                        ctrader_ws = CTraderWebSocketService(
+                            client_id=client_id,
+                            client_secret=client_secret,
+                            access_token=access_token,
+                            account_id=account_id,  # Pass as string - library will handle conversion
+                            db_engine=db_service.engine,
+                            environment=environment,
+                            symbols=["EURUSD", "GBPUSD", "USDJPY"]
+                        )
+                        ctrader_ws.start()
+                        result["ctrader_ws"] = ctrader_ws
+
+                        # Expose cTrader WebSocket for monitoring
+                        main_window.ctrader_ws = ctrader_ws
+
+                        logger.info(f"✓ cTrader WebSocket service started (account: {account_id}, env: {environment})")
+                    else:
+                        logger.warning("cTrader credentials incomplete - WebSocket not started")
+                        logger.warning(f"Missing credentials: "
+                                     f"client_id={'NO' if not client_id else 'OK'}, "
+                                     f"client_secret={'NO' if not client_secret else 'OK'}, "
+                                     f"access_token={'NO' if not access_token else 'OK'}, "
+                                     f"account_id={'NO' if not account_id else 'OK'}")
+                except Exception as e:
+                    logger.error(f"Failed to start cTrader WebSocket: {e}", exc_info=True)
+            else:
+                logger.info("cTrader WebSocket not started (ctrader_enabled=False)")
         else:
             logger.info(f"Tiingo WebSocket connector NOT started (primary provider: {primary_provider})")
 
@@ -410,6 +468,14 @@ def setup_ui(
     def _graceful_shutdown():
         logger.info("Shutting down services...")
         if connector: connector.stop()
+        # Stop cTrader WebSocket if it was started
+        ctrader_ws = result.get("ctrader_ws")
+        if ctrader_ws:
+            try:
+                ctrader_ws.stop()
+                logger.info("cTrader WebSocket stopped")
+            except Exception as e:
+                logger.error(f"Error stopping cTrader WebSocket: {e}")
         if aggregator: aggregator.stop()
         if dom_aggregator: dom_aggregator.stop()
         if db_writer: db_writer.stop()

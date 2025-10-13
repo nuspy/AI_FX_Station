@@ -227,27 +227,29 @@ class DataSourcesTab(QWidget):
             status['realtime_ticks']['method'] = 'WebSocket (cTrader ProtoOA)'
             status['realtime_ticks']['provider'] = 'cTrader'
 
-            # Check if cTrader is enabled and connected
+            # Check if cTrader is enabled and WebSocket service is running
             ctrader_enabled = get_setting("ctrader_enabled", False)
             if ctrader_enabled:
-                # Check if broker is connected (cTrader WebSocket)
-                if self._main_window and hasattr(self._main_window, 'controller'):
-                    controller = self._main_window.controller
-                    if hasattr(controller, 'broker') and controller.broker:
-                        broker = controller.broker
-                        is_connected = getattr(broker, '_connected', False)
+                # Check if cTrader WebSocket service exists and is running
+                if self._main_window and hasattr(self._main_window, 'ctrader_ws'):
+                    ctrader_ws = self._main_window.ctrader_ws
+                    if ctrader_ws:
+                        # Check if service is connected
+                        is_connected = getattr(ctrader_ws, 'connected', False)
                         if is_connected:
                             status['realtime_ticks']['status'] = 'Connected'
-                            status['realtime_ticks']['details'] = 'cTrader ProtoOA WebSocket active'
+                            # Get subscribed symbols
+                            symbols = getattr(ctrader_ws, 'symbols', [])
+                            status['realtime_ticks']['details'] = f'cTrader ProtoOA WebSocket active - Symbols: {", ".join(symbols)}'
                         else:
                             status['realtime_ticks']['status'] = 'Disconnected'
-                            status['realtime_ticks']['details'] = 'Broker not connected'
+                            status['realtime_ticks']['details'] = 'cTrader WebSocket service not connected'
                     else:
                         status['realtime_ticks']['status'] = 'Not Initialized'
-                        status['realtime_ticks']['details'] = 'Broker not created'
+                        status['realtime_ticks']['details'] = 'cTrader WebSocket service is None'
                 else:
                     status['realtime_ticks']['status'] = 'Not Initialized'
-                    status['realtime_ticks']['details'] = 'Controller not available'
+                    status['realtime_ticks']['details'] = 'cTrader WebSocket service not created (check credentials in settings)'
             else:
                 status['realtime_ticks']['status'] = 'Disabled'
                 status['realtime_ticks']['details'] = 'cTrader real-time features not enabled in settings'
@@ -300,37 +302,41 @@ class DataSourcesTab(QWidget):
             logger.debug(f"Could not check MarketDataService provider: {e}")
             status['historical_candles']['details'] = 'MarketDataService (Unknown)'
 
-        # cTrader status - check if broker is configured
+        # cTrader status - check if WebSocket service is configured
         try:
             ctrader_enabled = get_setting("ctrader_enabled", False)
             if ctrader_enabled:
-                # Check if broker is connected
-                if self._main_window and hasattr(self._main_window, 'controller'):
-                    controller = self._main_window.controller
-                    if hasattr(controller, 'broker') and controller.broker:
-                        broker = controller.broker
-                        is_connected = getattr(broker, '_connected', False)
+                # Check if cTrader WebSocket service exists and is running
+                if self._main_window and hasattr(self._main_window, 'ctrader_ws'):
+                    ctrader_ws = self._main_window.ctrader_ws
+                    if ctrader_ws:
+                        is_connected = getattr(ctrader_ws, 'connected', False)
 
                         if is_connected:
+                            # All cTrader services are active via WebSocket
                             status['ctrader_ticks']['method'] = 'WebSocket'
                             status['ctrader_ticks']['status'] = 'Connected'
-                            status['ctrader_ticks']['details'] = 'ProtoOA WebSocket'
+                            status['ctrader_ticks']['details'] = 'ProtoOA WebSocket - Real-time tick data'
 
                             status['ctrader_volumes']['method'] = 'WebSocket'
                             status['ctrader_volumes']['status'] = 'Connected'
-                            status['ctrader_volumes']['details'] = 'Included in tick data'
+                            status['ctrader_volumes']['details'] = 'Volume data included in tick stream'
 
                             status['ctrader_orderbook']['method'] = 'WebSocket'
-                            status['ctrader_orderbook']['status'] = 'Available'
-                            status['ctrader_orderbook']['details'] = 'Depth of Market (DoM) via ProtoOA'
+                            status['ctrader_orderbook']['status'] = 'Connected'
+                            status['ctrader_orderbook']['details'] = 'Depth of Market (DoM) via ProtoOA depth events'
                         else:
                             for key in ['ctrader_ticks', 'ctrader_volumes', 'ctrader_orderbook']:
                                 status[key]['status'] = 'Disconnected'
-                                status[key]['details'] = 'Broker not connected'
+                                status[key]['details'] = 'cTrader WebSocket service not connected'
                     else:
                         for key in ['ctrader_ticks', 'ctrader_volumes', 'ctrader_orderbook']:
                             status[key]['status'] = 'Not Initialized'
-                            status[key]['details'] = 'Broker not created'
+                            status[key]['details'] = 'cTrader WebSocket service is None'
+                else:
+                    for key in ['ctrader_ticks', 'ctrader_volumes', 'ctrader_orderbook']:
+                        status[key]['status'] = 'Not Initialized'
+                        status[key]['details'] = 'cTrader WebSocket service not created (check credentials in settings)'
             else:
                 for key in ['ctrader_ticks', 'ctrader_volumes', 'ctrader_orderbook']:
                     status[key]['status'] = 'Disabled'

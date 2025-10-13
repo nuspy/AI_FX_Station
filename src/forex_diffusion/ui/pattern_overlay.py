@@ -170,11 +170,10 @@ class PyQtGraphAxesWrapper:
     def annotate(self, text, xy, xytext=None, **kwargs):
         """Add arrow annotation - matplotlib compatible
 
-        For PyQtGraph, we draw a simple vertical line with an arrow symbol
-        instead of complex ArrowItem which doesn't render well.
+        For PyQtGraph, we draw a line with a triangle symbol as arrowhead.
         """
         import pyqtgraph as pg
-        from PySide6.QtGui import QColor, QPen
+        from PySide6.QtGui import QColor, QPen, QBrush
         from PySide6.QtCore import Qt
 
         arrowprops = kwargs.get('arrowprops', {})
@@ -182,7 +181,7 @@ class PyQtGraphAxesWrapper:
             # Just text annotation without arrow
             return self.text(xy[0], xy[1], text, **kwargs)
 
-        # Draw simplified arrow: vertical line + triangle symbol
+        # Draw arrow with line + triangle arrowhead
         if xytext is None:
             xytext = xy
 
@@ -192,34 +191,62 @@ class PyQtGraphAxesWrapper:
         # Extract arrow properties
         color = arrowprops.get('color', '#FFFFFF')
         linewidth = arrowprops.get('lw', 1.2)
-        alpha = kwargs.get('alpha', 1.0)
+        linestyle = arrowprops.get('linestyle', '--')
+        alpha = arrowprops.get('alpha', 0.8)
 
         # Convert color
         qcolor = QColor(color)
         qcolor.setAlphaF(alpha)
         pen = QPen(qcolor)
         pen.setWidthF(linewidth)
-        pen.setStyle(Qt.PenStyle.DashLine)  # Dashed line
+
+        # Convert linestyle
+        if linestyle == '--':
+            pen.setStyle(Qt.PenStyle.DashLine)
+        elif linestyle == ':':
+            pen.setStyle(Qt.PenStyle.DotLine)
+        else:
+            pen.setStyle(Qt.PenStyle.SolidLine)
 
         # Draw vertical line from badge to target price
         line = pg.PlotCurveItem(
-            x=[x1, x1],
+            x=[x0, x1],
             y=[y0, y1],
             pen=pen
         )
-        line.setZValue(119)
-
+        line.setZValue(118)
         self.plot_item.addItem(line)
         self._pattern_items.append(line)
 
-        # Note: Arrow symbol removed - only vertical dashed line remains
-        # Symbols ('t', 't3') were causing yellow squares to appear
-        # The vertical line with text label is sufficient for TP/SL markers
+        # Draw arrowhead as a triangle symbol at the target point
+        # Determine triangle orientation based on direction
+        dy = y1 - y0
+        if dy > 0:
+            # Pointing up
+            symbol = 't'  # Triangle up
+        else:
+            # Pointing down
+            symbol = 't1'  # Triangle down
+
+        # Create scatter plot for arrowhead
+        arrow_scatter = pg.ScatterPlotItem(
+            x=[x1],
+            y=[y1],
+            size=10,  # Size of triangle
+            symbol=symbol,
+            brush=QBrush(qcolor),
+            pen=QPen(qcolor)
+        )
+        arrow_scatter.setZValue(119)
+
+        self.plot_item.addItem(arrow_scatter)
+        self._pattern_items.append(arrow_scatter)
 
         # Return fake annotation for compatibility
         class FakeAnnotation:
-            def __init__(self, line_item):
+            def __init__(self, line_item, arrow_item):
                 self._line = line_item
+                self._arrow = arrow_item
             def remove(self):
                 # Cleanup handled by clear_pattern_overlays
                 pass
@@ -227,10 +254,11 @@ class PyQtGraphAxesWrapper:
                 # Support visibility toggle
                 try:
                     self._line.setVisible(visible)
+                    self._arrow.setVisible(visible)
                 except Exception:
                     pass
 
-        return FakeAnnotation(line)
+        return FakeAnnotation(line, arrow_scatter)
 
     def text(self, x, y, text, **kwargs):
         """Add text annotation - matplotlib compatible"""
@@ -344,8 +372,11 @@ class PyQtGraphAxesWrapper:
     def _on_scatter_hovered(self, scatter_item, points):
         """Handle hover over pattern badge scatter plot"""
         try:
+            logger.debug(f"Hover event: scatter_item={id(scatter_item)}, points={len(points)}")
+
             if len(points) == 0:
                 # Mouse left the scatter - hide tooltip
+                logger.debug("Mouse left scatter, hiding tooltip")
                 if self._tooltip_item:
                     self._tooltip_item.setVisible(False)
                 self._hover_scatter = None
@@ -354,6 +385,7 @@ class PyQtGraphAxesWrapper:
             # Get associated event data
             event_data = self._clickable_items.get(id(scatter_item))
             if event_data is None:
+                logger.warning(f"No event data for scatter item {id(scatter_item)}, available IDs: {list(self._clickable_items.keys())}")
                 return
 
             # Get pattern label
@@ -361,6 +393,8 @@ class PyQtGraphAxesWrapper:
                 label = self._renderer_ref._pattern_label(event_data)
             else:
                 label = getattr(event_data, 'name', 'Pattern')
+
+            logger.debug(f"Showing tooltip with label: {label}")
 
             # Create or update tooltip
             if self._tooltip_item is None:
@@ -374,17 +408,22 @@ class PyQtGraphAxesWrapper:
                 self._tooltip_item.setZValue(1000)  # Very high z-order
                 self.plot_item.addItem(self._tooltip_item)
                 self._pattern_items.append(self._tooltip_item)
+                logger.debug("Created new tooltip item")
             else:
                 self._tooltip_item.setText(label)
+                logger.debug("Updated existing tooltip text")
 
             # Position tooltip near the hovered point
             point = points[0]
-            self._tooltip_item.setPos(point.pos().x(), point.pos().y())
+            pos_x = point.pos().x()
+            pos_y = point.pos().y()
+            self._tooltip_item.setPos(pos_x, pos_y)
             self._tooltip_item.setVisible(True)
             self._hover_scatter = scatter_item
+            logger.debug(f"Positioned tooltip at ({pos_x}, {pos_y}), visible={self._tooltip_item.isVisible()}")
 
         except Exception as e:
-            logger.debug(f"Error handling scatter hover: {e}")
+            logger.exception(f"Error handling scatter hover: {e}")
 
     def clear_pattern_overlays(self):
         """Remove all pattern overlay items"""
@@ -607,8 +646,23 @@ class PatternOverlayRenderer:
             ax.figure.canvas.draw_idle()
             return
 
+        # Get x-axis range for debugging
+        xmin, xmax = ax.get_xlim()
+        logger.debug(f"PatternOverlay: x-axis range = [{xmin}, {xmax}]")
+
+        # Log event timestamps for debugging historical range
+        if len(evs) > 0:
+            event_times = []
+            for e in evs[:min(5, len(evs))]:  # Log first 5 events
+                ts = getattr(e, "confirm_ts", getattr(e, "ts", None))
+                if ts:
+                    event_times.append(str(ts))
+            logger.debug(f"PatternOverlay: Sample event timestamps: {event_times}")
+
         # Normalizza e filtra densità
         norm = self._normalize_events(ax, evs)
+        logger.debug(f"PatternOverlay: {len(norm)} events normalized (from {len(evs)} input events)")
+
         kept = self._density_filter(ax, norm)
         mode = self._axis_mode(ax)
         logger.info(f"PatternOverlay: drawing {len(kept)}/{len(evs)} events on ax=Axes (mode={mode})")
@@ -750,6 +804,10 @@ class PatternOverlayRenderer:
             x = x_ms
         else:
             x = x_date if d_date <= d_ms else x_ms
+
+        # Debug logging for patterns outside visible range (suppressed - too spammy)
+        # Will be reported in summary by _normalize_events()
+
         return x
 
     # ---------- Event normalization & density ----------
@@ -802,6 +860,10 @@ class PatternOverlayRenderer:
 
     def _normalize_events(self, ax: mpla.Axes, evs):
         norm = []
+        skipped_count = 0
+        xmin, xmax = ax.get_xlim()
+        outside_range_count = 0
+
         for e in evs:
             label = self._pattern_label(e)
             ts = getattr(e, "confirm_ts", getattr(e, "ts", None))
@@ -816,7 +878,30 @@ class PatternOverlayRenderer:
                 y = np.nan
 
             if not np.isnan(x) and not np.isnan(y):
-                norm.append((x, y, label, kind, direction, e))
+                # Check if inside visible range
+                if xmin <= x <= xmax:
+                    norm.append((x, y, label, kind, direction, e))
+                else:
+                    outside_range_count += 1
+                    if outside_range_count <= 3:  # Log first few
+                        logger.debug(
+                            f"Pattern outside range: label={label}, ts={ts}, x={x:.2f} "
+                            f"(range=[{xmin:.2f}, {xmax:.2f}])"
+                        )
+            else:
+                skipped_count += 1
+                if skipped_count <= 3:  # Log first few skipped events
+                    logger.debug(f"Skipped event: x={x}, y={y}, ts={ts}, px={px}, label={label}")
+
+        if skipped_count > 0:
+            logger.debug(f"_normalize_events: skipped {skipped_count}/{len(evs)} events with invalid x or y coordinates")
+
+        if outside_range_count > 0:
+            logger.warning(
+                f"⚠️  {outside_range_count}/{len(evs)} patterns are OUTSIDE the visible chart range "
+                f"[{xmin:.2f}, {xmax:.2f}]. "
+                f"Zoom out or scroll the chart to see older patterns."
+            )
 
         try:
             norm.sort(key=lambda t: float(t[0]), reverse=True)
@@ -845,7 +930,67 @@ class PatternOverlayRenderer:
                 kept.append((x, y, label, kind, direction, e))
             if len(kept) >= MAX_OVERLAYS:
                 break
+
+        # Apply side-by-side layout for overlapping badges
+        kept = self._layout_overlapping_badges(kept, step)
         return kept
+
+    def _layout_overlapping_badges(self, patterns, step):
+        """
+        Detect overlapping patterns and reposition them side-by-side horizontally.
+
+        Returns list of (x, y, label, kind, direction, e) with adjusted x positions.
+        """
+        if len(patterns) <= 1:
+            return patterns
+
+        # Overlap threshold: patterns within this distance are considered overlapping
+        overlap_threshold = step * 0.5  # Half a candle width
+
+        # Group patterns that overlap
+        groups = []
+        for pattern in patterns:
+            x, y, label, kind, direction, e = pattern
+
+            # Find if this pattern belongs to an existing group
+            found_group = False
+            for group in groups:
+                # Check if pattern overlaps with any pattern in the group
+                for gx, gy, glabel, gkind, gdir, ge in group:
+                    if abs(x - gx) < overlap_threshold and abs(y - gy) < (y * 0.0001):  # 0.01% price tolerance
+                        group.append(pattern)
+                        found_group = True
+                        break
+                if found_group:
+                    break
+
+            if not found_group:
+                groups.append([pattern])
+
+        # Reposition patterns in each group side-by-side
+        result = []
+        offset_distance = step * 0.3  # Distance between badges (30% of candle width)
+
+        for group in groups:
+            if len(group) == 1:
+                # No overlap, keep original position
+                result.append(group[0])
+            else:
+                # Multiple overlapping patterns - position them side-by-side
+                # Calculate center position
+                center_x = sum(p[0] for p in group) / len(group)
+                center_y = sum(p[1] for p in group) / len(group)
+
+                # Calculate starting x position (leftmost)
+                total_width = (len(group) - 1) * offset_distance
+                start_x = center_x - total_width / 2
+
+                # Reposition each pattern
+                for i, (x, y, label, kind, direction, e) in enumerate(group):
+                    new_x = start_x + i * offset_distance
+                    result.append((new_x, center_y, label, kind, direction, e))
+
+        return result
 
     # ---------- Drawing ----------
     def _clear_all(self) -> None:
@@ -871,9 +1016,10 @@ class PatternOverlayRenderer:
         color = self._direction_color(direction)
 
         # Draw only a circle marker - no text label initially
-        ms = 12.0  # Slightly larger for visibility
+        # Reduced to 1/5 of original size per user request
+        ms = 2.4  # Was 12.0, now reduced to 1/5
         ln = ax.plot([x], [y], marker="o", markersize=ms, markerfacecolor=color,
-                     markeredgecolor="white", markeredgewidth=1.5, zorder=120, picker=HIT_RADIUS_PX)[0]
+                     markeredgecolor="none", markeredgewidth=0, zorder=120, picker=HIT_RADIUS_PX)[0]
 
         self._badges.append(ln)
         self._artist_map[ln] = event_obj
@@ -888,48 +1034,93 @@ class PatternOverlayRenderer:
                     break
 
     def _draw_target_arrow(self, x: float, y: float, direction: str, e: object) -> None:
-        """Draw yellow label for target price (take profit) - no vertical line"""
+        """Draw yellow arrow and label for target price (take profit)"""
         target = getattr(e, "target_price", None)
         if target is None:
+            logger.debug(f"No target_price for pattern {getattr(e, 'pattern_key', 'unknown')}, skipping TP arrow")
             return
         try:
             ty = float(target)
-        except Exception:
+        except Exception as ex:
+            logger.debug(f"Failed to convert target_price {target} to float: {ex}")
             return
+
+        logger.debug(f"Drawing TP arrow: x={x}, y={y}, ty={ty}, direction={direction}")
+
         ax = self.ax
 
-        # Yellow label for target (take profit) - NO arrow/line
+        # Yellow color for TP
         color = "#FFD700"  # Gold/Yellow
         dy = ty - y
 
-        # Only draw text label at target price
+        # Use annotate() to draw arrow from badge to target price
+        arrow = ax.annotate(
+            "",  # No text on the arrow itself
+            xy=(x, ty),  # Arrow points to target price
+            xytext=(x, y),  # Arrow starts from badge position
+            arrowprops=dict(
+                arrowstyle='->',  # Simple arrow
+                color=color,
+                lw=1.5,
+                alpha=0.8,
+                linestyle='--'
+            ),
+            zorder=118
+        )
+        self._arrows.append(arrow)
+        logger.debug(f"Added TP arrow to _arrows list (now {len(self._arrows)} arrows)")
+
+        # Draw text label at target price
         lab = ax.text(x, ty, f"TP: {ty:.5f}", fontsize=8, color=color,
                       va="bottom" if dy>0 else "top", ha="left",
                       bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
                       zorder=119)
         self._arrows.append(lab)
+        logger.debug(f"Added TP label to _arrows list (now {len(self._arrows)} arrows total)")
 
     def _draw_invalidation_arrow(self, x: float, y: float, direction: str, e: object) -> None:
-        """Draw red label for invalidation price (stop loss) - no vertical line"""
+        """Draw red arrow and label for invalidation price (stop loss)"""
         failure_price = getattr(e, "failure_price", None)
         if failure_price is None:
+            logger.debug(f"No failure_price for pattern {getattr(e, 'pattern_key', 'unknown')}, skipping SL arrow")
             return
         try:
             fp = float(failure_price)
-        except Exception:
+        except Exception as ex:
+            logger.debug(f"Failed to convert failure_price {failure_price} to float: {ex}")
             return
 
+        logger.debug(f"Drawing SL arrow: x={x}, y={y}, fp={fp}, direction={direction}")
+
         ax = self.ax
-        # Red label for invalidation (stop loss) - NO arrow/line
+        # Red color for SL
         color = "#FF4444"  # Bright red
 
-        # Only draw text label at invalidation price
+        # Use annotate() to draw arrow from badge to failure price
+        arrow = ax.annotate(
+            "",  # No text on the arrow itself
+            xy=(x, fp),  # Arrow points to failure price
+            xytext=(x, y),  # Arrow starts from badge position
+            arrowprops=dict(
+                arrowstyle='->',  # Simple arrow
+                color=color,
+                lw=1.5,
+                alpha=0.8,
+                linestyle='--'
+            ),
+            zorder=118
+        )
+        self._arrows.append(arrow)
+        logger.debug(f"Added SL arrow to _arrows list (now {len(self._arrows)} arrows)")
+
+        # Draw text label at invalidation price
         label = ax.text(x, fp, f"SL: {fp:.5f}", fontsize=8, color=color,
                        va="bottom" if fp < y else "top", ha="left",
                        bbox=dict(boxstyle="round,pad=0.2", fc="black", ec=color, lw=0.8, alpha=0.9),
                        zorder=120)
 
         self._arrows.append(label)
+        logger.debug(f"Added SL label to _arrows list (now {len(self._arrows)} arrows total)")
 
     def _draw_invalidation_timeline(self, x: float, y: float, direction: str, e: object) -> None:
         """Draw gray 50% opacity line indicating maximum invalidation time"""
@@ -977,8 +1168,8 @@ class PatternOverlayRenderer:
                     # Add small label at the end
                     label = ax.text(end_x, fp, "50%", fontsize=6, color='gray',
                                   va="bottom", ha="left", alpha=0.7,
-                                  bbox=dict(boxstyle="round,pad=0.1", fc="white",
-                                          ec="gray", lw=0.5, alpha=0.5),
+                                  bbox=dict(boxstyle="round,pad=0.1", fc="none",
+                                          ec="gray", lw=0.5, alpha=0.7),
                                   zorder=110)
 
                     self._arrows.extend(line + [label])

@@ -52,7 +52,7 @@ class CTraderWebSocketService:
         client_id: str,
         client_secret: str,
         access_token: str,
-        account_id: int,
+        account_id,  # Accept str or int - will be converted as needed
         db_engine,
         environment: str = "demo",
         symbols: Optional[List[str]] = None
@@ -64,7 +64,7 @@ class CTraderWebSocketService:
             client_id: cTrader application client ID
             client_secret: cTrader application client secret
             access_token: OAuth access token
-            account_id: cTrader trading account ID
+            account_id: cTrader trading account ID (can be string like "a.taini" or int like 12345)
             db_engine: SQLAlchemy engine for database operations
             environment: 'demo' or 'live'
             symbols: List of symbols to stream (default: ['EURUSD', 'GBPUSD'])
@@ -78,7 +78,33 @@ class CTraderWebSocketService:
         self.client_id = client_id
         self.client_secret = client_secret
         self.access_token = access_token
-        self.account_id = account_id
+
+        # Account ID handling:
+        # - If numeric (int or numeric string), use it directly
+        # - If non-numeric (like "a.taini"), fetch account list from cTrader API
+        self.account_id_raw = account_id  # Store original value
+        self.account_id: Optional[int] = None  # Will be set after fetching accounts
+        self.auto_fetch_account = False
+
+        if isinstance(account_id, str):
+            try:
+                # Try to parse as integer
+                self.account_id = int(account_id)
+                logger.debug(f"Using numeric account_id: {self.account_id}")
+            except ValueError:
+                # Non-numeric string (like "a.taini") - we'll fetch the account list
+                logger.info(
+                    f"Account ID '{account_id}' is not numeric. "
+                    f"Will automatically fetch account list from cTrader API."
+                )
+                self.auto_fetch_account = True
+        elif isinstance(account_id, int):
+            self.account_id = account_id
+        else:
+            # None or other type - will fetch account list
+            logger.info("No account ID provided. Will fetch account list from cTrader API.")
+            self.auto_fetch_account = True
+
         self.db_engine = db_engine
         self.environment = environment
         self.symbols = symbols or ['EURUSD', 'GBPUSD', 'USDJPY']
@@ -91,6 +117,7 @@ class CTraderWebSocketService:
         self.connected = False
         self.authenticated = False
         self.subscribed_symbols: Dict[str, int] = {}  # symbol -> symbol_id
+        self._skip_depth_quotes = False  # Flag to skip depth quotes if not supported
 
         # Message queue for asyncio communication
         self.message_queue: asyncio.Queue = None
@@ -222,7 +249,24 @@ class CTraderWebSocketService:
         """
         self.connected = False
         self.authenticated = False
-        logger.warning(f"WebSocket disconnected from cTrader: {reason}")
+
+        reason_str = str(reason)
+
+        # Check if disconnection is due to depth quotes timeout (common for demo accounts)
+        if 'TimeoutError' in reason_str or 'Deferred' in reason_str:
+            logger.warning(
+                f"⚠️  WebSocket disconnected due to timeout: {reason}\n"
+                f"This is often caused by depth quotes (DOM) subscription not being supported.\n"
+                f"The service will reconnect without attempting depth quotes subscription."
+            )
+            # Mark that we shouldn't try depth quotes on next connection
+            self._skip_depth_quotes = True
+        elif 'ConnectionDone' in reason_str:
+            logger.info(f"WebSocket connection closed cleanly: {reason}")
+        else:
+            logger.warning(f"WebSocket disconnected from cTrader: {reason}")
+
+        # Auto-reconnect will be handled by ReconnectingClientFactory
 
     def _authenticate(self):
         """Authenticate with cTrader API."""
@@ -238,9 +282,76 @@ class CTraderWebSocketService:
         except Exception as e:
             logger.error(f"Authentication error: {e}")
 
+    def _fetch_account_list(self):
+        """Fetch list of trading accounts from cTrader API."""
+        try:
+            logger.info("Fetching account list from cTrader API...")
+            account_list_req = Messages.ProtoOAGetAccountListByAccessTokenReq()
+            account_list_req.accessToken = self.access_token
+
+            self.client.send(account_list_req)
+            logger.info("Sent account list request")
+
+        except Exception as e:
+            logger.error(f"Error fetching account list: {e}")
+
+    def _handle_account_list(self, message):
+        """Handle account list response and select account to use."""
+        try:
+            if not hasattr(message, 'ctidTraderAccount') or len(message.ctidTraderAccount) == 0:
+                logger.error("No trading accounts found for this access token")
+                return
+
+            # List all available accounts
+            logger.info(f"Found {len(message.ctidTraderAccount)} trading account(s):")
+            for i, account in enumerate(message.ctidTraderAccount):
+                account_id = account.ctidTraderAccountId
+                is_live = account.isLive if hasattr(account, 'isLive') else False
+                account_type = "LIVE" if is_live else "DEMO"
+                logger.info(f"  [{i+1}] Account ID: {account_id} (Type: {account_type})")
+
+            # Select the first account that matches our environment
+            selected_account = None
+            is_demo_env = (self.environment.lower() == "demo")
+
+            for account in message.ctidTraderAccount:
+                is_live = account.isLive if hasattr(account, 'isLive') else False
+                # Match account type with environment
+                if is_demo_env and not is_live:
+                    selected_account = account
+                    break
+                elif not is_demo_env and is_live:
+                    selected_account = account
+                    break
+
+            # If no matching account, use the first one
+            if not selected_account:
+                logger.warning(
+                    f"No {self.environment} account found. Using first available account."
+                )
+                selected_account = message.ctidTraderAccount[0]
+
+            self.account_id = selected_account.ctidTraderAccountId
+            is_live = selected_account.isLive if hasattr(selected_account, 'isLive') else False
+            account_type = "LIVE" if is_live else "DEMO"
+
+            logger.info(
+                f"✓ Selected account: {self.account_id} (Type: {account_type})"
+            )
+
+            # Now authorize this account
+            reactor.callLater(0, self._authorize_account)
+
+        except Exception as e:
+            logger.error(f"Error handling account list: {e}")
+
     def _authorize_account(self):
         """Authorize trading account after application auth."""
         try:
+            if self.account_id is None:
+                logger.error("Cannot authorize account: account_id is None")
+                return
+
             account_auth_req = Messages.ProtoOAAccountAuthReq()
             account_auth_req.ctidTraderAccountId = self.account_id
             account_auth_req.accessToken = self.access_token
@@ -268,16 +379,35 @@ class CTraderWebSocketService:
     def _subscribe_to_depth_quotes(self, symbol_ids: List[int]):
         """Subscribe to depth quotes (order book / DOM)."""
         try:
-            for symbol_id in symbol_ids:
-                depth_req = Messages.ProtoOASubscribeDepthQuotesReq()
-                depth_req.ctidTraderAccountId = self.account_id
-                depth_req.symbolId.append(symbol_id)
+            if not symbol_ids:
+                logger.warning("No symbol IDs to subscribe for depth quotes")
+                return
 
-                self.client.send(depth_req)
-                logger.info(f"Subscribed to depth quotes for symbol ID {symbol_id}")
+            logger.info(f"Attempting to subscribe to depth quotes for {len(symbol_ids)} symbols: {symbol_ids}")
+
+            # Create ONE request with ALL symbol IDs (symbolId is a repeated field)
+            depth_req = Messages.ProtoOASubscribeDepthQuotesReq()
+            depth_req.ctidTraderAccountId = self.account_id
+
+            # Add all symbol IDs to the repeated field
+            for symbol_id in symbol_ids:
+                depth_req.symbolId.append(symbol_id)
+                logger.debug(f"Added symbol ID {symbol_id} to depth quotes subscription")
+
+            # Send ONE request with all symbols
+            logger.info(
+                f"Sending depth quotes subscription request: "
+                f"account={self.account_id}, symbolIds={list(depth_req.symbolId)}"
+            )
+            self.client.send(depth_req)
+            logger.info(f"✓ Sent depth quotes subscription request for {len(symbol_ids)} symbols")
 
         except Exception as e:
-            logger.error(f"Depth subscription error: {e}")
+            logger.exception(f"Depth subscription error: {e}")
+            logger.error(
+                f"⚠️  Failed to subscribe to depth quotes. "
+                f"Please verify your cTrader account has DOM access enabled."
+            )
 
     def _on_message_received(self, client, message):
         """
@@ -292,10 +422,22 @@ class CTraderWebSocketService:
         try:
             payload_type = message.payloadType
 
+            # Log all message types for debugging
+            message_type_name = str(payload_type).split('.')[-1] if hasattr(payload_type, '__class__') else str(payload_type)
+            logger.debug(f"Received message: {message_type_name} (type={payload_type})")
+
             # Application auth response
             if payload_type == Messages.ProtoOAApplicationAuthRes:
                 logger.info("✓ Application authenticated")
-                reactor.callLater(0, self._authorize_account)
+                # If we need to fetch account list, do it now; otherwise authorize directly
+                if self.auto_fetch_account:
+                    reactor.callLater(0, self._fetch_account_list)
+                else:
+                    reactor.callLater(0, self._authorize_account)
+
+            # Account list response
+            elif payload_type == Messages.ProtoOAGetAccountListByAccessTokenRes:
+                self._handle_account_list(message)
 
             # Account auth response
             elif payload_type == Messages.ProtoOAAccountAuthRes:
@@ -309,21 +451,40 @@ class CTraderWebSocketService:
 
             # Depth quotes subscription response
             elif payload_type == Messages.ProtoOASubscribeDepthQuotesRes:
-                logger.info("✓ Subscribed to depth quotes")
+                logger.info("✓ Successfully subscribed to depth quotes (DOM streaming active)")
 
             # Depth event (order book update)
             elif payload_type == Messages.ProtoOADepthEvent:
+                logger.debug("Received ProtoOADepthEvent - processing order book update")
                 self._handle_depth_event(message)
 
             # Execution event (for sentiment tracking)
             elif payload_type == Messages.ProtoOAExecutionEvent:
+                logger.debug("Received ProtoOAExecutionEvent - processing trade execution")
                 self._handle_execution_event(message)
 
             # Error response
             elif payload_type == Messages.ProtoOAErrorRes:
                 error_code = message.errorCode if hasattr(message, 'errorCode') else 'unknown'
                 error_desc = message.description if hasattr(message, 'description') else ''
-                logger.error(f"cTrader error: {error_code} - {error_desc}")
+
+                # Check if it's a depth quotes subscription error
+                if 'DEPTH' in str(error_desc).upper() or 'DOM' in str(error_desc).upper():
+                    logger.warning(
+                        f"⚠️  Depth quotes (DOM) not available: {error_code} - {error_desc}\n"
+                        f"This is normal for demo accounts or accounts without DOM access.\n"
+                        f"Trading and pattern detection will continue without real-time order book data."
+                    )
+                else:
+                    logger.error(f"cTrader error: {error_code} - {error_desc}")
+
+            # Heartbeat (keep-alive)
+            elif payload_type == ProtoHeartbeatEvent:
+                logger.debug("Received heartbeat")
+
+            # Unknown message type
+            else:
+                logger.debug(f"Unhandled message type: {message_type_name} (type={payload_type})")
 
         except Exception as e:
             logger.exception(f"Error handling message: {e}")
@@ -348,8 +509,15 @@ class CTraderWebSocketService:
                         break
 
             if symbol_ids:
-                # Subscribe to depth quotes (order books) for these symbols
-                reactor.callLater(0, lambda: self._subscribe_to_depth_quotes(symbol_ids))
+                # Subscribe to depth quotes only if not skipped (e.g., after timeout)
+                if self._skip_depth_quotes:
+                    logger.info(
+                        f"⏭️  Skipping depth quotes subscription (not supported by this account). "
+                        f"Subscribed to {len(symbol_ids)} symbols for price/volume streaming only."
+                    )
+                else:
+                    # Subscribe to depth quotes (order books) for these symbols
+                    reactor.callLater(0, lambda: self._subscribe_to_depth_quotes(symbol_ids))
 
         except Exception as e:
             logger.error(f"Error handling symbols list: {e}")

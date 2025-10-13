@@ -150,11 +150,17 @@ class PatternsService(ChartServiceBase):
             _cfg = {}
 
         cur = (_cfg.get('patterns',{}).get('current_scan',{}) or {})
-        minutes = int(cur.get('interval_minutes', 5))
+        # Support both interval_seconds (preferred) and interval_minutes (legacy)
+        if 'interval_seconds' in cur:
+            interval_ms = int(cur.get('interval_seconds', 10)) * 1000
+        else:
+            # Legacy: interval_minutes (default 5 minutes is too slow for real-time)
+            # Use 10 seconds for real-time detection
+            interval_ms = int(cur.get('interval_minutes', 0)) * 60 * 1000 if cur.get('interval_minutes') else 10000
 
         # Create workers and move to threads
-        self._chart_worker = ScanWorker(self, 'chart', minutes*60*1000)
-        self._candle_worker = ScanWorker(self, 'candle', minutes*60*1000)
+        self._chart_worker = ScanWorker(self, 'chart', interval_ms)
+        self._candle_worker = ScanWorker(self, 'candle', interval_ms)
 
         self._chart_worker.moveToThread(self._chart_thread)
         self._candle_worker.moveToThread(self._candle_thread)
@@ -211,7 +217,18 @@ class PatternsService(ChartServiceBase):
         self._detection_thread.start()
         self._multithread_detection_thread.start()
 
-        self._threads_started = False
+        # Start real-time pattern scan threads
+        self._chart_thread.start()
+        self._candle_thread.start()
+
+        # Log interval in human-readable format
+        if interval_ms < 60000:
+            interval_str = f"{interval_ms / 1000:.0f} seconds"
+        else:
+            interval_str = f"{interval_ms / 60000:.1f} minutes"
+        logger.info(f"Started real-time pattern scan threads (interval: {interval_str})")
+
+        self._threads_started = True
 
     @Slot(int, str)
     def _on_detection_progress(self, percentage: float, status: str) -> None:
@@ -785,18 +802,42 @@ class PatternsService(ChartServiceBase):
         except Exception as e:
             logger.debug(f"Error in timer scan ({kind}): {e}")
 
-    def _quick_pattern_scan(self, dfN: pd.DataFrame, kind: str) -> None:
-        """Ultra-lightweight pattern scan - DISABLED to prevent GUI blocking"""
+    def _quick_pattern_scan(self, dfN: pd.DataFrame, kind: str) -> List[PatternEvent]:
+        """Ultra-lightweight pattern scan - only scans last N candles for real-time detection"""
         try:
-            # TEMPORARY: Disable pattern detection completely to prevent GUI blocking
-            # The detector.detect() calls on 7324 rows are too heavy for main thread
-            logger.debug(f"Pattern detection temporarily disabled to prevent GUI blocking ({kind})")
-            return []
+            # Only process last 100 candles for real-time detection (fast, no GUI blocking)
+            REALTIME_LOOKBACK = 100
+            if len(dfN) > REALTIME_LOOKBACK:
+                df_recent = dfN.tail(REALTIME_LOOKBACK).copy()
+            else:
+                df_recent = dfN.copy()
 
-            # TODO: Implement proper background processing with:
-            # 1. QThread with proper signal/slot communication
-            # 2. Or chunked processing with QTimer.singleShot(0, ...)
-            # 3. Or only process last N candles instead of full dataset
+            logger.debug(f"Quick pattern scan for {kind} on last {len(df_recent)} candles (of {len(dfN)} total)")
+
+            # Get detectors for this pattern type
+            detectors = self.chart_detectors if kind == 'chart' else self.candle_detectors
+            if not detectors:
+                return []
+
+            # Run detection synchronously on recent data only
+            all_events = []
+            for detector in detectors:
+                try:
+                    # Check if detector is enabled
+                    det_name = getattr(detector, '__class__', type(detector)).__name__
+                    if not self._is_pattern_enabled(det_name):
+                        continue
+
+                    # Detect patterns on recent data
+                    events = detector.detect(df_recent)
+                    if events:
+                        all_events.extend(events)
+                        logger.debug(f"Quick scan found {len(events)} {det_name} patterns")
+                except Exception as e:
+                    logger.debug(f"Quick scan detector error: {e}")
+                    continue
+
+            return all_events
 
         except Exception as e:
             logger.debug(f"Quick pattern scan error: {e}")
@@ -961,7 +1002,9 @@ class PatternsService(ChartServiceBase):
                 detection_tasks = []
                 for det in dets:
                     detector_key = getattr(det, 'key', 'unknown')
-                    detector_df = self._apply_boundary_to_df(dfN, detector_key, timeframe, boundary_config)
+                    # For historical scan, DO NOT apply boundary - use full filtered range
+                    # Boundary is only for real-time detection to prevent GUI blocking
+                    detector_df = dfN  # Use full historical dataframe without boundary
                     detection_tasks.append({
                         'detector': det,
                         'dataframe': detector_df,
@@ -2290,7 +2333,13 @@ class PatternsService(ChartServiceBase):
 
             # Enrich events with pattern information
             if events:
-                events = enrich_events(events, PatternInfoProvider())
+                # Get pattern_info.json path
+                import os
+                pattern_info_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
+                    'configs', 'pattern_info.json'
+                )
+                events = enrich_events(events, PatternInfoProvider(pattern_info_path))
 
                 # Update events safely on main thread
                 self._events = (self._events or []) + events
@@ -2359,7 +2408,13 @@ class PatternsService(ChartServiceBase):
 
             # Enrich events with pattern information
             if events:
-                events = enrich_events(events, PatternInfoProvider())
+                # Get pattern_info.json path
+                import os
+                pattern_info_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
+                    'configs', 'pattern_info.json'
+                )
+                events = enrich_events(events, PatternInfoProvider(pattern_info_path))
 
                 # Update events safely
                 self._events = (self._events or []) + events

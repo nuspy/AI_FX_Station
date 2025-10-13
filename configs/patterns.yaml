@@ -231,7 +231,7 @@ patterns:
     arrow_len_atr: 1.5
   current_scan:
     lookback_hours: 6
-    interval_minutes: 5
+    interval_seconds: 10  # Real-time detection every 10 seconds
 dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
