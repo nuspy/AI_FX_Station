@@ -187,7 +187,9 @@ class FeatureWindow:
                                     feature_config: Dict[str, Any]) -> pd.DataFrame:
         """Compute features incrementally where possible."""
 
-        from ..training.train_sklearn import _relative_ohlc, _temporal_feats, _realized_vol_feature, _indicators, _coerce_indicator_tfs
+        from .feature_engineering import relative_ohlc, temporal_features, realized_volatility_feature
+        from .feature_utils import coerce_indicator_tfs
+        from ..training.train_sklearn import _indicators  # TODO: Consolidate indicators after completing ISSUE-001
 
         feats_list = []
 
@@ -198,7 +200,7 @@ class FeatureWindow:
             # For incremental OHLC, we need some context for relative computation
             context_size = min(50, len(combined_data))
             context_data = combined_data.tail(context_size)
-            ohlc_feats = _relative_ohlc(context_data)
+            ohlc_feats = relative_ohlc(context_data)
 
             # Extract only the new portions
             new_start_idx = len(context_data) - len(new_candles)
@@ -208,8 +210,8 @@ class FeatureWindow:
 
         # Temporal features - can be computed on new data only
         if feature_config.get("use_temporal_features", True):
-            temporal_feats = _temporal_feats(new_candles)
-            feats_list.append(temporal_feats)
+            temp_feats = temporal_features(new_candles)
+            feats_list.append(temp_feats)
 
         # Realized volatility - needs historical context
         rv_window = feature_config.get("rv_window", 60)
@@ -217,7 +219,7 @@ class FeatureWindow:
             # Need sufficient history for realized vol computation
             rv_context_size = min(rv_window * 2, len(combined_data))
             rv_context_data = combined_data.tail(rv_context_size)
-            rv_feats = _realized_vol_feature(rv_context_data, rv_window)
+            rv_feats = realized_volatility_feature(rv_context_data, rv_window)
 
             # Extract new portions
             new_start_idx = len(rv_context_data) - len(new_candles)
@@ -227,7 +229,7 @@ class FeatureWindow:
 
         # Indicators - need historical context for proper computation
         indicator_tfs_raw = feature_config.get("indicator_tfs", {})
-        indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
+        indicator_tfs = coerce_indicator_tfs(indicator_tfs_raw)
 
         # Advanced features
         is_advanced = feature_config.get("advanced", False) or feature_config.get("use_advanced_features", False)
@@ -299,26 +301,28 @@ class FeatureWindow:
                              feature_config: Dict[str, Any]) -> pd.DataFrame:
         """Compute full feature set from scratch."""
 
-        from ..training.train_sklearn import _relative_ohlc, _temporal_feats, _realized_vol_feature, _indicators, _coerce_indicator_tfs
+        from .feature_engineering import relative_ohlc, temporal_features, realized_volatility_feature
+        from .feature_utils import coerce_indicator_tfs
+        from ..training.train_sklearn import _indicators  # TODO: Consolidate indicators after completing ISSUE-001
 
         feats_list = []
 
         # Relative OHLC
         if feature_config.get("use_relative_ohlc", True):
-            feats_list.append(_relative_ohlc(df_candles))
+            feats_list.append(relative_ohlc(df_candles))
 
         # Temporal features
         if feature_config.get("use_temporal_features", True):
-            feats_list.append(_temporal_feats(df_candles))
+            feats_list.append(temporal_features(df_candles))
 
         # Realized volatility
         rv_window = feature_config.get("rv_window", 60)
         if rv_window > 1:
-            feats_list.append(_realized_vol_feature(df_candles, rv_window))
+            feats_list.append(realized_volatility_feature(df_candles, rv_window))
 
         # Indicators
         indicator_tfs_raw = feature_config.get("indicator_tfs", {})
-        indicator_tfs = _coerce_indicator_tfs(indicator_tfs_raw)
+        indicator_tfs = coerce_indicator_tfs(indicator_tfs_raw)
 
         # Advanced features
         is_advanced = feature_config.get("advanced", False) or feature_config.get("use_advanced_features", False)
