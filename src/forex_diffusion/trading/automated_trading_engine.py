@@ -33,7 +33,7 @@ try:
     from ..risk.position_sizer import PositionSizer, BacktestTradeHistory
     from ..execution.smart_execution import SmartExecutionOptimizer
     from ..services.parameter_loader import ParameterLoaderService
-    from ..services.dom_aggregator import DOMAggreg atorService
+    from ..services.dom_aggregator import DOMAggregatorService
 except ImportError:
     pass
 
@@ -176,10 +176,10 @@ class AutomatedTradingEngine:
                 logger.warning(f"Could not initialize Parameter Loader: {e}. Using defaults.")
 
         # DOM Aggregator Service
-        self.dom_service: Optional[DOMAggreg atorService] = None
+        self.dom_service: Optional[DOMAggregatorService] = None
         if config.use_dom_data and config.db_engine:
             try:
-                self.dom_service = DOMAggreg atorService(
+                self.dom_service = DOMAggregatorService(
                     engine=config.db_engine,
                     symbols=config.symbols
                 )
