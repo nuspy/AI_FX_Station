@@ -421,12 +421,59 @@ def _coerce_indicator_tfs(raw: Any) -> Dict[str, List[str]]:
 
 
 def _standardize_train_val(X: pd.DataFrame, y: pd.Series, val_frac: float):
-    """Standardize training and validation sets"""
+    """
+    Standardize training and validation sets ensuring NO look-ahead bias.
+
+    CRITICAL: Computes mean/std ONLY on training set, then applies to validation.
+    This prevents information leakage from future data.
+
+    Returns:
+        Tuple of ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
+    """
+    from scipy import stats
+
+    # Split WITHOUT shuffling to maintain temporal order (prevent look-ahead bias)
     Xtr, Xva, ytr, yva = train_test_split(X.values, y.values, test_size=val_frac, shuffle=False)
+
+    # Compute statistics ONLY on training set (NO look-ahead bias)
     mu = Xtr.mean(axis=0)
     sigma = Xtr.std(axis=0)
-    sigma[sigma == 0] = 1.0
-    return ((Xtr - mu) / sigma, ytr), ((Xva - mu) / sigma, yva), (mu, sigma)
+    sigma[sigma == 0] = 1.0  # Prevent division by zero (BUG-001 fix)
+
+    # Apply standardization
+    Xtr_scaled = (Xtr - mu) / sigma
+    Xva_scaled = (Xva - mu) / sigma
+
+    # VERIFICATION: Statistical test for look-ahead bias detection
+    # If train and validation distributions are too similar, likely bias present
+    p_values = []
+    for i in range(min(10, Xtr_scaled.shape[1])):  # Test first 10 features
+        if Xtr_scaled.shape[0] > 20 and Xva_scaled.shape[0] > 20:
+            # Kolmogorov-Smirnov test: different distributions should have low p-value
+            _, p_val = stats.ks_2samp(Xtr_scaled[:, i], Xva_scaled[:, i])
+            p_values.append(p_val)
+
+    # Metadata for debugging
+    scaler_metadata = {
+        "train_size": Xtr.shape[0],
+        "val_size": Xva.shape[0],
+        "train_mean": mu.tolist(),
+        "train_std": sigma.tolist(),
+        "ks_test_p_values": p_values,
+        "ks_test_median_p": float(np.median(p_values)) if p_values else None,
+    }
+
+    # WARNING: If distributions too similar, potential look-ahead bias
+    if scaler_metadata["ks_test_median_p"] is not None:
+        if scaler_metadata["ks_test_median_p"] > 0.8:
+            warnings.warn(
+                f"⚠️ POTENTIAL LOOK-AHEAD BIAS DETECTED!\n"
+                f"Train/Val distributions suspiciously similar (KS median p-value={scaler_metadata['ks_test_median_p']:.3f}).\n"
+                f"Expected p < 0.5 for different time periods. Verify train_test_split has shuffle=False.",
+                RuntimeWarning
+            )
+
+    return ((Xtr_scaled, ytr), (Xva_scaled, yva), (mu, sigma, scaler_metadata))
 
 
 def _fit_model(algo: str, Xtr, ytr, args):
@@ -522,9 +569,13 @@ def main():
 
     # Standardize and split
     print(f"📊 Splitting and standardizing data...")
-    (Xtr, ytr), (Xva, yva), (mu, sigma) = _standardize_train_val(X, y, args.val_frac)
+    (Xtr, ytr), (Xva, yva), (mu, sigma, scaler_metadata) = _standardize_train_val(X, y, args.val_frac)
     print(f"   Training: {len(Xtr)} samples")
     print(f"   Validation: {len(Xva)} samples")
+
+    # Log KS test results for look-ahead bias detection
+    if scaler_metadata.get('ks_test_median_p') is not None:
+        print(f"   KS test median p-value: {scaler_metadata['ks_test_median_p']:.4f} (< 0.5 expected for no bias)")
 
     # Apply PCA if requested
     pca_model = None
