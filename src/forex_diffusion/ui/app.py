@@ -354,73 +354,79 @@ def setup_ui(
             result["tiingo_ws_connector"] = connector
             logger.info("Tiingo WebSocket connector started (primary provider: tiingo)")
         # cTrader WebSocket for primary provider
+        # DISABLED: CTraderProvider now handles DOM subscriptions directly to avoid conflicts
+        # Two separate Client instances (CTraderProvider + CTraderWebSocketService) caused
+        # message interception issues where CTraderProvider's client would receive all messages,
+        # preventing CTraderWebSocketService from getting responses (TimeoutError).
+        # Solution: Use CTraderProvider's built-in DOM subscription (stream_market_depth_impl).
         elif primary_provider == "ctrader":
-            ctrader_enabled = get_setting("ctrader_enabled", False)
-            if ctrader_enabled:
-                try:
-                    from ..services.ctrader_websocket import CTraderWebSocketService
-
-                    # Get cTrader credentials - try both prefixed and non-prefixed keys
-                    client_id = (get_setting("provider.ctrader.client_id", "") or
-                                get_setting("ctrader_client_id", ""))
-                    client_secret = (get_setting("provider.ctrader.client_secret", "") or
-                                    get_setting("ctrader_client_secret", ""))
-                    access_token = (get_setting("provider.ctrader.access_token", "") or
-                                   get_setting("ctrader_access_token", ""))
-                    environment = (get_setting("provider.ctrader.environment", "demo") or
-                                  get_setting("ctrader_environment", "demo"))
-
-                    # IMPORTANT: Get the authenticated account_id from CTraderProvider
-                    # CTraderProvider has already connected and fetched the numeric account ID
-                    # from cTrader API, so we reuse it instead of creating a new connection
-                    account_id = None
-                    if hasattr(market_service, 'provider') and hasattr(market_service.provider, '_account_id'):
-                        account_id = market_service.provider._account_id
-                        logger.info(f"Using authenticated account ID from CTraderProvider: {account_id}")
-                    else:
-                        # Fallback: try to get from config, but this may be a username
-                        account_id_raw = (get_setting("provider.ctrader.account_id", "") or
-                                         get_setting("ctrader_account_id", ""))
-                        if account_id_raw:
-                            account_id = account_id_raw
-                            logger.warning(f"Using account_id from config (may need auto-fetch): {account_id}")
-
-                    logger.info(f"cTrader WebSocket initialization: "
-                               f"client_id={'set' if client_id else 'missing'}, "
-                               f"client_secret={'set' if client_secret else 'missing'}, "
-                               f"access_token={'set' if access_token else 'missing'}, "
-                               f"account_id={account_id}, "
-                               f"environment={environment}")
-
-                    if client_id and client_secret and access_token and account_id:
-                        logger.info(f"Starting cTrader WebSocket with account: {account_id}")
-                        ctrader_ws = CTraderWebSocketService(
-                            client_id=client_id,
-                            client_secret=client_secret,
-                            access_token=access_token,
-                            account_id=account_id,  # Use authenticated account ID from provider
-                            db_engine=db_service.engine,
-                            environment=environment,
-                            symbols=["EURUSD", "GBPUSD", "USDJPY"]
-                        )
-                        ctrader_ws.start()
-                        result["ctrader_ws"] = ctrader_ws
-
-                        # Expose cTrader WebSocket for monitoring
-                        main_window.ctrader_ws = ctrader_ws
-
-                        logger.info(f"✓ cTrader WebSocket service started (account: {account_id}, env: {environment})")
-                    else:
-                        logger.warning("cTrader credentials incomplete - WebSocket not started")
-                        logger.warning(f"Missing credentials: "
-                                     f"client_id={'NO' if not client_id else 'OK'}, "
-                                     f"client_secret={'NO' if not client_secret else 'OK'}, "
-                                     f"access_token={'NO' if not access_token else 'OK'}, "
-                                     f"account_id={'NO' if not account_id else 'OK'}")
-                except Exception as e:
-                    logger.error(f"Failed to start cTrader WebSocket: {e}", exc_info=True)
-            else:
-                logger.info("cTrader WebSocket not started (ctrader_enabled=False)")
+            logger.info("cTrader WebSocket service disabled - CTraderProvider handles DOM subscriptions directly")
+            # ctrader_enabled = get_setting("ctrader_enabled", False)
+            # if ctrader_enabled:
+            #     try:
+            #         from ..services.ctrader_websocket import CTraderWebSocketService
+            #
+            #         # Get cTrader credentials - try both prefixed and non-prefixed keys
+            #         client_id = (get_setting("provider.ctrader.client_id", "") or
+            #                     get_setting("ctrader_client_id", ""))
+            #         client_secret = (get_setting("provider.ctrader.client_secret", "") or
+            #                         get_setting("ctrader_client_secret", ""))
+            #         access_token = (get_setting("provider.ctrader.access_token", "") or
+            #                        get_setting("ctrader_access_token", ""))
+            #         environment = (get_setting("provider.ctrader.environment", "demo") or
+            #                       get_setting("ctrader_environment", "demo"))
+            #
+            #         # IMPORTANT: Get the authenticated account_id from CTraderProvider
+            #         # CTraderProvider has already connected and fetched the numeric account ID
+            #         # from cTrader API, so we reuse it instead of creating a new connection
+            #         account_id = None
+            #         if hasattr(market_service, 'provider') and hasattr(market_service.provider, '_account_id'):
+            #             account_id = market_service.provider._account_id
+            #             logger.info(f"Using authenticated account ID from CTraderProvider: {account_id}")
+            #         else:
+            #             # Fallback: try to get from config, but this may be a username
+            #             account_id_raw = (get_setting("provider.ctrader.account_id", "") or
+            #                              get_setting("ctrader_account_id", ""))
+            #             if account_id_raw:
+            #                 account_id = account_id_raw
+            #                 logger.warning(f"Using account_id from config (may need auto-fetch): {account_id}")
+            #
+            #         logger.info(f"cTrader WebSocket initialization: "
+            #                    f"client_id={'set' if client_id else 'missing'}, "
+            #                    f"client_secret={'set' if client_secret else 'missing'}, "
+            #                    f"access_token={'set' if access_token else 'missing'}, "
+            #                    f"account_id={account_id}, "
+            #                    f"environment={environment}")
+            #
+            #         if client_id and client_secret and access_token and account_id:
+            #             logger.info(f"Starting cTrader WebSocket with account: {account_id}")
+            #             ctrader_ws = CTraderWebSocketService(
+            #                 client_id=client_id,
+            #                 client_secret=client_secret,
+            #                 access_token=access_token,
+            #                 account_id=account_id,  # Use authenticated account ID from provider
+            #                 db_engine=db_service.engine,
+            #                 environment=environment,
+            #                 symbols=["EURUSD", "GBPUSD", "USDJPY"]
+            #             )
+            #             ctrader_ws.start()
+            #             result["ctrader_ws"] = ctrader_ws
+            #
+            #             # Expose cTrader WebSocket for monitoring
+            #             main_window.ctrader_ws = ctrader_ws
+            #
+            #             logger.info(f"✓ cTrader WebSocket service started (account: {account_id}, env: {environment})")
+            #         else:
+            #             logger.warning("cTrader credentials incomplete - WebSocket not started")
+            #             logger.warning(f"Missing credentials: "
+            #                          f"client_id={'NO' if not client_id else 'OK'}, "
+            #                          f"client_secret={'NO' if not client_secret else 'OK'}, "
+            #                          f"access_token={'NO' if not access_token else 'OK'}, "
+            #                          f"account_id={'NO' if not account_id else 'OK'}")
+            #     except Exception as e:
+            #         logger.error(f"Failed to start cTrader WebSocket: {e}", exc_info=True)
+            # else:
+            #     logger.info("cTrader WebSocket not started (ctrader_enabled=False)")
         else:
             logger.info(f"Tiingo WebSocket connector NOT started (primary provider: {primary_provider})")
 

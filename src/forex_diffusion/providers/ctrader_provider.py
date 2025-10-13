@@ -93,6 +93,10 @@ class CTraderProvider(BaseProvider):
         # Rate limiting (5 req/sec for historical data)
         self._rate_limiter = deque(maxlen=5)
 
+        # DOM (market depth) data buffers
+        self._dom_buffer: Dict[str, Dict] = {}  # symbol -> latest DOM snapshot
+        self._depth_quotes: Dict[str, Dict[int, Dict]] = {}  # symbol -> {quote_id -> quote_data}
+
         # Endpoint configuration
         if self.environment == "live":
             self.host = EndPoints.PROTOBUF_LIVE_HOST
@@ -475,6 +479,102 @@ class CTraderProvider(BaseProvider):
                 logger.error(f"[{self.name}] Error converting ProtoOASpotEvent: {e}")
                 return {"type": "error", "error": str(e)}
 
+        # Handle ProtoOADepthEvent (market depth / DOM updates)
+        if msg_type == "ProtoOADepthEvent":
+            try:
+                # Get symbol name from symbolId (reverse lookup)
+                symbol_id = message.symbolId
+                symbol_name = None
+
+                # Find symbol name from cache
+                if hasattr(self, '_symbol_cache'):
+                    for name, sid in self._symbol_cache.items():
+                        if sid == symbol_id:
+                            symbol_name = name
+                            break
+
+                if not symbol_name:
+                    symbol_name = f"ID:{symbol_id}"
+
+                # Initialize depth quotes buffer for this symbol if not exists
+                if symbol_name not in self._depth_quotes:
+                    self._depth_quotes[symbol_name] = {}
+
+                # Process deleted quotes (remove from buffer)
+                if hasattr(message, 'deletedQuotes'):
+                    for quote_id in message.deletedQuotes:
+                        self._depth_quotes[symbol_name].pop(quote_id, None)
+
+                # Process new/updated quotes
+                if hasattr(message, 'newQuotes'):
+                    for quote in message.newQuotes:
+                        quote_id = quote.id
+                        # cTrader uses 100000 multiplier for prices
+                        quote_data = {
+                            'id': quote_id,
+                            'size': quote.size if hasattr(quote, 'size') else 0,
+                        }
+
+                        # Quote can be either bid or ask
+                        if hasattr(quote, 'bid') and quote.bid > 0:
+                            quote_data['bid'] = quote.bid / 100000
+                            quote_data['side'] = 'bid'
+                        elif hasattr(quote, 'ask') and quote.ask > 0:
+                            quote_data['ask'] = quote.ask / 100000
+                            quote_data['side'] = 'ask'
+
+                        self._depth_quotes[symbol_name][quote_id] = quote_data
+
+                # Build order book from current quotes
+                bids = []
+                asks = []
+
+                for quote_data in self._depth_quotes[symbol_name].values():
+                    if quote_data.get('side') == 'bid' and 'bid' in quote_data:
+                        bids.append({
+                            'price': quote_data['bid'],
+                            'size': quote_data['size']
+                        })
+                    elif quote_data.get('side') == 'ask' and 'ask' in quote_data:
+                        asks.append({
+                            'price': quote_data['ask'],
+                            'size': quote_data['size']
+                        })
+
+                # Sort bids (descending) and asks (ascending)
+                bids.sort(key=lambda x: x['price'], reverse=True)
+                asks.sort(key=lambda x: x['price'])
+
+                # Calculate DOM metrics
+                total_bid_volume = sum(b['size'] for b in bids)
+                total_ask_volume = sum(a['size'] for a in asks)
+
+                # Calculate spread if we have both bids and asks
+                spread = None
+                if bids and asks:
+                    spread = asks[0]['price'] - bids[0]['price']
+
+                # Update DOM buffer
+                dom_data = {
+                    "type": "depth",
+                    "symbol": symbol_name,
+                    "symbol_id": symbol_id,
+                    "bids": bids[:10],  # Top 10 levels
+                    "asks": asks[:10],  # Top 10 levels
+                    "total_bid_volume": total_bid_volume,
+                    "total_ask_volume": total_ask_volume,
+                    "spread": spread,
+                    "timestamp": int(time.time() * 1000),
+                }
+
+                self._dom_buffer[symbol_name] = dom_data
+
+                return dom_data
+
+            except Exception as e:
+                logger.error(f"[{self.name}] Error converting ProtoOADepthEvent: {e}")
+                return {"type": "error", "error": str(e)}
+
         # Handle other message types (placeholder)
         return {
             "type": msg_type,
@@ -754,27 +854,51 @@ class CTraderProvider(BaseProvider):
         return await self._get_historical_ticks_impl(symbol, start_ms, end_ms)
 
     async def _get_market_depth_impl(self, symbol: str, levels: int) -> Optional[Dict[str, Any]]:
-        """Get market depth (DOM) from cTrader."""
+        """
+        Get market depth (DOM) from cTrader.
+
+        Note: DOM data is streamed via subscriptions. Use get_current_dom() to access
+        the latest DOM snapshot from the buffer, or stream_market_depth() for real-time updates.
+        """
         try:
-            await self._rate_limit_wait()
+            # Check if we already have DOM data for this symbol
+            if symbol in self._dom_buffer:
+                return self._dom_buffer[symbol]
 
-            symbol_id = await self._get_symbol_id(symbol)
-
-            # Subscribe to depth of market
-            request = Messages.ProtoOASubscribeLiveTrendbarReq()
-            request.ctidTraderAccountId = self._account_id
-            request.symbolId = symbol_id
-
-            # In cTrader, DOM is streamed via subscriptions
-            # For a snapshot, we'd need to get the latest from the stream
-            # This is a simplified implementation
-            logger.warning(f"[{self.name}] Market depth requires WebSocket subscription - returning None")
+            logger.warning(
+                f"[{self.name}] No DOM data available for {symbol}. "
+                "Subscribe to DOM updates using stream_market_depth() or check CTraderWebSocketService."
+            )
             return None
 
         except Exception as e:
             logger.error(f"[{self.name}] Failed to get market depth for {symbol}: {e}")
             self.health.errors.append(str(e))
             return None
+
+    def get_current_dom(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the latest DOM (market depth) snapshot from buffer.
+
+        This is a synchronous method that returns the most recent DOM data
+        received via the streaming subscription.
+
+        Args:
+            symbol: Symbol name (e.g., "EUR/USD")
+
+        Returns:
+            Dict with DOM data:
+            - symbol: Symbol name
+            - bids: List of bid levels [{price, size}, ...]
+            - asks: List of ask levels [{price, size}, ...]
+            - total_bid_volume: Total volume on bid side
+            - total_ask_volume: Total volume on ask side
+            - spread: Current spread (ask - bid)
+            - timestamp: Timestamp in milliseconds
+
+            None if no data available (not subscribed or no updates yet)
+        """
+        return self._dom_buffer.get(symbol)
 
     async def _get_sentiment_impl(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get trader sentiment from cTrader."""
@@ -847,10 +971,30 @@ class CTraderProvider(BaseProvider):
             self.health.errors.append(str(e))
 
     async def _stream_market_depth_impl(self, symbols: List[str]) -> AsyncIterator[Dict[str, Any]]:
-        """Stream market depth updates from cTrader."""
-        # Implementation placeholder
-        logger.warning(f"[{self.name}] stream_market_depth not yet implemented")
-        yield {}
+        """Stream market depth (DOM) updates from cTrader."""
+        try:
+            # Ensure connected
+            if not self.health.is_connected:
+                await self.connect()
+
+            # Subscribe to depth quotes for symbols
+            await self._subscribe_depth_quotes(symbols)
+
+            # Stream DOM updates from queue
+            while self._running:
+                try:
+                    msg = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
+
+                    # Only yield depth-related messages
+                    if msg.get('type') == 'depth':
+                        yield msg
+
+                except asyncio.TimeoutError:
+                    continue
+
+        except Exception as e:
+            logger.error(f"[{self.name}] DOM stream failed: {e}")
+            self.health.errors.append(str(e))
 
     # Helper methods for cTrader protocol
 
@@ -987,6 +1131,55 @@ class CTraderProvider(BaseProvider):
 
         except Exception as e:
             logger.error(f"[{self.name}] Error subscribing to spot quotes: {e}")
+            return False
+
+    async def _subscribe_depth_quotes(self, symbols: List[str]) -> bool:
+        """
+        Subscribe to depth quotes (order book / DOM) for symbols.
+
+        Args:
+            symbols: List of symbol names (e.g., ["EUR/USD", "GBP/USD"])
+
+        Returns:
+            True if subscription successful, False otherwise
+        """
+        try:
+            # Get symbol IDs for all requested symbols
+            symbol_ids = []
+            for symbol in symbols:
+                try:
+                    symbol_id = await self._get_symbol_id(symbol)
+                    symbol_ids.append(symbol_id)
+                    # Initialize depth quotes buffer for this symbol
+                    self._depth_quotes[symbol] = {}
+                except Exception as e:
+                    logger.warning(f"[{self.name}] Could not get symbol ID for {symbol}: {e}")
+                    continue
+
+            if not symbol_ids:
+                logger.error(f"[{self.name}] No valid symbol IDs found for depth subscription")
+                return False
+
+            # Send depth quotes subscription request
+            logger.info(f"[{self.name}] Subscribing to depth quotes (DOM) for {len(symbol_ids)} symbols: {symbol_ids}")
+            request = Messages.ProtoOASubscribeDepthQuotesReq()
+            request.ctidTraderAccountId = self._account_id
+
+            # Add all symbol IDs to the repeated field
+            for symbol_id in symbol_ids:
+                request.symbolId.append(symbol_id)
+
+            response = await self._send_and_wait(request, Messages.ProtoOASubscribeDepthQuotesRes, timeout=10.0)
+
+            if response:
+                logger.info(f"[{self.name}] ✓ Successfully subscribed to depth quotes (DOM) for {symbols}")
+                return True
+            else:
+                logger.warning(f"[{self.name}] Failed to subscribe to depth quotes - may not be supported on this account type")
+                return False
+
+        except Exception as e:
+            logger.warning(f"[{self.name}] Error subscribing to depth quotes: {e} (DOM may not be available)")
             return False
 
     async def _send_and_wait(self, request: Any, response_type: Any, timeout: float = 10.0) -> Optional[Any]:
