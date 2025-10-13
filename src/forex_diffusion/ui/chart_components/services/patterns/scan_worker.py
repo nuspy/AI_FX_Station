@@ -17,25 +17,30 @@ class ScanWorker(QObject):
         super().__init__()
         self._parent: PatternsService = parent
         self._kind = kind  # "chart" or "candle"
-        self._timer = QTimer(self)
-        self._timer.setInterval(int(interval_ms))
+        self._timer: Optional[QTimer] = None  # Create lazily after moveToThread
+        self._interval_ms = int(interval_ms)
         self._original_interval = int(interval_ms)  # Store original interval for dynamic adjustment
-        self._timer.timeout.connect(self._tick)
         self._enabled = False
 
     @Slot()
     def start(self):
+        # Create timer on this thread (after moveToThread)
+        if self._timer is None:
+            self._timer = QTimer(self)
+            self._timer.setInterval(self._interval_ms)
+            self._timer.timeout.connect(self._tick)
         self._enabled = True
         self._timer.start()
 
     @Slot()
     def stop(self):
         self._enabled = False
-        self._timer.stop()
+        if self._timer is not None:
+            self._timer.stop()
 
     @Slot()
     def _tick(self):
-        if not self._enabled:
+        if not self._enabled or self._timer is None:
             return
         try:
             # Check if market is likely closed and adjust interval accordingly

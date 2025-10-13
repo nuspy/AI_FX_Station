@@ -98,8 +98,11 @@ class PatternsService(ChartServiceBase):
 
         self._busy = False
         self._pending_df: Optional[pd.DataFrame] = None
-        self._debounce_timer: Optional[QTimer] = None
         self._debounce_ms = 30
+        # Create debounce timer on GUI thread (in __init__)
+        self._debounce_timer = QTimer(self.view)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.timeout.connect(self._consume_debounce)
 
         # Initialize cache and strength calculator
         self._pattern_cache = get_pattern_cache()
@@ -844,23 +847,27 @@ class PatternsService(ChartServiceBase):
             return []
 
     def start_historical_scan_with_range(self, df: Optional[pd.DataFrame] = None) -> None:
-        """Start one-time historical pattern scan with configured time range"""
+        """Start one-time historical pattern scan for visible chart range + 33% buffer"""
         try:
-            # DO NOT reload config here - it would overwrite user's dialog input
-            # The config is already set by event_handlers.py after dialog input
-            # self._historical_config = self._load_historical_config()
-
             if not self._historical_config.get('enabled', False):
                 logger.info("Historical patterns not enabled")
                 return
 
-            # Get time range in minutes
-            start_time_str = self._historical_config.get('start_time', '30d')
-            end_time_str = self._historical_config.get('end_time', '7d')
-            start_minutes = self.parse_time_string(start_time_str)
-            end_minutes = self.parse_time_string(end_time_str)
+            # Get visible range from chart
+            try:
+                view_range = self.view.main_plot.getViewBox().viewRange()
+                xmin, xmax = view_range[0]  # x-axis range (timestamps in seconds)
+            except Exception as e:
+                logger.error(f"Failed to get visible chart range: {e}")
+                return
 
-            logger.info(f"Starting historical scan: {start_minutes}m to {end_minutes}m ago (config: start_time='{start_time_str}', end_time='{end_time_str}')")
+            # Calculate 33% buffer before visible range
+            range_width = xmax - xmin
+            buffer = range_width * 0.33
+            scan_start = xmin - buffer
+            scan_end = xmax
+
+            logger.info(f"Starting historical scan for visible range + 33% buffer: {scan_start:.0f}s to {scan_end:.0f}s")
 
             # Use the provided dataframe or get current one
             if df is None:
@@ -875,20 +882,74 @@ class PatternsService(ChartServiceBase):
                 logger.error("No dataframe available for historical scan - load chart data first")
                 return
 
-            # Filter dataframe to historical range
-            historical_df = self._filter_df_for_historical_range(df, start_minutes, end_minutes)
+            # Filter dataframe to visible range + buffer
+            historical_df = self._filter_df_for_visible_range(df, scan_start, scan_end)
 
             if historical_df is None or len(historical_df) == 0:
-                logger.warning("No data available in specified historical range")
+                logger.warning("No data available in visible chart range")
                 return
 
-            logger.info(f"Historical scan: analyzing {len(historical_df)} rows from {start_minutes}m to {end_minutes}m ago")
+            logger.info(f"Historical scan: analyzing {len(historical_df)} rows in visible range + 33% buffer")
 
             # Run detection on historical data
             self._run_historical_detection(historical_df)
 
         except Exception as e:
             logger.error(f"Error in historical scan: {e}")
+
+    def _filter_df_for_visible_range(self, df: pd.DataFrame, start_timestamp: float, end_timestamp: float) -> pd.DataFrame:
+        """Filter dataframe to visible chart range (timestamps in seconds)"""
+        try:
+            logger.debug(f"Filtering df with {len(df)} rows for visible range: {start_timestamp:.0f}s to {end_timestamp:.0f}s")
+
+            # Find timestamp column
+            ts_col = None
+            for col in df.columns:
+                if col.lower() in TS_SYNONYMS:
+                    ts_col = col
+                    break
+
+            if ts_col is None:
+                # Try to use index if it's datetime
+                if hasattr(df.index, 'normalize'):
+                    ts_col = df.index.name or 'timestamp'
+                    df = df.reset_index()
+                else:
+                    logger.error("No timestamp column found for visible range filtering")
+                    return None
+
+            logger.debug(f"Using timestamp column: {ts_col}, dtype: {df[ts_col].dtype}")
+
+            # Convert timestamps to seconds if needed
+            ts_values = df[ts_col].to_numpy()
+
+            # Detect timestamp format and convert to seconds
+            if df[ts_col].dtype in ['int64', 'float64']:
+                # Numeric timestamps
+                if ts_values.max() > 1e16:  # nanoseconds
+                    ts_seconds = ts_values / 1e9
+                elif ts_values.max() > 1e11:  # milliseconds
+                    ts_seconds = ts_values / 1000
+                else:  # already in seconds
+                    ts_seconds = ts_values
+            elif pd.api.types.is_datetime64_any_dtype(df[ts_col]):
+                # Datetime - convert to seconds since epoch
+                ts_seconds = df[ts_col].astype('int64') / 1e9
+            else:
+                logger.error(f"Unsupported timestamp format: {df[ts_col].dtype}")
+                return None
+
+            # Filter by visible range
+            mask = (ts_seconds >= start_timestamp) & (ts_seconds <= end_timestamp)
+            filtered_df = df[mask].copy()
+
+            logger.info(f"Visible range filter: {len(df)} rows -> {len(filtered_df)} rows")
+
+            return filtered_df
+
+        except Exception as e:
+            logger.error(f"Error filtering dataframe for visible range: {e}")
+            return None
 
     def _filter_df_for_historical_range(self, df: pd.DataFrame, start_minutes: int, end_minutes: int) -> pd.DataFrame:
         """Filter dataframe to specified historical time range"""
@@ -1046,10 +1107,7 @@ class PatternsService(ChartServiceBase):
         # Store current dataframe for historical scanning
         if df is not None:
             self._current_df = df
-        if self._debounce_timer is None:
-            self._debounce_timer = QTimer()
-            self._debounce_timer.setSingleShot(True)
-            self._debounce_timer.timeout.connect(self._consume_debounce)
+        # Timer is already created in __init__ on GUI thread
         if not self._debounce_timer.isActive():
             self._debounce_timer.start(self._debounce_ms)
 

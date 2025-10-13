@@ -812,32 +812,13 @@ class EventHandlersMixin:
                 )
                 return
 
-            # Load default values from patterns.yaml
-            historical_config = patterns_service._load_historical_config()
-            default_start = historical_config.get('start_time', '30d')
-            default_end = historical_config.get('end_time', '7d')
+            # Enable historical scanning for this scan
+            patterns_service._historical_config['enabled'] = True
 
-            # Open dialog to get time range
-            from ..patterns_config_dialog import HistoricalScanDialog
-            dialog = HistoricalScanDialog(self, default_start=default_start, default_end=default_end)
-
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                start_time, end_time = dialog.get_time_range()
-
-                if not start_time or not end_time:
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self, "Invalid Range", "Please specify both start and end time.")
-                    return
-
-                # Update historical config temporarily for this scan
-                patterns_service._historical_config['enabled'] = True  # Ensure enabled for this scan
-                patterns_service._historical_config['start_time'] = start_time
-                patterns_service._historical_config['end_time'] = end_time
-                logger.info(f"Config updated: start_time='{start_time}', end_time='{end_time}', config={patterns_service._historical_config}")
-
-                # Start historical scan with selected range
-                patterns_service.start_historical_scan_with_range()
-                logger.info(f"Historical pattern scan started: {start_time} to {end_time}")
+            # Start historical scan for visible range + 33% buffer
+            # No dialog needed - automatically scans current visible chart range
+            patterns_service.start_historical_scan_with_range()
+            logger.info("Historical pattern scan started for visible chart range + 33% buffer")
 
         except Exception as e:
             logger.exception(f"Historical scan failed: {e}")
