@@ -78,6 +78,11 @@ class PositionSizer:
         self.min_position_size_pct = min_position_size_pct
         self.max_total_exposure_pct = max_total_exposure_pct
         self.drawdown_reduction_enabled = drawdown_reduction_enabled
+        
+        # Portfolio-level constraints (STRUCT-002)
+        self.max_sector_exposure_pct = max_sector_exposure_pct
+        self.correlation_threshold = correlation_threshold
+        self.use_correlation_adjustment = use_correlation_adjustment
         self.drawdown_threshold_pct = drawdown_threshold_pct
         self.drawdown_size_multiplier = drawdown_size_multiplier
 
