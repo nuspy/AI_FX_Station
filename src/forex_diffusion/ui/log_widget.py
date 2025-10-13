@@ -62,9 +62,18 @@ class LogWidget(QWidget):
         self.logReceived.connect(self._on_log_received_gui_thread)
 
         # Update timer for periodic refresh
-        self._update_timer = QTimer()
-        self._update_timer.timeout.connect(self._update_display)
-        self._update_timer.start(1000)  # Update every second
+        # IMPORTANT: QTimer must be created on GUI thread
+        # Use QTimer.singleShot to defer creation to GUI thread event loop
+        self._update_timer = None
+        from PySide6.QtCore import QMetaObject, Qt as QtCore
+        QMetaObject.invokeMethod(self, "_init_timer", QtCore.ConnectionType.QueuedConnection)
+
+    def _init_timer(self):
+        """Initialize update timer on GUI thread."""
+        if self._update_timer is None:
+            self._update_timer = QTimer(self)
+            self._update_timer.timeout.connect(self._update_display)
+            self._update_timer.start(1000)  # Update every second
 
     def _init_ui(self):
         """Initialize the UI."""
@@ -168,7 +177,9 @@ class LogWidget(QWidget):
 
     def _load_existing_logs(self):
         """Load logs that were already captured before widget creation."""
-        for log_entry in LogWidget._log_buffer:
+        # Create snapshot to avoid "deque mutated during iteration" error
+        buffer_snapshot = list(LogWidget._log_buffer)
+        for log_entry in buffer_snapshot:
             self._process_log(log_entry, update_display=False)
         self._update_display()
 
@@ -220,8 +231,10 @@ class LogWidget(QWidget):
                 search_text_lower = search_text if case_sensitive else search_text.lower()
 
         # Filter and display logs
+        # Create snapshot to avoid "deque mutated during iteration" error
+        buffer_snapshot = list(LogWidget._log_buffer)
         displayed = 0
-        for log_entry in LogWidget._log_buffer:
+        for log_entry in buffer_snapshot:
             level = log_entry.get('level', 'INFO').upper()
             message = log_entry.get('message', '')
             timestamp = log_entry.get('timestamp', '')
@@ -330,10 +343,12 @@ class LogWidget(QWidget):
         self._paused = checked
         if checked:
             self.pause_btn.setText("▶️ Resume")
-            self._update_timer.stop()
+            if self._update_timer:
+                self._update_timer.stop()
         else:
             self.pause_btn.setText("⏸ Pause")
-            self._update_timer.start(1000)
+            if self._update_timer:
+                self._update_timer.start(1000)
             self._update_display()
 
     def _clear_logs(self):
@@ -363,8 +378,10 @@ class LogWidget(QWidget):
 
         if file_path:
             try:
+                # Create snapshot to avoid "deque mutated during iteration" error
+                buffer_snapshot = list(LogWidget._log_buffer)
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    for log_entry in LogWidget._log_buffer:
+                    for log_entry in buffer_snapshot:
                         level = log_entry.get('level', 'INFO')
                         message = log_entry.get('message', '')
                         timestamp = log_entry.get('timestamp', '')

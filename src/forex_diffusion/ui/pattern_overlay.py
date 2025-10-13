@@ -617,6 +617,9 @@ class PatternOverlayRenderer:
         self._last_hover_artist: Optional[mpla.Axes] = None  # types corrected below
         self._last_hover_artist: Optional[mpla.Artist] = None
 
+        # Track last warning state to suppress repeated warnings
+        self._last_outside_range_warning: Optional[Tuple[int, int]] = None  # (outside_count, total_count)
+
     # ---------- Public API ----------
     def set_axes(self, ax: mpla.Axes) -> None:
         self.ax = ax
@@ -896,12 +899,40 @@ class PatternOverlayRenderer:
         if skipped_count > 0:
             logger.debug(f"_normalize_events: skipped {skipped_count}/{len(evs)} events with invalid x or y coordinates")
 
+        # Only show "patterns outside range" warning if significantly different from last time
+        # This prevents hundreds of repeated warnings
         if outside_range_count > 0:
-            logger.warning(
-                f"⚠️  {outside_range_count}/{len(evs)} patterns are OUTSIDE the visible chart range "
-                f"[{xmin:.2f}, {xmax:.2f}]. "
-                f"Zoom out or scroll the chart to see older patterns."
-            )
+            current_state = (outside_range_count, len(evs))
+            should_warn = False
+
+            if self._last_outside_range_warning is None:
+                # First time - show warning
+                should_warn = True
+            else:
+                last_outside, last_total = self._last_outside_range_warning
+                # Only warn if:
+                # 1. Outside count changed by >20%, OR
+                # 2. Total count changed significantly, OR
+                # 3. Percentage changed by >10%
+                pct_change = abs(outside_range_count / len(evs) - last_outside / last_total) if last_total > 0 else 1.0
+                count_change = abs(outside_range_count - last_outside) / max(last_outside, 1)
+
+                if pct_change > 0.10 or count_change > 0.20 or abs(len(evs) - last_total) > 100:
+                    should_warn = True
+
+            if should_warn:
+                logger.warning(
+                    f"⚠️  {outside_range_count}/{len(evs)} patterns are OUTSIDE the visible chart range "
+                    f"[{xmin:.2f}, {xmax:.2f}]. "
+                    f"Zoom out or scroll the chart to see older patterns."
+                )
+                self._last_outside_range_warning = current_state
+            else:
+                # Suppress warning - log at debug level instead
+                logger.debug(
+                    f"{outside_range_count}/{len(evs)} patterns outside visible range "
+                    f"[{xmin:.2f}, {xmax:.2f}] (warning suppressed - no significant change)"
+                )
 
         try:
             norm.sort(key=lambda t: float(t[0]), reverse=True)
