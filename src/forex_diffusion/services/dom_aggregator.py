@@ -6,61 +6,61 @@ Processes market depth data and calculates derived metrics like:
 - Spread
 - Order book imbalance
 - Liquidity metrics
+
+Refactored to use ThreadedBackgroundService base class.
 """
 from __future__ import annotations
 
-import threading
-import time
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
-from collections import deque
 
 import pandas as pd
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
-from .db_service import DBService
-from ..utils.symbol_utils import get_symbols_from_config
+from .base_service import ThreadedBackgroundService
 
 
-class DOMAggregatorService:
+class DOMAggregatorService(ThreadedBackgroundService):
     """
     Background service that processes DOM snapshots and calculates metrics.
+    
+    Inherits from ThreadedBackgroundService for lifecycle management and error recovery.
     """
 
-    def __init__(self, engine, symbols: List[str] | None = None, interval_seconds: int = 5):
-        self.engine = engine
-        self.db = DBService(engine=self.engine)
-        self._symbols = symbols or []
-        self._interval = interval_seconds
-        self._stop_event = threading.Event()
-        self._thread = None
-        # Note: DOM cache removed - not implemented, caused confusion
-
-    def start(self):
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        logger.info(f"DOMAggregatorService started (interval={self._interval}s, symbols={self._symbols or '<all>'})")
-
-    def stop(self, timeout: float = 2.0):
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=timeout)
-        logger.info("DOMAggregatorService stopped")
-
-    def _run_loop(self):
-        while not self._stop_event.is_set():
-            try:
-                symbols = self._symbols or self._get_symbols_from_config()
-                for sym in symbols:
-                    self._process_dom_for_symbol(sym)
-            except Exception as e:
-                logger.exception(f"DOMAggregatorService loop error: {e}")
-
-            time.sleep(self._interval)
+    def __init__(self, engine: Engine, symbols: List[str] | None = None, interval_seconds: int = 5):
+        """
+        Initialize DOM aggregator service.
+        
+        Args:
+            engine: SQLAlchemy engine for database access
+            symbols: List of symbols to process (None = load from config)
+            interval_seconds: Interval between DOM processing runs (default: 5s)
+        """
+        # Initialize base class with circuit breaker enabled
+        super().__init__(
+            engine=engine,
+            symbols=symbols,
+            interval_seconds=interval_seconds,
+            enable_circuit_breaker=True
+        )
+    
+    @property
+    def service_name(self) -> str:
+        """Service name for logging."""
+        return "DOMAggregatorService"
+    
+    def _process_iteration(self):
+        """
+        Process one DOM aggregation iteration.
+        
+        Called by base class in background thread. Processes DOM snapshots
+        and calculates metrics for all configured symbols.
+        """
+        symbols = self.get_symbols()  # Use base class method
+        for sym in symbols:
+            self._process_dom_for_symbol(sym)
 
     def _process_dom_for_symbol(self, symbol: str):
         """Process latest DOM snapshot for a symbol."""
@@ -155,9 +155,7 @@ class DOMAggregatorService:
             "imbalance": imbalance,
         }
 
-    def _get_symbols_from_config(self) -> List[str]:
-        """Get symbols from config (DEPRECATED: Use symbol_utils.get_symbols_from_config directly)."""
-        return get_symbols_from_config()
+
 
     def get_latest_dom_metrics(self, symbol: str) -> Optional[Dict]:
         """Get latest DOM metrics for a symbol."""
