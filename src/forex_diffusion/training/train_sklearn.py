@@ -22,92 +22,32 @@ except ImportError:
         SklearnAutoencoder = None
         SklearnVAE = None
 
-# Use project's MarketDataService (SQLAlchemy) to load candles for training.
-# This avoids file-based adapters and ensures a single DB access mode across the app.
+# ISSUE-001 FIX: Import centralized modules to avoid duplication
+# This fix mirrors the approach in train_sklearn_btalib.py
 try:
-    from forex_diffusion.services.marketdata import MarketDataService  # type: ignore
-except Exception:
-    # fallback relative import if run as module inside repo
-    from ..services.marketdata import MarketDataService  # type: ignore
-
-import datetime
-from sqlalchemy import text
-
-
-def fetch_candles_from_db(
-    symbol: str, timeframe: str, days_history: int
-) -> pd.DataFrame:
-    """
-    Fetch candles using SQLAlchemy engine from MarketDataService.
-    Returns DataFrame with columns ['ts_utc','open','high','low','close','volume'] ordered ASC.
-    """
-    # Get engine
-    try:
-        ms = MarketDataService()
-        engine = getattr(ms, "engine", None)
-    except Exception as e:
-        raise RuntimeError(f"Failed to instantiate MarketDataService: {e}")
-
-    if engine is None:
-        raise RuntimeError("Database engine not available from MarketDataService")
-
-    # compute start timestamp (ms)
-    try:
-        now_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
-        start_ms = now_ms - int(max(0, int(days_history)) * 24 * 3600 * 1000)
-    except Exception:
-        start_ms = None
-
-    # Query DB
-    try:
-        with engine.connect() as conn:
-            if start_ms is None:
-                q = text(
-                    "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
-                    "FROM market_data_candles "
-                    "WHERE symbol = :symbol AND timeframe = :timeframe "
-                    "ORDER BY ts_utc ASC"
-                )
-                rows = conn.execute(
-                    q, {"symbol": symbol, "timeframe": timeframe}
-                ).fetchall()
-            else:
-                q = text(
-                    "SELECT ts_utc, open, high, low, close, COALESCE(volume,0) AS volume "
-                    "FROM market_data_candles "
-                    "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc >= :start_ms "
-                    "ORDER BY ts_utc ASC"
-                )
-                rows = conn.execute(
-                    q,
-                    {
-                        "symbol": symbol,
-                        "timeframe": timeframe,
-                        "start_ms": int(start_ms),
-                    },
-                ).fetchall()
-    except Exception as e:
-        raise RuntimeError(f"Failed to query market_data_candles: {e}")
-
-    if not rows:
-        raise RuntimeError(
-            f"No candles found for {symbol} {timeframe} in last {days_history} days"
-        )
-
-    df = pd.DataFrame(
-        rows, columns=["ts_utc", "open", "high", "low", "close", "volume"]
+    from forex_diffusion.data.data_loader import fetch_candles_from_db
+    from forex_diffusion.features.feature_utils import (
+        ensure_dt_index as _ensure_dt_index,
+        timeframe_to_timedelta as _timeframe_to_timedelta,
+        coerce_indicator_tfs as _coerce_indicator_tfs,
     )
-    df["ts_utc"] = pd.to_numeric(df["ts_utc"], errors="coerce").astype("int64")
-    for c in ["open", "high", "low", "close", "volume"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-    df = (
-        df.dropna(subset=["ts_utc", "open", "high", "low", "close"])
-        .sort_values("ts_utc")
-        .reset_index(drop=True)
+except ImportError:
+    # Fallback for relative imports
+    from ..data.data_loader import fetch_candles_from_db
+    from ..features.feature_utils import (
+        ensure_dt_index as _ensure_dt_index,
+        timeframe_to_timedelta as _timeframe_to_timedelta,
+        coerce_indicator_tfs as _coerce_indicator_tfs,
     )
-    return df[["ts_utc", "open", "high", "low", "close", "volume"]]
 
+# REMOVED: 119 lines of duplicate code (DUP-TRAIN-001 to DUP-TRAIN-004)
+# - fetch_candles_from_db() (77 lines) - now imported from data_loader
+# - _ensure_dt_index() (6 lines) - now imported from feature_utils
+# - _timeframe_to_timedelta() (14 lines) - now imported from feature_utils  
+# - _coerce_indicator_tfs() (22 lines) - now imported from feature_utils
+
+# NOTE: Original functions removed, now using centralized versions.
+# This ensures consistency across all training scripts and reduces maintenance burden.
 
 try:
     import ta
@@ -118,60 +58,6 @@ except Exception:
     warnings.warn(
         "Package 'ta' non trovato: indicatori avanzati limitati.", RuntimeWarning
     )
-
-
-def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.index = pd.to_datetime(out["ts_utc"], unit="ms", utc=True)
-    return out
-
-
-def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
-    tf = str(tf).strip().lower()
-    if tf.endswith("ms"):
-        return pd.Timedelta(milliseconds=int(tf[:-2]))
-    if tf.endswith("s") and not tf.endswith("ms"):
-        return pd.Timedelta(seconds=int(tf[:-1]))
-    if tf.endswith("m"):
-        return pd.Timedelta(minutes=int(tf[:-1]))
-    if tf.endswith("h"):
-        return pd.Timedelta(hours=int(tf[:-1]))
-    if tf.endswith("d"):
-        return pd.Timedelta(days=int(tf[:-1]))
-    raise ValueError(f"Timeframe non supportato: {tf}")
-
-
-def _coerce_indicator_tfs(raw_value: Any) -> Dict[str, List[str]]:
-    if not raw_value:
-        return {}
-    data: Dict[str, Any]
-    if isinstance(raw_value, dict):
-        data = raw_value
-    else:
-        try:
-            data = json.loads(str(raw_value))
-        except Exception:
-            warnings.warn(
-                "indicator_tfs non parseable; uso dizionario vuoto", RuntimeWarning
-            )
-            return {}
-    out: Dict[str, List[str]] = {}
-    for k, v in data.items():
-        if not v:
-            continue
-        key = str(k).lower()
-        if isinstance(v, (list, tuple, set)):
-            vals = [str(x) for x in v if str(x).strip()]
-        else:
-            vals = [str(v)]
-        dedup: List[str] = []
-        for tf in vals:
-            tf_norm = tf.strip()
-            if tf_norm and tf_norm not in dedup:
-                dedup.append(tf_norm)
-        if dedup:
-            out[key] = dedup
-    return out
 
 
 def _realized_vol_feature(df: pd.DataFrame, window: int) -> pd.DataFrame:
