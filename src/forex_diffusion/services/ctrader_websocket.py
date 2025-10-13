@@ -23,16 +23,16 @@ from sqlalchemy import text
 
 try:
     from ctrader_open_api import Client, Protobuf, TcpProtocol, EndPoints
-    from ctrader_open_api.messages.protobuf import (
-        OpenApiCommonMessages_pb2 as CommonMessages,
-        OpenApiMessages_pb2 as Messages
+    from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import (
+        ProtoMessage, ProtoHeartbeatEvent, ProtoErrorRes
     )
+    from ctrader_open_api.messages import OpenApiMessages_pb2 as Messages
     from twisted.internet import reactor, ssl as twisted_ssl
     from twisted.internet.protocol import ReconnectingClientFactory
     _HAS_CTRADER = True
-except ImportError:
+except ImportError as e:
     _HAS_CTRADER = False
-    logger.error("ctrader-open-api or twisted not installed")
+    logger.error(f"ctrader-open-api or twisted not installed: {e}")
 
 
 class CTraderWebSocketService:
@@ -109,13 +109,14 @@ class CTraderWebSocketService:
         self.on_volume_update: Optional[Callable] = None
         self.on_sentiment_update: Optional[Callable] = None
 
-        # Determine host
+        # Determine host and port
         if environment == "demo":
             self.host = EndPoints.PROTOBUF_DEMO_HOST
-            self.port = EndPoints.PROTOBUF_DEMO_PORT
         else:
             self.host = EndPoints.PROTOBUF_LIVE_HOST
-            self.port = EndPoints.PROTOBUF_LIVE_PORT
+
+        # Port is the same for both demo and live
+        self.port = EndPoints.PROTOBUF_PORT
 
         logger.info(
             f"Initialized CTraderWebSocketService: "
@@ -137,14 +138,32 @@ class CTraderWebSocketService:
 
         self.message_queue = asyncio.Queue(maxsize=10000)
 
-        # Start Twisted reactor in thread
-        self._reactor_running = True
-        self._reactor_thread = threading.Thread(
-            target=self._run_twisted_reactor,
-            daemon=True,
-            name="CTraderTwisted"
-        )
-        self._reactor_thread.start()
+        # Check if reactor is already running (from another service)
+        if reactor.running:
+            logger.info("Twisted reactor already running")
+        else:
+            # Start Twisted reactor in thread
+            self._reactor_running = True
+            self._reactor_thread = threading.Thread(
+                target=self._run_twisted_reactor,
+                daemon=True,
+                name="CTraderTwisted"
+            )
+            self._reactor_thread.start()
+
+            # Wait for reactor to start
+            import time
+            time.sleep(0.5)
+
+        # Create client and set callbacks
+        self.client = Client(self.host, self.port, TcpProtocol)
+        self.client.setMessageReceivedCallback(self._on_message_received)
+        self.client.setConnectedCallback(self._on_connected)
+        self.client.setDisconnectedCallback(self._on_disconnected)
+
+        # Start client service (initiates connection)
+        logger.info("Starting client service...")
+        self.client.startService()
 
         logger.info("CTrader WebSocket service started")
 
@@ -171,40 +190,38 @@ class CTraderWebSocketService:
     def _run_twisted_reactor(self):
         """Run Twisted reactor (blocking call in separate thread)."""
         try:
-            # Create client
-            self.client = Client(self.host, self.port, TcpProtocol)
-
-            # Set message handlers
-            self.client.set_message_callback(self._on_message_received)
-            self.client.set_error_callback(self._on_error)
-            self.client.set_connection_callback(self._on_connected)
-            self.client.set_disconnection_callback(self._on_disconnected)
-
-            # Start connection
-            self.client.start()
-
             # Run reactor (blocking until stopped)
             logger.info("Starting Twisted reactor...")
             reactor.run(installSignalHandlers=False)
+            logger.info("Twisted reactor stopped")
 
         except Exception as e:
             logger.exception(f"Twisted reactor error: {e}")
         finally:
             self._reactor_running = False
 
-    def _on_connected(self):
-        """Called when WebSocket connection established."""
+    def _on_connected(self, client):
+        """Called when WebSocket connection established.
+
+        Args:
+            client: The cTrader client instance (passed by library)
+        """
         self.connected = True
         logger.info("WebSocket connected to cTrader")
 
         # Authenticate
         reactor.callLater(0, self._authenticate)
 
-    def _on_disconnected(self):
-        """Called when WebSocket disconnected."""
+    def _on_disconnected(self, client, reason):
+        """Called when WebSocket disconnected.
+
+        Args:
+            client: The cTrader client instance (passed by library)
+            reason: The disconnection reason
+        """
         self.connected = False
         self.authenticated = False
-        logger.warning("WebSocket disconnected from cTrader")
+        logger.warning(f"WebSocket disconnected from cTrader: {reason}")
 
     def _authenticate(self):
         """Authenticate with cTrader API."""
@@ -260,9 +277,13 @@ class CTraderWebSocketService:
         except Exception as e:
             logger.error(f"Spot subscription error: {e}")
 
-    def _on_message_received(self, message):
+    def _on_message_received(self, client, message):
         """
         Handle incoming message from cTrader (called by Twisted).
+
+        Args:
+            client: The cTrader client instance (passed by library)
+            message: The received message
 
         Dispatches to appropriate handler based on message type.
         """
