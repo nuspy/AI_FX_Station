@@ -20,6 +20,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from .db_service import DBService
+from ..utils.symbol_utils import get_symbols_from_config
 
 
 class DOMAggregatorService:
@@ -34,10 +35,7 @@ class DOMAggregatorService:
         self._interval = interval_seconds
         self._stop_event = threading.Event()
         self._thread = None
-
-        # Cache for recent DOM data (avoid recalculation)
-        self._dom_cache: Dict[str, deque] = {}
-        self._cache_size = 100  # Keep last 100 snapshots per symbol
+        # Note: DOM cache removed - not implemented, caused confusion
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -45,13 +43,13 @@ class DOMAggregatorService:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info(f"DOMAggreg atorService started (interval={self._interval}s, symbols={self._symbols or '<all>'})")
+        logger.info(f"DOMAggregatorService started (interval={self._interval}s, symbols={self._symbols or '<all>'})")
 
     def stop(self, timeout: float = 2.0):
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=timeout)
-        logger.info("DOMAggreg atorService stopped")
+        logger.info("DOMAggregatorService stopped")
 
     def _run_loop(self):
         while not self._stop_event.is_set():
@@ -60,7 +58,7 @@ class DOMAggregatorService:
                 for sym in symbols:
                     self._process_dom_for_symbol(sym)
             except Exception as e:
-                logger.exception(f"DOMAggreg atorService loop error: {e}")
+                logger.exception(f"DOMAggregatorService loop error: {e}")
 
             time.sleep(self._interval)
 
@@ -148,10 +146,8 @@ class DOMAggregatorService:
         ask_volume = sum(vol for _, vol in asks)
         imbalance = bid_volume / ask_volume if ask_volume > 0 else 0.0
 
-        # Weighted mid price (volume-weighted average)
-        # weighted_bid = sum(price * vol for price, vol in bids[:5]) / sum(vol for _, vol in bids[:5]) if bids else 0.0
-        # weighted_ask = sum(price * vol for price, vol in asks[:5]) / sum(vol for _, vol in asks[:5]) if asks else 0.0
-        # weighted_mid = (weighted_bid + weighted_ask) / 2.0
+        # Note: Weighted mid price calculation removed (was commented out, not used)
+        # If needed in future, implement as separate method with clear documentation
 
         return {
             "mid_price": mid_price,
@@ -160,9 +156,8 @@ class DOMAggregatorService:
         }
 
     def _get_symbols_from_config(self) -> List[str]:
-        from ..utils.config import get_config
-        cfg = get_config()
-        return getattr(cfg.data, "symbols", [])
+        """Get symbols from config (DEPRECATED: Use symbol_utils.get_symbols_from_config directly)."""
+        return get_symbols_from_config()
 
     def get_latest_dom_metrics(self, symbol: str) -> Optional[Dict]:
         """Get latest DOM metrics for a symbol."""

@@ -19,6 +19,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from .db_service import DBService
+from ..utils.symbol_utils import get_symbols_from_config
 
 
 class SentimentAggregatorService:
@@ -126,9 +127,8 @@ class SentimentAggregatorService:
             logger.error(f"Failed to process sentiment for {symbol}: {e}")
 
     def _get_symbols_from_config(self) -> List[str]:
-        from ..utils.config import get_config
-        cfg = get_config()
-        return getattr(cfg.data, "symbols", [])
+        """Get symbols from config (DEPRECATED: Use symbol_utils.get_symbols_from_config directly)."""
+        return get_symbols_from_config()
 
     def get_latest_sentiment_metrics(self, symbol: str) -> Optional[Dict]:
         """Get latest sentiment metrics for a symbol."""

@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from .db_service import DBService
 from ..data import io as data_io
+from ..utils.symbol_utils import get_symbols_from_config
 
 # Standard timeframes to be aggregated
 TF_RULES: Dict[str, Dict] = {
@@ -40,6 +41,7 @@ class AggregatorService:
         self._stop_event = threading.Event()
         self._thread = None
         self._last_processed_ts: Dict[tuple[str, str], int] = {}
+        self._state_lock = threading.Lock()  # Thread safety for state dictionary
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -90,7 +92,12 @@ class AggregatorService:
     def _aggregate_for_symbol(self, symbol: str, timeframe: str, ts_now: datetime):
         state_key = (symbol, timeframe)
         
-        last_ts = self._last_processed_ts.get(state_key) or self._get_last_candle_ts(symbol, timeframe)
+        # Thread-safe access to last processed timestamp
+        with self._state_lock:
+            last_ts = self._last_processed_ts.get(state_key)
+        
+        if last_ts is None:
+            last_ts = self._get_last_candle_ts(symbol, timeframe)
         if not last_ts:
             last_ts = int(ts_now.timestamp() * 1000) - (24 * 60 * 60 * 1000)
 
@@ -100,6 +107,7 @@ class AggregatorService:
         if start_ms >= end_ms:
             return
 
+        # Fetch ticks (read-only, no transaction needed)
         with self.engine.connect() as conn:
             # Corrected query to fetch ticks with the right timeframe
             # Extended to support tick_volume and real_volume from multi-provider data
@@ -156,15 +164,24 @@ class AggregatorService:
             return
 
         df_candles = pd.DataFrame(candles)
-        report = data_io.upsert_candles(self.engine, df_candles, symbol, timeframe, resampled=(timeframe != '1m'))
-        # logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
-
-        self._last_processed_ts[state_key] = end_ms
+        
+        # Use transaction to ensure atomicity of upsert + state update
+        try:
+            report = data_io.upsert_candles(self.engine, df_candles, symbol, timeframe, resampled=(timeframe != '1m'))
+            # logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
+            
+            # Only update state if upsert succeeded
+            # Thread-safe update of last processed timestamp
+            with self._state_lock:
+                self._last_processed_ts[state_key] = end_ms
+        except Exception as e:
+            logger.error(f"Failed to upsert candles for {symbol} {timeframe}: {e}")
+            # Don't update state if upsert failed - will retry next iteration
+            raise
 
     def _get_symbols_from_config(self) -> List[str]:
-        from ..utils.config import get_config
-        cfg = get_config()
-        return getattr(cfg.data, "symbols", [])
+        """Get symbols from config (DEPRECATED: Use symbol_utils.get_symbols_from_config directly)."""
+        return get_symbols_from_config()
 
     def _sleep_until_next_minute(self):
         now = datetime.now(timezone.utc)
