@@ -2462,6 +2462,22 @@ class PatternsService(ChartServiceBase):
                 except Exception:
                     pass
 
+            # Cache results
+            cache_key = self._generate_cache_key(kind)
+            if cache_key and events:
+                self._detection_cache[cache_key] = {
+                    'events': events,
+                    'timestamp': datetime.now()
+                }
+                # Cleanup old cache entries (keep last 20)
+                if len(self._detection_cache) > 20:
+                    oldest_keys = sorted(
+                        self._detection_cache.keys(),
+                        key=lambda k: self._detection_cache[k]['timestamp']
+                    )[:len(self._detection_cache) - 20]
+                    for old_key in oldest_keys:
+                        del self._detection_cache[old_key]
+
             return events
 
         except Exception as e:
