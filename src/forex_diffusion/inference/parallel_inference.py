@@ -35,6 +35,8 @@ class ModelExecutor:
     """
     Individual model executor for parallel processing.
     Handles loading and running a single model independently.
+    
+    CRITICAL-003: Added memory management with proper cleanup.
     """
 
     def __init__(self, model_path: str, model_config: Dict[str, Any], use_gpu: bool = False):
@@ -51,6 +53,38 @@ class ModelExecutor:
         else:
             import torch
             self.device = torch.device("cpu")
+    
+    def __del__(self):
+        """CRITICAL-003: Cleanup when executor is destroyed"""
+        self.unload_model()
+    
+    def unload_model(self):
+        """CRITICAL-003: Explicitly unload model from memory"""
+        if self.is_loaded and self.model_data is not None:
+            try:
+                # Move model to CPU first if on GPU
+                if self.use_gpu and hasattr(self.model_data.get('model'), 'cpu'):
+                    self.model_data['model'].cpu()
+                
+                # Clear model data
+                del self.model_data
+                self.model_data = None
+                self.is_loaded = False
+                
+                # Force garbage collection
+                import gc
+                gc.collect()
+                
+                # Clear CUDA cache if using GPU
+                if self.use_gpu:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                
+                logger.debug(f"Model unloaded: {Path(self.model_path).name}")
+                
+            except Exception as e:
+                logger.warning(f"Error unloading model: {e}")
 
     def load_model(self) -> None:
         """Load the model for this executor."""
@@ -262,13 +296,19 @@ class ParallelInferenceEngine:
         return aggregated
 
     def _execute_parallel(self, executors: List[ModelExecutor], features_df: pd.DataFrame, candles_df: pd.DataFrame = None) -> List[Dict[str, Any]]:
-        """Execute model predictions in parallel using thread pool."""
+        """
+        Execute model predictions in parallel using thread pool.
+        
+        CRITICAL-003: Proper cleanup of model executors
+        CRITICAL-004: Timeout protection (30s per model, 60s total)
+        """
         results = []
 
         def load_and_predict(executor):
             try:
                 executor.load_model()
-                return executor.predict(features_df, candles_df)
+                result = executor.predict(features_df, candles_df)
+                return result
             except Exception as e:
                 return {
                     'model_path': executor.model_path,
@@ -278,40 +318,65 @@ class ParallelInferenceEngine:
                     'execution_time': 0,
                     'success': False
                 }
+            finally:
+                # CRITICAL-003: Always cleanup after prediction
+                try:
+                    executor.unload_model()
+                except Exception as e:
+                    logger.warning(f"Error unloading model {executor.model_path}: {e}")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all tasks
             futures = {executor.submit(load_and_predict, model_executor): model_executor
                       for model_executor in executors}
 
-            # Collect results
-            for future in concurrent.futures.as_completed(futures):
-                model_executor = futures[future]
-                try:
-                    result = future.result(timeout=30)  # 30-second timeout per model
-                    results.append(result)
+            # CRITICAL-004: Collect results with timeout
+            # Individual timeout: 30s per model
+            # Global timeout: 60s for all models
+            try:
+                for future in concurrent.futures.as_completed(futures, timeout=60):
+                    model_executor = futures[future]
+                    try:
+                        result = future.result(timeout=30)  # 30-second timeout per model
+                        results.append(result)
 
-                except concurrent.futures.TimeoutError:
-                    logger.error(f"Model execution timed out: {model_executor.model_path}")
-                    results.append({
-                        'model_path': model_executor.model_path,
-                        'model_name': Path(model_executor.model_path).stem,
-                        'predictions': None,
-                        'error': 'Execution timeout',
-                        'execution_time': 30,
-                        'success': False
-                    })
+                    except concurrent.futures.TimeoutError:
+                        logger.error(f"Model execution timed out (30s): {model_executor.model_path}")
+                        results.append({
+                            'model_path': model_executor.model_path,
+                            'model_name': Path(model_executor.model_path).stem,
+                            'predictions': None,
+                            'error': 'Execution timeout (30s)',
+                            'execution_time': 30,
+                            'success': False
+                        })
 
-                except Exception as e:
-                    logger.error(f"Parallel execution failed for {model_executor.model_path}: {e}")
-                    results.append({
-                        'model_path': model_executor.model_path,
-                        'model_name': Path(model_executor.model_path).stem,
-                        'predictions': None,
-                        'error': str(e),
-                        'execution_time': 0,
-                        'success': False
-                    })
+                    except Exception as e:
+                        logger.error(f"Parallel execution failed for {model_executor.model_path}: {e}")
+                        results.append({
+                            'model_path': model_executor.model_path,
+                            'model_name': Path(model_executor.model_path).stem,
+                            'predictions': None,
+                            'error': str(e),
+                            'execution_time': 0,
+                            'success': False
+                        })
+                        
+            except concurrent.futures.TimeoutError:
+                # Global timeout reached
+                logger.error("Global timeout reached (60s) - cancelling remaining models")
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
+                        model_executor = futures[future]
+                        results.append({
+                            'model_path': model_executor.model_path,
+                            'model_name': Path(model_executor.model_path).stem,
+                            'predictions': None,
+                            'error': 'Global timeout (60s)',
+                            'execution_time': 60,
+                            'success': False
+                        })
 
         return results
 
