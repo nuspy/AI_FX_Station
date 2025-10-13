@@ -500,6 +500,13 @@ class PlotService(ChartServiceBase):
                 except Exception:
                     pass
 
+                # Unlink volume plot before clearing to prevent ViewBox deletion errors
+                if hasattr(self.view, 'volume_plot') and self.view.volume_plot is not None:
+                    try:
+                        self.view.volume_plot.setXLink(None)  # Unlink from main plot
+                    except Exception:
+                        pass
+
                 graphics_layout.clear()
                 self.view.finplot_axes = []
                 # Reset click filter flag so it will be reinstalled
@@ -509,9 +516,9 @@ class PlotService(ChartServiceBase):
                 graphics_layout.ci.layout.setSpacing(0)
                 graphics_layout.ci.layout.setContentsMargins(0, 0, 0, 0)
 
-                # Create main price plot (70% height) with date axis
-                date_axis = DateAxisItem(orientation='bottom')
-                main_plot = graphics_layout.addPlot(row=0, col=0, axisItems={'bottom': date_axis})
+                # Create main price plot WITHOUT bottom axis (will be on volume plot)
+                main_plot = graphics_layout.addPlot(row=0, col=0)
+                main_plot.hideAxis('bottom')  # Hide x-axis labels on main plot
                 main_plot.showGrid(x=True, y=True, alpha=0.3)
                 main_plot.setMinimumHeight(300)
                 # Minimize margins
@@ -566,8 +573,24 @@ class PlotService(ChartServiceBase):
                     custom_plot.getViewBox().setMouseEnabled(y=False)
                     self.view.finplot_axes.append(custom_plot)
                     self.view.custom_plot = custom_plot
+                    row_idx += 1
                 else:
                     self.view.custom_plot = None
+
+                # Recreate volume subplot (1/10 height, 66% opacity)
+                # Always add volume plot at the bottom with the date axis
+                date_axis = DateAxisItem(orientation='bottom')
+                volume_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': date_axis})
+                volume_plot.setLabel('left', 'Volume')
+                volume_plot.setMaximumHeight(80)  # Approximately 1/10 of typical chart height
+                volume_plot.showGrid(x=True, y=True, alpha=0.3)
+                volume_plot.setContentsMargins(0, 0, 0, 0)
+                volume_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                # Link x-axis to main plot for synchronized zoom/pan
+                volume_plot.setXLink(main_plot)
+                self.view.finplot_axes.append(volume_plot)
+                self.view.volume_plot = volume_plot
+                self.view.volume_bars = None  # Reset volume bars reference
 
                 # Re-plot forecasts from saved data (items are invalidated after graphics_layout.clear())
                 try:
