@@ -81,6 +81,8 @@ data:
     intraday_base_tf: "1m"
     # if provider doesn't return minute history for full 20y, use daily for long-run and intraday recent segment
     prefer_daily_for_longrun: true
+    # Days per REST API call when fetching historical candles (default: 7 = one week)
+    rest_batch_days: 7
   storage:
     resampled_flag_field: "resampled"
     # unique key enforced: (symbol, timeframe, ts_utc)

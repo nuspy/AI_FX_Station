@@ -93,6 +93,38 @@ def split_range_by_month(start: datetime, end: datetime) -> List[Tuple[datetime,
 
     return ranges
 
+def split_range_by_days(start: datetime, end: datetime, days: int) -> List[Tuple[datetime, datetime]]:
+    """
+    Split [start, end] into fixed-day subranges for API requests.
+    Returns list of (range_start, range_end) pairs in UTC (both timezone-aware).
+
+    Args:
+        start: Start datetime (timezone-aware UTC)
+        end: End datetime (timezone-aware UTC)
+        days: Number of days per chunk (default: 7 = one week)
+
+    Returns:
+        List of (start, end) tuples, each covering up to 'days' days
+    """
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if start >= end:
+        return []
+
+    ranges: List[Tuple[datetime, datetime]] = []
+    cur = start
+    delta = timedelta(days=days)
+
+    while cur < end:
+        # Calculate end of current chunk (cur + days)
+        chunk_end = min(cur + delta, end)
+        ranges.append((cur, chunk_end))
+        cur = chunk_end
+
+    return ranges
+
 def tf_to_pandas_freq(tf: str) -> str:
     """Return pandas frequency string for given timeframe label if available."""
     tf = tf.strip()

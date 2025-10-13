@@ -87,8 +87,8 @@ class ParameterAdaptationDB(Base):
     deployed_at = Column(Integer, nullable=True)  # Unix timestamp ms
     rollback_at = Column(Integer, nullable=True)  # Unix timestamp ms
 
-    # Metadata
-    metadata = Column(JSON, nullable=True)
+    # Additional parameters metadata (renamed from 'metadata' to avoid SQLAlchemy conflict)
+    params_metadata = Column(JSON, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=func.current_timestamp())

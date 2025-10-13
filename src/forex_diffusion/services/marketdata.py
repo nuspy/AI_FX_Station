@@ -172,6 +172,18 @@ class MarketDataService:
         # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
         self.rest_enabled: bool = True
 
+        # Read REST batch days from config (default: 7 days = one week)
+        try:
+            self.rest_batch_days = int(getattr(getattr(self.cfg.data, "backfill", None), "rest_batch_days", 7))
+            if self.rest_batch_days <= 0:
+                logger.warning("Invalid rest_batch_days ({}), using default 7", self.rest_batch_days)
+                self.rest_batch_days = 7
+        except Exception as e:
+            logger.warning("Could not read rest_batch_days from config: {}, using default 7", e)
+            self.rest_batch_days = 7
+
+        logger.info("REST batch size: {} days per request", self.rest_batch_days)
+
     def _show_provider_config_dialog(self, error_message: str):
         """Show provider configuration dialog."""
         try:
@@ -370,20 +382,20 @@ class MarketDataService:
         if tf_req != tf_norm:
             logger.info("Normalized timeframe alias: '{}' -> '{}'", tf_req, tf_norm)
 
-        # Pre-compute total subranges for determinate progress (using monthly splits for large ranges)
+        # Pre-compute total subranges for determinate progress (using configurable batch size)
         total_subranges = 0
         try:
             range_days = (now_ms - start_ms) / (24 * 3600 * 1000)
-            # For large ranges (>90 days), use monthly splits; otherwise single request per gap
-            use_monthly_split = range_days > 90
+            # Use batch split if range exceeds configured batch size (default: 7 days)
+            use_batch_split = range_days > self.rest_batch_days
 
             if range_days <= 370:  # avoid huge O(N) precompute for multi-year 1m ranges
                 # Only process the requested timeframe (no cascading)
                 for tf in tfs_to_process:
                     r_tf = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
                     for (s_ms, e_ms) in r_tf:
-                        if use_monthly_split:
-                            total_subranges += len(time_utils.split_range_by_month(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms)))
+                        if use_batch_split:
+                            total_subranges += len(time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), self.rest_batch_days))
                         else:
                             total_subranges += 1
             else:
@@ -399,9 +411,9 @@ class MarketDataService:
                 except Exception:
                     pass
 
-        # Determine if we need monthly splits (only for large historical backfills >90 days)
+        # Determine if we need batch splits based on configured rest_batch_days
         range_days = (now_ms - start_ms) / (24 * 3600 * 1000)
-        use_monthly_split = range_days > 90
+        use_batch_split = range_days > self.rest_batch_days
 
         # Process ONLY the requested timeframe (no cascading to other TFs)
         for tf in tfs_to_process:
@@ -411,8 +423,8 @@ class MarketDataService:
                 if tf == "1m":
                     missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
                     for (s_ms, e_ms) in missing_ranges:
-                        if use_monthly_split:
-                            subranges = time_utils.split_range_by_month(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
+                        if use_batch_split:
+                            subranges = time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), self.rest_batch_days)
                         else:
                             subranges = [(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))]
 
@@ -437,16 +449,16 @@ class MarketDataService:
                     continue
                 # Special handling for 1w: Tiingo doesn't support "week", download 1d and resample locally
                 if tf == "1w":
-                    self._backfill_weekly(symbol, start_ms, now_ms, use_monthly_split)
+                    self._backfill_weekly(symbol, start_ms, now_ms, self.rest_batch_days)
                     processed += 1
                     _emit_progress()
                     continue
 
                 missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
                 for (s_ms, e_ms) in missing_ranges:
-                    # Split by month only for large backfills, otherwise single request
-                    if use_monthly_split:
-                        subranges = time_utils.split_range_by_month(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
+                    # Split by configured batch size for large backfills, otherwise single request
+                    if use_batch_split:
+                        subranges = time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), self.rest_batch_days)
                     else:
                         subranges = [(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))]
 
@@ -488,17 +500,17 @@ class MarketDataService:
             logger.info("No missing 1m ranges detected for {}", symbol)
             return
 
-        # Determine if we need monthly splits (only for large ranges >90 days)
+        # Determine if we need batch splits based on configured rest_batch_days
         range_days = (end_ms - start_ms) / (24 * 3600 * 1000)
-        use_monthly_split = range_days > 90
+        use_batch_split = range_days > self.rest_batch_days
 
         for (s_ms, e_ms) in missing_ranges:
             s_dt = time_utils.ms_to_utc_dt(s_ms)
             e_dt = time_utils.ms_to_utc_dt(e_ms)
 
-            # Split by month only for large backfills, otherwise single request
-            if use_monthly_split:
-                subranges = time_utils.split_range_by_month(s_dt, e_dt)
+            # Split by configured batch size for large backfills, otherwise single request
+            if use_batch_split:
+                subranges = time_utils.split_range_by_days(s_dt, e_dt, self.rest_batch_days)
             else:
                 subranges = [(s_dt, e_dt)]
 
@@ -545,10 +557,16 @@ class MarketDataService:
                 report = data_io.upsert_candles(self.engine, df, symbol, timeframe, provider_source=self.provider_name.lower())
                 # logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
 
-    def _backfill_weekly(self, symbol: str, start_ms: int, end_ms: int, use_monthly_split: bool):
+    def _backfill_weekly(self, symbol: str, start_ms: int, end_ms: int, batch_days: int):
         """
         Backfill 1w timeframe by downloading 1d data and resampling to weekly.
         Tiingo API doesn't support 'week' resampleFreq, so we must resample locally.
+
+        Args:
+            symbol: Trading symbol
+            start_ms: Start timestamp in milliseconds
+            end_ms: End timestamp in milliseconds
+            batch_days: Number of days per batch request (from config)
         """
         import pandas as pd
 
@@ -558,10 +576,14 @@ class MarketDataService:
             logger.info("No missing ranges for {} 1w", symbol)
             return
 
+        # Determine if we need batch splits
+        range_days = (end_ms - start_ms) / (24 * 3600 * 1000)
+        use_batch_split = range_days > batch_days
+
         for (s_ms, e_ms) in missing_ranges:
             # Download 1d data for the range
-            if use_monthly_split:
-                subranges = time_utils.split_range_by_month(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
+            if use_batch_split:
+                subranges = time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), batch_days)
             else:
                 subranges = [(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))]
 
