@@ -3,7 +3,9 @@ Enhanced training system with bta-lib indicators integration
 Supports 80+ professional indicators with smart data filtering and configuration management
 """
 
-import argparse, json, math, warnings
+import argparse
+import json
+import warnings
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
@@ -18,9 +20,7 @@ from sklearn.model_selection import train_test_split
 # Import new indicators system
 from ..features.indicators_btalib import (
     BTALibIndicators,
-    IndicatorConfig,
     IndicatorCategories,
-    DataRequirement,
 )
 
 # Import centralized modules (ISSUE-001)

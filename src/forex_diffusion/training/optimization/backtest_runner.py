@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Tuple, Callable
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
@@ -652,7 +652,6 @@ class BacktestRunner:
     def _update_unrealized_metrics(self, trade: TradeResult, row: pd.Series) -> None:
         """Update unrealized metrics for active trades"""
         # This could track unrealized P&L, drawdown, etc.
-        pass
 
     def _calculate_comprehensive_metrics(self, trades: List[TradeResult],
                                        equity_curve: List[Dict[str, Any]],

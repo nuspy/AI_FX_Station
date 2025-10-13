@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import random
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any
 from dataclasses import dataclass
 from loguru import logger
 

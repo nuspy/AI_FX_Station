@@ -8,8 +8,6 @@ when both optimization and real-time detection are running.
 from __future__ import annotations
 
 import psutil
-import threading
-import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable
 from datetime import datetime, timedelta

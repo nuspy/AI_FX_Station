@@ -16,15 +16,14 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from enum import Enum
-import json
 import numpy as np
 import pandas as pd
 from loguru import logger
 
-from ..monitoring.drift_detector import DriftDetector, DriftAlert, DriftSeverity
+from ..monitoring.drift_detector import DriftDetector, DriftSeverity
 
 
 class RetrainTriggerType(Enum):

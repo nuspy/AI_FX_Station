@@ -7,7 +7,7 @@ with existing PyTorch Lightning training loop.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -16,7 +16,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
 from loguru import logger
 
-from .optimization_config import OptimizationConfig, HardwareInfo
+from .optimization_config import OptimizationConfig
 
 
 class OptimizedTrainingCallback(Callback):

@@ -5,7 +5,6 @@ Handles keeping, deleting, and cleanup of model files based on regime
 performance. Only models that are best for at least one regime are kept.
 """
 
-import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging

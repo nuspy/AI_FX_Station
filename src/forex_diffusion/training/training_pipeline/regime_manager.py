@@ -7,14 +7,13 @@ and tracking of best models per regime.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import logging
 from sqlalchemy.orm import Session
 
 from .database import (
-    RegimeDefinition, RegimeBestModel, InferenceBacktest,
-    get_all_active_regimes, get_best_model_for_regime,
+    RegimeDefinition, get_all_active_regimes, get_best_model_for_regime,
     update_best_model_for_regime
 )
 from .config_loader import get_config

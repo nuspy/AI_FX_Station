@@ -5,14 +5,14 @@ Provides SQLAlchemy models for all training pipeline tables and utility function
 for database operations.
 """
 
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from contextlib import contextmanager
 import uuid
 
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean, DateTime, JSON, Text,
-    ForeignKey, create_engine, func, Index, UniqueConstraint
+    ForeignKey, create_engine, func, UniqueConstraint
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session

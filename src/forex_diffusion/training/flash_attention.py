@@ -40,7 +40,7 @@ class FlashAttentionWrapper(nn.Module):
 
         if self.use_flash_attn:
             try:
-                from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+                from flash_attn import flash_attn_func
 
                 self.flash_attn_func = flash_attn_func
                 logger.info("Flash Attention 2 enabled")
@@ -86,7 +86,7 @@ class FlashAttentionWrapper(nn.Module):
 
         # Check if library is installed
         try:
-            import flash_attn
+            pass
 
             return True
         except ImportError:
@@ -288,7 +288,7 @@ class FlashSelfAttention(nn.Module):
             return False
 
         try:
-            import flash_attn
+            pass
 
             return True
         except ImportError:

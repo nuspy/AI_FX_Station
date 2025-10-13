@@ -114,21 +114,18 @@ class HardwareInfo:
 
         # Detect APEX
         try:
-            import apex
             self.has_apex = True
         except ImportError:
             self.has_apex = False
 
         # Detect Flash Attention
         try:
-            import flash_attn
             self.has_flash_attn = True
         except ImportError:
             self.has_flash_attn = False
 
         # Detect DALI
         try:
-            import nvidia.dali
             self.has_dali = True
         except ImportError:
             self.has_dali = False

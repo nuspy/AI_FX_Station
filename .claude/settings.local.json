@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(black:*)"
+      "Bash(black:*)",
+      "Bash(autoflake:*)"
     ],
     "deny": [],
     "ask": []

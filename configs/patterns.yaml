@@ -7,106 +7,9 @@ patterns:
     past_extra_bars: 2000
   chart_patterns:
     enabled_default: true
-    keys_enabled:
-    - broadening_bottom
-    - broadening_top
-    - right_angle_broadening_ascending
-    - right_angle_broadening_descending
-    - broadening_wedge_ascending
-    - broadening_wedge_descending
-    - wedge_ascending
-    - wedge_descending
-    - ascending_triangle
-    - descending_triangle
-    - symmetrical_triangle
-    - rectangle_range
-    - diamond_top
-    - diamond_bottom
-    - double_top
-    - bull_flag
-    - double_bottom
-    - triple_top
-    - triple_bottom
-    - rising_channel
-    - falling_channel
-    - bear_flag
-    - bull_pennant
-    - bear_pennant
-    - head_and_shoulders
-    - inverse_head_and_shoulders
-    - elliott_impulse_bull
-    - elliott_impulse_bear
-    - elliott_corrective_abc
-    - gartley_bull
-    - gartley_bear
-    - butterfly_bull
-    - butterfly_bear
-    - bat_bull
-    - bat_bear
-    - crab_bull
-    - crab_bear
-    - cypher_bull
-    - cypher_bear
-    - shark_bull
-    - shark_bear
-    - abcd_bull
-    - abcd_bear
-    - rounding_bottom
-    - rounding_top
-    - island_reversal_top
-    - island_reversal_bottom
-    - measured_move
-    - three_drives
+    keys_enabled: []
     parameter_overrides:
       broadening_bottom: {}
-      broadening_top: {}
-      right_angle_broadening_ascending: {}
-      right_angle_broadening_descending: {}
-      broadening_wedge_ascending: {}
-      broadening_wedge_descending: {}
-      wedge_ascending: {}
-      wedge_descending: {}
-      ascending_triangle: {}
-      descending_triangle: {}
-      symmetrical_triangle: {}
-      rectangle_range: {}
-      diamond_top: {}
-      diamond_bottom: {}
-      double_top: {}
-      bull_flag: {}
-      double_bottom: {}
-      triple_top: {}
-      triple_bottom: {}
-      rising_channel: {}
-      falling_channel: {}
-      bear_flag: {}
-      bull_pennant: {}
-      bear_pennant: {}
-      head_and_shoulders: {}
-      inverse_head_and_shoulders: {}
-      elliott_impulse_bull: {}
-      elliott_impulse_bear: {}
-      elliott_corrective_abc: {}
-      gartley_bull: {}
-      gartley_bear: {}
-      butterfly_bull: {}
-      butterfly_bear: {}
-      bat_bull: {}
-      bat_bear: {}
-      crab_bull: {}
-      crab_bear: {}
-      cypher_bull: {}
-      cypher_bear: {}
-      shark_bull: {}
-      shark_bear: {}
-      abcd_bull: {}
-      abcd_bear: {}
-      rounding_bottom: {}
-      rounding_top: {}
-      island_reversal_top: {}
-      island_reversal_bottom: {}
-      measured_move: {}
-      three_drives: {}
   candle_patterns:
     enabled_default: true
     keys_enabled: []
@@ -231,14 +134,14 @@ patterns:
     arrow_len_atr: 1.5
   current_scan:
     lookback_hours: 6
-    interval_seconds: 10  # Real-time detection every 10 seconds
+    interval_seconds: 10
 dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
   start_time: 30d
   end_time: 1d
 performance:
-  detection_threads: 24
+  detection_threads: 18
   detection_mode: max_speed
   parallel_historical: true
   parallel_realtime: true

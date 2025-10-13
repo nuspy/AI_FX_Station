@@ -12,12 +12,11 @@ Reference: "Multi-Task Learning" by Caruana (1997)
 
 from __future__ import annotations
 
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from loguru import logger
 

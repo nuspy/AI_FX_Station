@@ -15,7 +15,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Optional
 
-import numpy as np
 import pandas as pd
 
 # Import trainer helpers (the CLI module contains reusable functions)

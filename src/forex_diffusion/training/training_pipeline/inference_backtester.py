@@ -8,14 +8,12 @@ and breaks down performance by market regime.
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Optional, Tuple
-from itertools import product
 import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 
 from .database import (
-    InferenceBacktest, create_inference_backtest,
-    update_inference_backtest_results
+    create_inference_backtest, update_inference_backtest_results
 )
 from .regime_manager import RegimeManager
 from .config_loader import get_config

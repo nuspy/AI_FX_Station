@@ -8,30 +8,24 @@ with support for resume/idempotency, parallel execution, and regime-aware optimi
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
 from loguru import logger
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from .multi_objective import ParetoOptimizer, MultiObjectiveEvaluator
 from .parameter_space import ParameterSpace
-from .backtest_runner import BacktestRunner, BacktestResult
+from .backtest_runner import BacktestRunner
 from .regime_classifier import RegimeClassifier
 from .task_manager import TaskManager, TaskStatus
 from .invalidation_rules import InvalidationRuleEngine
 from .early_stopping import EarlyStoppingManager
-from .logging_reporter import LoggingReporter
-from .genetic_algorithm import GeneticAlgorithm, GAConfig
 
 # Database models
 from ...services.db_service import DBService
@@ -139,7 +133,7 @@ class OptimizationEngine:
         self.pareto_optimizer = ParetoOptimizer()
 
         # Resource management
-        from .resource_manager import ResourceManager, Priority
+        from .resource_manager import ResourceManager
         self.resource_manager = ResourceManager()
         self.is_running = False
         self.is_paused = False
@@ -542,7 +536,6 @@ class OptimizationEngine:
     async def _validate_dataset(self, dataset_id: str, dataset_config: Dict[str, Any]) -> None:
         """Validate dataset configuration and availability."""
         # Implementation would check data availability, format, etc.
-        pass
 
     def _load_dataset(self, asset: str, timeframe: str,
                      dataset_config: Dict[str, Any]) -> pd.DataFrame:
@@ -556,7 +549,6 @@ class OptimizationEngine:
         """Create pattern detector with specified parameters."""
         # Implementation would create appropriate detector instance
         # This is a placeholder
-        pass
 
     def _calculate_recency_weighted_metrics(self, backtest_result: Any,
                                           decay_months: float) -> Dict[str, Any]:

@@ -6,9 +6,7 @@ Detects interrupted training queues on startup and prompts user to resume.
 
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-from pathlib import Path
 import logging
-from sqlalchemy.orm import Session
 
 from .database import (
     session_scope, get_all_training_queues, TrainingQueue,

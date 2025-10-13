@@ -7,7 +7,7 @@ then the appropriate parameter set is loaded based on current regime.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
@@ -16,7 +16,7 @@ from loguru import logger
 from datetime import datetime
 
 from ...regime.hmm_detector import HMMRegimeDetector, RegimeType
-from .backtest_runner import BacktestRunner, BacktestResult
+from .backtest_runner import BacktestRunner
 from .parameter_space import ParameterSpace
 from .genetic_algorithm import GeneticAlgorithm, GAConfig
 

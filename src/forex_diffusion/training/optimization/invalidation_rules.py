@@ -9,9 +9,8 @@ that adapt to historical performance statistics.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from loguru import logger
 

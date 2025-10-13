@@ -8,7 +8,6 @@ with progress signals and proper exception handling.
 from PyQt6.QtCore import QThread, pyqtSignal
 from typing import Dict, Any, List, Optional
 import logging
-from datetime import datetime
 
 from .training_orchestrator import TrainingOrchestrator
 from .database import session_scope

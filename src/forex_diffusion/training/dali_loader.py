@@ -7,7 +7,7 @@ CPU bottleneck and improving training throughput.
 
 from __future__ import annotations
 
-from typing import Optional, List, Tuple, Iterator
+from typing import Optional, List, Iterator
 from pathlib import Path
 import numpy as np
 import torch
@@ -50,7 +50,7 @@ class DALIWrapper:
             return False
 
         try:
-            import nvidia.dali
+            pass
 
             return True
         except ImportError:
@@ -70,7 +70,6 @@ class DALIWrapper:
         try:
             from nvidia.dali import pipeline_def
             from nvidia.dali import fn
-            from nvidia.dali import types
 
             @pipeline_def
             def time_series_pipeline():
@@ -224,7 +223,7 @@ def create_dali_loader(
     """
     # Check DALI availability
     try:
-        import nvidia.dali
+        pass
     except ImportError:
         logger.warning("DALI not available")
         return None
@@ -329,7 +328,6 @@ def create_financial_dali_pipeline(
     try:
         from nvidia.dali import pipeline_def
         from nvidia.dali import fn
-        from nvidia.dali import types
 
         @pipeline_def
         def financial_pipeline():

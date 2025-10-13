@@ -16,7 +16,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from loguru import logger
 
-from .optimization_config import OptimizationConfig, DistributedBackend
+from .optimization_config import OptimizationConfig
 
 
 def setup_distributed(

@@ -18,8 +18,7 @@ from .database import (
     session_scope, create_training_run, create_training_queue,
     update_training_run_status, update_training_run_results,
     update_queue_status, update_queue_progress,
-    get_training_queue_by_id, get_training_run_by_config_hash,
-    TrainingQueue
+    get_training_queue_by_id, get_training_run_by_config_hash
 )
 from .config_grid import (
     generate_config_grid, add_config_hashes, deduplicate_configs,

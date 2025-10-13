@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from typing import Tuple, Optional, Literal
+from typing import Tuple, Literal
 from loguru import logger
 
 # Import DeviceManager for GPU support

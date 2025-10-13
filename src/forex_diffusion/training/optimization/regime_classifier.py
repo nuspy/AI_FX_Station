@@ -10,11 +10,9 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from enum import Enum
-import asyncio
-import aiohttp
 from loguru import logger
 
 try:
