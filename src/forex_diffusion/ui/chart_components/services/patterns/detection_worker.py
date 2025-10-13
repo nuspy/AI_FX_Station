@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtCore import QObject, Signal, Slot
 from loguru import logger
 
@@ -35,46 +36,46 @@ class DetectionWorker(QObject):
             # Try to determine current timeframe from dataframe or default to 5m
             timeframe = self._detect_timeframe_from_df(df)
 
+            # Create batches list
+            batches = []
             for batch_num in range(total_batches):
                 start_idx = batch_num * batch_size
                 end_idx = min(start_idx + batch_size, len(detectors))
-                batch_detectors = detectors[start_idx:end_idx]
-
-                # Update progress in GUI thread
-                progress_percent = int((batch_num / total_batches) * 100)
-                status = f"Scanning patterns... {progress_percent}% ({batch_num + 1}/{total_batches})"
-                self.progress_updated.emit(progress_percent, status)
-
-                # Process detectors in this batch
-                batch_events = []
-                for i, det in enumerate(batch_detectors):
+                batches.append((batch_num, detectors[start_idx:end_idx]))
+            
+            # Process batches in parallel (max 4 workers)
+            max_workers = min(4, len(batches))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all batches
+                future_to_batch = {
+                    executor.submit(
+                        self._process_batch,
+                        df,
+                        batch_detectors,
+                        timeframe,
+                        boundary_config
+                    ): batch_num
+                    for batch_num, batch_detectors in batches
+                }
+                
+                # Collect results as they complete
+                completed = 0
+                for future in as_completed(future_to_batch):
+                    batch_num = future_to_batch[future]
                     try:
-                        detector_key = getattr(det, 'key', f'unknown_{i}')
-
-                        start_time = time.time()
-
-                        # Apply boundary-specific dataframe limitation
-                        detector_df = self._apply_boundary_to_df(df, detector_key, timeframe, boundary_config)
-
-                        events = det.detect(detector_df)
-                        elapsed = time.time() - start_time
-
-                        if elapsed > 1.0:  # Log slow detectors
-                            logger.debug(f"Detector {detector_key} took {elapsed:.2f}s")
-
-                        if events:
-                            batch_events.extend(events)
-
+                        batch_events = future.result()
+                        all_events.extend(batch_events)
+                        
+                        # Emit batch completion
+                        self.batch_completed.emit(batch_num, batch_events)
                     except Exception as e:
-                        detector_key = getattr(det, 'key', f'unknown_{i}')
-                        logger.error(f"Detector {detector_key} failed: {e}")
-
-                # Emit batch completion
-                self.batch_completed.emit(batch_num, batch_events)
-                all_events.extend(batch_events)
-
-                # Allow other threads to run (yield)
-                time.sleep(0.001)  # 1ms pause to keep GUI responsive
+                        logger.error(f"Batch {batch_num} failed: {e}")
+                    
+                    # Update progress
+                    completed += 1
+                    progress_percent = int((completed / total_batches) * 100)
+                    status = f"Scanning patterns... {progress_percent}% ({completed}/{total_batches})"
+                    self.progress_updated.emit(progress_percent, status)
 
             # Emit final completion
             self.detection_finished.emit(all_events)
@@ -84,6 +85,33 @@ class DetectionWorker(QObject):
             self.detection_finished.emit([])
         finally:
             self._active = False
+    
+    def _process_batch(self, df, batch_detectors, timeframe, boundary_config):
+        """Process single batch of detectors (called in parallel)"""
+        batch_events = []
+        for i, det in enumerate(batch_detectors):
+            try:
+                detector_key = getattr(det, 'key', f'unknown_{i}')
+
+                start_time = time.time()
+
+                # Apply boundary-specific dataframe limitation
+                detector_df = self._apply_boundary_to_df(df, detector_key, timeframe, boundary_config)
+
+                events = det.detect(detector_df)
+                elapsed = time.time() - start_time
+
+                if elapsed > 1.0:  # Log slow detectors
+                    logger.debug(f"Detector {detector_key} took {elapsed:.2f}s")
+
+                if events:
+                    batch_events.extend(events)
+
+            except Exception as e:
+                detector_key = getattr(det, 'key', f'unknown_{i}')
+                logger.error(f"Detector {detector_key} failed: {e}")
+        
+        return batch_events
 
     def _detect_timeframe_from_df(self, df):
         """Try to detect timeframe from dataframe timestamps"""
