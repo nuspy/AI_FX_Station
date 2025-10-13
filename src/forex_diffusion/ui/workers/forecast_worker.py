@@ -428,7 +428,7 @@ class ForecastWorker(QRunnable):
             # Prepare features using the same system as single model inference
             from ...features.feature_engineering import relative_ohlc, temporal_features, realized_volatility_feature
             from ...features.feature_utils import coerce_indicator_tfs
-            from ...training.train_sklearn import _indicators  # TODO: Consolidate indicators after completing ISSUE-001
+            from ...features.indicator_pipeline import compute_indicators  # ISSUE-001b: Use centralized indicator computation
             from ...features.feature_cache import get_feature_cache
 
             # Feature cache and config (reuse from single model logic)
@@ -547,7 +547,7 @@ class ForecastWorker(QRunnable):
                         tf_bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "4h": 6, "1d": 1, "1w": 1/7}
                         bars_per_day = tf_bars_per_day.get(tf, 24)
                         days_history_est = max(1, int(limit / bars_per_day)) if bars_per_day > 0 else 7
-                        feats_list.append(_indicators(df_candles_full, ind_cfg, indicator_tfs, tf, symbol=symbol, days_history=days_history_est))
+                        feats_list.append(compute_indicators(df_candles_full, ind_cfg, indicator_tfs, tf, symbol=symbol, days_history=days_history_est))
 
                 if not feats_list:
                     # Fallback to basic features

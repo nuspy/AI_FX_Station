@@ -234,6 +234,10 @@ def _temporal_feats(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# ISSUE-001b: Import centralized indicator computation
+from ..features.indicator_pipeline import compute_indicators
+
+# Backward compatibility alias
 def _indicators(
     df: pd.DataFrame,
     ind_cfg: Dict[str, Any],
@@ -242,192 +246,12 @@ def _indicators(
     symbol: str = None,
     days_history: int = None,
 ) -> pd.DataFrame:
-    from loguru import logger
+    """
+    DEPRECATED: Use compute_indicators from features.indicator_pipeline instead.
 
-    logger.debug(f"_indicators called with df shape: {df.shape}, base_tf: {base_tf}")
-    frames: List[pd.DataFrame] = []
-    base = _ensure_dt_index(df)
-    base_lookup = base[["ts_utc"]].copy()
-    try:
-        base_delta = _timeframe_to_timedelta(base_tf)
-    except Exception:
-        base_delta = pd.Timedelta("1min")
-
-    # OPTIMIZATION: Pre-fetch all timeframes needed (cache to avoid redundant DB queries)
-    timeframe_cache: Dict[str, pd.DataFrame] = {base_tf: df.copy()}
-
-    # Collect all unique timeframes needed
-    unique_tfs = set([base_tf])
-    for name in ind_cfg.keys():
-        key = str(name).lower()
-        tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
-        unique_tfs.update(tfs)
-
-    # Pre-fetch all non-base timeframes ONCE
-    for tf in unique_tfs:
-        if tf != base_tf and tf not in timeframe_cache:
-            try:
-                if symbol and days_history:
-                    logger.info(
-                        f"[CACHE] Pre-fetching {tf} candles from DB (will be reused for all indicators)"
-                    )
-                    timeframe_cache[tf] = fetch_candles_from_db(
-                        symbol, tf, days_history
-                    )
-                    logger.debug(
-                        f"[CACHE] Cached {tf}: {timeframe_cache[tf].shape[0]} rows"
-                    )
-                else:
-                    # Fallback to resample if symbol/days_history not provided
-                    logger.warning(
-                        f"Symbol/days_history not provided, falling back to resample for {tf}"
-                    )
-                    timeframe_cache[tf] = _resample(df, tf)
-            except Exception as e:
-                logger.exception(f"Failed to pre-fetch {tf} candles: {e}")
-                # Don't cache failed fetches
-
-    logger.info(
-        f"[CACHE] Pre-fetched {len(timeframe_cache)} timeframes: {list(timeframe_cache.keys())}"
-    )
-
-    # Now process indicators using cached data
-    for name, params in ind_cfg.items():
-        key = str(name).lower()
-        tfs = indicator_tfs.get(key) or indicator_tfs.get(name, []) or [base_tf]
-        for tf in tfs:
-            logger.debug(f"Processing indicator {key} for TF {tf}")
-
-            # Use cached data instead of fetching again
-            if tf in timeframe_cache:
-                tmp = timeframe_cache[tf].copy()
-                logger.debug(f"[CACHE HIT] Using cached {tf} data for {key}")
-            else:
-                logger.warning(
-                    f"[CACHE MISS] TF {tf} not in cache, skipping indicator {key}_{tf}"
-                )
-                continue
-
-            tmp = _ensure_dt_index(tmp)
-            logger.debug(
-                f"Indicator {key}_{tf}: final tmp shape = {tmp.shape} (need ≥14 for ATR/RSI)"
-            )
-            cols: Dict[str, pd.Series] = {}
-
-            if not _HAS_TA:
-                if key == "rsi":
-                    n = int(params.get("n", 14))
-                    delta = tmp["close"].diff()
-                    up = delta.clip(lower=0.0).rolling(n).mean()
-                    down = (-delta.clip(upper=0.0)).rolling(n).mean()
-                    rs = up / (down + 1e-12)
-                    cols[f"rsi_{tf}_{n}"] = 100 - (100 / (1 + rs))
-                elif key == "atr":
-                    n = int(params.get("n", 14))
-                    hl = (tmp["high"] - tmp["low"]).abs()
-                    hc = (tmp["high"] - tmp["close"].shift(1)).abs()
-                    lc = (tmp["low"] - tmp["close"].shift(1)).abs()
-                    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-                    cols[f"atr_{tf}_{n}"] = tr.rolling(n).mean()
-            else:
-                if key == "rsi":
-                    n = int(params.get("n", 14))
-                    cols[f"rsi_{tf}_{n}"] = ta.momentum.RSIIndicator(
-                        close=tmp["close"], window=n
-                    ).rsi()
-                elif key == "atr":
-                    n = int(params.get("n", 14))
-                    cols[f"atr_{tf}_{n}"] = ta.volatility.AverageTrueRange(
-                        high=tmp["high"], low=tmp["low"], close=tmp["close"], window=n
-                    ).average_true_range()
-                elif key == "bollinger":
-                    n = int(params.get("n", 20))
-                    dev = float(params.get("dev", 2.0))
-                    bb = ta.volatility.BollingerBands(
-                        close=tmp["close"], window=n, window_dev=dev
-                    )
-                    cols[f"bb_m_{tf}_{n}_{dev}"] = bb.bollinger_mavg()
-                    cols[f"bb_h_{tf}_{n}_{dev}"] = bb.bollinger_hband()
-                    cols[f"bb_l_{tf}_{n}_{dev}"] = bb.bollinger_lband()
-                elif key == "macd":
-                    f = int(params.get("fast", 12))
-                    s = int(params.get("slow", 26))
-                    sig = int(params.get("signal", 9))
-                    macd = ta.trend.MACD(
-                        close=tmp["close"],
-                        window_fast=f,
-                        window_slow=s,
-                        window_sign=sig,
-                    )
-                    cols[f"macd_{tf}_{f}_{s}_{sig}"] = macd.macd()
-                    cols[f"macd_sig_{tf}_{f}_{s}_{sig}"] = macd.macd_signal()
-                    cols[f"macd_diff_{tf}_{f}_{s}_{sig}"] = macd.macd_diff()
-                elif key == "donchian":
-                    n = int(params.get("n", 20))
-                    u = tmp["high"].rolling(n).max()
-                    l = tmp["low"].rolling(n).min()
-                    cols[f"donch_mid_{tf}_{n}"] = (u + l) / 2.0
-                elif key == "keltner":
-                    ema = int(params.get("ema", 20))
-                    atr_n = int(params.get("atr", 10))
-                    mult = float(params.get("mult", 1.5))
-                    mid = tmp["close"].ewm(span=ema, adjust=False).mean()
-                    hl = (tmp["high"] - tmp["low"]).abs()
-                    hc = (tmp["high"] - tmp["close"].shift(1)).abs()
-                    lc = (tmp["low"] - tmp["close"].shift(1)).abs()
-                    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-                    atr = tr.rolling(atr_n).mean()
-                    cols[f"kelt_mid_{tf}_{ema}_{atr_n}_{mult}"] = mid
-                    cols[f"kelt_up_{tf}_{ema}_{atr_n}_{mult}"] = mid + mult * atr
-                    cols[f"kelt_lo_{tf}_{ema}_{atr_n}_{mult}"] = mid - mult * atr
-                elif key == "hurst":
-                    w = int(params.get("window", 128))
-                    series = tmp["close"].astype(float)
-                    roll = series.rolling(w)
-
-                    def _h(x):
-                        vals = x.values
-                        if len(vals) < 2:
-                            return np.nan
-                        vals = vals - vals.mean()
-                        z = np.cumsum(vals)
-                        R = z.max() - z.min()
-                        S = vals.std() + 1e-12
-                        return math.log((R / S) + 1e-12) / math.log(len(vals) + 1e-12)
-
-                    cols[f"hurst_{tf}_{w}"] = roll.apply(_h, raw=False)
-                elif key == "ema":
-                    fast = int(params.get("fast", 12))
-                    slow = int(params.get("slow", 26))
-                    ema_fast = tmp["close"].ewm(span=fast, adjust=False).mean()
-                    ema_slow = tmp["close"].ewm(span=slow, adjust=False).mean()
-                    cols[f"ema_fast_{tf}_{fast}"] = ema_fast
-                    cols[f"ema_slow_{tf}_{slow}"] = ema_slow
-                    cols[f"ema_slope_{tf}_{fast}"] = ema_fast.diff().fillna(0.0)
-            if not cols:
-                continue
-            feat = pd.DataFrame(cols)
-            feat["ts_utc"] = tmp.index.view("int64") // 10**6
-            right = _ensure_dt_index(feat)
-            try:
-                tol = max(_timeframe_to_timedelta(tf), base_delta)
-            except Exception:
-                tol = base_delta
-            merged = pd.merge_asof(
-                left=base_lookup,
-                right=right,
-                left_index=True,
-                right_index=True,
-                direction="nearest",
-                tolerance=tol,
-            )
-            merged = (
-                merged.reset_index(drop=True)
-                .drop(columns=["ts_utc_y"], errors="ignore")
-                .rename(columns={"ts_utc_x": "ts_utc"})
-            )
-            frames.append(merged.drop(columns=["ts_utc"], errors="ignore"))
-    return pd.concat(frames, axis=1) if frames else pd.DataFrame(index=df.index)
+    This function is kept for backward compatibility but delegates to the centralized implementation.
+    """
+    return compute_indicators(df, ind_cfg, indicator_tfs, base_tf, symbol, days_history)
 
 
 def _build_features(candles: pd.DataFrame, args):

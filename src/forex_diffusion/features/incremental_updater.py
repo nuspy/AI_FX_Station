@@ -189,7 +189,7 @@ class FeatureWindow:
 
         from .feature_engineering import relative_ohlc, temporal_features, realized_volatility_feature
         from .feature_utils import coerce_indicator_tfs
-        from ..training.train_sklearn import _indicators  # TODO: Consolidate indicators after completing ISSUE-001
+        from .indicator_pipeline import compute_indicators  # ISSUE-001b: Use centralized indicator computation
 
         feats_list = []
 
@@ -256,7 +256,7 @@ class FeatureWindow:
             ind_cfg = self._build_indicator_config(feature_config, indicator_tfs)
 
             if ind_cfg:
-                indicator_feats = _indicators(
+                indicator_feats = compute_indicators(
                     indicator_context_data,
                     ind_cfg,
                     indicator_tfs,
@@ -303,7 +303,7 @@ class FeatureWindow:
 
         from .feature_engineering import relative_ohlc, temporal_features, realized_volatility_feature
         from .feature_utils import coerce_indicator_tfs
-        from ..training.train_sklearn import _indicators  # TODO: Consolidate indicators after completing ISSUE-001
+        from .indicator_pipeline import compute_indicators  # ISSUE-001b: Use centralized indicator computation
 
         feats_list = []
 
@@ -343,7 +343,7 @@ class FeatureWindow:
         if indicator_tfs:
             ind_cfg = self._build_indicator_config(feature_config, indicator_tfs)
             if ind_cfg:
-                feats_list.append(_indicators(df_candles, ind_cfg, indicator_tfs, self.timeframe))
+                feats_list.append(compute_indicators(df_candles, ind_cfg, indicator_tfs, self.timeframe))
 
         if not feats_list:
             raise IncrementalUpdateError("No features configured for computation")
