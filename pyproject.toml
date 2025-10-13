@@ -176,6 +176,7 @@ dev = [
   "pytest-asyncio>=0.21.0",
   "black>=23.0.0",
   "ruff>=0.1.0",
+  "autoflake>=2.3.0",  # Remove unused imports
 ]
 
 # Full NVIDIA stack (nvidia + compiled components via installer)
