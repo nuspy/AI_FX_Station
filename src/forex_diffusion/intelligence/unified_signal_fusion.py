@@ -272,13 +272,22 @@ class UnifiedSignalFusion:
         market_data: Optional[pd.DataFrame],
         sentiment_score: Optional[float]
     ) -> List[FusedSignal]:
-        """Process pattern detection signals"""
+        """
+        Process pattern detection signals.
+        
+        HIGH-003: Uses pattern confidence scores from PatternEvent.score field
+        """
         fused = []
 
         for signal in pattern_signals:
             # Extract pattern information
-            pattern_confidence = getattr(signal, 'confidence', 0.7)
+            # HIGH-003: PatternEvent uses 'score' field for confidence
+            pattern_confidence = getattr(signal, 'score', getattr(signal, 'confidence', 0.7))
             direction = getattr(signal, 'direction', 'neutral')
+            
+            # Convert direction to string if it's an enum
+            if hasattr(direction, 'value'):
+                direction = direction.value
 
             # Calculate MTF confirmations (simplified)
             mtf_confirmations = [True] * 2 + [False] * 1  # Example

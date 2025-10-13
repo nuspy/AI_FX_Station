@@ -220,9 +220,11 @@ class SignalQualityScorer:
     ) -> SignalQualityScore:
         """
         Score a pattern-based signal.
+        
+        HIGH-003: Uses pattern confidence scores in quality assessment
 
         Args:
-            pattern_confidence: Pattern detector confidence (0-1)
+            pattern_confidence: Pattern detector confidence (0-1) from PatternEvent.score
             mtf_confirmations: List of boolean confirmations per timeframe
             regime_probability: HMM regime probability (0-1)
             volume_ratio: Volume relative to average (0-2+)
@@ -231,8 +233,9 @@ class SignalQualityScorer:
             regime: Current regime
 
         Returns:
-            Quality assessment
+            Quality assessment with composite score weighted by pattern confidence
         """
+        # HIGH-003: Pattern confidence directly influences quality score
         # Convert inputs to dimension scores
         pattern_strength = np.clip(pattern_confidence, 0.0, 1.0)
 
