@@ -866,6 +866,8 @@ class PatternOverlayRenderer:
         skipped_count = 0
         xmin, xmax = ax.get_xlim()
         outside_range_count = 0
+        patterns_before_range = 0  # Patterns to the left (past)
+        patterns_after_range = 0   # Patterns to the right (future)
 
         for e in evs:
             label = self._pattern_label(e)
@@ -886,6 +888,12 @@ class PatternOverlayRenderer:
                     norm.append((x, y, label, kind, direction, e))
                 else:
                     outside_range_count += 1
+                    # Track direction (past vs future)
+                    if x < xmin:
+                        patterns_before_range += 1
+                    else:
+                        patterns_after_range += 1
+
                     if outside_range_count <= 3:  # Log first few
                         logger.debug(
                             f"Pattern outside range: label={label}, ts={ts}, x={x:.2f} "
@@ -921,10 +929,22 @@ class PatternOverlayRenderer:
                     should_warn = True
 
             if should_warn:
+                # Build direction-specific guidance message
+                if patterns_before_range > 0 and patterns_after_range == 0:
+                    direction_msg = "Scroll LEFT (← backwards in time) to see these older patterns."
+                elif patterns_after_range > 0 and patterns_before_range == 0:
+                    direction_msg = "Scroll RIGHT (→ forwards in time) to see these newer patterns."
+                elif patterns_before_range > 0 and patterns_after_range > 0:
+                    direction_msg = (
+                        f"Scroll LEFT for {patterns_before_range} older patterns, "
+                        f"or RIGHT for {patterns_after_range} newer patterns."
+                    )
+                else:
+                    direction_msg = "Zoom out or scroll the chart to see these patterns."
+
                 logger.warning(
                     f"⚠️  {outside_range_count}/{len(evs)} patterns are OUTSIDE the visible chart range "
-                    f"[{xmin:.2f}, {xmax:.2f}]. "
-                    f"Zoom out or scroll the chart to see older patterns."
+                    f"[{xmin:.2f}, {xmax:.2f}]. {direction_msg}"
                 )
                 self._last_outside_range_warning = current_state
             else:
