@@ -56,6 +56,10 @@ class BacktestEngine:
         self.train_days = int(wf.get("train_window_days", 365 * 2))
         self.val_days = int(wf.get("val_window_days", 90))
         self.test_days = int(wf.get("test_window_days", 90))
+        
+        # Walk-forward purge and embargo (BUG-002 fix)
+        self.purge_days = int(wf.get("purge_days", 1))  # Remove 1 day after training
+        self.embargo_days = int(wf.get("embargo_days", 2))  # Remove 2 days after validation
 
         baseline_cfg = bf.get("baseline", {}) if isinstance(bf, dict) else {}
         self.rw_sigma_window = int(baseline_cfg.get("rw_sigma_window", 100))
