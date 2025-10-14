@@ -137,6 +137,11 @@ class CTraderWebSocketService:
         self.on_volume_update: Optional[Callable] = None
         self.on_sentiment_update: Optional[Callable] = None
 
+        # Request/Response tracking (for _send_and_wait pattern)
+        self._pending_requests: Dict[str, Any] = {}  # clientMsgId -> Future-like object
+        self._next_msg_id = 1
+        self._msg_id_lock = threading.Lock()
+
         # Determine host and port
         if environment == "demo":
             self.host = EndPoints.PROTOBUF_DEMO_HOST
@@ -206,12 +211,19 @@ class CTraderWebSocketService:
             except Exception as e:
                 logger.error(f"Error during disconnect: {e}")
 
-        # Stop reactor
-        if reactor.running:
-            reactor.callFromThread(reactor.stop)
-
-        if self._reactor_thread:
-            self._reactor_thread.join(timeout=5.0)
+        # DON'T stop reactor if it's shared with CTraderProvider
+        # Only stop if we started it ourselves
+        if self._reactor_thread and reactor.running:
+            logger.info("Stopping Twisted reactor (owned by CTraderWebSocketService)...")
+            try:
+                reactor.callFromThread(reactor.stop)
+            except Exception as e:
+                logger.warning(f"Error stopping reactor: {e}")
+            
+            if self._reactor_thread:
+                self._reactor_thread.join(timeout=5.0)
+        else:
+            logger.info("Reactor shared with CTraderProvider - not stopping reactor")
 
         logger.info("CTrader WebSocket service stopped")
 
@@ -386,6 +398,10 @@ class CTraderWebSocketService:
     def _subscribe_to_symbols(self):
         """Subscribe to spot quotes and symbols for all configured symbols."""
         try:
+            # If reconnecting and we already know DOM isn't supported, log it
+            if self._skip_depth_quotes:
+                logger.info("Reconnecting - will skip depth quotes subscription (not supported on this account)")
+            
             for symbol in self.symbols:
                 # Get symbols list first (to get symbol IDs)
                 symbols_req = Messages.ProtoOASymbolsListReq()
@@ -401,16 +417,21 @@ class CTraderWebSocketService:
         """Subscribe to depth quotes (order book / DOM).
 
         Note: Demo accounts typically don't support DOM. The subscription will timeout
-        after 5 seconds if not supported, which is expected behavior.
+        after 10 seconds if not supported, which is expected behavior.
         """
         try:
+            # Skip if we already know depth quotes aren't supported
+            if self._skip_depth_quotes:
+                logger.info("Skipping depth quotes subscription (not supported on this account)")
+                return
+            
             if not symbol_ids:
                 logger.warning("No symbol IDs to subscribe for depth quotes")
                 return
 
             logger.info(
                 f"Attempting to subscribe to depth quotes for {len(symbol_ids)} symbols: {symbol_ids}\n"
-                f"Note: Demo accounts may not support DOM - timeout after 5s is expected."
+                f"Note: Demo accounts may not support DOM - timeout after 10s is expected."
             )
 
             # Create ONE request with ALL symbol IDs (symbolId is a repeated field)
@@ -422,14 +443,109 @@ class CTraderWebSocketService:
                 depth_req.symbolId.append(symbol_id)
                 logger.debug(f"Added symbol ID {symbol_id} to depth quotes subscription")
 
-            # Send ONE request with all symbols
-            # Note: This may timeout if DOM isn't supported (common for demo accounts)
-            self.client.send(depth_req)
-            logger.debug(f"Sent depth quotes subscription request for {len(symbol_ids)} symbols")
+            # Use _send_and_wait pattern with 10s timeout
+            reactor.callFromThread(
+                self._send_and_wait_twisted,
+                depth_req,
+                Messages.ProtoOASubscribeDepthQuotesRes,
+                10.0,  # 10 second timeout
+                self._on_depth_subscription_response,
+                self._on_depth_subscription_timeout
+            )
 
         except Exception as e:
             logger.warning(f"Depth subscription error (this is normal for accounts without DOM access): {e}")
             self._skip_depth_quotes = True
+
+    def _on_depth_subscription_response(self, response):
+        """Callback when depth subscription succeeds."""
+        logger.info("✓ Successfully subscribed to depth quotes (DOM streaming active)")
+
+    def _on_depth_subscription_timeout(self, error):
+        """Callback when depth subscription times out."""
+        logger.warning(
+            "⏭️ Depth quotes subscription timed out - DOM not supported on this account.\n"
+            "Continuing with spot quotes only (synthetic DOM from bid/ask)."
+        )
+        self._skip_depth_quotes = True
+        
+        # IMPORTANT: Don't raise exception here - that would cause disconnect/reconnect loop
+        # The Deferred timeout already handled the error, we just need to set the flag
+        
+        # Show notification to user
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            from PySide6.QtCore import QTimer
+            
+            app = QApplication.instance()
+            if app:
+                def show_notification():
+                    msg = QMessageBox()
+                    msg.setIcon(QMessageBox.Icon.Information)
+                    msg.setWindowTitle("cTrader DOM Not Available")
+                    msg.setText("Depth of Market (DOM) not supported on this account")
+                    msg.setInformativeText(
+                        f"Your cTrader account ({self.environment}) does not support real-time DOM streaming.\n\n"
+                        "✓ Spot quotes (bid/ask) will continue working normally\n"
+                        "✓ Synthetic DOM (1-level) will be used for OrderFlowPanel\n"
+                        "✓ All trading features remain functional\n\n"
+                        "Note: DOM/Level 2 data is typically not available on demo accounts."
+                    )
+                    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                    msg.exec()
+                
+                # Schedule on main thread
+                QTimer.singleShot(0, show_notification)
+        except Exception as e:
+            logger.debug(f"Could not show DOM notification: {e}")
+
+    def _send_and_wait_twisted(self, request, expected_response_type, timeout, on_success, on_error):
+        """
+        Send request and wait for response with timeout (Twisted-compatible).
+
+        Args:
+            request: Protobuf request message
+            expected_response_type: Expected response message type
+            timeout: Timeout in seconds
+            on_success: Callback(response) when response received
+            on_error: Callback(error) when timeout or error occurs
+        """
+        from twisted.internet import defer
+
+        try:
+            # Generate unique message ID
+            with self._msg_id_lock:
+                msg_id = str(self._next_msg_id)
+                self._next_msg_id += 1
+
+            # Set clientMsgId on request
+            if hasattr(request, 'clientMsgId'):
+                request.clientMsgId = msg_id
+
+            # Create Deferred for tracking this request
+            d = defer.Deferred()
+
+            # Add timeout
+            d.addTimeout(timeout, reactor, onTimeoutCancel=lambda: on_error("Timeout"))
+
+            # Add callbacks
+            d.addCallback(on_success)
+            d.addErrback(lambda failure: on_error(str(failure)))
+
+            # Store in pending requests
+            self._pending_requests[msg_id] = {
+                'deferred': d,
+                'expected_type': expected_response_type,
+                'timestamp': time.time()
+            }
+
+            # Send request
+            self.client.send(request)
+            logger.debug(f"Sent request {msg_id} ({type(request).__name__}), waiting for {expected_response_type.__name__}")
+
+        except Exception as e:
+            logger.error(f"Error in _send_and_wait_twisted: {e}")
+            on_error(str(e))
 
     def _on_message_received(self, client, message):
         """
@@ -447,6 +563,24 @@ class CTraderWebSocketService:
             # Log all message types for debugging
             message_type_name = str(payload_type).split('.')[-1] if hasattr(payload_type, '__class__') else str(payload_type)
             logger.debug(f"Received message: {message_type_name} (type={payload_type})")
+
+            # Check if this is a response to a pending request (has clientMsgId)
+            if hasattr(message, 'clientMsgId') and message.clientMsgId:
+                msg_id = message.clientMsgId
+                if msg_id in self._pending_requests:
+                    pending = self._pending_requests.pop(msg_id)
+                    expected_type = pending['expected_type']
+                    
+                    # Check if response type matches expected
+                    if payload_type == expected_type:
+                        logger.debug(f"Matched response for request {msg_id}")
+                        # Complete the Deferred
+                        deferred = pending['deferred']
+                        if not deferred.called:
+                            deferred.callback(message)
+                        return  # Don't process further
+                    else:
+                        logger.warning(f"Response type mismatch: expected {expected_type}, got {payload_type}")
 
             # Application auth response
             if payload_type == Messages.ProtoOAApplicationAuthRes:
@@ -471,12 +605,12 @@ class CTraderWebSocketService:
             elif payload_type == Messages.ProtoOASymbolsListRes:
                 self._handle_symbols_list(message)
 
-            # Depth quotes subscription response
-            elif payload_type == Messages.ProtoOASubscribeDepthQuotesRes:
+            # Depth quotes subscription response (type 2157)
+            elif payload_type == 2157:
                 logger.info("✓ Successfully subscribed to depth quotes (DOM streaming active)")
 
-            # Depth event (order book update)
-            elif payload_type == Messages.ProtoOADepthEvent:
+            # Depth event (order book update) - TYPE 2155 is the ACTUAL DOM data!
+            elif payload_type == 2155:
                 logger.debug("Received ProtoOADepthEvent - processing order book update")
                 self._handle_depth_event(message)
 
@@ -564,6 +698,29 @@ class CTraderWebSocketService:
 
             if not symbol_name:
                 return
+            
+            # Track event frequency for monitoring
+            if not hasattr(self, '_spot_event_count'):
+                self._spot_event_count = {}
+                self._spot_event_last_log = {}
+            
+            if symbol_name not in self._spot_event_count:
+                self._spot_event_count[symbol_name] = 0
+                self._spot_event_last_log[symbol_name] = time.time()
+            
+            self._spot_event_count[symbol_name] += 1
+            
+            # Log frequency every 60 seconds
+            now = time.time()
+            if now - self._spot_event_last_log[symbol_name] >= 60:
+                events_per_min = self._spot_event_count[symbol_name]
+                avg_interval = 60.0 / events_per_min if events_per_min > 0 else 0
+                logger.info(
+                    f"📊 ProtoOASpotEvent frequency for {symbol_name}: "
+                    f"{events_per_min} events/min (avg interval: {avg_interval:.2f}s)"
+                )
+                self._spot_event_count[symbol_name] = 0
+                self._spot_event_last_log[symbol_name] = now
 
             # Extract prices (cTrader uses pips * 100000)
             bid = message.bid / 100000.0 if hasattr(message, 'bid') else None
@@ -661,6 +818,29 @@ class CTraderWebSocketService:
 
             if not symbol_name:
                 return
+            
+            # Track event frequency for monitoring
+            if not hasattr(self, '_depth_event_count'):
+                self._depth_event_count = {}
+                self._depth_event_last_log = {}
+            
+            if symbol_name not in self._depth_event_count:
+                self._depth_event_count[symbol_name] = 0
+                self._depth_event_last_log[symbol_name] = time.time()
+            
+            self._depth_event_count[symbol_name] += 1
+            
+            # Log frequency every 60 seconds
+            now = time.time()
+            if now - self._depth_event_last_log[symbol_name] >= 60:
+                events_per_min = self._depth_event_count[symbol_name]
+                avg_interval = 60.0 / events_per_min if events_per_min > 0 else 0
+                logger.info(
+                    f"📊 ProtoOADepthEvent frequency for {symbol_name}: "
+                    f"{events_per_min} events/min (avg interval: {avg_interval:.2f}s)"
+                )
+                self._depth_event_count[symbol_name] = 0
+                self._depth_event_last_log[symbol_name] = now
 
             # Initialize depth quotes for this symbol if needed
             if symbol_name not in self.depth_quotes:
@@ -748,7 +928,9 @@ class CTraderWebSocketService:
             logger.debug(
                 f"Processed depth event for {symbol_name}: "
                 f"{len(bids)} bids, {len(asks)} asks, "
-                f"spread={spread:.5f if spread else 0}"
+                f"spread={spread:.5f if spread else 0}, "
+                f"new_quotes={len(message.newQuotes) if hasattr(message, 'newQuotes') else 0}, "
+                f"deleted_quotes={len(message.deletedQuotes) if hasattr(message, 'deletedQuotes') else 0}"
             )
 
         except Exception as e:
@@ -839,6 +1021,29 @@ class CTraderWebSocketService:
                     'provider': 'ctrader'
                 })
 
+            # Track database write frequency
+            if not hasattr(self, '_db_write_count'):
+                self._db_write_count = {}
+                self._db_write_last_log = {}
+            
+            symbol = dom_data['symbol']
+            if symbol not in self._db_write_count:
+                self._db_write_count[symbol] = 0
+                self._db_write_last_log[symbol] = time.time()
+            
+            self._db_write_count[symbol] += 1
+            
+            # Log database write frequency every 60 seconds
+            now = time.time()
+            if now - self._db_write_last_log[symbol] >= 60:
+                writes_per_min = self._db_write_count[symbol]
+                logger.info(
+                    f"💾 Database writes for {symbol}: {writes_per_min} rows/min "
+                    f"(~{writes_per_min * 60} rows/hour)"
+                )
+                self._db_write_count[symbol] = 0
+                self._db_write_last_log[symbol] = now
+            
             logger.debug(f"Stored order book for {dom_data['symbol']}")
 
         except Exception as e:
