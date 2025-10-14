@@ -309,7 +309,10 @@ class CTraderWebSocketService:
             app_auth_req.clientId = self.client_id
             app_auth_req.clientSecret = self.client_secret
 
-            self.client.send(app_auth_req)
+            # Auth requests expect responses, use longer timeout (30s)
+            deferred = self.client.send(app_auth_req, responseTimeoutInSeconds=30)
+            if deferred:
+                deferred.addErrback(lambda err: logger.warning(f"App auth timeout after 30s: {err}"))
             logger.info("Sent application auth request")
 
         except Exception as e:
@@ -322,7 +325,9 @@ class CTraderWebSocketService:
             account_list_req = Messages.ProtoOAGetAccountListByAccessTokenReq()
             account_list_req.accessToken = self.access_token
 
-            self.client.send(account_list_req)
+            deferred = self.client.send(account_list_req, responseTimeoutInSeconds=30)
+            if deferred:
+                deferred.addErrback(lambda err: logger.warning(f"Account list timeout after 30s: {err}"))
             logger.info("Sent account list request")
 
         except Exception as e:
@@ -389,7 +394,9 @@ class CTraderWebSocketService:
             account_auth_req.ctidTraderAccountId = self.account_id
             account_auth_req.accessToken = self.access_token
 
-            self.client.send(account_auth_req)
+            deferred = self.client.send(account_auth_req, responseTimeoutInSeconds=30)
+            if deferred:
+                deferred.addErrback(lambda err: logger.warning(f"Account auth timeout after 30s: {err}"))
             logger.info(f"Sent account auth request for account {self.account_id}")
 
         except Exception as e:
@@ -406,7 +413,9 @@ class CTraderWebSocketService:
                 # Get symbols list first (to get symbol IDs)
                 symbols_req = Messages.ProtoOASymbolsListReq()
                 symbols_req.ctidTraderAccountId = self.account_id
-                self.client.send(symbols_req)
+                deferred = self.client.send(symbols_req, responseTimeoutInSeconds=30)
+                if deferred:
+                    deferred.addErrback(lambda err: logger.warning(f"Symbols list timeout after 30s: {err}"))
 
             logger.info(f"Requested symbols list for subscription")
 
@@ -443,61 +452,24 @@ class CTraderWebSocketService:
                 depth_req.symbolId.append(symbol_id)
                 logger.debug(f"Added symbol ID {symbol_id} to depth quotes subscription")
 
-            # Use _send_and_wait pattern with 10s timeout
-            reactor.callFromThread(
-                self._send_and_wait_twisted,
-                depth_req,
-                Messages.ProtoOASubscribeDepthQuotesRes,
-                10.0,  # 10 second timeout
-                self._on_depth_subscription_response,
-                self._on_depth_subscription_timeout
+            # Send subscription request (fire-and-forget, no response expected)
+            # DOM events (type 2155) will arrive asynchronously when available
+            # Use long timeout and add errback to prevent "Unhandled error in Deferred"
+            deferred = self.client.send(depth_req, responseTimeoutInSeconds=3600)
+            if deferred:
+                deferred.addCallback(lambda _: None)
+                deferred.addErrback(lambda err: None)
+            logger.info(
+                f"📡 Subscribed to DOM for {len(symbol_ids)} symbols\n"
+                f"DOM events (type 2155 - ProtoOADepthEvent) will stream continuously if supported.\n"
+                f"If no DOM events arrive, the account may not support Level 2 data."
             )
 
         except Exception as e:
             logger.warning(f"Depth subscription error (this is normal for accounts without DOM access): {e}")
             self._skip_depth_quotes = True
 
-    def _on_depth_subscription_response(self, response):
-        """Callback when depth subscription succeeds."""
-        logger.info("✓ Successfully subscribed to depth quotes (DOM streaming active)")
 
-    def _on_depth_subscription_timeout(self, error):
-        """Callback when depth subscription times out."""
-        logger.warning(
-            "⏭️ Depth quotes subscription timed out - DOM not supported on this account.\n"
-            "Continuing with spot quotes only (synthetic DOM from bid/ask)."
-        )
-        self._skip_depth_quotes = True
-        
-        # IMPORTANT: Don't raise exception here - that would cause disconnect/reconnect loop
-        # The Deferred timeout already handled the error, we just need to set the flag
-        
-        # Show notification to user
-        try:
-            from PySide6.QtWidgets import QApplication, QMessageBox
-            from PySide6.QtCore import QTimer
-            
-            app = QApplication.instance()
-            if app:
-                def show_notification():
-                    msg = QMessageBox()
-                    msg.setIcon(QMessageBox.Icon.Information)
-                    msg.setWindowTitle("cTrader DOM Not Available")
-                    msg.setText("Depth of Market (DOM) not supported on this account")
-                    msg.setInformativeText(
-                        f"Your cTrader account ({self.environment}) does not support real-time DOM streaming.\n\n"
-                        "✓ Spot quotes (bid/ask) will continue working normally\n"
-                        "✓ Synthetic DOM (1-level) will be used for OrderFlowPanel\n"
-                        "✓ All trading features remain functional\n\n"
-                        "Note: DOM/Level 2 data is typically not available on demo accounts."
-                    )
-                    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                    msg.exec()
-                
-                # Schedule on main thread
-                QTimer.singleShot(0, show_notification)
-        except Exception as e:
-            logger.debug(f"Could not show DOM notification: {e}")
 
     def _send_and_wait_twisted(self, request, expected_response_type, timeout, on_success, on_error):
         """
@@ -505,7 +477,7 @@ class CTraderWebSocketService:
 
         Args:
             request: Protobuf request message
-            expected_response_type: Expected response message type
+            expected_response_type: Expected response type (integer)
             timeout: Timeout in seconds
             on_success: Callback(response) when response received
             on_error: Callback(error) when timeout or error occurs
@@ -522,26 +494,37 @@ class CTraderWebSocketService:
             if hasattr(request, 'clientMsgId'):
                 request.clientMsgId = msg_id
 
-            # Create Deferred for tracking this request
-            d = defer.Deferred()
+            # Use manual timeout with callLater instead of Deferred.addTimeout
+            timeout_call = None
+            
+            def timeout_handler():
+                # Remove from pending
+                if msg_id in self._pending_requests:
+                    self._pending_requests.pop(msg_id)
+                logger.debug(f"Request {msg_id} timed out after {timeout}s")
+                # Call error handler directly (don't trigger Deferred)
+                on_error("Timeout")
+            
+            def success_wrapper(response):
+                # Cancel timeout if response arrives
+                if timeout_call and timeout_call.active():
+                    timeout_call.cancel()
+                on_success(response)
+            
+            # Schedule timeout
+            timeout_call = reactor.callLater(timeout, timeout_handler)
 
-            # Add timeout
-            d.addTimeout(timeout, reactor, onTimeoutCancel=lambda: on_error("Timeout"))
-
-            # Add callbacks
-            d.addCallback(on_success)
-            d.addErrback(lambda failure: on_error(str(failure)))
-
-            # Store in pending requests
+            # Store in pending requests (no Deferred, just timeout call)
             self._pending_requests[msg_id] = {
-                'deferred': d,
+                'timeout_call': timeout_call,
                 'expected_type': expected_response_type,
-                'timestamp': time.time()
+                'timestamp': time.time(),
+                'callback': success_wrapper
             }
 
             # Send request
             self.client.send(request)
-            logger.debug(f"Sent request {msg_id} ({type(request).__name__}), waiting for {expected_response_type.__name__}")
+            logger.debug(f"Sent request {msg_id} ({type(request).__name__}), waiting for response type {expected_response_type}")
 
         except Exception as e:
             logger.error(f"Error in _send_and_wait_twisted: {e}")
@@ -563,6 +546,20 @@ class CTraderWebSocketService:
             # Log all message types for debugging
             message_type_name = str(payload_type).split('.')[-1] if hasattr(payload_type, '__class__') else str(payload_type)
             logger.debug(f"Received message: {message_type_name} (type={payload_type})")
+            
+            # Heartbeat (type 51) - send heartbeat response
+            if payload_type == 51:
+                try:
+                    from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import ProtoHeartbeatEvent
+                    heartbeat_res = ProtoHeartbeatEvent()
+                    deferred = self.client.send(heartbeat_res, responseTimeoutInSeconds=3600)
+                    if deferred:
+                        deferred.addCallback(lambda _: None)
+                        deferred.addErrback(lambda err: None)
+                    logger.debug("Sent heartbeat response")
+                    return  # Don't process as auth response
+                except Exception as e:
+                    logger.warning(f"Failed to send heartbeat: {e}")
 
             # Check if this is a response to a pending request (has clientMsgId)
             if hasattr(message, 'clientMsgId') and message.clientMsgId:
@@ -574,16 +571,21 @@ class CTraderWebSocketService:
                     # Check if response type matches expected
                     if payload_type == expected_type:
                         logger.debug(f"Matched response for request {msg_id}")
-                        # Complete the Deferred
-                        deferred = pending['deferred']
-                        if not deferred.called:
-                            deferred.callback(message)
+                        
+                        # Cancel timeout
+                        if 'timeout_call' in pending and pending['timeout_call'].active():
+                            pending['timeout_call'].cancel()
+                        
+                        # Call success callback
+                        if 'callback' in pending:
+                            pending['callback'](message)
+                        
                         return  # Don't process further
                     else:
                         logger.warning(f"Response type mismatch: expected {expected_type}, got {payload_type}")
 
-            # Application auth response
-            if payload_type == Messages.ProtoOAApplicationAuthRes:
+            # Application auth response (type 2101)
+            if payload_type == Messages.ProtoOAApplicationAuthRes or payload_type == 2101:
                 logger.info("✓ Application authenticated")
                 # If we need to fetch account list, do it now; otherwise authorize directly
                 if self.auto_fetch_account:
@@ -605,14 +607,32 @@ class CTraderWebSocketService:
             elif payload_type == Messages.ProtoOASymbolsListRes:
                 self._handle_symbols_list(message)
 
-            # Depth quotes subscription response (type 2157)
+            # Depth quotes subscription response (type 2157) - OPTIONAL confirmation
             elif payload_type == 2157:
-                logger.info("✓ Successfully subscribed to depth quotes (DOM streaming active)")
+                logger.success("✓ DOM subscription confirmed - Level 2 data streaming will begin")
 
             # Depth event (order book update) - TYPE 2155 is the ACTUAL DOM data!
             elif payload_type == 2155:
-                logger.debug("Received ProtoOADepthEvent - processing order book update")
-                self._handle_depth_event(message)
+                # Decode the payload as ProtoOADepthEvent
+                try:
+                    depth_event = Messages.ProtoOADepthEvent()
+                    depth_event.ParseFromString(message.payload)
+                    
+                    # Log first 5 events for debugging
+                    if not hasattr(self, '_depth_event_total_count'):
+                        self._depth_event_total_count = 0
+                    self._depth_event_total_count += 1
+                    
+                    if self._depth_event_total_count <= 5:
+                        logger.info(f"🎯 ProtoOADepthEvent #{self._depth_event_total_count} received and decoded successfully")
+                        logger.info(f"   symbolId={depth_event.symbolId}")
+                        logger.info(f"   newQuotes={len(depth_event.newQuotes) if hasattr(depth_event, 'newQuotes') else 0}")
+                        logger.info(f"   deletedQuotes={len(depth_event.deletedQuotes) if hasattr(depth_event, 'deletedQuotes') else 0}")
+                    
+                    logger.debug("Processing ProtoOADepthEvent...")
+                    self._handle_depth_event(depth_event)
+                except Exception as e:
+                    logger.error(f"Failed to parse ProtoOADepthEvent: {e}", exc_info=True)
 
             # Execution event (for sentiment tracking)
             elif payload_type == Messages.ProtoOAExecutionEvent:

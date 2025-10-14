@@ -83,6 +83,17 @@ data:
     prefer_daily_for_longrun: true
     # Days per REST API call when fetching historical candles (default: 7 = one week)
     rest_batch_days: 7
+    # Gap detection settings
+    gap_detection:
+      # Minimum consecutive missing candles to trigger a download (prevents tiny gap re-downloads)
+      min_gap_size: 10
+      # Timestamp tolerance in seconds for fuzzy matching (accounts for provider timestamp variations)
+      timestamp_tolerance_seconds: 2
+      # Enable day-level aggregation (if false, only fetches exact missing ranges)
+      enable_day_aggregation: true
+      # Minimum percentage of day missing to trigger full day download (0.0-1.0)
+      # e.g., 0.3 = only aggregate to full day if 30%+ of day is missing
+      day_aggregation_threshold: 0.3
   storage:
     resampled_flag_field: "resampled"
     # unique key enforced: (symbol, timeframe, ts_utc)

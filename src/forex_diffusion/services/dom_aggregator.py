@@ -29,7 +29,7 @@ class DOMAggregatorService(ThreadedBackgroundService):
     Inherits from ThreadedBackgroundService for lifecycle management and error recovery.
     """
 
-    def __init__(self, engine: Engine, symbols: List[str] | None = None, interval_seconds: int = 5):
+    def __init__(self, engine: Engine, symbols: List[str] | None = None, interval_seconds: int = 5, provider=None):
         """
         Initialize DOM aggregator service.
         
@@ -37,6 +37,7 @@ class DOMAggregatorService(ThreadedBackgroundService):
             engine: SQLAlchemy engine for database access
             symbols: List of symbols to process (None = load from config)
             interval_seconds: Interval between DOM processing runs (default: 5s)
+            provider: Optional provider instance to read DOM from RAM buffer instead of database
         """
         # Initialize base class with circuit breaker enabled
         super().__init__(
@@ -45,6 +46,7 @@ class DOMAggregatorService(ThreadedBackgroundService):
             interval_seconds=interval_seconds,
             enable_circuit_breaker=True
         )
+        self.provider = provider  # Store provider reference for RAM buffer access
     
     @property
     def service_name(self) -> str:
@@ -187,12 +189,38 @@ class DOMAggregatorService(ThreadedBackgroundService):
     def get_latest_dom_snapshot(self, symbol: str) -> Optional[Dict]:
         """
         Get complete DOM snapshot with full order book data.
+        
+        Reads from provider RAM buffer if available (faster),
+        otherwise falls back to database.
 
         Returns:
             Dictionary with bids, asks arrays and computed metrics,
             or None if no data available.
         """
         try:
+            # TRY RAM BUFFER FIRST (faster, real-time)
+            if self.provider and hasattr(self.provider, '_dom_buffer'):
+                buffer_keys = list(self.provider._dom_buffer.keys())
+                logger.debug(f"DOM buffer keys: {buffer_keys}")
+                
+                # Try multiple symbol formats (EURUSD, EUR/USD, EUR-USD)
+                symbol_variants = [
+                    symbol,
+                    symbol.replace('/', ''),
+                    symbol.replace('-', ''),
+                    symbol.replace('/', '-'),
+                ]
+                logger.debug(f"Looking for {symbol} as variants: {symbol_variants}")
+                
+                for sym_variant in symbol_variants:
+                    if sym_variant in self.provider._dom_buffer:
+                        dom_data = self.provider._dom_buffer[sym_variant]
+                        logger.info(f"✓ DOM snapshot for {symbol} (found as '{sym_variant}') retrieved from RAM buffer")
+                        return dom_data
+                
+                logger.warning(f"DOM for {symbol} not found in buffer. Buffer has: {buffer_keys}")
+            
+            # FALLBACK TO DATABASE (for historical or if provider not available)
             with self.engine.connect() as conn:
                 query = text(
                     "SELECT ts_utc, bids, asks, mid_price, spread, imbalance "

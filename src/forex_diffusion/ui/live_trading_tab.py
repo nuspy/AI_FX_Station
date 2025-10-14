@@ -24,7 +24,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from loguru import logger
 
-from ..broker import CTraderBroker, BrokerSimulator, OrderSide, Position
+from ..brokers.ctrader_broker_v2 import CTraderBroker, BrokerSimulator, OrderSide, Position
 
 
 class LiveTradingTab(QWidget):

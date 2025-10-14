@@ -113,6 +113,11 @@ class PlotService(ChartServiceBase):
             logger.error(f"Failed to apply theme to PyQtGraph: {e}")
 
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
+        # TEMPORARY: Disable plotting for performance testing
+        if getattr(self.view, '_disable_plotting', False):
+            logger.debug("Plotting disabled for performance - skipping update_plot")
+            return
+        
         # Check if using finplot
         if hasattr(self.view, 'use_finplot') and self.view.use_finplot:
             return self._update_plot_finplot(df, quantiles)

@@ -249,10 +249,10 @@ class PatternsService(ChartServiceBase):
         # Load performance settings
         performance_config = self._config.get('performance', {})
 
-        # Auto-detect optimal thread count
+        # Auto-detect optimal thread count (REDUCED from 32 to 8 max to prevent UI blocking)
         # imports moved to top
         cpu_count = os.cpu_count() or 8
-        optimal_threads = max(1, min(32, int(cpu_count * 0.75)))
+        optimal_threads = max(1, min(8, int(cpu_count * 0.5)))  # Reduced from 32 to 8 max, 50% instead of 75%
 
         max_threads = performance_config.get('detection_threads', optimal_threads)
         self.parallel_realtime = performance_config.get('parallel_realtime', True)
@@ -274,13 +274,16 @@ class PatternsService(ChartServiceBase):
         self._historical_worker.batch_completed.connect(self._on_multithread_batch_completed)
         self._historical_worker.detection_finished.connect(self._on_multithread_detection_finished)
 
-        # Start detection threads
-        self._detection_thread.start()
-        self._multithread_detection_thread.start()
+        # Pattern detection threads - START DISABLED for better UI performance
+        # User can enable via Chart tab pattern checkboxes when needed
+        # self._detection_thread.start()
+        # self._multithread_detection_thread.start()
+        logger.warning(f"⚠️ Pattern detection threads DISABLED by default (enable via UI checkboxes). Max workers: {max_threads}")
 
-        # Start real-time pattern scan threads
-        self._chart_thread.start()
-        self._candle_thread.start()
+        # Real-time pattern scan threads - ALSO DISABLED by default
+        # self._chart_thread.start()
+        # self._candle_thread.start()
+        logger.warning("⚠️ Real-time pattern scan threads DISABLED by default (enable via UI checkboxes)")
 
         # Log interval in human-readable format
         if interval_ms < 60000:

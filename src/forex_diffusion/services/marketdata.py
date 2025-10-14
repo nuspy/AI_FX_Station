@@ -182,7 +182,23 @@ class MarketDataService:
             logger.warning("Could not read rest_batch_days from config: {}, using default 7", e)
             self.rest_batch_days = 7
 
+        # Read gap detection settings from config
+        try:
+            gap_cfg = getattr(getattr(self.cfg.data, "backfill", None), "gap_detection", None)
+            self.min_gap_size = int(getattr(gap_cfg, "min_gap_size", 10)) if gap_cfg else 10
+            self.timestamp_tolerance_ms = int(getattr(gap_cfg, "timestamp_tolerance_seconds", 2)) * 1000 if gap_cfg else 2000
+            self.enable_day_aggregation = bool(getattr(gap_cfg, "enable_day_aggregation", True)) if gap_cfg else True
+            self.day_aggregation_threshold = float(getattr(gap_cfg, "day_aggregation_threshold", 0.3)) if gap_cfg else 0.3
+        except Exception as e:
+            logger.warning("Could not read gap_detection settings from config: {}, using defaults", e)
+            self.min_gap_size = 10
+            self.timestamp_tolerance_ms = 2000
+            self.enable_day_aggregation = True
+            self.day_aggregation_threshold = 0.3
+
         logger.info("REST batch size: {} days per request", self.rest_batch_days)
+        logger.info("Gap detection: min_size={}, tolerance={}ms, day_agg={} (threshold={})",
+                    self.min_gap_size, self.timestamp_tolerance_ms, self.enable_day_aggregation, self.day_aggregation_threshold)
 
     def _show_provider_config_dialog(self, error_message: str):
         """Show provider configuration dialog."""
@@ -664,6 +680,11 @@ class MarketDataService:
         """
         Determine contiguous ranges [s_ms,e_ms] where expected period-end timestamps for timeframe are missing in DB.
         Returns list of start_ms,end_ms pairs in milliseconds (UTC). Each pair should be inclusive bounds for requesting.
+        
+        Implements smart gap detection with:
+        - Timestamp fuzzy matching (tolerance window)
+        - Minimum gap size threshold
+        - Configurable day-level aggregation
         """
         if timeframe == "tick":
             # ticks handled via 1m fallback aggregator; return a single range
@@ -683,12 +704,28 @@ class MarketDataService:
             logger.exception("Failed to query existing candles for gap detection: {}", e)
             existing = set()
 
-        # compute missing expected points (ints)
+        # FUZZY MATCHING: For each expected timestamp, check if there's an existing timestamp within tolerance
+        tolerance_ms = getattr(self, "timestamp_tolerance_ms", 2000)
         expected_set = set(expected)
-        missing_points = sorted(list(expected_set - existing))
+        missing_points = []
+        
+        for exp_ts in expected:
+            # Check if any existing timestamp is within tolerance window
+            found_match = False
+            for exist_ts in existing:
+                if abs(exp_ts - exist_ts) <= tolerance_ms:
+                    found_match = True
+                    break
+            if not found_match:
+                missing_points.append(exp_ts)
+        
+        missing_points = sorted(missing_points)
         if not missing_points:
             return []
 
+        # MINIMUM GAP SIZE THRESHOLD: Filter out runs smaller than min_gap_size
+        min_gap_size = getattr(self, "min_gap_size", 10)
+        
         # group consecutive expected timestamps into contiguous runs
         runs: List[List[int]] = []
         run = [missing_points[0]]
@@ -709,10 +746,17 @@ class MarketDataService:
             if delta <= expected_delta + pd.Timedelta(seconds=1):
                 run.append(t)
             else:
-                runs.append(run)
+                # Only save run if it meets minimum size threshold
+                if len(run) >= min_gap_size:
+                    runs.append(run)
                 run = [t]
-        if run:
+        if run and len(run) >= min_gap_size:
             runs.append(run)
+        
+        # Log filtered gaps
+        if not runs:
+            logger.debug("No significant gaps found for {} {} (all gaps < {} candles)", symbol, timeframe, min_gap_size)
+            return []
 
         # convert runs to [start_ms,end_ms] inclusive for requesting (add a small margin)
         out_ranges: List[Tuple[int, int]] = []
@@ -734,17 +778,38 @@ class MarketDataService:
                 e_ms = int(pd.to_datetime(e_dt_plus).value // 1_000_000)
             out_ranges.append((int(s), e_ms))
 
-        # NEW AGGREGATION STRATEGY: If any day has gaps, download the ENTIRE day
-        # This prevents multiple requests for the same day when there are scattered gaps
-        # Group ranges by day and merge all gaps within the same day
-        if out_ranges:
+        # SMART DAY-LEVEL AGGREGATION: Only aggregate to full day if significant portion is missing
+        enable_day_agg = getattr(self, "enable_day_aggregation", True)
+        day_agg_threshold = getattr(self, "day_aggregation_threshold", 0.3)
+        
+        if out_ranges and enable_day_agg:
             from datetime import datetime
-            day_ranges: Dict[str, Tuple[int, int]] = {}  # day_key -> (min_start, max_end)
+            
+            # Calculate expected candles per day for this timeframe
+            try:
+                freq = time_utils.tf_to_pandas_freq(timeframe)
+                delta = pd.Timedelta(freq)
+                candles_per_day = int(pd.Timedelta(days=1) / delta)
+            except Exception:
+                # Fallback: assume 1440 minutes per day
+                if timeframe.endswith("m"):
+                    minutes = int(timeframe[:-1])
+                    candles_per_day = 1440 // minutes
+                elif timeframe.endswith("h"):
+                    hours = int(timeframe[:-1])
+                    candles_per_day = 24 // hours
+                else:
+                    candles_per_day = 1
+            
+            # Group ranges by day and count missing candles per day
+            day_ranges: Dict[str, Tuple[int, int, int]] = {}  # day_key -> (min_start, max_end, missing_count)
 
             for start_ms, end_ms in out_ranges:
-                # Get the day for both start and end
                 start_dt = datetime.utcfromtimestamp(start_ms / 1000.0)
                 end_dt = datetime.utcfromtimestamp(end_ms / 1000.0)
+                
+                # Count how many candles are missing in this range
+                missing_count = len([t for t in expected if start_ms <= t <= end_ms])
 
                 # Generate day keys for all days covered by this range
                 current_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -756,22 +821,39 @@ class MarketDataService:
                     day_end_ms = int((current_dt.timestamp() + 86400) * 1000)  # +24 hours
 
                     if day_key in day_ranges:
-                        # Extend the day range if needed
-                        existing_start, existing_end = day_ranges[day_key]
+                        # Extend the day range and add to missing count
+                        existing_start, existing_end, existing_count = day_ranges[day_key]
                         day_ranges[day_key] = (
                             min(existing_start, day_start_ms),
-                            max(existing_end, day_end_ms)
+                            max(existing_end, day_end_ms),
+                            existing_count + missing_count
                         )
                     else:
-                        # Use full day boundaries
-                        day_ranges[day_key] = (day_start_ms, day_end_ms)
+                        day_ranges[day_key] = (day_start_ms, day_end_ms, missing_count)
 
                     current_dt += pd.Timedelta(days=1)
 
-            # Convert back to list of ranges, sorted by start time
-            out_ranges = sorted(list(day_ranges.values()), key=lambda x: x[0])
-
-            logger.debug(f"Aggregated {len(out_ranges)} day-level ranges for {symbol} {timeframe}")
+            # Only expand to full day if missing percentage exceeds threshold
+            final_ranges = []
+            for day_key, (day_start, day_end, missing_count) in day_ranges.items():
+                missing_pct = missing_count / candles_per_day if candles_per_day > 0 else 1.0
+                
+                if missing_pct >= day_agg_threshold:
+                    # Significant gap - download full day
+                    final_ranges.append((day_start, day_end))
+                    logger.debug("Day {} has {:.1%} missing ({}/{}) - downloading full day",
+                                day_key, missing_pct, missing_count, candles_per_day)
+                else:
+                    # Small gap - only download exact missing range(s)
+                    for start_ms, end_ms in out_ranges:
+                        start_dt = datetime.utcfromtimestamp(start_ms / 1000.0)
+                        if start_dt.strftime("%Y-%m-%d") == day_key:
+                            final_ranges.append((start_ms, end_ms))
+                            logger.debug("Day {} has {:.1%} missing ({}/{}) - downloading exact range only",
+                                        day_key, missing_pct, missing_count, candles_per_day)
+            
+            out_ranges = sorted(final_ranges, key=lambda x: x[0])
+            logger.debug("Smart aggregation: {} ranges for {} {}", len(out_ranges), symbol, timeframe)
 
         return out_ranges
 

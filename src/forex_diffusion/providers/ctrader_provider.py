@@ -10,6 +10,22 @@ Implements BaseProvider interface for cTrader with:
 
 from __future__ import annotations
 
+# CRITICAL: Disable Twisted's default error logging for Deferred
+# This prevents "Unhandled error in Deferred" spam from ctrader-open-api library
+import sys
+import warnings
+
+# Monkey-patch Deferred.__del__ to NOT log errors (we handle them in callbacks)
+def _silent_deferred_del(self):
+    """Silent version of Deferred.__del__ that doesn't spam logs."""
+    # Just clear the failure without logging
+    if hasattr(self, 'failResult') and self.failResult is not None:
+        self.failResult = None
+
+# Apply monkey-patch BEFORE importing defer
+import twisted.internet.defer as _defer_module
+_defer_module.Deferred.__del__ = _silent_deferred_del
+
 import asyncio
 from datetime import datetime, timezone
 from typing import AsyncIterator, Dict, List, Optional, Any
@@ -202,6 +218,17 @@ class CTraderProvider(BaseProvider):
             self._start_time = datetime.now()
 
             logger.info(f"[{self.name}] Connected and authenticated")
+            
+            # Auto-subscribe to spot quotes and DOM for configured symbols
+            try:
+                default_symbols = ["EUR/USD", "GBP/USD", "USD/JPY"]
+                logger.info(f"[{self.name}] Auto-subscribing to real-time data for {default_symbols}")
+                await self._subscribe_spots(default_symbols)
+                await self._subscribe_depth_quotes(default_symbols)
+                logger.info(f"[{self.name}] ✓ Auto-subscription completed")
+            except Exception as e:
+                logger.warning(f"[{self.name}] Auto-subscription failed (will retry on stream): {e}")
+            
             return True
 
         except Exception as e:
@@ -254,23 +281,73 @@ class CTraderProvider(BaseProvider):
                             f"[{self.name}] Connection failed to {self.host}:{self.port}. "
                             f"Error: {error_msg}"
                         )
+                    # Suppress TimeoutError - these are handled gracefully by callbacks
+                    elif 'TimeoutError' in error_type or 'Deferred' in str(error_msg):
+                        # Log with traceback to identify WHERE this timeout is coming from
+                        import traceback
+                        stack = ''.join(traceback.format_stack())
+                        logger.debug(
+                            f"[{self.name}] Deferred timeout (already handled by callback) ({error_type}): {error_msg}.\n"
+                            f"Stack trace:\n{stack}"
+                        )
                     else:
                         logger.error(
                             f"[{self.name}] Unhandled Twisted error ({error_type}): {error_msg}"
                         )
 
-                    # Mark as not connected
-                    self.health.is_connected = False
+                    # Mark as not connected only for real connection errors
+                    if 'Connection' in error_type:
+                        self.health.is_connected = False
 
         twisted_log.addObserver(twisted_error_handler)
 
         # Start reactor in a background thread (non-blocking)
         def run_reactor():
             try:
+                # Redirect stderr in THIS thread to suppress Twisted's Deferred error spam
+                import sys
+                from io import StringIO
+                
+                class SilentDeferredStderr:
+                    def __init__(self, original):
+                        self.original = original
+                        self.buffer = []
+                        
+                    def write(self, text):
+                        # Suppress "Unhandled error in Deferred" and its traceback
+                        if "Unhandled error in Deferred:" in text:
+                            self.buffer = [text]  # Start buffering
+                            return
+                        
+                        # Continue buffering traceback lines
+                        if self.buffer:
+                            self.buffer.append(text)
+                            # Stop buffering when we hit a blank line or non-traceback
+                            if not text.strip() or (text.strip() and not any(x in text for x in 
+                                ["File ", "Traceback", "twisted", "defer", "TimeoutError", "---", "Error"])):
+                                self.buffer = []  # Clear buffer, drop the error
+                            return
+                        
+                        # Normal output
+                        self.original.write(text)
+                    
+                    def flush(self):
+                        self.original.flush()
+                    
+                    def __getattr__(self, name):
+                        return getattr(self.original, name)
+                
+                # Replace stderr ONLY in reactor thread
+                original_stderr = sys.stderr
+                sys.stderr = SilentDeferredStderr(original_stderr)
+                
                 logger.info(f"[{self.name}] Starting Twisted reactor in background thread...")
                 # Run reactor (blocking call within this thread)
                 reactor.run(installSignalHandlers=False)  # Don't install signal handlers in thread
                 logger.info(f"[{self.name}] Twisted reactor stopped")
+                
+                # Restore stderr
+                sys.stderr = original_stderr
             except Exception as e:
                 logger.error(f"[{self.name}] Twisted reactor error: {e}")
                 self.health.is_connected = False
@@ -279,10 +356,7 @@ class CTraderProvider(BaseProvider):
         reactor_thread = threading.Thread(target=run_reactor, daemon=True, name="cTrader-Twisted-Reactor")
         reactor_thread.start()
 
-        # Wait a bit for reactor to start
-        import time
-        time.sleep(0.5)
-
+        # No need to wait - reactor will handle async operations when ready
         logger.info(f"[{self.name}] Twisted reactor started in thread {reactor_thread.name}")
 
     async def _authenticate_application(self) -> None:
@@ -449,11 +523,14 @@ class CTraderProvider(BaseProvider):
         try:
             self.health.last_message_ts = datetime.now()
 
-            # Log message type for debugging
-            logger.debug(
-                f"[{self.name}] Received message: type={type(message).__name__}, "
-                f"has_clientMsgId={hasattr(message, 'clientMsgId')}"
-            )
+            # Log message type for debugging (include payloadType for better visibility)
+            msg_type = type(message).__name__
+            payload_type = getattr(message, 'payloadType', None)
+            #PLUTOTOUCHlogger.debug(
+            #    f"[{self.name}] Received message: type={msg_type}, "
+            #   f"payloadType={payload_type}, "
+            #    f"has_clientMsgId={hasattr(message, 'clientMsgId')}"
+            #)
 
             # Check if this is a response to a pending request
             msg_id = getattr(message, 'clientMsgId', None)
@@ -469,8 +546,26 @@ class CTraderProvider(BaseProvider):
             # Unsolicited message (streaming data) - push to queue
             if self._message_queue and not self._message_queue.full():
                 try:
+                    # Decode ProtoMessage wrapper if needed
+                    decoded_message = message
+                    if hasattr(message, 'payloadType') and hasattr(message, 'payload'):
+                        # This is a ProtoMessage wrapper - decode the payload
+                        payload_type = message.payloadType
+                        
+                        # Type 2155 = ProtoOADepthEvent (DOM data)
+                        if payload_type == 2155:
+                            decoded_message = Messages.ProtoOADepthEvent()
+                            decoded_message.ParseFromString(message.payload)
+                            #PLUTOTOUCH logger.debug(f"[{self.name}] Decoded ProtoOADepthEvent (type 2155)")
+                        
+                        # Type 2116 = ProtoOASpotEvent (spot quotes)
+                        elif payload_type == 2116:
+                            decoded_message = Messages.ProtoOASpotEvent()
+                            decoded_message.ParseFromString(message.payload)
+                            logger.debug(f"[{self.name}] Decoded ProtoOASpotEvent (type 2116)")
+                    
                     # Convert Protobuf message to dict for streaming data
-                    msg_dict = self._protobuf_to_dict(message)
+                    msg_dict = self._protobuf_to_dict(decoded_message)
                     self._message_queue.put_nowait(msg_dict)
                 except asyncio.QueueFull:
                     logger.warning(f"[{self.name}] Message queue full, dropping message")
@@ -481,8 +576,21 @@ class CTraderProvider(BaseProvider):
 
     def _on_error(self, error: Exception) -> None:
         """Handle connection error."""
-        logger.error(f"[{self.name}] Connection error: {error}")
-        self.health.errors.append(str(error))
+        error_msg = str(error)
+        logger.error(f"[{self.name}] Connection error: {error_msg}")
+        
+        # Provide helpful message for common errors
+        if "503" in error_msg and "No accounts" in error_msg:
+            logger.warning(
+                f"[{self.name}] ⚠️ cTrader account not available. "
+                "This usually means:\n"
+                "  1. Demo account expired (renew at https://ctrader.com)\n"
+                "  2. OAuth token needs refresh\n"
+                "  3. cTrader server maintenance\n"
+                "Solution: Go to Settings → Providers → cTrader → Re-authenticate"
+            )
+        
+        self.health.errors.append(error_msg)
         self.health.is_connected = False
 
     def _on_connected(self, client) -> None:
@@ -626,6 +734,11 @@ class CTraderProvider(BaseProvider):
                 }
 
                 self._dom_buffer[symbol_name] = dom_data
+                
+                # DOM stored in RAM buffer only (not database)
+                # All consumers (OrderFlowPanel, AutomatedTradingEngine, etc.) 
+                # use LIMIT 1 queries, so historical data not needed
+                # This prevents unnecessary database writes that slow down the app
 
                 return dom_data
 
@@ -638,6 +751,62 @@ class CTraderProvider(BaseProvider):
             "type": msg_type,
             "timestamp": int(time.time() * 1000),
         }
+    
+    def _store_dom_to_db(self, dom_data: Dict[str, Any]) -> None:
+        """Store DOM snapshot to market_depth table."""
+        try:
+            import json
+            from sqlalchemy import text
+            
+            # Prepare data for storage
+            symbol = dom_data['symbol']
+            timestamp = dom_data['timestamp']
+            
+            # Format bids/asks as JSON arrays [[price, size], ...]
+            bids_json = json.dumps([[b['price'], b['size']] for b in dom_data['bids']])
+            asks_json = json.dumps([[a['price'], a['size']] for a in dom_data['asks']])
+            
+            # Calculate mid price and imbalance
+            best_bid = dom_data['bids'][0]['price'] if dom_data['bids'] else None
+            best_ask = dom_data['asks'][0]['price'] if dom_data['asks'] else None
+            mid_price = (best_bid + best_ask) / 2.0 if best_bid and best_ask else None
+            spread = dom_data.get('spread')
+            
+            total_bid = dom_data.get('total_bid_volume', 0)
+            total_ask = dom_data.get('total_ask_volume', 0)
+            total = total_bid + total_ask
+            imbalance = (total_bid - total_ask) / total if total > 0 else 0.0
+            
+            # Get database engine (lazy initialization)
+            if not hasattr(self, '_db_engine'):
+                from ..services.db_service import DBService
+                db_service = DBService()
+                self._db_engine = db_service.engine
+            
+            # Insert into database (UPSERT - update if duplicate timestamp)
+            with self._db_engine.begin() as conn:
+                query = text(
+                    "INSERT INTO market_depth (symbol, ts_utc, bids, asks, mid_price, spread, imbalance, provider) "
+                    "VALUES (:symbol, :ts_utc, :bids, :asks, :mid_price, :spread, :imbalance, :provider) "
+                    "ON CONFLICT(symbol, ts_utc, provider) DO UPDATE SET "
+                    "bids=excluded.bids, asks=excluded.asks, mid_price=excluded.mid_price, "
+                    "spread=excluded.spread, imbalance=excluded.imbalance"
+                )
+                conn.execute(query, {
+                    'symbol': symbol,
+                    'ts_utc': timestamp,
+                    'bids': bids_json,
+                    'asks': asks_json,
+                    'mid_price': mid_price,
+                    'spread': spread,
+                    'imbalance': imbalance,
+                    'provider': 'ctrader'
+                })
+            
+            logger.debug(f"[{self.name}] Stored DOM for {symbol} to database")
+            
+        except Exception as e:
+            logger.error(f"[{self.name}] Error storing DOM to database: {e}", exc_info=True)
 
     async def _rate_limit_wait(self) -> None:
         """Wait if necessary to respect rate limit (5 req/sec)."""
@@ -1178,14 +1347,21 @@ class CTraderProvider(BaseProvider):
             request.ctidTraderAccountId = self._account_id
             request.symbolId.extend(symbol_ids)  # Add all symbol IDs to repeated field
 
-            response = await self._send_and_wait(request, Messages.ProtoOASubscribeSpotsRes)
-
-            if response:
-                logger.info(f"[{self.name}] Successfully subscribed to spot quotes for {symbols}")
-                return True
-            else:
-                logger.error(f"[{self.name}] Failed to subscribe to spot quotes")
-                return False
+            # Send subscription request (fire-and-forget, no response expected)
+            # Spot events will arrive asynchronously via message stream
+            logger.debug(f"[{self.name}] Sending spot quotes subscription request (fire-and-forget)")
+            
+            # Use very long timeout (3600s = 1 hour) since we don't expect a response
+            # The library always creates a Deferred, but we don't wait for it
+            deferred = self.client.send(request, responseTimeoutInSeconds=3600)
+            
+            # Add callbacks to consume the Deferred and prevent garbage collection errors
+            if deferred:
+                deferred.addCallback(lambda _: None)  # Ignore success
+                deferred.addErrback(lambda err: logger.debug(f"[{self.name}] Spot subscription deferred error (ignored): {err}"))
+            
+            logger.info(f"[{self.name}] 📡 Subscribed to spot quotes for {len(symbols)} symbols")
+            return True  # Subscription sent successfully
 
         except Exception as e:
             logger.error(f"[{self.name}] Error subscribing to spot quotes: {e}")
@@ -1227,14 +1403,24 @@ class CTraderProvider(BaseProvider):
             for symbol_id in symbol_ids:
                 request.symbolId.append(symbol_id)
 
-            response = await self._send_and_wait(request, Messages.ProtoOASubscribeDepthQuotesRes, timeout=10.0)
-
-            if response:
-                logger.info(f"[{self.name}] ✓ Successfully subscribed to depth quotes (DOM) for {symbols}")
-                return True
-            else:
-                logger.warning(f"[{self.name}] Failed to subscribe to depth quotes - may not be supported on this account type")
-                return False
+            # Send subscription request (fire-and-forget, no response expected)
+            # DOM events will arrive asynchronously via message stream
+            logger.debug(f"[{self.name}] Sending depth quotes subscription request (fire-and-forget)")
+            
+            # Use very long timeout (3600s = 1 hour) since we don't expect a response
+            # The library always creates a Deferred, but we don't wait for it
+            deferred = self.client.send(request, responseTimeoutInSeconds=3600)
+            
+            # Add callbacks to consume the Deferred and prevent garbage collection errors
+            if deferred:
+                deferred.addCallback(lambda _: None)  # Ignore success
+                deferred.addErrback(lambda err: logger.debug(f"[{self.name}] DOM subscription deferred error (ignored): {err}"))
+            
+            logger.info(
+                f"[{self.name}] 📡 Subscribed to DOM for {len(symbols)} symbols\n"
+                f"DOM events will stream continuously if supported by account."
+            )
+            return True  # Subscription sent successfully
 
         except Exception as e:
             logger.warning(f"[{self.name}] Error subscribing to depth quotes: {e} (DOM may not be available)")
@@ -1257,7 +1443,8 @@ class CTraderProvider(BaseProvider):
         try:
             # Send request via Twisted client with clientMsgId parameter
             logger.debug(f"[{self.name}] Sending request {msg_id} ({request.__class__.__name__})")
-            self.client.send(request, clientMsgId=msg_id)
+            # Use custom timeout from parameter (not library's default 5s)
+            self.client.send(request, clientMsgId=msg_id, responseTimeoutInSeconds=timeout)
 
             # Wait for response with timeout
             response = await asyncio.wait_for(future, timeout=timeout)

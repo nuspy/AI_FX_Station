@@ -39,10 +39,19 @@ def setup_ui(
     Initializes all UI components, services, and their connections.
     """
     result: dict[str, Any] = {}
+    
+    # Performance profiling
+    import time
+    _startup_timer = time.time()
+    
+    def _log_timing(step_name):
+        elapsed = time.time() - _startup_timer
+        logger.info(f"⏱️ STARTUP TIMING: {step_name} completed in {elapsed:.2f}s")
 
     # --- Install Log Handler (early for capturing all logs) ---
     from .log_widget import install_log_handler
     install_log_handler()
+    _log_timing("Log handler installed")
 
     # --- Log Device Info (GPU/CPU) ---
     try:
@@ -59,59 +68,66 @@ def setup_ui(
     result["db_service"] = db_service
     result["market_service"] = market_service
     result["db_writer"] = db_writer
+    _log_timing("Database and Market services initialized")
 
     # --- Auto-backfill on startup (Mode A) ---
+    # DISABLED: Auto-backfill slows down startup significantly (600+ days download)
+    # Users can manually backfill from UI when needed
     # OPTIMIZATION: Only download 1m data from REST API, then derive higher timeframes locally
-    # This reduces REST API calls from 8 per symbol to 1 per symbol
-    # Higher timeframes (5m, 15m, 30m, 1h, 4h, 1d, 1w) are derived from 1m by AggregatorService
-    try:
-        logger.info("Auto-backfill: downloading 1m data and deriving higher timeframes...")
-        symbols_to_backfill = ["EUR/USD"]  # Add more symbols as needed
+    AUTO_BACKFILL_ENABLED = True  # Set to True to enable auto-backfill on startup
+    
+    if AUTO_BACKFILL_ENABLED:
+        try:
+            logger.info("Auto-backfill: downloading 1m data and deriving higher timeframes...")
+            symbols_to_backfill = ["EUR/USD"]  # Add more symbols as needed
 
-        for symbol in symbols_to_backfill:
-            try:
-                # STEP 1: Download only 1m data from REST API
-                logger.info(f"Downloading 1m data for {symbol}...")
-                market_service.backfill_symbol_timeframe(
-                    symbol=symbol,
-                    timeframe="1m",
-                    force_full=False,  # Only fill gaps, not full history
-                    progress_cb=None,  # No UI progress callback on startup
-                    start_ms_override=None  # Auto-detect from last candle
-                )
-                logger.info(f"1m download completed for {symbol}")
-
-                # STEP 2: Derive higher timeframes from 1m using local database
-                # The AggregatorService (started below) will handle this automatically
-                # But we can also trigger immediate derivation here if needed
+            for symbol in symbols_to_backfill:
                 try:
-                    from ..services.aggregator import derive_timeframes_from_base
-                    logger.info(f"Deriving higher timeframes from 1m for {symbol}...")
-                    # Derive all higher timeframes from 1m using database
-                    higher_timeframes = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
-                    for tf in higher_timeframes:
-                        try:
-                            derive_timeframes_from_base(
-                                engine=db_service.engine,
-                                symbol=symbol,
-                                base_tf="1m",
-                                target_tf=tf
-                            )
-                            logger.info(f"Derived {tf} from 1m for {symbol}")
-                        except Exception as e:
-                            logger.warning(f"Failed to derive {tf} from 1m for {symbol}: {e}")
-                except ImportError:
-                    # If derive function doesn't exist, AggregatorService will handle it later
-                    logger.debug("Derivation function not available - AggregatorService will handle it")
+                    # STEP 1: Download only 1m data from REST API
+                    logger.info(f"Downloading 1m data for {symbol}...")
+                    _backfill_start = time.time()
+                    market_service.backfill_symbol_timeframe(
+                        symbol=symbol,
+                        timeframe="1m",
+                        force_full=False,  # Only fill gaps, not full history
+                        progress_cb=None,  # No UI progress callback on startup
+                        start_ms_override=None  # Auto-detect from last candle
+                    )
+                    _backfill_elapsed = time.time() - _backfill_start
+                    logger.info(f"1m download completed for {symbol} in {_backfill_elapsed:.2f}s")
+
+                    # STEP 2: Derive higher timeframes from 1m using local database
+                    try:
+                        from ..services.aggregator import derive_timeframes_from_base
+                        logger.info(f"Deriving higher timeframes from 1m for {symbol}...")
+                        higher_timeframes = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+                        for tf in higher_timeframes:
+                            try:
+                                derive_timeframes_from_base(
+                                    engine=db_service.engine,
+                                    symbol=symbol,
+                                    base_tf="1m",
+                                    target_tf=tf
+                                )
+                                logger.info(f"Derived {tf} from 1m for {symbol}")
+                            except Exception as e:
+                                logger.warning(f"Failed to derive {tf} from 1m for {symbol}: {e}")
+                    except ImportError:
+                        logger.debug("Derivation function not available - AggregatorService will handle it")
+                    except Exception as e:
+                        logger.warning(f"Derivation failed for {symbol}: {e}")
+
                 except Exception as e:
-                    logger.warning(f"Derivation failed for {symbol}: {e}")
+                    logger.warning(f"Auto-backfill failed for {symbol}: {e}")
 
-            except Exception as e:
-                logger.warning(f"Auto-backfill failed for {symbol}: {e}")
-
-        logger.info("Auto-backfill completed (1m + derived timeframes).")
-    except Exception as e:
-        logger.exception(f"Auto-backfill error: {e}")
+            logger.info("Auto-backfill completed (1m + derived timeframes).")
+            _log_timing("Auto-backfill completed")
+        except Exception as e:
+            logger.exception(f"Auto-backfill error: {e}")
+    else:
+        logger.info("Auto-backfill disabled (set AUTO_BACKFILL_ENABLED=True to enable)")
+    
+    _log_timing("Before Aggregator Service start")
 
     # --- Aggregator Service ---
     symbols_to_aggregate = ["EUR/USD"]
@@ -122,10 +138,17 @@ def setup_ui(
     # --- DOM Aggregator Service ---
     from ..services.dom_aggregator import DOMAggregatorService
     dom_symbols = ["EURUSD", "GBPUSD", "USDJPY"]  # DOM monitoring symbols
-    dom_aggregator = DOMAggregatorService(engine=db_service.engine, symbols=dom_symbols, interval_seconds=2)
+    # Pass provider reference to enable RAM buffer reading (faster than database)
+    provider = getattr(market_service, 'provider', None)
+    dom_aggregator = DOMAggregatorService(
+        engine=db_service.engine, 
+        symbols=dom_symbols, 
+        interval_seconds=2,
+        provider=provider  # Enable RAM buffer access
+    )
     dom_aggregator.start()
     result["dom_aggregator"] = dom_aggregator
-    logger.info(f"DOM Aggreg ator Service started for {dom_symbols}")
+    logger.info(f"DOM Aggregator Service started for {dom_symbols} (RAM buffer: {provider is not None})")
 
     # --- Order Flow Analyzer ---
     from ..analysis.order_flow_analyzer import OrderFlowAnalyzer
@@ -176,11 +199,14 @@ def setup_ui(
 
     # --- Create Chart tab (level_1, no nested tabs) ---
     # Chart content is shown directly without nested tabs
+    _log_timing("Before creating ChartTab")
     chart_tab = ChartTabUI(
         main_window,
         dom_service=dom_aggregator,
         order_flow_analyzer=order_flow_analyzer
     )
+    _log_timing("After creating ChartTab")
+    logger.info("✓ ChartTab created")
 
     # Live Trading will be a separate window, stored as attribute
     # Initialize SmartExecutionOptimizer for pre-trade validation
@@ -361,79 +387,77 @@ def setup_ui(
             result["tiingo_ws_connector"] = connector
             logger.info("Tiingo WebSocket connector started (primary provider: tiingo)")
         # cTrader WebSocket for primary provider
-        # DISABLED: CTraderProvider now handles DOM subscriptions directly to avoid conflicts
-        # Two separate Client instances (CTraderProvider + CTraderWebSocketService) caused
-        # message interception issues where CTraderProvider's client would receive all messages,
-        # preventing CTraderWebSocketService from getting responses (TimeoutError).
-        # Solution: Use CTraderProvider's built-in DOM subscription (stream_market_depth_impl).
+        # STRATEGY: CTraderProvider (historical data) and CTraderWebSocketService (real-time streams)
+        # both use Twisted reactor. To avoid conflicts:
+        # 1. CTraderProvider starts reactor first (via MarketDataService init)
+        # 2. CTraderWebSocketService detects running reactor and reuses it
+        # 3. Both connect to same account using same credentials (no auth duplication)
         elif primary_provider == "ctrader":
-            logger.info("cTrader WebSocket service disabled - CTraderProvider handles DOM subscriptions directly")
-            # ctrader_enabled = get_setting("ctrader_enabled", False)
-            # if ctrader_enabled:
-            #     try:
-            #         from ..services.ctrader_websocket import CTraderWebSocketService
-            #
-            #         # Get cTrader credentials - try both prefixed and non-prefixed keys
-            #         client_id = (get_setting("provider.ctrader.client_id", "") or
-            #                     get_setting("ctrader_client_id", ""))
-            #         client_secret = (get_setting("provider.ctrader.client_secret", "") or
-            #                         get_setting("ctrader_client_secret", ""))
-            #         access_token = (get_setting("provider.ctrader.access_token", "") or
-            #                        get_setting("ctrader_access_token", ""))
-            #         environment = (get_setting("provider.ctrader.environment", "demo") or
-            #                       get_setting("ctrader_environment", "demo"))
-            #
-            #         # IMPORTANT: Get the authenticated account_id from CTraderProvider
-            #         # CTraderProvider has already connected and fetched the numeric account ID
-            #         # from cTrader API, so we reuse it instead of creating a new connection
-            #         account_id = None
-            #         if hasattr(market_service, 'provider') and hasattr(market_service.provider, '_account_id'):
-            #             account_id = market_service.provider._account_id
-            #             logger.info(f"Using authenticated account ID from CTraderProvider: {account_id}")
-            #         else:
-            #             # Fallback: try to get from config, but this may be a username
-            #             account_id_raw = (get_setting("provider.ctrader.account_id", "") or
-            #                              get_setting("ctrader_account_id", ""))
-            #             if account_id_raw:
-            #                 account_id = account_id_raw
-            #                 logger.warning(f"Using account_id from config (may need auto-fetch): {account_id}")
-            #
-            #         logger.info(f"cTrader WebSocket initialization: "
-            #                    f"client_id={'set' if client_id else 'missing'}, "
-            #                    f"client_secret={'set' if client_secret else 'missing'}, "
-            #                    f"access_token={'set' if access_token else 'missing'}, "
-            #                    f"account_id={account_id}, "
-            #                    f"environment={environment}")
-            #
-            #         if client_id and client_secret and access_token and account_id:
-            #             logger.info(f"Starting cTrader WebSocket with account: {account_id}")
-            #             ctrader_ws = CTraderWebSocketService(
-            #                 client_id=client_id,
-            #                 client_secret=client_secret,
-            #                 access_token=access_token,
-            #                 account_id=account_id,  # Use authenticated account ID from provider
-            #                 db_engine=db_service.engine,
-            #                 environment=environment,
-            #                 symbols=["EURUSD", "GBPUSD", "USDJPY"]
-            #             )
-            #             ctrader_ws.start()
-            #             result["ctrader_ws"] = ctrader_ws
-            #
-            #             # Expose cTrader WebSocket for monitoring
-            #             main_window.ctrader_ws = ctrader_ws
-            #
-            #             logger.info(f"✓ cTrader WebSocket service started (account: {account_id}, env: {environment})")
-            #         else:
-            #             logger.warning("cTrader credentials incomplete - WebSocket not started")
-            #             logger.warning(f"Missing credentials: "
-            #                          f"client_id={'NO' if not client_id else 'OK'}, "
-            #                          f"client_secret={'NO' if not client_secret else 'OK'}, "
-            #                          f"access_token={'NO' if not access_token else 'OK'}, "
-            #                          f"account_id={'NO' if not account_id else 'OK'}")
-            #     except Exception as e:
-            #         logger.error(f"Failed to start cTrader WebSocket: {e}", exc_info=True)
-            # else:
-            #     logger.info("cTrader WebSocket not started (ctrader_enabled=False)")
+            logger.info("cTrader provider active - Initializing WebSocket service for real-time market data")
+            ctrader_enabled = get_setting("ctrader_enabled", True)  # Default to True when cTrader is primary
+            if ctrader_enabled:
+                try:
+                    from ..services.ctrader_websocket import CTraderWebSocketService
+                    
+                    # Get cTrader credentials - try both prefixed and non-prefixed keys
+                    client_id = (get_setting("provider.ctrader.client_id", "") or
+                                get_setting("ctrader_client_id", ""))
+                    client_secret = (get_setting("provider.ctrader.client_secret", "") or
+                                get_setting("ctrader_client_secret", ""))
+                    access_token = (get_setting("provider.ctrader.access_token", "") or
+                                   get_setting("ctrader_access_token", ""))
+                    environment = (get_setting("provider.ctrader.environment", "demo") or
+                                  get_setting("ctrader_environment", "demo"))
+                    
+                    # IMPORTANT: Get the authenticated account_id from CTraderProvider
+                    # CTraderProvider has already connected and fetched the numeric account ID
+                    # from cTrader API, so we reuse it instead of creating a new connection
+                    account_id = None
+                    if hasattr(market_service, 'provider') and hasattr(market_service.provider, '_account_id'):
+                        account_id = market_service.provider._account_id
+                        logger.info(f"Using authenticated account ID from CTraderProvider: {account_id}")
+                    else:
+                        # Fallback: try to get from config, but this may be a username
+                        account_id_raw = (get_setting("provider.ctrader.account_id", "") or
+                                         get_setting("ctrader_account_id", ""))
+                        if account_id_raw:
+                            account_id = account_id_raw
+                            logger.warning(f"Using account_id from config (may need auto-fetch): {account_id}")
+                    
+                    logger.info(f"cTrader WebSocket initialization: "
+                               f"client_id={'set' if client_id else 'missing'}, "
+                               f"client_secret={'set' if client_secret else 'missing'}, "
+                               f"access_token={'set' if access_token else 'missing'}, "
+                               f"account_id={account_id}, "
+                               f"environment={environment}")
+                    
+                    if client_id and client_secret and access_token and account_id:
+                        # DISABLED: CTraderProvider already handles WebSocket streaming + DOM
+                        # Separate WebSocketService causes auth conflicts (duplicate connections)
+                        logger.info(f"✓ cTrader WebSocket handled by CTraderProvider (account: {account_id}, env: {environment})")
+                        # ctrader_ws = CTraderWebSocketService(
+                        #     client_id=client_id,
+                        #     client_secret=client_secret,
+                        #     access_token=access_token,
+                        #     account_id=account_id,
+                        #     db_engine=db_service.engine,
+                        #     environment=environment,
+                        #     symbols=["EURUSD", "GBPUSD", "USDJPY"]
+                        # )
+                        # ctrader_ws.start()
+                        # result["ctrader_ws"] = ctrader_ws
+                        # main_window.ctrader_ws = ctrader_ws
+                    else:
+                        logger.warning("cTrader credentials incomplete - WebSocket not started")
+                        logger.warning(f"Missing credentials: "
+                                     f"client_id={'NO' if not client_id else 'OK'}, "
+                                     f"client_secret={'NO' if not client_secret else 'OK'}, "
+                                     f"access_token={'NO' if not access_token else 'OK'}, "
+                                     f"account_id={'NO' if not account_id else 'OK'}")
+                except Exception as e:
+                    logger.error(f"Failed to start cTrader WebSocket: {e}", exc_info=True)
+            else:
+                logger.info("cTrader WebSocket not started (ctrader_enabled=False)")
         else:
             logger.info(f"Tiingo WebSocket connector NOT started (primary provider: {primary_provider})")
 
@@ -503,5 +527,6 @@ def setup_ui(
         if dom_aggregator: dom_aggregator.stop()
         if db_writer: db_writer.stop()
     if app: app.aboutToQuit.connect(_graceful_shutdown)
-
+    
+    _log_timing("✅ COMPLETE - UI setup finished")
     return result

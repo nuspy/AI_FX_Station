@@ -187,8 +187,29 @@ class DataService(ChartServiceBase):
                 if start_ms >= c0 and end_ms <= c1:
                     return  # nulla da fare
 
-            # carica da DB solo la finestra necessaria
-            df = self._load_candles_from_db(sym, tf_req, limit=50000, start_ms=start_ms, end_ms=end_ms)
+            # OPTIMIZED: Load only viewport + 2x buffer on each side (dynamic loading)
+            # This prevents loading 50k candles when only ~500 are needed
+            # Buffer ensures smooth panning without reloading
+            viewport_size_ms = end_ms - start_ms
+            buffer_ms = viewport_size_ms * 2  # 2x buffer on each side
+            
+            buffered_start = max(0, start_ms - buffer_ms)
+            buffered_end = end_ms + buffer_ms
+            
+            # Calculate reasonable limit based on timeframe
+            # Viewport + 2x buffer before + 2x buffer after = 5x viewport
+            tf_to_ms = {
+                "1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+                "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000, "1w": 604_800_000,
+            }
+            candle_duration = tf_to_ms.get(tf_req, 60_000)
+            estimated_candles = int(viewport_size_ms / candle_duration) * 5
+            dynamic_limit = max(500, min(10000, int(estimated_candles)))
+            
+            logger.debug(f"Dynamic loading: viewport={start_ms}-{end_ms}, buffered={buffered_start}-{buffered_end}, limit={dynamic_limit}")
+            
+            # carica da DB solo la finestra necessaria con buffer
+            df = self._load_candles_from_db(sym, tf_req, limit=dynamic_limit, start_ms=buffered_start, end_ms=buffered_end)
             if df is None or df.empty:
                 return
 
@@ -249,7 +270,7 @@ class DataService(ChartServiceBase):
             if not sym or start_ms is None or end_ms is None or start_ms >= end_ms:
                 return []
             # load actual 1m candles in range
-            df1 = self._load_candles_from_db(sym, "1m", limit=500000, start_ms=int(start_ms), end_ms=int(end_ms))
+            df1 = self._load_candles_from_db(sym, "1m", limit=10000, start_ms=int(start_ms), end_ms=int(end_ms))
             actual = np.array([], dtype=np.int64)
             if df1 is not None and not df1.empty and "ts_utc" in df1.columns:
                 actual = df1["ts_utc"].astype("int64").dropna().values
@@ -476,9 +497,10 @@ class DataService(ChartServiceBase):
         except Exception:
             start_ms_view = None
         try:
-            # If no date range specified (years=0, months=0), load ALL available data instead of limiting to 3000
-            # This ensures the chart shows full historical data on startup
-            limit_candles = 3000 if start_ms_view is not None else 500000  # 500k = unlimited for practical purposes
+            # OPTIMIZED: Always limit to reasonable amount (2000 candles = ~33h for 1m, ~3 months for 1h)
+            # This prevents loading 500k candles which causes severe UI lag
+            # User can pan/zoom to load more with dynamic buffering
+            limit_candles = 2000  # Reasonable default for all cases
 
             df = self._load_candles_from_db(self.symbol, self.timeframe, limit=limit_candles, start_ms=start_ms_view)
             if df is not None and not df.empty:
