@@ -279,18 +279,7 @@ class OrderFlowPanel(QWidget):
         self.absorption_alert.hide()
         layout.addWidget(self.absorption_alert)
 
-        # Exhaustion Alert (kept visible to avoid layout thrash)
-        self.exhaustion_alert = QLabel("")
-        self._exhaustion_active_style = (
-            "background-color: #F8D7DA; color: #721C24; "
-            "padding: 5px; border-radius: 3px; font-weight: bold;"
-        )
-        self._exhaustion_inactive_style = (
-            "background-color: transparent; color: #721C24; "
-            "padding: 5px; border-radius: 3px; font-weight: bold;"
-        )
-        self.exhaustion_alert.setStyleSheet(self._exhaustion_inactive_style)
-        layout.addWidget(self.exhaustion_alert)
+
 
         group.setLayout(layout)
         return group
@@ -431,16 +420,6 @@ class OrderFlowPanel(QWidget):
                 self.absorption_alert.hide()
             self._alerts_cache['absorption'] = absorption_detected
 
-        # Exhaustion
-        exhaustion_detected = metrics.get('exhaustion_detected', False)
-        if self._alerts_cache['exhaustion'] != exhaustion_detected:
-            if exhaustion_detected:
-                self.exhaustion_alert.setText("🔴 Exhaustion detected - Potential reversal")
-                self.exhaustion_alert.setStyleSheet(self._exhaustion_active_style)
-            else:
-                self.exhaustion_alert.setText("")
-                self.exhaustion_alert.setStyleSheet(self._exhaustion_inactive_style)
-            self._alerts_cache['exhaustion'] = exhaustion_detected
 
     def update_signals(self, signals: List[Dict[str, Any]]):
         """
