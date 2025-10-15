@@ -531,15 +531,19 @@ class PlotService(ChartServiceBase):
 
                 row_idx = 1
                 if has_normalized:
-                    # Create normalized subplot (reduced 30% from 90px to 63px)
-                    normalized_plot = graphics_layout.addPlot(row=row_idx, col=0)
+                    # Create normalized subplot with DateAxisItem
+                    from ..ui_builder import DateAxisItem
+                    normalized_date_axis = DateAxisItem(orientation='bottom')
+                    normalized_date_axis.set_date_format(get_setting("chart.date_format", "YYYY-MM-DD"))
+                    
+                    normalized_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': normalized_date_axis})
                     normalized_plot.showGrid(x=True, y=True, alpha=0.3)
                     normalized_plot.setYRange(0, 100)  # Normalized range 0-100
                     normalized_plot.setMaximumHeight(63)
                     # Minimize margins
                     normalized_plot.setContentsMargins(0, 0, 0, 0)
                     normalized_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
-                    # Hide Y-axis (values same as main plot)
+                    # Hide Y-axis labels
                     normalized_plot.showAxis('left', False)
                     # Add legend (movable by default in PyQtGraph)
                     normalized_plot.addLegend(offset=(10, 10))
@@ -555,14 +559,18 @@ class PlotService(ChartServiceBase):
                     self.view.normalized_plot = None
 
                 if has_custom:
-                    # Create custom subplot (reduced 30% from 90px to 63px)
-                    custom_plot = graphics_layout.addPlot(row=row_idx, col=0)
+                    # Create custom subplot with DateAxisItem
+                    from ..ui_builder import DateAxisItem
+                    custom_date_axis = DateAxisItem(orientation='bottom')
+                    custom_date_axis.set_date_format(get_setting("chart.date_format", "YYYY-MM-DD"))
+                    
+                    custom_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': custom_date_axis})
                     custom_plot.showGrid(x=True, y=True, alpha=0.3)
                     custom_plot.setMaximumHeight(63)
                     # Minimize margins
                     custom_plot.setContentsMargins(0, 0, 0, 0)
                     custom_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
-                    # Hide Y-axis (values same as main plot)
+                    # Hide Y-axis labels
                     custom_plot.showAxis('left', False)
                     # Add legend (movable by default in PyQtGraph)
                     custom_plot.addLegend(offset=(10, 10))
@@ -577,15 +585,19 @@ class PlotService(ChartServiceBase):
                 else:
                     self.view.custom_plot = None
 
-                # Recreate volume subplot (1/10 height, 66% opacity)
+                # Recreate volume subplot with better height and auto-range
                 # Always add volume plot at the bottom with the date axis
                 date_axis = DateAxisItem(orientation='bottom')
                 volume_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': date_axis})
                 volume_plot.setLabel('left', 'Volume')
-                volume_plot.setMaximumHeight(80)  # Approximately 1/10 of typical chart height
+                volume_plot.setMaximumHeight(120)  # Increased from 80 to 120 for better visibility
                 volume_plot.showGrid(x=True, y=True, alpha=0.3)
                 volume_plot.setContentsMargins(0, 0, 0, 0)
                 volume_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                # Enable auto-range for Y axis
+                volume_plot.enableAutoRange(axis='y', enable=True)
+                # Hide Y-axis labels (volume values not important)
+                volume_plot.showAxis('left', False)
                 # Link x-axis to main plot for synchronized zoom/pan
                 volume_plot.setXLink(main_plot)
                 self.view.finplot_axes.append(volume_plot)
