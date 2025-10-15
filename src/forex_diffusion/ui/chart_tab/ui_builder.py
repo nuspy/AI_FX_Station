@@ -114,7 +114,7 @@ class UIBuilderMixin:
 
         # Order Books section (middle) - widget has internal title
         from ..order_books_widget import OrderBooksWidget
-        self.order_books_widget = OrderBooksWidget()
+        self.order_books_widget = OrderBooksWidget(parent=self)
         left_splitter.addWidget(self.order_books_widget)
         
         # Order Flow section (bottom)

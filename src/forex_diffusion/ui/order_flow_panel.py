@@ -10,9 +10,8 @@ from PySide6.QtWidgets import (
     QLabel, QGroupBox, QProgressBar, QComboBox
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont
-from typing import Dict, List, Optional, Any
-import numpy as np
+from PySide6.QtGui import QColor
+from typing import Dict, List, Any
 from loguru import logger
 
 
@@ -35,6 +34,29 @@ class OrderFlowPanel(QWidget):
 
         # Track historical data for volume calculations
         self.last_snapshot = None
+
+        # Fixed number of rows for order book tables to avoid layout resizes
+        self._order_book_rows = 10
+
+        # Caches to avoid redundant UI churn (prevents fullscreen drop)
+        self._metrics_cache: Dict[str, Any] = {
+            "spread_text": None,
+            "spread_style": None,
+            "spread_zscore": None,
+            "bid_depth": None,
+            "ask_depth": None,
+            "buy_volume": None,
+            "sell_volume": None,
+            "depth_bar_value": None,
+            "depth_state": None,
+            "volume_bar_value": None,
+            "volume_state": None,
+        }
+        self._alerts_cache: Dict[str, Any] = {
+            "large_order": None,
+            "absorption": None,
+            "exhaustion": None,
+        }
 
         self.init_ui()
 
@@ -206,6 +228,10 @@ class OrderFlowPanel(QWidget):
         self.asks_table.setAlternatingRowColors(True)
         self.asks_table.setMaximumHeight(200)
         asks_layout.addWidget(self.asks_table)
+
+        # Initialize tables with fixed row count
+        self.bids_table.setRowCount(self._order_book_rows)
+        self.asks_table.setRowCount(self._order_book_rows)
         
         layout.addLayout(bids_layout)
         layout.addLayout(asks_layout)
@@ -253,13 +279,17 @@ class OrderFlowPanel(QWidget):
         self.absorption_alert.hide()
         layout.addWidget(self.absorption_alert)
 
-        # Exhaustion Alert
+        # Exhaustion Alert (kept visible to avoid layout thrash)
         self.exhaustion_alert = QLabel("")
-        self.exhaustion_alert.setStyleSheet(
+        self._exhaustion_active_style = (
             "background-color: #F8D7DA; color: #721C24; "
             "padding: 5px; border-radius: 3px; font-weight: bold;"
         )
-        self.exhaustion_alert.hide()
+        self._exhaustion_inactive_style = (
+            "background-color: transparent; color: #721C24; "
+            "padding: 5px; border-radius: 3px; font-weight: bold;"
+        )
+        self.exhaustion_alert.setStyleSheet(self._exhaustion_inactive_style)
         layout.addWidget(self.exhaustion_alert)
 
         group.setLayout(layout)
@@ -272,102 +302,145 @@ class OrderFlowPanel(QWidget):
         Args:
             metrics: Dictionary with order flow metrics
         """
-        logger.debug(f"📊 update_metrics called with: spread={metrics.get('spread')}, bid_depth={metrics.get('bid_depth')}, ask_depth={metrics.get('ask_depth')}")
         self.current_metrics = metrics
 
-        # Spread
         spread = metrics.get('spread', 0.0)
-        logger.debug(f"Setting spread label to: {spread:.5f}")
-        spread_pips = spread * 10000  # Convert to pips for forex
-        self.spread_label.setText(f"{spread_pips:.1f} pips")
+        spread_text = f"{spread * 10000:.1f} pips"
+        if self._metrics_cache["spread_text"] != spread_text:
+            self.spread_label.setText(spread_text)
+            self._metrics_cache["spread_text"] = spread_text
 
-        # Spread Z-Score
         spread_zscore = metrics.get('spread_zscore', 0.0)
-        self.spread_zscore_label.setText(f"{spread_zscore:.2f}")
-        if abs(spread_zscore) > 2.0:
-            self.spread_zscore_label.setStyleSheet("color: red; font-weight: bold;")
-        elif abs(spread_zscore) > 1.0:
-            self.spread_zscore_label.setStyleSheet("color: orange; font-weight: bold;")
-        else:
-            self.spread_zscore_label.setStyleSheet("color: green;")
+        spread_z_text = f"{spread_zscore:.2f}"
+        if self._metrics_cache["spread_zscore"] != spread_z_text:
+            self.spread_zscore_label.setText(spread_z_text)
+            self._metrics_cache["spread_zscore"] = spread_z_text
 
-        # Depth
+        spread_style = "green"
+        if abs(spread_zscore) > 2.0:
+            spread_style = "red"
+        elif abs(spread_zscore) > 1.0:
+            spread_style = "orange"
+        if self._metrics_cache["spread_style"] != spread_style:
+            style_map = {
+                "red": "color: red; font-weight: bold;",
+                "orange": "color: orange; font-weight: bold;",
+                "green": "color: green;",
+            }
+            self.spread_zscore_label.setStyleSheet(style_map[spread_style])
+            self._metrics_cache["spread_style"] = spread_style
+
         bid_depth = metrics.get('bid_depth', 0.0)
         ask_depth = metrics.get('ask_depth', 0.0)
-        self.bid_depth_label.setText(f"{bid_depth:,.0f}")
-        self.ask_depth_label.setText(f"{ask_depth:,.0f}")
+        bid_depth_text = f"{bid_depth:,.0f}"
+        ask_depth_text = f"{ask_depth:,.0f}"
+        if self._metrics_cache["bid_depth"] != bid_depth_text:
+            self.bid_depth_label.setText(bid_depth_text)
+            self._metrics_cache["bid_depth"] = bid_depth_text
+        if self._metrics_cache["ask_depth"] != ask_depth_text:
+            self.ask_depth_label.setText(ask_depth_text)
+            self._metrics_cache["ask_depth"] = ask_depth_text
 
-        # Volume
         buy_volume = metrics.get('buy_volume', 0.0)
         sell_volume = metrics.get('sell_volume', 0.0)
-        self.buy_volume_label.setText(f"{buy_volume:,.0f}")
-        self.sell_volume_label.setText(f"{sell_volume:,.0f}")
+        buy_volume_text = f"{buy_volume:,.0f}"
+        sell_volume_text = f"{sell_volume:,.0f}"
+        if self._metrics_cache["buy_volume"] != buy_volume_text:
+            self.buy_volume_label.setText(buy_volume_text)
+            self._metrics_cache["buy_volume"] = buy_volume_text
+        if self._metrics_cache["sell_volume"] != sell_volume_text:
+            self.sell_volume_label.setText(sell_volume_text)
+            self._metrics_cache["sell_volume"] = sell_volume_text
 
-        # Depth Imbalance (-1 to +1)
         depth_imbalance = metrics.get('depth_imbalance', 0.0)
         depth_imb_pct = int(depth_imbalance * 100)
-        self.depth_imbalance_bar.setValue(depth_imb_pct)
+        if self._metrics_cache["depth_bar_value"] != depth_imb_pct:
+            self.depth_imbalance_bar.setValue(depth_imb_pct)
+            self._metrics_cache["depth_bar_value"] = depth_imb_pct
 
         if depth_imbalance > 0.3:
-            self.depth_imb_label.setText("Bid Heavy")
-            self.depth_imb_label.setStyleSheet("color: green; font-weight: bold;")
-            self.depth_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+            depth_state = "bid"
         elif depth_imbalance < -0.3:
-            self.depth_imb_label.setText("Ask Heavy")
-            self.depth_imb_label.setStyleSheet("color: red; font-weight: bold;")
-            self.depth_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            depth_state = "ask"
         else:
-            self.depth_imb_label.setText("Neutral")
-            self.depth_imb_label.setStyleSheet("color: gray;")
-            self.depth_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            depth_state = "neutral"
+        if self._metrics_cache["depth_state"] != depth_state:
+            if depth_state == "bid":
+                self.depth_imb_label.setText("Bid Heavy")
+                self.depth_imb_label.setStyleSheet("color: green; font-weight: bold;")
+                self.depth_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+            elif depth_state == "ask":
+                self.depth_imb_label.setText("Ask Heavy")
+                self.depth_imb_label.setStyleSheet("color: red; font-weight: bold;")
+                self.depth_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            else:
+                self.depth_imb_label.setText("Neutral")
+                self.depth_imb_label.setStyleSheet("color: gray;")
+                self.depth_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            self._metrics_cache["depth_state"] = depth_state
 
-        # Volume Imbalance
         volume_imbalance = metrics.get('volume_imbalance', 0.0)
         vol_imb_pct = int(volume_imbalance * 100)
-        self.volume_imbalance_bar.setValue(vol_imb_pct)
+        if self._metrics_cache["volume_bar_value"] != vol_imb_pct:
+            self.volume_imbalance_bar.setValue(vol_imb_pct)
+            self._metrics_cache["volume_bar_value"] = vol_imb_pct
 
         if volume_imbalance > 0.3:
-            self.vol_imb_label.setText("Buy Pressure")
-            self.vol_imb_label.setStyleSheet("color: green; font-weight: bold;")
-            self.volume_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+            volume_state = "buy"
         elif volume_imbalance < -0.3:
-            self.vol_imb_label.setText("Sell Pressure")
-            self.vol_imb_label.setStyleSheet("color: red; font-weight: bold;")
-            self.volume_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            volume_state = "sell"
         else:
-            self.vol_imb_label.setText("Neutral")
-            self.vol_imb_label.setStyleSheet("color: gray;")
-            self.volume_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            volume_state = "neutral"
+        if self._metrics_cache["volume_state"] != volume_state:
+            if volume_state == "buy":
+                self.vol_imb_label.setText("Buy Pressure")
+                self.vol_imb_label.setStyleSheet("color: green; font-weight: bold;")
+                self.volume_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+            elif volume_state == "sell":
+                self.vol_imb_label.setText("Sell Pressure")
+                self.vol_imb_label.setStyleSheet("color: red; font-weight: bold;")
+                self.volume_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            else:
+                self.vol_imb_label.setText("Neutral")
+                self.vol_imb_label.setStyleSheet("color: gray;")
+                self.volume_imbalance_bar.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            self._metrics_cache["volume_state"] = volume_state
 
-        # Alerts
         self._update_alerts(metrics)
 
     def _update_alerts(self, metrics: Dict[str, Any]):
         """Update alert labels"""
         # Large Order Detection
         large_order_detected = metrics.get('large_order_detected', False)
-        if large_order_detected:
-            direction = metrics.get('large_order_direction', 'unknown')
-            self.large_order_alert.setText(f"⚠️ Large {direction.upper()} order detected!")
-            self.large_order_alert.show()
-        else:
-            self.large_order_alert.hide()
+        if self._alerts_cache['large_order'] != large_order_detected:
+            if large_order_detected:
+                direction = metrics.get('large_order_direction', 'unknown')
+                self.large_order_alert.setText(f"⚠️ Large {direction.upper()} order detected!")
+                self.large_order_alert.show()
+            else:
+                self.large_order_alert.hide()
+            self._alerts_cache['large_order'] = large_order_detected
 
         # Absorption
         absorption_detected = metrics.get('absorption_detected', False)
-        if absorption_detected:
-            self.absorption_alert.setText("🔵 Price absorption detected - Support/Resistance forming")
-            self.absorption_alert.show()
-        else:
-            self.absorption_alert.hide()
+        if self._alerts_cache['absorption'] != absorption_detected:
+            if absorption_detected:
+                self.absorption_alert.setText("🔵 Price absorption detected - Support/Resistance forming")
+                self.absorption_alert.show()
+            else:
+                self.absorption_alert.hide()
+            self._alerts_cache['absorption'] = absorption_detected
 
         # Exhaustion
         exhaustion_detected = metrics.get('exhaustion_detected', False)
-        if exhaustion_detected:
-            self.exhaustion_alert.setText("🔴 Exhaustion detected - Potential reversal")
-            self.exhaustion_alert.show()
-        else:
-            self.exhaustion_alert.hide()
+        if self._alerts_cache['exhaustion'] != exhaustion_detected:
+            if exhaustion_detected:
+                self.exhaustion_alert.setText("🔴 Exhaustion detected - Potential reversal")
+                self.exhaustion_alert.setStyleSheet(self._exhaustion_active_style)
+            else:
+                self.exhaustion_alert.setText("")
+                self.exhaustion_alert.setStyleSheet(self._exhaustion_inactive_style)
+            self._alerts_cache['exhaustion'] = exhaustion_detected
 
     def update_signals(self, signals: List[Dict[str, Any]]):
         """
@@ -424,7 +497,6 @@ class OrderFlowPanel(QWidget):
 
     def refresh_display(self):
         """Refresh display (called by timer) - fetches real-time DOM data"""
-        logger.debug(f"🔄 OrderFlowPanel refresh_display called for {self.current_symbol}")
         if not self.dom_service:
             logger.warning("No DOM service available")
             return
@@ -432,16 +504,10 @@ class OrderFlowPanel(QWidget):
         try:
             # Get latest DOM snapshot from database
             snapshot = self.dom_service.get_latest_dom_snapshot(self.current_symbol)
-            logger.debug(f"📊 OrderFlowPanel snapshot for {self.current_symbol}: {snapshot is not None}, keys: {list(snapshot.keys()) if snapshot else 'None'}")
             if not snapshot:
-                logger.debug(f"No DOM data available for {self.current_symbol}")
                 return
-            
-            # Log snapshot content for debugging
-            logger.debug(f"Snapshot content: bids={len(snapshot.get('bids', []))}, asks={len(snapshot.get('asks', []))}, best_bid={snapshot.get('best_bid')}, best_ask={snapshot.get('best_ask')}")
 
             # Compute order flow metrics using analyzer
-            logger.debug(f"Order flow analyzer available: {self.order_flow_analyzer is not None}")
             if self.order_flow_analyzer:
                 # Estimate volume (would normally come from tick data)
                 # For now, use depth as proxy
@@ -482,7 +548,6 @@ class OrderFlowPanel(QWidget):
                     'exhaustion_detected': metrics.exhaustion_detected,
                 }
 
-                logger.debug(f"Updating metrics: {list(metrics_dict.keys())}")
                 self.update_metrics(metrics_dict)
                 
                 # Update order books display
@@ -557,26 +622,44 @@ class OrderFlowPanel(QWidget):
             asks: List of ask orders [{'price': float, 'size': float}, ...]
         """
         try:
-            logger.debug(f"Updating order books: {len(bids)} bids, {len(asks)} asks")
-            
+            # Ensure tables keep the fixed row count
+            if self.bids_table.rowCount() != self._order_book_rows:
+                self.bids_table.setRowCount(self._order_book_rows)
+            if self.asks_table.rowCount() != self._order_book_rows:
+                self.asks_table.setRowCount(self._order_book_rows)
+
             # Update bids table (buy orders)
-            self.bids_table.setRowCount(len(bids))
-            for i, bid in enumerate(bids):
-                price_item = QTableWidgetItem(f"{bid['price']:.5f}")
-                size_item = QTableWidgetItem(f"{bid['size']:.0f}")
-                price_item.setForeground(QColor('green'))
-                self.bids_table.setItem(i, 0, price_item)
-                self.bids_table.setItem(i, 1, size_item)
-            
+            self.bids_table.blockSignals(True)
+            try:
+                for row in range(self._order_book_rows):
+                    if row < len(bids):
+                        bid = bids[row]
+                        price_text = f"{bid['price']:.5f}"
+                        size_text = f"{bid['size']:.0f}"
+                    else:
+                        price_text = ""
+                        size_text = ""
+                    self._set_table_value(self.bids_table, row, 0, price_text, QColor('green'))
+                    self._set_table_value(self.bids_table, row, 1, size_text, QColor('green'))
+            finally:
+                self.bids_table.blockSignals(False)
+
             # Update asks table (sell orders)
-            self.asks_table.setRowCount(len(asks))
-            for i, ask in enumerate(asks):
-                price_item = QTableWidgetItem(f"{ask['price']:.5f}")
-                size_item = QTableWidgetItem(f"{ask['size']:.0f}")
-                price_item.setForeground(QColor('red'))
-                self.asks_table.setItem(i, 0, price_item)
-                self.asks_table.setItem(i, 1, size_item)
-                
+            self.asks_table.blockSignals(True)
+            try:
+                for row in range(self._order_book_rows):
+                    if row < len(asks):
+                        ask = asks[row]
+                        price_text = f"{ask['price']:.5f}"
+                        size_text = f"{ask['size']:.0f}"
+                    else:
+                        price_text = ""
+                        size_text = ""
+                    self._set_table_value(self.asks_table, row, 0, price_text, QColor('red'))
+                    self._set_table_value(self.asks_table, row, 1, size_text, QColor('red'))
+            finally:
+                self.asks_table.blockSignals(False)
+
         except Exception as e:
             logger.error(f"Error updating order books: {e}", exc_info=True)
 
@@ -585,3 +668,13 @@ class OrderFlowPanel(QWidget):
         self.current_metrics = {}
         self.signals_data = []
         self._update_signals_table()
+
+    def _set_table_value(self, table: QTableWidget, row: int, col: int, text: str, color: QColor):
+        item = table.item(row, col)
+        if item is None:
+            item = QTableWidgetItem()
+            item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            table.setItem(row, col, item)
+        if item.text() != text:
+            item.setText(text)
+        item.setForeground(color)
