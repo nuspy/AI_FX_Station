@@ -13,6 +13,35 @@ from .base import ChartServiceBase
 
 class DataService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
+    
+    def _load_1m_fallback_for_ticks(self, symbol: str):
+        """Load 1m candles when timeframe='tick' but no ticks available."""
+        try:
+            logger.info(f"Loading 1m fallback data for tick chart: {symbol}")
+            db_service = getattr(self.view, 'db_service', None)
+            if not db_service:
+                logger.warning("No db_service available for 1m fallback")
+                return
+            
+            # Query last 3000 1m candles
+            query = f"""
+                SELECT ts_utc, open, high, low, close, volume
+                FROM candles
+                WHERE symbol = '{symbol}' AND timeframe = '1m'
+                ORDER BY ts_utc DESC
+                LIMIT 3000
+            """
+            
+            df = pd.read_sql(query, db_service.engine)
+            if not df.empty:
+                df = df.sort_values('ts_utc').reset_index(drop=True)
+                self._last_df = df
+                logger.info(f"Loaded {len(df)} 1m candles as fallback for tick chart")
+            else:
+                logger.warning(f"No 1m candles found for {symbol}")
+                
+        except Exception as e:
+            logger.error(f"Failed to load 1m fallback: {e}", exc_info=True)
 
     def _handle_tick(self, payload: dict):
         """Thread-safe entrypoint: enqueue tick to GUI thread."""
@@ -29,6 +58,11 @@ class DataService(ChartServiceBase):
             if not isinstance(payload, dict):
                 return
             sym = payload.get("symbol") or getattr(self, "symbol", None)
+            
+            # Fallback: if timeframe='tick' and no tick data in buffer, load 1m candles
+            current_tf = getattr(self, 'timeframe', '1m')
+            if current_tf == 'tick' and (self._last_df is None or self._last_df.empty):
+                self._load_1m_fallback_for_ticks(sym)
 
             # Update active provider label (get from settings)
             # DISABLED: causes widget deletion errors

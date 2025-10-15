@@ -49,144 +49,62 @@ class OrderBooksWidget(QWidget):
     def _init_ui(self):
         """Initialize the UI components."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)  # Ridotto da 5 a 2
-        layout.setSpacing(2)  # Ridotto da 5 a 2
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
 
-        # Header
+        # Header unico: Order Books | Spread | Mid
         header_layout = QHBoxLayout()
-        self.symbol_label = QLabel("--")
-        self.symbol_label.setStyleSheet("font-weight: bold; font-size: 9px; color: #e0e0e0;")  # Ridotto da 11px a 9px
+        
+        self.symbol_label = QLabel("Order Books")
+        self.symbol_label.setStyleSheet("font-weight: bold; font-size: 10px; color: #ffffff;")
         header_layout.addWidget(self.symbol_label)
-
+        
         header_layout.addStretch()
-
-        self.status_label = QLabel("●")
-        self.status_label.setStyleSheet("color: #888888; font-size: 14px;")
-        self.status_label.setToolTip("Disconnected")
-        header_layout.addWidget(self.status_label)
+        
+        self.spread_label = QLabel("Spread: --")
+        self.spread_label.setStyleSheet("font-size: 9px; color: #ffa500; font-weight: bold;")
+        header_layout.addWidget(self.spread_label)
+        
+        self.mid_price_label = QLabel("Mid: --")
+        self.mid_price_label.setStyleSheet("font-size: 9px; color: #00bfff; font-weight: bold; margin-left: 10px;")
+        header_layout.addWidget(self.mid_price_label)
 
         layout.addLayout(header_layout)
 
-        # Asks table (ascending order - lowest ask at bottom)
-        self.asks_table = QTableWidget()
-        self.asks_table.setColumnCount(3)
-        self.asks_table.setHorizontalHeaderLabels(["Price", "Volume", "Total"])
-        self.asks_table.horizontalHeader().setStretchLastSection(True)
-        self.asks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.asks_table.verticalHeader().setVisible(False)
-        self.asks_table.verticalHeader().setDefaultSectionSize(16)  # Ridotto altezza righe
-        self.asks_table.setMaximumHeight(150)
-        self.asks_table.setStyleSheet("""
+        # Tabella unica per bids + asks (10 righe: 5 bids sopra, 5 asks sotto)
+        self.book_table = QTableWidget()
+        self.book_table.setColumnCount(3)
+        self.book_table.setHorizontalHeaderLabels(["Price", "Volume", "Total"])
+        self.book_table.setRowCount(10)  # 5 bids + 5 asks
+        self.book_table.horizontalHeader().setStretchLastSection(True)
+        self.book_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.book_table.verticalHeader().setVisible(False)
+        self.book_table.verticalHeader().setDefaultSectionSize(18)
+        self.book_table.setStyleSheet("""
             QTableWidget {
-                background-color: #2b2b2b;
-                gridline-color: #3a3a3a;
+                background-color: #1e1e1e;
+                gridline-color: #2a2a2a;
                 border: 1px solid #3a3a3a;
-                font-size: 8px;
-            }
-            QTableWidget::item {
-                padding: 1px;
-                color: #e0e0e0;
-            }
-            QHeaderView::section {
-                background-color: #3a3a3a;
-                color: #c0c0c0;
-                font-size: 8px;
-                padding: 1px;
-                border: 1px solid #4a4a4a;
-            }
-        """)
-        layout.addWidget(self.asks_table)
-
-        # Spread and mid price display
-        spread_layout = QVBoxLayout()
-        spread_layout.setSpacing(2)
-
-        self.spread_label = QLabel("Spread: --")
-        self.spread_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.spread_label.setStyleSheet("font-size: 10px; color: #ffa500; font-weight: bold;")
-        spread_layout.addWidget(self.spread_label)
-
-        self.mid_price_label = QLabel("Mid: --")
-        self.mid_price_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.mid_price_label.setStyleSheet("font-size: 11px; color: #00bfff; font-weight: bold;")
-        spread_layout.addWidget(self.mid_price_label)
-
-        layout.addLayout(spread_layout)
-
-        # Bids table (descending order - highest bid at top)
-        self.bids_table = QTableWidget()
-        self.bids_table.setColumnCount(3)
-        self.bids_table.setHorizontalHeaderLabels(["Price", "Volume", "Total"])
-        self.bids_table.horizontalHeader().setStretchLastSection(True)
-        self.bids_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.bids_table.verticalHeader().setVisible(False)
-        self.bids_table.verticalHeader().setDefaultSectionSize(16)  # Ridotto altezza righe
-        self.bids_table.setMaximumHeight(150)
-        self.bids_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #2b2b2b;
-                gridline-color: #3a3a3a;
-                border: 1px solid #3a3a3a;
-                font-size: 8px;
-            }
-            QTableWidget::item {
-                padding: 1px;
-                color: #e0e0e0;
-            }
-            QHeaderView::section {
-                background-color: #3a3a3a;
-                color: #c0c0c0;
-                padding: 3px;
-                border: 1px solid #4a4a4a;
                 font-size: 9px;
             }
-        """)
-        layout.addWidget(self.bids_table)
-
-        # Imbalance bar
-        imbalance_layout = QVBoxLayout()
-        imbalance_layout.setSpacing(2)
-
-        imbalance_label = QLabel("Order Flow Imbalance")
-        imbalance_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        imbalance_label.setStyleSheet("font-size: 9px; color: #a0a0a0;")
-        imbalance_layout.addWidget(imbalance_label)
-
-        # Progress bar for imbalance (-1 to +1)
-        self.imbalance_bar = QProgressBar()
-        self.imbalance_bar.setRange(-100, 100)
-        self.imbalance_bar.setValue(0)
-        self.imbalance_bar.setTextVisible(True)
-        self.imbalance_bar.setFormat("%p%")
-        self.imbalance_bar.setMaximumHeight(15)
-        self.imbalance_bar.setStyleSheet("""
-            QProgressBar {
+            QTableWidget::item {
+                padding: 2px;
+                color: #000000;
+            }
+            QHeaderView::section {
+                background-color: #2a2a2a;
+                color: #ffffff;
+                font-size: 9px;
+                padding: 3px;
                 border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                text-align: center;
-                background-color: #2b2b2b;
-            }
-            QProgressBar::chunk {
-                background-color: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #dc143c, stop:0.5 #888888, stop:1 #00ff00
-                );
             }
         """)
-        imbalance_layout.addWidget(self.imbalance_bar)
-
-        self.imbalance_label = QLabel("Bid: -- | Ask: --")
-        self.imbalance_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.imbalance_label.setStyleSheet("font-size: 8px; color: #808080;")
-        imbalance_layout.addWidget(self.imbalance_label)
-
-        layout.addLayout(imbalance_layout)
-
+        layout.addWidget(self.book_table)
+        
         layout.addStretch()
 
-        # Connect click handlers
-        self.bids_table.cellClicked.connect(self._on_bid_clicked)
-        self.asks_table.cellClicked.connect(self._on_ask_clicked)
+        # Connect click handler
+        self.book_table.cellClicked.connect(self._on_book_clicked)
 
     @Slot(str, dict)
     def update_order_book(self, symbol: str, book_data: Dict[str, Any]):
@@ -222,56 +140,7 @@ class OrderBooksWidget(QWidget):
 
     def _update_display(self):
         """Update all display components."""
-        # Update symbol
-        self.symbol_label.setText(self._current_symbol or "--")
-
-        # Update asks table (reversed to show lowest ask at bottom)
-        self.asks_table.setRowCount(len(self._asks))
-        cumulative_ask = 0.0
-        for i, (price, volume) in enumerate(reversed(self._asks)):
-            cumulative_ask += volume
-
-            # Price
-            price_item = QTableWidgetItem(f"{price:.5f}")
-            price_item.setForeground(QColor(220, 20, 60))  # Crimson for asks
-            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.asks_table.setItem(i, 0, price_item)
-
-            # Volume
-            volume_item = QTableWidgetItem(f"{volume:.2f}")
-            volume_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.asks_table.setItem(i, 1, volume_item)
-
-            # Cumulative
-            cumulative_item = QTableWidgetItem(f"{cumulative_ask:.2f}")
-            cumulative_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            cumulative_item.setForeground(QColor(150, 150, 150))
-            self.asks_table.setItem(i, 2, cumulative_item)
-
-        # Update bids table
-        self.bids_table.setRowCount(len(self._bids))
-        cumulative_bid = 0.0
-        for i, (price, volume) in enumerate(self._bids):
-            cumulative_bid += volume
-
-            # Price
-            price_item = QTableWidgetItem(f"{price:.5f}")
-            price_item.setForeground(QColor(0, 255, 0))  # Green for bids
-            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.bids_table.setItem(i, 0, price_item)
-
-            # Volume
-            volume_item = QTableWidgetItem(f"{volume:.2f}")
-            volume_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.bids_table.setItem(i, 1, volume_item)
-
-            # Cumulative
-            cumulative_item = QTableWidgetItem(f"{cumulative_bid:.2f}")
-            cumulative_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            cumulative_item.setForeground(QColor(150, 150, 150))
-            self.bids_table.setItem(i, 2, cumulative_item)
-
-        # Update spread and mid price
+        # Update spread and mid in header
         if self._spread is not None:
             self.spread_label.setText(f"Spread: {self._spread:.5f}")
         else:
@@ -282,33 +151,65 @@ class OrderBooksWidget(QWidget):
         else:
             self.mid_price_label.setText("Mid: --")
 
-        # Update imbalance
-        imbalance_pct = int(self._imbalance * 100)
-        self.imbalance_bar.setValue(imbalance_pct)
+        # Populate unified table: 5 bids (rows 0-4) + 5 asks (rows 5-9)
+        # Bids: highest to lowest (row 0 = best bid)
+        bids_to_show = self._bids[:5]  # Take first 5 (highest)
+        cumulative_bid = 0.0
+        for i, (price, volume) in enumerate(bids_to_show):
+            cumulative_bid += volume
+            
+            # Green gradient (darker = deeper level)
+            intensity = int(255 - (i * 40))  # 255, 215, 175, 135, 95
+            bg_color = QColor(0, intensity, 0)
+            
+            self._set_row_data(i, price, volume, cumulative_bid, bg_color)
 
-        # Calculate total volumes
-        total_bid_volume = sum(vol for _, vol in self._bids)
-        total_ask_volume = sum(vol for _, vol in self._asks)
-        self.imbalance_label.setText(
-            f"Bid: {total_bid_volume:.2f} | Ask: {total_ask_volume:.2f}"
-        )
+        # Asks: lowest to highest (row 5 = best ask)
+        asks_to_show = self._asks[:5]  # Take first 5 (lowest)
+        cumulative_ask = 0.0
+        for i, (price, volume) in enumerate(asks_to_show):
+            cumulative_ask += volume
+            
+            # Red gradient (darker = deeper level)
+            intensity = int(255 - (i * 40))  # 255, 215, 175, 135, 95
+            bg_color = QColor(intensity, 0, 0)
+            
+            self._set_row_data(5 + i, price, volume, cumulative_ask, bg_color)
+    
+    def _set_row_data(self, row: int, price: float, volume: float, cumulative: float, bg_color: QColor):
+        """Set data for a single row with background color."""
+        # Price
+        price_item = QTableWidgetItem(f"{price:.5f}")
+        price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        price_item.setBackground(bg_color)
+        self.book_table.setItem(row, 0, price_item)
 
-    def _on_bid_clicked(self, row: int, column: int):
-        """Handle click on bid price level."""
-        if column == 0 and row < len(self._bids):  # Clicked on price column
-            price = self._bids[row][0]
-            self.priceLevelClicked.emit(price, 'bid')
-            logger.debug(f"Bid level clicked: {price}")
+        # Volume
+        volume_item = QTableWidgetItem(f"{volume:.3f}")
+        volume_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        volume_item.setBackground(bg_color)
+        self.book_table.setItem(row, 1, volume_item)
 
-    def _on_ask_clicked(self, row: int, column: int):
-        """Handle click on ask price level."""
+        # Cumulative
+        cumulative_item = QTableWidgetItem(f"{cumulative:.3f}")
+        cumulative_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        cumulative_item.setBackground(bg_color)
+        self.book_table.setItem(row, 2, cumulative_item)
+
+    def _on_book_clicked(self, row: int, column: int):
+        """Handle click on price level in unified table."""
         if column == 0:  # Clicked on price column
-            # Asks are reversed in display
-            actual_index = len(self._asks) - 1 - row
-            if 0 <= actual_index < len(self._asks):
-                price = self._asks[actual_index][0]
-                self.priceLevelClicked.emit(price, 'ask')
-                logger.debug(f"Ask level clicked: {price}")
+            if row < 5:  # Bids (rows 0-4)
+                if row < len(self._bids):
+                    price = self._bids[row][0]
+                    self.priceLevelClicked.emit(price, 'bid')
+                    logger.debug(f"Bid level clicked: {price}")
+            else:  # Asks (rows 5-9)
+                ask_index = row - 5
+                if ask_index < len(self._asks):
+                    price = self._asks[ask_index][0]
+                    self.priceLevelClicked.emit(price, 'ask')
+                    logger.debug(f"Ask level clicked: {price}")
 
     @Slot()
     def clear(self):
@@ -320,33 +221,13 @@ class OrderBooksWidget(QWidget):
         self._spread = None
         self._imbalance = 0.0
 
-        self.symbol_label.setText("--")
         self.spread_label.setText("Spread: --")
         self.mid_price_label.setText("Mid: --")
-        self.imbalance_bar.setValue(0)
-        self.imbalance_label.setText("Bid: -- | Ask: --")
 
-        self.bids_table.setRowCount(0)
-        self.asks_table.setRowCount(0)
-
-        # Update status indicator
-        self.status_label.setText("●")
-        self.status_label.setStyleSheet("color: #888888; font-size: 14px;")
-        self.status_label.setToolTip("Disconnected")
-
-    @Slot()
-    def set_connected(self):
-        """Mark as connected."""
-        self.status_label.setText("●")
-        self.status_label.setStyleSheet("color: #00ff00; font-size: 14px;")
-        self.status_label.setToolTip("Connected")
-
-    @Slot()
-    def set_disconnected(self):
-        """Mark as disconnected."""
-        self.status_label.setText("●")
-        self.status_label.setStyleSheet("color: #dc143c; font-size: 14px;")
-        self.status_label.setToolTip("Disconnected")
+        # Clear all rows in unified table
+        for row in range(10):
+            for col in range(3):
+                self.book_table.setItem(row, col, QTableWidgetItem(""))
     
     def update_dom(self, bids: List[Dict], asks: List[Dict]):
         """Update DOM with bids/asks from provider.
