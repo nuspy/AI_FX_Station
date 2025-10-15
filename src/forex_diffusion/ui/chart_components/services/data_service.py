@@ -41,6 +41,19 @@ class DataService(ChartServiceBase):
                     ask_val = payload.get('ask', payload.get('offer'))
                     logger.debug(f"📊 Updating market watch: {sym} bid={bid_val} ask={ask_val}")
                     self._update_market_quote(sym, bid_val, ask_val, payload.get('ts_utc'))
+                    
+                    # Update order books widget if available (from parent ChartTab)
+                    if hasattr(self.view, 'order_books_widget') and self.view.order_books_widget:
+                        # Get actual DOM data from dom_service (passed to ChartTab)
+                        dom_service = getattr(self.view, 'dom_service', None)
+                        logger.debug(f"Order books update: has_widget={True}, has_dom_service={dom_service is not None}")
+                        if dom_service:
+                            dom_snapshot = dom_service.get_latest_dom_snapshot(sym)
+                            if dom_snapshot:
+                                bids = dom_snapshot.get('bids', [])
+                                asks = dom_snapshot.get('asks', [])
+                                logger.debug(f"Updating order books widget: {len(bids)} bids, {len(asks)} asks")
+                                self.view.order_books_widget.update_dom(bids, asks)
             except Exception as e:
                 logger.error(f"Failed to update market watch: {e}")
 
@@ -64,13 +77,19 @@ class DataService(ChartServiceBase):
                         y = (bid_val + ask_val) / 2
                     # se buffer vuoto: crea
                     if self._last_df is None or self._last_df.empty:
-                        row = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
+                        # Create with OHLC columns for candle charts
+                        row = {"ts_utc": ts, "open": y, "high": y, "low": y, "close": y, "volume": 0, "bid": bid_val, "ask": ask_val}
                         self._last_df = pd.DataFrame([row])
                     else:
                         last_ts = int(self._last_df["ts_utc"].iloc[-1])
                         if ts > last_ts:
-                            # append
-                            self._last_df.loc[len(self._last_df)] = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
+                            # append new candle (tick becomes OHLC bar)
+                            new_row = {"ts_utc": ts, "open": y, "high": y, "low": y, "close": y, "volume": 0}
+                            if bid_val is not None:
+                                new_row["bid"] = bid_val
+                            if ask_val is not None:
+                                new_row["ask"] = ask_val
+                            self._last_df.loc[len(self._last_df)] = new_row
                             # trim buffer
                             if len(self._last_df) > 10000:
                                 self._last_df = self._last_df.iloc[-10000:].reset_index(drop=True)
@@ -125,7 +144,12 @@ class DataService(ChartServiceBase):
                 prev_xlim = prev_ylim = None
             # redraw base chart (quantiles overlay mantenuti da _forecasts)
             if self._last_df is not None and not self._last_df.empty:
+                logger.debug(f"📊 Calling update_plot with {len(self._last_df)} rows")
+                logger.debug(f"   Columns: {list(self._last_df.columns)}")
+                logger.debug(f"   Last row: {self._last_df.iloc[-1].to_dict() if len(self._last_df) > 0 else 'empty'}")
                 self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+            else:
+                logger.warning(f"⚠️ Cannot update plot: _last_df is {'None' if self._last_df is None else 'empty'}")
                 # Trigger follow mode if enabled and timeout expired
                 try:
                     if hasattr(self, '_follow_center_if_needed'):
@@ -983,10 +1007,13 @@ class DataService(ChartServiceBase):
         - Black: Stable (no significant change in 10+ ticks)
         """
         try:
+            logger.debug(f"_update_market_quote called: {symbol}, bid={bid}, ask={ask}, has_widget={hasattr(self, 'market_watch')}")
             if not hasattr(self, 'market_watch') or self.market_watch is None:
+                logger.warning(f"⚠️ Market watch widget not available")
                 return
 
             if bid is None or ask is None:
+                logger.warning(f"⚠️ Bid or ask is None for {symbol}")
                 return
 
             # Calculate spread
@@ -1026,9 +1053,11 @@ class DataService(ChartServiceBase):
 
             # Find existing item for this symbol or add new one
             found = False
+            search_prefix = f"{symbol} |"
             for i in range(self.market_watch.count()):
                 item = self.market_watch.item(i)
-                if item and item.text().startswith(f"{symbol} |"):
+                item_text = item.text() if item else ""
+                if item and item_text.startswith(search_prefix):
                     item.setText(display_text)
                     # Apply color based on spread state
                     if spread_color == "green":
@@ -1050,8 +1079,9 @@ class DataService(ChartServiceBase):
                 else:
                     item.setForeground(Qt.black)
                 self.market_watch.addItem(item)
+                # Widget auto-updates on addItem
 
-            # PlutoTouch logger.debug(f"Market watch updated: {symbol} bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.1f} color={spread_color}")
+            # logger.debug(f"Market watch updated: {symbol} bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.1f} color={spread_color}")
 
         except Exception as e:
             logger.exception(f"Failed to update market quote for {symbol}: {e}")

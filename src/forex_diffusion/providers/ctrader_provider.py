@@ -227,7 +227,8 @@ class CTraderProvider(BaseProvider):
             
             # Auto-subscribe to spot quotes and DOM for configured symbols
             try:
-                default_symbols = ["EUR/USD", "GBP/USD", "USD/JPY"]
+                # TODO: Make this configurable from settings
+                default_symbols = ["EUR/USD"]  # Start with single symbol for stability
                 logger.info(f"[{self.name}] Auto-subscribing to real-time data for {default_symbols}")
                 await self._subscribe_spots(default_symbols)
                 await self._subscribe_depth_quotes(default_symbols)
@@ -573,18 +574,21 @@ class CTraderProvider(BaseProvider):
                         
                         # Type 2128 = ProtoOATrailingSLChangedEvent (trailing stop loss changed)
                         elif payload_type == 2128:
-                            logger.debug(f"[{self.name}] ⊘ Skipping ProtoOATrailingSLChangedEvent (type 2128)")
-                            return  # Skip processing
+                            decoded_message = Messages.ProtoOATrailingSLChangedEvent()
+                            decoded_message.ParseFromString(message.payload)
+                            logger.info(f"[{self.name}] 📝 Trailing SL changed: {decoded_message}")
                         
                         # Type 2157 = ProtoOAOrderErrorEvent (order error notification)
                         elif payload_type == 2157:
-                            logger.debug(f"[{self.name}] ⊘ Skipping ProtoOAOrderErrorEvent (type 2157)")
-                            return  # Skip processing
+                            decoded_message = Messages.ProtoOAOrderErrorEvent()
+                            decoded_message.ParseFromString(message.payload)
+                            logger.warning(f"[{self.name}] ⚠️ Order error: {decoded_message}")
                         
                         # Type 2127 = ProtoOAExecutionEvent (order execution/cancellation/fill)
                         elif payload_type == 2127:
-                            logger.debug(f"[{self.name}] ⊘ Skipping ProtoOAExecutionEvent (type 2127) - order event")
-                            return  # Skip processing
+                            decoded_message = Messages.ProtoOAExecutionEvent()
+                            decoded_message.ParseFromString(message.payload)
+                            logger.info(f"[{self.name}] 💼 Order execution event: {decoded_message}")
                         
                         else:
                             # Unknown payload type - log it with message details

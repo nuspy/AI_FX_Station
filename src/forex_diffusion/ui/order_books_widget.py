@@ -343,3 +343,44 @@ class OrderBooksWidget(QWidget):
         self.status_label.setText("●")
         self.status_label.setStyleSheet("color: #dc143c; font-size: 14px;")
         self.status_label.setToolTip("Disconnected")
+    
+    def update_dom(self, bids: List[Dict], asks: List[Dict]):
+        """Update DOM with bids/asks from provider.
+        
+        Args:
+            bids: List of {'price': float, 'size': float}
+            asks: List of {'price': float, 'size': float}
+        """
+        try:
+            # Convert to format expected by update_book
+            bids_formatted = [[b['price'], b['size']] for b in bids if 'price' in b and 'size' in b]
+            asks_formatted = [[a['price'], a['size']] for a in asks if 'price' in a and 'size' in a]
+            
+            # Calculate mid, spread, imbalance
+            mid = None
+            spread = None
+            imbalance = 0.0
+            
+            if bids_formatted and asks_formatted:
+                best_bid = bids_formatted[0][0]
+                best_ask = asks_formatted[0][0]
+                mid = (best_bid + best_ask) / 2
+                spread = best_ask - best_bid
+                
+                total_bid_vol = sum(b[1] for b in bids_formatted)
+                total_ask_vol = sum(a[1] for a in asks_formatted)
+                if total_bid_vol + total_ask_vol > 0:
+                    imbalance = (total_bid_vol - total_ask_vol) / (total_bid_vol + total_ask_vol)
+            
+            book_data = {
+                'bids': bids_formatted,
+                'asks': asks_formatted,
+                'mid_price': mid,
+                'spread': spread,
+                'imbalance': imbalance
+            }
+            
+            self.update_order_book(self._current_symbol or "EUR/USD", book_data)
+            
+        except Exception as e:
+            logger.error(f"Error in update_dom: {e}", exc_info=True)
