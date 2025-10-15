@@ -532,7 +532,7 @@ class PlotService(ChartServiceBase):
                 row_idx = 1
                 if has_normalized:
                     # Create normalized subplot with DateAxisItem
-                    from ..ui_builder import DateAxisItem
+                    from ...chart_tab.ui_builder import DateAxisItem
                     normalized_date_axis = DateAxisItem(orientation='bottom')
                     normalized_date_axis.set_date_format(get_setting("chart.date_format", "YYYY-MM-DD"))
                     
@@ -560,7 +560,7 @@ class PlotService(ChartServiceBase):
 
                 if has_custom:
                     # Create custom subplot with DateAxisItem
-                    from ..ui_builder import DateAxisItem
+                    from ...chart_tab.ui_builder import DateAxisItem
                     custom_date_axis = DateAxisItem(orientation='bottom')
                     custom_date_axis.set_date_format(get_setting("chart.date_format", "YYYY-MM-DD"))
                     
