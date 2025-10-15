@@ -1,0 +1,225 @@
+# ANALISI COMPONENTI CHE FANNO UPDATE
+# Ricerca eseguita: 2025-01-15
+# Pattern cercati: .update(), updateGeometry, setUpdatesEnabled, repaint(), processEvents, graphics_layout, addPlot, clear()
+
+## CATEGORIA 1: GRAPHICS LAYOUT OPERATIONS (RISCHIO ALTO - RESIZE WINDOW)
+=============================================================================
+
+1. src/forex_diffusion/ui/chart_components/services/plot_service.py:510
+   - graphics_layout.clear()
+   - QUANDO: Ricreazione subplot (cambio indicatori)
+   - IMPATTO: Cancella TUTTI i plot e ricrea da zero
+   - RISCHIO: ⚠️ ALTO - Trigger layout recalculation → Windows WM_SIZE
+
+2. src/forex_diffusion/ui/chart_components/services/plot_service.py:520
+   - graphics_layout.addPlot(row=0, col=0)
+   - QUANDO: Creazione main plot dopo clear()
+   - IMPATTO: Aggiunge plot al layout
+   - RISCHIO: ⚠️ ALTO - Cambia dimensioni layout
+
+3. src/forex_diffusion/ui/chart_components/services/plot_service.py:539
+   - graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': normalized_date_axis})
+   - QUANDO: Aggiunta subplot normalizzato
+   - IMPATTO: Aggiunge nuovo subplot
+   - RISCHIO: ⚠️ ALTO - Cambia dimensioni layout
+
+4. src/forex_diffusion/ui/chart_components/services/plot_service.py:570
+   - graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': custom_date_axis})
+   - QUANDO: Aggiunta subplot custom
+   - IMPATTO: Aggiunge nuovo subplot
+   - RISCHIO: ⚠️ ALTO - Cambia dimensioni layout
+
+5. src/forex_diffusion/ui/chart_components/services/plot_service.py:597
+   - graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': date_axis})
+   - QUANDO: Aggiunta volume plot
+   - IMPATTO: Aggiunge volume subplot
+   - RISCHIO: ⚠️ ALTO - Cambia dimensioni layout
+
+6. src/forex_diffusion/ui/chart_tab/ui_builder.py:199
+   - GraphicsLayoutWidget()
+   - QUANDO: Inizializzazione chart
+   - IMPATTO: Creazione widget layout principale
+   - RISCHIO: ⚠️ MEDIO - Setup iniziale
+
+7. src/forex_diffusion/ui/chart_tab/ui_builder.py:210
+   - graphics_layout.addPlot(row=0, col=0)
+   - QUANDO: Setup main plot iniziale
+   - IMPATTO: Creazione main plot
+   - RISCHIO: ⚠️ MEDIO - Setup iniziale
+
+8. src/forex_diffusion/ui/chart_tab/ui_builder.py:225
+   - graphics_layout.nextRow()
+   - QUANDO: Spostamento a row successiva
+   - IMPATTO: Incrementa row index
+   - RISCHIO: ⚠️ BASSO - Solo cambio indice
+
+9. src/forex_diffusion/ui/chart_tab/ui_builder.py:226
+   - graphics_layout.addPlot(row=1, col=0, axisItems={'bottom': self.date_axis})
+   - QUANDO: Aggiunta volume plot iniziale
+   - IMPATTO: Aggiunge volume subplot
+   - RISCHIO: ⚠️ MEDIO - Setup iniziale
+
+10. src/forex_diffusion/ui/chart_tab/ui_builder.py:240
+    - chart_container_layout.addWidget(self.graphics_layout)
+    - QUANDO: Aggiunta graphics_layout al container
+    - IMPATTO: Integrazione nel layout principale
+    - RISCHIO: ⚠️ ALTO - Connessione a parent layout
+
+11. src/forex_diffusion/ui/chart_components/services/plot_service.py:516-517
+    - graphics_layout.ci.layout.setSpacing(0)
+    - graphics_layout.ci.layout.setContentsMargins(0, 0, 0, 0)
+    - QUANDO: Minimizzazione spacing dopo clear()
+    - IMPATTO: Modifica layout spacing
+    - RISCHIO: ⚠️ MEDIO - Cambio parametri layout
+
+## CATEGORIA 2: UPDATE_PLOT CALLS (TRIGGER GRAPHICS_LAYOUT.CLEAR)
+===================================================================
+
+12. src/forex_diffusion/ui/chart_components/services/data_service.py:219
+    - self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+    - QUANDO: Tick handler (real-time update)
+    - IMPATTO: Trigger _update_plot_finplot → graphics_layout.clear()
+    - RISCHIO: ⚠️ CRITICO - Chiamato ogni tick!
+
+13. src/forex_diffusion/ui/chart_components/services/data_service.py:338
+    - self.update_plot(df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+    - QUANDO: Cambio timeframe
+    - IMPATTO: Reload completo chart
+    - RISCHIO: ⚠️ ALTO - Ma occasionale
+
+14. src/forex_diffusion/ui/chart_components/services/data_service.py:617
+    - self.update_plot(df)
+    - QUANDO: Caricamento iniziale dati
+    - IMPATTO: Setup iniziale chart
+    - RISCHIO: ⚠️ MEDIO - Una tantum
+
+15. src/forex_diffusion/ui/chart_components/services/data_service.py:674
+    - self.update_plot(df)
+    - QUANDO: Cambio symbol
+    - IMPATTO: Reload completo chart
+    - RISCHIO: ⚠️ ALTO - Ma occasionale
+
+16. src/forex_diffusion/ui/chart_components/services/data_service.py:734
+    - self.update_plot(df)
+    - QUANDO: Cambio timeframe
+    - IMPATTO: Reload completo chart
+    - RISCHIO: ⚠️ ALTO - Ma occasionale
+
+17. src/forex_diffusion/ui/chart_components/services/data_service.py:935
+    - self.update_plot(df)
+    - QUANDO: Backfill completato
+    - IMPATTO: Refresh chart
+    - RISCHIO: ⚠️ MEDIO - Occasionale
+
+18. src/forex_diffusion/ui/chart_components/services/action_service.py:102
+    - self.update_plot(self._last_df)
+    - QUANDO: Cambio configurazione indicators
+    - IMPATTO: Redraw chart con nuovi indicatori
+    - RISCHIO: ⚠️ ALTO - Trigger graphics_layout.clear()
+
+19. src/forex_diffusion/ui/chart_components/services/action_service.py:166
+    - self.update_plot(self._last_df)
+    - QUANDO: Cambio impostazioni indicators
+    - IMPATTO: Redraw chart
+    - RISCHIO: ⚠️ ALTO - Trigger graphics_layout.clear()
+
+20. src/forex_diffusion/ui/chart_components/services/plot_service.py:1771
+    - self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+    - QUANDO: Toggle price mode (candlestick/line)
+    - IMPATTO: Redraw chart
+    - RISCHIO: ⚠️ ALTO - Ma occasionale
+
+21. src/forex_diffusion/ui/chart_components/services/plot_service.py:1924
+    - self.update_plot(self._last_df)
+    - QUANDO: Cambio theme/colori
+    - IMPATTO: Redraw chart
+    - RISCHIO: ⚠️ ALTO - Ma occasionale
+
+22. src/forex_diffusion/ui/chart_tab/event_handlers.py:362
+    - self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+    - QUANDO: Toggle follow mode
+    - IMPATTO: Redraw chart
+    - RISCHIO: ⚠️ MEDIO - Occasionale
+
+## CATEGORIA 3: WIDGET UPDATE/REPAINT (RISCHIO BASSO-MEDIO)
+===========================================================
+
+23. src/forex_diffusion/ui/chart_components/services/draggable_legend.py:90
+    - label.update()
+    - QUANDO: Cambio colore model legend
+    - IMPATTO: Repaint label
+    - RISCHIO: ✅ BASSO - Widget isolato
+
+24. src/forex_diffusion/ui/chart_components/services/draggable_legend.py:98
+    - self.update()
+    - QUANDO: Aggiunta model a legend
+    - IMPATTO: Repaint legend
+    - RISCHIO: ✅ BASSO - Widget isolato
+
+25. src/forex_diffusion/ui/chart_components/services/draggable_legend.py:108
+    - self.update()
+    - QUANDO: Rimozione model da legend
+    - IMPATTO: Repaint legend
+    - RISCHIO: ✅ BASSO - Widget isolato
+
+26. src/forex_diffusion/ui/chart_components/services/patterns/patterns_service.py:167-385-726-739-754-767-772-1158-1398
+    - ps._repaint()
+    - QUANDO: Pattern detection completata
+    - IMPATTO: Ridisegna solo pattern layer
+    - RISCHIO: ✅ BASSO - Layer isolato
+
+27. src/forex_diffusion/ui/positions_table_widget.py:123
+    - self.table.setUpdatesEnabled(False)
+    - QUANDO: Refresh positions table
+    - IMPATTO: Blocca temporaneamente update table
+    - RISCHIO: ✅ BASSO - Ottimizzazione performance
+
+28. src/forex_diffusion/ui/positions_table_widget.py:133
+    - self.table.setUpdatesEnabled(True)
+    - QUANDO: Fine refresh positions table
+    - IMPATTO: Riabilita update table
+    - RISCHIO: ✅ BASSO - Ottimizzazione performance
+
+## CATEGORIA 4: BACKGROUND UPDATES (DICT/SETTINGS)
+==================================================
+
+29-40. Vari .update() su dict/settings (patterns_config_dialog.py, pareto_visualization_dialog.py, etc.)
+    - IMPATTO: Update dict Python, non UI
+    - RISCHIO: ✅ NULLO - Non impattano rendering
+
+## ANALISI PROBLEMA RESIZE WINDOW
+===================================
+
+ROOT CAUSE IDENTIFICATO:
+-------------------------
+Il punto #12 (data_service.py:219) è il COLPEVOLE PRINCIPALE:
+
+1. Real-time tick arriva ogni ~100ms
+2. _handle_tick() chiama update_plot()
+3. update_plot() chiama _update_plot_finplot()
+4. _update_plot_finplot() chiama graphics_layout.clear() (punto #1)
+5. Poi ricrea TUTTI i subplot con addPlot() (punti #2-5)
+6. Qt ricalcola layout dimensions
+7. QVBoxLayout propaga size hint al parent window
+8. Windows riceve WM_SIZE message
+9. Windows esce da fullscreen e ridimensiona finestra
+
+FREQUENZA:
+----------
+- CRITICO: Punto #12 → OGNI TICK (10+ volte/secondo)
+- ALTO: Punti #13-21 → Occasionale (cambio settings)
+- BASSO: Punti #23-28 → Widget isolati
+
+SOLUZIONE PROPOSTA:
+-------------------
+Invece di chiamare graphics_layout.clear() su ogni tick:
+1. Aggiornare SOLO i dati degli existing plot items
+2. Non ricreare subplot se non cambiano indicatori
+3. Separare "update data" da "rebuild layout"
+4. graphics_layout.clear() SOLO quando cambiano indicatori/settings
+
+PROSSIMI STEP:
+--------------
+1. Modificare _update_plot_finplot() per update in-place
+2. Aggiungere flag _layout_dirty per rilevare quando serve clear()
+3. Separare _update_data() (fast) da _rebuild_layout() (slow)
