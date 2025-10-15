@@ -216,7 +216,18 @@ class DataService(ChartServiceBase):
                 logger.debug(f"   Columns: {list(self._last_df.columns)}")
                 logger.debug(f"   Last row: {self._last_df.iloc[-1].to_dict() if len(self._last_df) > 0 else 'empty'}")
                 
+                # Block window geometry changes during plot update
+                main_window = self.window()
+                if main_window:
+                    # Save current window state
+                    saved_state = main_window.windowState()
+                
                 self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+                
+                # Restore window state if it changed
+                if main_window and saved_state:
+                    if main_window.windowState() != saved_state:
+                        main_window.setWindowState(saved_state)
             else:
                 logger.warning(f"⚠️ Cannot update plot: _last_df is {'None' if self._last_df is None else 'empty'}")
                 # Trigger follow mode if enabled and timeout expired

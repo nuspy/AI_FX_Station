@@ -543,6 +543,9 @@ class PlotService(ChartServiceBase):
                     # Minimize margins
                     normalized_plot.setContentsMargins(0, 0, 0, 0)
                     normalized_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Disable auto-range to prevent rescaling jitter
+                    normalized_plot.enableAutoRange(axis='y', enable=False)
+                    normalized_plot.setAutoVisible(y=False)
                     # Hide Y-axis labels
                     normalized_plot.showAxis('left', False)
                     # Add legend (movable by default in PyQtGraph)
@@ -570,6 +573,9 @@ class PlotService(ChartServiceBase):
                     # Minimize margins
                     custom_plot.setContentsMargins(0, 0, 0, 0)
                     custom_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Disable auto-range to prevent rescaling jitter
+                    custom_plot.enableAutoRange(axis='y', enable=False)
+                    custom_plot.setAutoVisible(y=False)
                     # Hide Y-axis labels
                     custom_plot.showAxis('left', False)
                     # Add legend (movable by default in PyQtGraph)
@@ -590,12 +596,13 @@ class PlotService(ChartServiceBase):
                 date_axis = DateAxisItem(orientation='bottom')
                 volume_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': date_axis})
                 volume_plot.setLabel('left', 'Volume')
-                volume_plot.setMaximumHeight(120)  # Increased from 80 to 120 for better visibility
+                volume_plot.setMaximumHeight(70)  # Reduced height to minimize space
                 volume_plot.showGrid(x=True, y=True, alpha=0.3)
                 volume_plot.setContentsMargins(0, 0, 0, 0)
                 volume_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
-                # Enable auto-range for Y axis
-                volume_plot.enableAutoRange(axis='y', enable=True)
+                # Disable auto-range to prevent jitter (set fixed range instead)
+                volume_plot.enableAutoRange(axis='y', enable=False)
+                volume_plot.setAutoVisible(y=False)
                 # Hide Y-axis labels (volume values not important)
                 volume_plot.showAxis('left', False)
                 # Link x-axis to main plot for synchronized zoom/pan
