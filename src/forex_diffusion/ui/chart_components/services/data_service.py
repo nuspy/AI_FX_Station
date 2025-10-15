@@ -216,16 +216,7 @@ class DataService(ChartServiceBase):
                 logger.debug(f"   Columns: {list(self._last_df.columns)}")
                 logger.debug(f"   Last row: {self._last_df.iloc[-1].to_dict() if len(self._last_df) > 0 else 'empty'}")
                 
-                # Block geometry updates to prevent window resize
-                main_window = self.window()
-                if main_window:
-                    main_window.setUpdatesEnabled(False)
-                
-                try:
-                    self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
-                finally:
-                    if main_window:
-                        main_window.setUpdatesEnabled(True)
+                self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
             else:
                 logger.warning(f"⚠️ Cannot update plot: _last_df is {'None' if self._last_df is None else 'empty'}")
                 # Trigger follow mode if enabled and timeout expired
