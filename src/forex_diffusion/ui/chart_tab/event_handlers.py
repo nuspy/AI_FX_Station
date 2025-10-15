@@ -239,13 +239,60 @@ class EventHandlersMixin:
         logger.info(f"Timeframe changed to: {value}")
         set_setting('chart.timeframe', value)
         self.timeframe = value
+        
         # Clear saved view range so chart resets to default zoom for new timeframe
-        if hasattr(self.chart_controller, 'plot_service'):
-            self.chart_controller.plot_service._saved_view_range = False  # False = don't save on next update
+        if hasattr(self, 'plot_service') and hasattr(self.plot_service, '_saved_view_range'):
+            self.plot_service._saved_view_range = False
             logger.debug("Cleared saved view range for timeframe change")
+        
         # Reload data from DB with new timeframe
-        self.chart_controller.on_timeframe_changed(value)
-        logger.debug("Reloaded data for timeframe change")
+        try:
+            self._reload_chart_data_for_timeframe(value)
+        except Exception as e:
+            logger.error(f"Failed to reload data for timeframe {value}: {e}")
+    
+    def _reload_chart_data_for_timeframe(self, timeframe: str):
+        """Reload chart data from database for new timeframe."""
+        try:
+            symbol = getattr(self, 'symbol', 'EUR/USD')
+            db_service = getattr(self, 'db_service', None)
+            
+            if not db_service:
+                logger.warning("No db_service available for timeframe reload")
+                return
+            
+            # Query candles for new timeframe (limit to 3000 for performance)
+            query = f"""
+                SELECT ts_utc, open, high, low, close, volume
+                FROM candles
+                WHERE symbol = '{symbol}' AND timeframe = '{timeframe}'
+                ORDER BY ts_utc DESC
+                LIMIT 3000
+            """
+            
+            import pandas as pd
+            df = pd.read_sql(query, db_service.engine)
+            
+            if df.empty:
+                logger.warning(f"No data found for {symbol} {timeframe}")
+                QMessageBox.warning(self, "No Data", f"No candles found for {symbol} on {timeframe} timeframe.")
+                return
+            
+            # Sort ascending
+            df = df.sort_values('ts_utc').reset_index(drop=True)
+            
+            # Update internal buffer
+            self._last_df = df
+            
+            # Trigger chart redraw
+            if hasattr(self, '_rt_flush'):
+                self._rt_dirty = True
+                self._rt_flush()
+            
+            logger.info(f"Loaded {len(df)} candles for {symbol} {timeframe}")
+            
+        except Exception as e:
+            logger.error(f"Error reloading chart data: {e}", exc_info=True)
 
     def _on_pred_step_changed(self, value: str) -> None:
         set_setting('chart.pred_step', value)

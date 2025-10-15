@@ -88,6 +88,15 @@ class DataService(ChartServiceBase):
                                 asks = dom_snapshot.get('asks', [])
                                 logger.debug(f"Updating order books widget: {len(bids)} bids, {len(asks)} asks")
                                 self.view.order_books_widget.update_dom(bids, asks)
+                                
+                                # Update order flow bar
+                                if hasattr(self.view, 'order_flow_bar') and bids and asks:
+                                    total_bid = sum(b.get('size', 0) for b in bids)
+                                    total_ask = sum(a.get('size', 0) for a in asks)
+                                    if total_bid + total_ask > 0:
+                                        imbalance = int(((total_bid - total_ask) / (total_bid + total_ask)) * 100)
+                                        self.view.order_flow_bar.setValue(imbalance)
+                                        self.view.order_flow_label.setText(f"Bid: {total_bid:.2f} | Ask: {total_ask:.2f}")
             except Exception as e:
                 logger.error(f"Failed to update market watch: {e}")
 
@@ -1078,36 +1087,40 @@ class DataService(ChartServiceBase):
                 self._price_history = {}
             if not hasattr(self, '_last_price_change'):
                 self._last_price_change = {}
+            if not hasattr(self, '_last_color'):
+                self._last_color = {}
 
             # Get or create price history for this symbol
             if symbol not in self._price_history:
                 self._price_history[symbol] = mid_price
                 self._last_price_change[symbol] = time.time()
+                self._last_color[symbol] = "white"
 
             last_price = self._price_history[symbol]
             last_change_time = self._last_price_change[symbol]
             current_time = time.time()
 
             # Determine color based on price movement
-            price_color = "white"  # Default: no recent change (>10s)
+            price_color = self._last_color.get(symbol, "white")
             
             if mid_price > last_price:
                 # Price increased
                 price_color = "green"
                 self._last_price_change[symbol] = current_time
                 self._price_history[symbol] = mid_price
+                self._last_color[symbol] = "green"
             elif mid_price < last_price:
                 # Price decreased
                 price_color = "red"
                 self._last_price_change[symbol] = current_time
                 self._price_history[symbol] = mid_price
+                self._last_color[symbol] = "red"
             else:
                 # Price unchanged - check if >10 seconds since last change
                 if current_time - last_change_time > 10:
                     price_color = "white"
-                else:
-                    # Keep previous color (would need to track it - default to white for now)
-                    price_color = "white"
+                    self._last_color[symbol] = "white"
+                # else: keep previous color
 
             # Update market watch list widget
             # Format: "SYMBOL | Bid: X.XXXXX | Ask: X.XXXXX | Spread: X.X pips"

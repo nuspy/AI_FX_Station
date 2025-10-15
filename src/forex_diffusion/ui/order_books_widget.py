@@ -55,9 +55,9 @@ class OrderBooksWidget(QWidget):
         # Header unico: Order Books | Spread | Mid
         header_layout = QHBoxLayout()
         
-        self.symbol_label = QLabel("Order Books")
-        self.symbol_label.setStyleSheet("font-weight: bold; font-size: 10px; color: #ffffff;")
-        header_layout.addWidget(self.symbol_label)
+        title_label = QLabel("📖 Order Books")
+        title_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
+        header_layout.addWidget(title_label)
         
         header_layout.addStretch()
         
@@ -79,7 +79,7 @@ class OrderBooksWidget(QWidget):
         self.book_table.horizontalHeader().setStretchLastSection(True)
         self.book_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.book_table.verticalHeader().setVisible(False)
-        self.book_table.verticalHeader().setDefaultSectionSize(18)
+        self.book_table.verticalHeader().setDefaultSectionSize(22)  # Row height with 2px margins
         self.book_table.setStyleSheet("""
             QTableWidget {
                 background-color: #1e1e1e;
@@ -88,7 +88,7 @@ class OrderBooksWidget(QWidget):
                 font-size: 9px;
             }
             QTableWidget::item {
-                padding: 2px;
+                padding: 2px 4px 2px 4px;
                 color: #000000;
             }
             QHeaderView::section {
@@ -158,8 +158,8 @@ class OrderBooksWidget(QWidget):
         for i, (price, volume) in enumerate(bids_to_show):
             cumulative_bid += volume
             
-            # Green gradient (darker = deeper level)
-            intensity = int(255 - (i * 40))  # 255, 215, 175, 135, 95
+            # Green gradient (darker = best level, lighter = deeper)
+            intensity = int(95 + (i * 40))  # 95, 135, 175, 215, 255 (inverted)
             bg_color = QColor(0, intensity, 0)
             
             self._set_row_data(i, price, volume, cumulative_bid, bg_color)
@@ -170,8 +170,8 @@ class OrderBooksWidget(QWidget):
         for i, (price, volume) in enumerate(asks_to_show):
             cumulative_ask += volume
             
-            # Red gradient (darker = deeper level)
-            intensity = int(255 - (i * 40))  # 255, 215, 175, 135, 95
+            # Red gradient (darker = best level, lighter = deeper)
+            intensity = int(95 + (i * 40))  # 95, 135, 175, 215, 255 (inverted)
             bg_color = QColor(intensity, 0, 0)
             
             self._set_row_data(5 + i, price, volume, cumulative_ask, bg_color)

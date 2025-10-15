@@ -94,38 +94,86 @@ class UIBuilderMixin:
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter = main_splitter
 
-        # Left panel split into Market Watch (top) and Order Books (bottom)
-        market_panel = QWidget()
-        market_layout = QVBoxLayout(market_panel)
-        market_layout.setContentsMargins(5, 5, 5, 5)
-        market_layout.setSpacing(5)
-
-        # Market Watch section
+        # Left panel with splitters: Market Watch / Order Books / Order Flow
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # Market Watch section (top)
+        market_watch_widget = QWidget()
+        market_watch_layout = QVBoxLayout(market_watch_widget)
+        market_watch_layout.setContentsMargins(3, 3, 3, 3)
+        market_watch_layout.setSpacing(2)
+        
         market_watch_label = QLabel("📊 Market Watch")
         market_watch_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
-        market_layout.addWidget(market_watch_label)
-
+        market_watch_layout.addWidget(market_watch_label)
+        
         self.market_watch = QListWidget()
-        market_layout.addWidget(self.market_watch, stretch=3)  # 60% of space
+        market_watch_layout.addWidget(self.market_watch)
+        
+        left_splitter.addWidget(market_watch_widget)
 
-        # Separator line
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        separator.setStyleSheet("background-color: #555555;")
-        market_layout.addWidget(separator)
-
-        # Order Books section
-        books_label = QLabel("📖 Order Books")
-        books_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
-        market_layout.addWidget(books_label)
-
-        # Import and create order books widget
+        # Order Books section (middle) - widget has internal title
         from ..order_books_widget import OrderBooksWidget
         self.order_books_widget = OrderBooksWidget()
-        market_layout.addWidget(self.order_books_widget, stretch=2)  # 40% of space
+        left_splitter.addWidget(self.order_books_widget)
+        
+        # Order Flow section (bottom)
+        order_flow_widget = QWidget()
+        order_flow_layout = QVBoxLayout(order_flow_widget)
+        order_flow_layout.setContentsMargins(3, 3, 3, 3)
+        order_flow_layout.setSpacing(2)
+        
+        order_flow_label = QLabel("💹 Order Flow Imbalance")
+        order_flow_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
+        order_flow_layout.addWidget(order_flow_label)
+        
+        from PySide6.QtWidgets import QProgressBar
+        self.order_flow_bar = QProgressBar()
+        self.order_flow_bar.setRange(-100, 100)
+        self.order_flow_bar.setValue(0)
+        self.order_flow_bar.setTextVisible(True)
+        self.order_flow_bar.setFormat("%p%")
+        self.order_flow_bar.setMaximumHeight(20)
+        self.order_flow_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                text-align: center;
+                background-color: #2b2b2b;
+            }
+            QProgressBar::chunk {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #dc143c, stop:0.5 #888888, stop:1 #00ff00
+                );
+            }
+        """)
+        order_flow_layout.addWidget(self.order_flow_bar)
+        
+        self.order_flow_label = QLabel("Bid: -- | Ask: --")
+        self.order_flow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.order_flow_label.setStyleSheet("font-size: 9px; color: #c0c0c0;")
+        order_flow_layout.addWidget(self.order_flow_label)
+        
+        left_splitter.addWidget(order_flow_widget)
+        
+        # Set proportions (Market Watch 40%, Order Books 40%, Order Flow 20%)
+        left_splitter.setStretchFactor(0, 4)
+        left_splitter.setStretchFactor(1, 4)
+        left_splitter.setStretchFactor(2, 2)
+        
+        # Save/restore splitter state
+        self.left_splitter = left_splitter
+        from ...utils.user_settings import get_setting, set_setting
+        saved_state = get_setting('chart.left_splitter_state')
+        if saved_state:
+            try:
+                left_splitter.restoreState(bytes.fromhex(saved_state))
+            except Exception:
+                pass
+        left_splitter.splitterMoved.connect(lambda: set_setting('chart.left_splitter_state', left_splitter.saveState().hex()))
 
-        main_splitter.addWidget(market_panel)
+        main_splitter.addWidget(left_splitter)
 
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         self.right_splitter = right_splitter
@@ -218,8 +266,26 @@ class UIBuilderMixin:
 
         # Minimize splitter handle width
         right_splitter.setHandleWidth(1)
+        
+        # Save/restore right splitter state
+        saved_right_state = get_setting('chart.right_splitter_state')
+        if saved_right_state:
+            try:
+                right_splitter.restoreState(bytes.fromhex(saved_right_state))
+            except Exception:
+                pass
+        right_splitter.splitterMoved.connect(lambda: set_setting('chart.right_splitter_state', right_splitter.saveState().hex()))
 
         main_splitter.addWidget(right_splitter)
+        
+        # Save/restore main splitter state
+        saved_main_state = get_setting('chart.main_splitter_state')
+        if saved_main_state:
+            try:
+                main_splitter.restoreState(bytes.fromhex(saved_main_state))
+            except Exception:
+                pass
+        main_splitter.splitterMoved.connect(lambda: set_setting('chart.main_splitter_state', main_splitter.saveState().hex()))
 
         # Set up chart tab layout
         chart_layout = QVBoxLayout(chart_tab)
