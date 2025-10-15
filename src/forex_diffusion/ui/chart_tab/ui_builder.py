@@ -226,6 +226,8 @@ class UIBuilderMixin:
         self.volume_plot = self.graphics_layout.addPlot(row=1, col=0, axisItems={'bottom': self.date_axis})
         self.volume_plot.setLabel('left', 'Volume')
         self.volume_plot.setMaximumHeight(80)  # Approximately 1/10 of typical chart height
+        self.volume_plot.enableAutoRange(axis='y', enable=True)  # Auto-scale Y for volume
+        self.volume_plot.showAxis('left', False)  # Hide Y axis labels for volume
         self.finplot_axes.append(self.volume_plot)
 
         # Link x-axis of volume plot to main plot for synchronized zoom/pan

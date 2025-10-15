@@ -51,6 +51,9 @@ class OrderBooksWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
+        
+        # Make widget expand vertically
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Header unico: Order Books | Spread | Mid
         header_layout = QHBoxLayout()
@@ -100,9 +103,7 @@ class OrderBooksWidget(QWidget):
                 border: 1px solid #3a3a3a;
             }
         """)
-        layout.addWidget(self.book_table)
-        
-        layout.addStretch()
+        layout.addWidget(self.book_table)  # Table expands to fill space
 
         # Connect click handler
         self.book_table.cellClicked.connect(self._on_book_clicked)

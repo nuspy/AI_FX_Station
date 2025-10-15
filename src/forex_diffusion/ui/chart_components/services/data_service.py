@@ -197,6 +197,13 @@ class DataService(ChartServiceBase):
                 return
             self._rt_dirty = False
             logger.debug("🔄 RT flush triggered, updating chart...")
+            
+            # Preserve window state to prevent fullscreen→normal resize
+            main_window = self.window()
+            window_state_before = None
+            if main_window:
+                window_state_before = main_window.windowState()
+            
             # preserve current view
             try:
                 # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
@@ -223,6 +230,13 @@ class DataService(ChartServiceBase):
                         self._follow_center_if_needed()
                 except Exception:
                     pass
+            
+            # Restore window state if it changed during update
+            if main_window and window_state_before:
+                if main_window.windowState() != window_state_before:
+                    logger.warning(f"Window state changed during update! Restoring from {main_window.windowState()} to {window_state_before}")
+                    main_window.setWindowState(window_state_before)
+                    
         except Exception as e:
             logger.exception("Realtime flush failed: {}", e)
 
