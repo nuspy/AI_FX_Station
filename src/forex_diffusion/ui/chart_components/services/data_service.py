@@ -75,16 +75,30 @@ class DataService(ChartServiceBase):
                     # Calculate mid price if y not available
                     if y is None and bid_val is not None and ask_val is not None:
                         y = (bid_val + ask_val) / 2
+                    # Get current timeframe for aggregation
+                    current_tf = getattr(self, 'timeframe', '1m')
+                    
+                    # Calculate candle interval in milliseconds
+                    tf_map = {
+                        '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+                        '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000
+                    }
+                    candle_interval_ms = tf_map.get(current_tf, 60_000)  # Default 1m
+                    
+                    # Normalize timestamp to candle boundary
+                    candle_ts = (ts // candle_interval_ms) * candle_interval_ms
+                    
                     # se buffer vuoto: crea
                     if self._last_df is None or self._last_df.empty:
                         # Create with OHLC columns for candle charts
-                        row = {"ts_utc": ts, "open": y, "high": y, "low": y, "close": y, "volume": 0, "bid": bid_val, "ask": ask_val}
+                        row = {"ts_utc": candle_ts, "open": y, "high": y, "low": y, "close": y, "volume": 0, "bid": bid_val, "ask": ask_val}
                         self._last_df = pd.DataFrame([row])
                     else:
-                        last_ts = int(self._last_df["ts_utc"].iloc[-1])
-                        if ts > last_ts:
-                            # append new candle (tick becomes OHLC bar)
-                            new_row = {"ts_utc": ts, "open": y, "high": y, "low": y, "close": y, "volume": 0}
+                        last_candle_ts = int(self._last_df["ts_utc"].iloc[-1])
+                        
+                        if candle_ts > last_candle_ts:
+                            # New candle - append new row
+                            new_row = {"ts_utc": candle_ts, "open": y, "high": y, "low": y, "close": y, "volume": 0}
                             if bid_val is not None:
                                 new_row["bid"] = bid_val
                             if ask_val is not None:
@@ -93,10 +107,12 @@ class DataService(ChartServiceBase):
                             # trim buffer
                             if len(self._last_df) > 10000:
                                 self._last_df = self._last_df.iloc[-10000:].reset_index(drop=True)
-                        elif ts == last_ts:
-                            # update last row
-                            col = "close" if "close" in self._last_df.columns else "price"
-                            self._last_df.at[len(self._last_df)-1, col] = y
+                        else:
+                            # Same candle - update OHLC
+                            idx = len(self._last_df) - 1
+                            self._last_df.at[idx, "high"] = max(self._last_df.at[idx, "high"], y)
+                            self._last_df.at[idx, "low"] = min(self._last_df.at[idx, "low"], y)
+                            self._last_df.at[idx, "close"] = y
                             if bid_val is not None:
                                 self._last_df.at[len(self._last_df)-1, 'bid'] = bid_val
                             if ask_val is not None:
@@ -1019,33 +1035,45 @@ class DataService(ChartServiceBase):
             # Calculate spread
             spread = ask - bid
             spread_pips = spread * 10000  # Assuming EUR/USD-like pair
+            
+            # Calculate mid price for price change detection
+            mid_price = (bid + ask) / 2
 
-            # Initialize spread history if needed
-            if not hasattr(self, '_spread_history'):
-                self._spread_history = {}
+            # Initialize price history and last change time if needed
+            if not hasattr(self, '_price_history'):
+                self._price_history = {}
+            if not hasattr(self, '_last_price_change'):
+                self._last_price_change = {}
 
-            # Get or create spread history for this symbol
-            if symbol not in self._spread_history:
-                self._spread_history[symbol] = []
+            # Get or create price history for this symbol
+            if symbol not in self._price_history:
+                self._price_history[symbol] = mid_price
+                self._last_price_change[symbol] = time.time()
 
-            history = self._spread_history[symbol]
-            history.append(spread)
+            last_price = self._price_history[symbol]
+            last_change_time = self._last_price_change[symbol]
+            current_time = time.time()
 
-            # Keep only last 10 spreads
-            if len(history) > 10:
-                history.pop(0)
-
-            # Determine spread color (need at least 10 ticks for stable detection)
-            spread_color = "black"  # Default: stable
-            if len(history) >= 2:
-                recent_avg = sum(history[-3:]) / min(3, len(history[-3:]))
-                older_avg = sum(history[:len(history)-3]) / max(1, len(history[:len(history)-3]))
-
-                if abs(recent_avg - older_avg) > spread * 0.1:  # 10% threshold
-                    if recent_avg > older_avg:
-                        spread_color = "green"  # Widening
-                    else:
-                        spread_color = "red"  # Narrowing
+            # Determine color based on price movement
+            price_color = "white"  # Default: no recent change (>10s)
+            
+            if mid_price > last_price:
+                # Price increased
+                price_color = "green"
+                self._last_price_change[symbol] = current_time
+                self._price_history[symbol] = mid_price
+            elif mid_price < last_price:
+                # Price decreased
+                price_color = "red"
+                self._last_price_change[symbol] = current_time
+                self._price_history[symbol] = mid_price
+            else:
+                # Price unchanged - check if >10 seconds since last change
+                if current_time - last_change_time > 10:
+                    price_color = "white"
+                else:
+                    # Keep previous color (would need to track it - default to white for now)
+                    price_color = "white"
 
             # Update market watch list widget
             # Format: "SYMBOL | Bid: X.XXXXX | Ask: X.XXXXX | Spread: X.X pips"
@@ -1059,25 +1087,25 @@ class DataService(ChartServiceBase):
                 item_text = item.text() if item else ""
                 if item and item_text.startswith(search_prefix):
                     item.setText(display_text)
-                    # Apply color based on spread state
-                    if spread_color == "green":
+                    # Apply color based on price movement
+                    if price_color == "green":
                         item.setForeground(Qt.green)
-                    elif spread_color == "red":
+                    elif price_color == "red":
                         item.setForeground(Qt.red)
                     else:
-                        item.setForeground(Qt.black)
+                        item.setForeground(Qt.white)
                     found = True
                     break
 
             if not found:
                 # Add new item
                 item = QListWidgetItem(display_text)
-                if spread_color == "green":
+                if price_color == "green":
                     item.setForeground(Qt.green)
-                elif spread_color == "red":
+                elif price_color == "red":
                     item.setForeground(Qt.red)
                 else:
-                    item.setForeground(Qt.black)
+                    item.setForeground(Qt.white)
                 self.market_watch.addItem(item)
                 # Widget auto-updates on addItem
 

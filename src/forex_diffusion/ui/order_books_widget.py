@@ -49,13 +49,13 @@ class OrderBooksWidget(QWidget):
     def _init_ui(self):
         """Initialize the UI components."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        layout.setContentsMargins(2, 2, 2, 2)  # Ridotto da 5 a 2
+        layout.setSpacing(2)  # Ridotto da 5 a 2
 
         # Header
         header_layout = QHBoxLayout()
         self.symbol_label = QLabel("--")
-        self.symbol_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
+        self.symbol_label.setStyleSheet("font-weight: bold; font-size: 9px; color: #e0e0e0;")  # Ridotto da 11px a 9px
         header_layout.addWidget(self.symbol_label)
 
         header_layout.addStretch()
@@ -74,23 +74,25 @@ class OrderBooksWidget(QWidget):
         self.asks_table.horizontalHeader().setStretchLastSection(True)
         self.asks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.asks_table.verticalHeader().setVisible(False)
+        self.asks_table.verticalHeader().setDefaultSectionSize(16)  # Ridotto altezza righe
         self.asks_table.setMaximumHeight(150)
         self.asks_table.setStyleSheet("""
             QTableWidget {
                 background-color: #2b2b2b;
                 gridline-color: #3a3a3a;
                 border: 1px solid #3a3a3a;
+                font-size: 8px;
             }
             QTableWidget::item {
-                padding: 2px;
+                padding: 1px;
                 color: #e0e0e0;
             }
             QHeaderView::section {
                 background-color: #3a3a3a;
                 color: #c0c0c0;
-                padding: 3px;
+                font-size: 8px;
+                padding: 1px;
                 border: 1px solid #4a4a4a;
-                font-size: 9px;
             }
         """)
         layout.addWidget(self.asks_table)
@@ -118,15 +120,17 @@ class OrderBooksWidget(QWidget):
         self.bids_table.horizontalHeader().setStretchLastSection(True)
         self.bids_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.bids_table.verticalHeader().setVisible(False)
+        self.bids_table.verticalHeader().setDefaultSectionSize(16)  # Ridotto altezza righe
         self.bids_table.setMaximumHeight(150)
         self.bids_table.setStyleSheet("""
             QTableWidget {
                 background-color: #2b2b2b;
                 gridline-color: #3a3a3a;
                 border: 1px solid #3a3a3a;
+                font-size: 8px;
             }
             QTableWidget::item {
-                padding: 2px;
+                padding: 1px;
                 color: #e0e0e0;
             }
             QHeaderView::section {
