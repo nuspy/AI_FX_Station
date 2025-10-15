@@ -29,11 +29,9 @@ def main():
         
         # Restore window geometry/state
         from forex_diffusion.utils.user_settings import get_setting, set_setting
-        from PySide6.QtCore import Qt
         
         saved_geometry = get_setting('window.geometry')
         saved_state = get_setting('window.state')
-        saved_window_state = get_setting('window.windowState')
         
         if saved_geometry:
             try:
@@ -46,13 +44,6 @@ def main():
         if saved_state:
             try:
                 main_window.restoreState(bytes.fromhex(saved_state))
-            except Exception:
-                pass
-        
-        # Explicitly restore window state (fullscreen, maximized, etc.)
-        if saved_window_state:
-            try:
-                main_window.setWindowState(Qt.WindowState(saved_window_state))
             except Exception:
                 pass
 
@@ -109,27 +100,15 @@ def main():
         # Use timer to set up components after window is shown
         QTimer.singleShot(100, setup_ui_components)
         
-        # Save window state on close and periodically
+        # Save window state on close only
         def save_window_state():
             try:
-                # Save both geometry and window state (includes fullscreen)
-                geo = main_window.saveGeometry().hex()
-                state = main_window.saveState().hex()
-                set_setting('window.geometry', geo)
-                set_setting('window.state', state)
-                # Also save window state flags for robustness
-                set_setting('window.windowState', int(main_window.windowState()))
+                set_setting('window.geometry', main_window.saveGeometry().hex())
+                set_setting('window.state', main_window.saveState().hex())
             except Exception as e:
                 print(f"Error saving window state: {e}")
         
-        # Save on close
         app.aboutToQuit.connect(save_window_state)
-        
-        # Also save periodically (every 5 seconds) to preserve state during runtime
-        from PySide6.QtCore import QTimer
-        state_saver_timer = QTimer()
-        state_saver_timer.timeout.connect(save_window_state)
-        state_saver_timer.start(5000)  # 5 seconds
 
         # Start the application
         print("Starting ForexGPT...")
