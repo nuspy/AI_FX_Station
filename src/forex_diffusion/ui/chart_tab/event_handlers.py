@@ -270,7 +270,6 @@ class EventHandlersMixin:
                 LIMIT 3000
             """
             
-            import pandas as pd
             df = pd.read_sql(query, db_service.engine)
             
             if df.empty:

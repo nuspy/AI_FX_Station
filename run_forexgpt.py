@@ -26,7 +26,25 @@ def main():
         # Create main window
         main_window = QMainWindow()
         main_window.setWindowTitle("ForexGPT - Forex Analysis Platform")
-        main_window.setGeometry(100, 100, 1400, 900)
+        
+        # Restore window geometry/state
+        from forex_diffusion.utils.user_settings import get_setting, set_setting
+        saved_geometry = get_setting('window.geometry')
+        saved_state = get_setting('window.state')
+        
+        if saved_geometry:
+            try:
+                main_window.restoreGeometry(bytes.fromhex(saved_geometry))
+            except Exception:
+                main_window.setGeometry(100, 100, 1400, 900)
+        else:
+            main_window.setGeometry(100, 100, 1400, 900)
+        
+        if saved_state:
+            try:
+                main_window.restoreState(bytes.fromhex(saved_state))
+            except Exception:
+                pass
 
         # Create central widget
         central_widget = QWidget()
@@ -80,6 +98,16 @@ def main():
 
         # Use timer to set up components after window is shown
         QTimer.singleShot(100, setup_ui_components)
+        
+        # Save window state on close
+        def save_window_state():
+            try:
+                set_setting('window.geometry', main_window.saveGeometry().hex())
+                set_setting('window.state', main_window.saveState().hex())
+            except Exception as e:
+                print(f"Error saving window state: {e}")
+        
+        app.aboutToQuit.connect(save_window_state)
 
         # Start the application
         print("Starting ForexGPT...")

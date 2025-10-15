@@ -15,7 +15,11 @@ class DataService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
     
     def _load_1m_fallback_for_ticks(self, symbol: str):
-        """Load 1m candles when timeframe='tick' but no ticks available."""
+        """Load 1m candles when timeframe='tick' but no ticks available.
+        
+        This runs ONCE on startup if buffer is empty. It fills the chart with
+        historical 1m candles. Real-time ticks will append/update on top.
+        """
         try:
             logger.info(f"Loading 1m fallback data for tick chart: {symbol}")
             db_service = getattr(self.view, 'db_service', None)
@@ -36,6 +40,10 @@ class DataService(ChartServiceBase):
             if not df.empty:
                 df = df.sort_values('ts_utc').reset_index(drop=True)
                 self._last_df = df
+                
+                # Mark as dirty to trigger redraw
+                self._rt_dirty = True
+                
                 logger.info(f"Loaded {len(df)} 1m candles as fallback for tick chart")
             else:
                 logger.warning(f"No 1m candles found for {symbol}")

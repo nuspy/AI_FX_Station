@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar
+    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFont
@@ -80,6 +80,7 @@ class OrderBooksWidget(QWidget):
         self.book_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.book_table.verticalHeader().setVisible(False)
         self.book_table.verticalHeader().setDefaultSectionSize(22)  # Row height with 2px margins
+        self.book_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.book_table.setStyleSheet("""
             QTableWidget {
                 background-color: #1e1e1e;
@@ -165,8 +166,8 @@ class OrderBooksWidget(QWidget):
         for i, (price, volume) in enumerate(asks_to_show):
             cumulative_ask += volume
             
-            # Red gradient (darker = best level, lighter = deeper)
-            intensity = int(95 + (i * 40))  # 95, 135, 175, 215, 255 (inverted)
+            # Red gradient (darker = deeper level, lighter = best) - OPPOSITE of bids
+            intensity = int(255 - (i * 40))  # 255, 215, 175, 135, 95 (best=light, deep=dark)
             bg_color = QColor(intensity, 0, 0)
             
             self._set_row_data(5 + i, price, volume, cumulative_ask, bg_color)
