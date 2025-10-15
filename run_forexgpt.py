@@ -50,7 +50,13 @@ def main():
         # Create central widget
         central_widget = QWidget()
         layout = QVBoxLayout(central_widget)
+        # Prevent layout changes from resizing the window
+        layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetNoConstraint)
         main_window.setCentralWidget(central_widget)
+        
+        # Lock window size during updates (prevent Windows from resizing)
+        main_window.setMinimumSize(800, 600)  # Minimum reasonable size
+        # Don't set maximum - allow user to resize manually
 
         # Create menu bar
         from forex_diffusion.ui.menus import MainMenuBar
