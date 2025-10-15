@@ -2,28 +2,121 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-import matplotlib.dates as mdates
-from matplotlib.patches import Rectangle, Patch
+# Using finplot exclusively - matplotlib removed
 import numpy as np
 import pandas as pd
 from loguru import logger
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
-from forex_diffusion.utils.time_utils import split_range_avoid_weekend
+# split_range_avoid_weekend removed - no longer needed
 from .patterns_hook import call_patterns_detection
-
 from forex_diffusion.utils.user_settings import get_setting, set_setting
-
-from .patterns_hook import call_patterns_detection
 from .base import ChartServiceBase
+
+# Import PyQtGraph for high-performance charting
+import pyqtgraph as pg
+from .pyqtgraph_candlestick import add_candlestick, DateAxisItem
+
+# Enhanced indicators support
+try:
+    from forex_diffusion.features.indicators_talib import TALibIndicators as BTALibIndicators
+    from forex_diffusion.features.indicator_ranges import indicator_range_classifier
+    ENHANCED_INDICATORS_AVAILABLE = True
+except ImportError:
+    ENHANCED_INDICATORS_AVAILABLE = False
+    BTALibIndicators = None
+    indicator_range_classifier = None
 
 
 class PlotService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
 
+    def __init__(self, view, controller):
+        super().__init__(view, controller)
+        self._subplot_service = None
+        self._subplot_enabled = False
+        self._mouse_label = None
+        self._crosshair_v = None
+        self._crosshair_h = None
+        self._mouse_proxy = None
+
+    def enable_indicator_subplots(self):
+        """Enable multi-subplot mode for indicators (PyQtGraph-based)"""
+        # Subplots are managed dynamically in _update_plot_finplot
+        # This method is kept for compatibility
+        self._subplot_enabled = True
+        logger.info("Indicator subplots enabled (PyQtGraph)")
+
+    def disable_indicator_subplots(self):
+        """Disable multi-subplot mode"""
+        self._subplot_enabled = False
+        logger.info("Indicator subplots disabled")
+
+    def apply_theme_to_pyqtgraph(self):
+        """Apply theme colors to PyQtGraph plots"""
+        if not hasattr(self.view, 'use_finplot') or not self.view.use_finplot:
+            return
+
+        # Get colors from settings
+        chart_bg = get_setting('chart_bg', '#0f1115')
+        mini_chart_bg_1 = get_setting('mini_chart_bg_1', '#14181f')
+        mini_chart_bg_2 = get_setting('mini_chart_bg_2', '#1a1e25')
+        axes_color = get_setting('axes_color', '#cfd6e1')
+        grid_color = get_setting('grid_color', '#3a4250')
+        text_color = get_setting('text_color', '#e0e0e0')
+        title_color = get_setting('title_bar_color', '#cfd6e1')
+
+        try:
+            import pyqtgraph as pg
+
+            # Apply to all plots with specific backgrounds
+            for i, plot_item in enumerate(self.view.finplot_axes):
+                # Determine which background color to use
+                if i == 0:
+                    # Main price plot
+                    bg_color = chart_bg
+                elif hasattr(self.view, 'normalized_plot') and plot_item == self.view.normalized_plot:
+                    # First subplot (normalized)
+                    bg_color = mini_chart_bg_1
+                elif hasattr(self.view, 'custom_plot') and plot_item == self.view.custom_plot:
+                    # Second subplot (custom)
+                    bg_color = mini_chart_bg_2
+                else:
+                    # Default to chart_bg
+                    bg_color = chart_bg
+
+                # Set background color using ViewBox
+                plot_item.getViewBox().setBackgroundColor(bg_color)
+
+                # Set axes colors and text
+                for axis_name in ['left', 'right', 'top', 'bottom']:
+                    axis = plot_item.getAxis(axis_name)
+                    axis.setPen(axes_color)
+                    axis.setTextPen(text_color)
+
+                # Set grid color (show grid with default alpha)
+                plot_item.showGrid(x=True, y=True, alpha=0.3)
+
+                # Update title color if title exists (LabelItem uses setColor, not setDefaultTextColor)
+                if hasattr(plot_item, 'titleLabel') and plot_item.titleLabel is not None:
+                    try:
+                        plot_item.setTitle(plot_item.titleLabel.text, color=title_color)
+                    except Exception:
+                        pass
+
+            # Apply to graphics layout background (use chart_bg)
+            if hasattr(self.view, 'graphics_layout'):
+                self.view.graphics_layout.setBackground(chart_bg)
+
+            # PlutoTouch logger.info("Theme applied to PyQtGraph plots")
+        except Exception as e:
+            logger.error(f"Failed to apply theme to PyQtGraph: {e}")
+
     def update_plot(self, df: pd.DataFrame, quantiles: Optional[dict] = None, restore_xlim=None, restore_ylim=None):
+        # Check if using finplot
+        if hasattr(self.view, 'use_finplot') and self.view.use_finplot:
+            return self._update_plot_finplot(df, quantiles)
+
         if df is None or df.empty:
             self._clear_candles()
             if hasattr(self, '_price_line') and self._price_line is not None:
@@ -60,6 +153,14 @@ class PlotService(ChartServiceBase):
             except Exception:
                 pass
             y_vals = df2[y_col].astype(float).to_numpy()
+
+            # Compress time axis by removing weekend periods
+            x_dt_compressed, y_vals_compressed, weekend_markers, compressed_df = self._compress_weekend_periods(x_dt, y_vals, df2)
+            x_dt = x_dt_compressed
+            y_vals = y_vals_compressed
+            # Use compressed dataframe for indicators
+            if compressed_df is not None:
+                df2 = compressed_df
 
             # --- patterns: pass robusto del DataFrame corrente ---
             try:
@@ -194,6 +295,12 @@ class PlotService(ChartServiceBase):
 
         self._plot_indicators(df2, x_dt)
 
+        # Plot enhanced indicators from EnhancedIndicatorsDialog
+        self._plot_enhanced_indicators(df2, x_dt)
+
+        # Draw weekend markers (yellow dashed lines)
+        self._draw_weekend_markers()
+
         if quantiles:
             self._plot_forecast_overlay(quantiles)
 
@@ -291,6 +398,765 @@ class PlotService(ChartServiceBase):
             call_patterns_detection(self.controller, self.view, df if 'df' in locals() else df2)
         except Exception as e:
             logger.debug(f'patterns hook error: {e}')
+
+    def _update_plot_finplot(self, df: pd.DataFrame, quantiles: Optional[dict] = None):
+        """Update plot using PyQtGraph (high-performance financial charting)"""
+        try:
+            if df is None or df.empty:
+                return
+
+            # Save current view range before update (unless explicitly cleared by user action)
+            saved_range = getattr(self, '_saved_view_range', None)
+            if hasattr(self, 'ax') and self.ax is not None and saved_range is not False:
+                try:
+                    view_range = self.ax.viewRange()
+                    self._saved_view_range = view_range
+                    # PlutoTouch logger.debug(f"Saved view range before update: {view_range}")
+                except Exception as e:
+                    logger.debug(f"Could not save view range: {e}")
+
+            self._last_df = df.copy()
+
+            # Prepare data
+            df2 = df.copy()
+            y_col = 'close' if 'close' in df2.columns else 'price'
+            df2['ts_utc'] = pd.to_numeric(df2['ts_utc'], errors='coerce')
+            df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')
+            df2 = df2.dropna(subset=['ts_utc', y_col]).reset_index(drop=True)
+
+            # Detect and convert timestamp unit (nanoseconds vs milliseconds)
+            if not df2.empty:
+                sample_ts = df2['ts_utc'].iloc[0]
+                # Nanoseconds: > 1e15 (year 2001 in nanoseconds)
+                # Milliseconds: > 1e12 (year 2001 in milliseconds)
+                # Seconds: > 1e9 (year 2001 in seconds)
+                if sample_ts > 1e15:
+                    logger.debug(f"Converting timestamps from nanoseconds to milliseconds (sample: {sample_ts})")
+                    df2['ts_utc'] = df2['ts_utc'] / 1e6  # nanoseconds to milliseconds
+                elif sample_ts < 1e10:
+                    logger.debug(f"Converting timestamps from seconds to milliseconds (sample: {sample_ts})")
+                    df2['ts_utc'] = df2['ts_utc'] * 1000  # seconds to milliseconds
+
+            # Validate timestamp range (reject corrupted timestamps)
+            # Valid range: 1970-2100 (in milliseconds: ~0 to ~4e12)
+            min_valid_ts = 0
+            max_valid_ts = 4e12  # Year 2096
+            ts_valid_mask = (df2['ts_utc'] >= min_valid_ts) & (df2['ts_utc'] <= max_valid_ts)
+            invalid_count = (~ts_valid_mask).sum()
+            if invalid_count > 0:
+                logger.warning(f"Dropping {invalid_count} rows with invalid timestamps (out of range {min_valid_ts} - {max_valid_ts})")
+                logger.debug(f"Sample invalid timestamps: {df2.loc[~ts_valid_mask, 'ts_utc'].head().tolist()}")
+                df2 = df2[ts_valid_mask].reset_index(drop=True)
+
+            if df2.empty:
+                logger.error("All timestamps were invalid - cannot plot")
+                return
+
+            # Convert timestamp to datetime
+            df2['time'] = pd.to_datetime(df2['ts_utc'], unit='ms', utc=True, errors='coerce')
+            # Drop any rows where datetime conversion failed
+            df2 = df2.dropna(subset=['time']).reset_index(drop=True)
+            df2 = df2.set_index('time')
+
+            # Get enabled indicators to check if we need 2 subplots
+            enabled_indicator_names = get_setting("indicators.enabled_list", [])
+            indicator_colors = get_setting("indicators.colors", {})
+
+            # Filter enabled indicators to only include those that exist in TA-Lib
+            if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
+                indicators_system_temp = BTALibIndicators()
+                available_names = set(indicators_system_temp.enabled_indicators.keys())
+                enabled_indicator_names = [name for name in enabled_indicator_names if name in available_names]
+
+            # Check what subplots we need
+            has_normalized = False
+            has_custom = False
+            if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
+                for name in enabled_indicator_names:
+                    range_info = indicator_range_classifier.get_range_info(name)
+                    if range_info:
+                        if range_info.subplot_recommendation == 'normalized_subplot':
+                            has_normalized = True
+                        elif range_info.subplot_recommendation == 'custom_subplot':
+                            has_custom = True
+
+            # Manage subplots in PyQtGraph GraphicsLayoutWidget
+            graphics_layout = self.view.graphics_layout
+            current_rows = len(self.view.finplot_axes) if hasattr(self.view, 'finplot_axes') else 1
+            # Count needed rows: price + volume + optional normalized/custom subplots
+            needed_rows = 2 + (1 if has_normalized else 0) + (1 if has_custom else 0)
+
+            # Recreate plots if row count changed
+            if current_rows != needed_rows:
+                # Save forecast items before clearing
+                forecast_items = []
+                try:
+                    from .forecast_service import get_forecast_service
+                    forecast_svc = get_forecast_service(self.controller, self.view, create=False)
+                    if forecast_svc and hasattr(forecast_svc, '_forecasts'):
+                        for f in forecast_svc._forecasts:
+                            for art in f.get("artists", []):
+                                forecast_items.append(art)
+                except Exception:
+                    pass
+
+                # Unlink volume plot before clearing to prevent ViewBox deletion errors
+                if hasattr(self.view, 'volume_plot') and self.view.volume_plot is not None:
+                    try:
+                        self.view.volume_plot.setXLink(None)  # Unlink from main plot
+                    except Exception:
+                        pass
+
+                graphics_layout.clear()
+                self.view.finplot_axes = []
+                # Reset click filter flag so it will be reinstalled
+                self._click_filter_installed = False
+
+                # Set minimal spacing between plots (using central item's layout)
+                graphics_layout.ci.layout.setSpacing(0)
+                graphics_layout.ci.layout.setContentsMargins(0, 0, 0, 0)
+
+                # Create main price plot WITHOUT bottom axis (will be on volume plot)
+                main_plot = graphics_layout.addPlot(row=0, col=0)
+                main_plot.hideAxis('bottom')  # Hide x-axis labels on main plot
+                main_plot.showGrid(x=True, y=True, alpha=0.3)
+                main_plot.setMinimumHeight(300)
+                # Minimize margins
+                main_plot.setContentsMargins(0, 0, 0, 0)
+                main_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                # Add legend (movable by default in PyQtGraph)
+                main_plot.addLegend(offset=(10, 10))
+                self.view.finplot_axes.append(main_plot)
+                self.view.main_plot = main_plot
+
+                row_idx = 1
+                if has_normalized:
+                    # Create normalized subplot with DateAxisItem
+                    from ...chart_tab.ui_builder import DateAxisItem
+                    normalized_date_axis = DateAxisItem(orientation='bottom')
+                    normalized_date_axis.set_date_format(get_setting("chart.date_format", "YYYY-MM-DD"))
+                    
+                    normalized_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': normalized_date_axis})
+                    normalized_plot.showGrid(x=True, y=True, alpha=0.3)
+                    normalized_plot.setYRange(0, 100)  # Normalized range 0-100
+                    normalized_plot.setMaximumHeight(63)
+                    # Minimize margins
+                    normalized_plot.setContentsMargins(0, 0, 0, 0)
+                    normalized_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Disable auto-range to prevent rescaling jitter
+                    normalized_plot.enableAutoRange(axis='y', enable=False)
+                    normalized_plot.setAutoVisible(y=False)
+                    # Hide Y-axis labels
+                    normalized_plot.showAxis('left', False)
+                    # Add legend (movable by default in PyQtGraph)
+                    normalized_plot.addLegend(offset=(10, 10))
+                    # Link X axis for synchronized zoom/pan but NOT Y axis
+                    normalized_plot.setXLink(main_plot)
+                    # Disable Y-axis zoom and pan for this subplot
+                    normalized_plot.setMouseEnabled(y=False)
+                    normalized_plot.getViewBox().setMouseEnabled(y=False)
+                    self.view.finplot_axes.append(normalized_plot)
+                    self.view.normalized_plot = normalized_plot
+                    row_idx += 1
+                else:
+                    self.view.normalized_plot = None
+
+                if has_custom:
+                    # Create custom subplot with DateAxisItem
+                    from ...chart_tab.ui_builder import DateAxisItem
+                    custom_date_axis = DateAxisItem(orientation='bottom')
+                    custom_date_axis.set_date_format(get_setting("chart.date_format", "YYYY-MM-DD"))
+                    
+                    custom_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': custom_date_axis})
+                    custom_plot.showGrid(x=True, y=True, alpha=0.3)
+                    custom_plot.setMaximumHeight(63)
+                    # Minimize margins
+                    custom_plot.setContentsMargins(0, 0, 0, 0)
+                    custom_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                    # Disable auto-range to prevent rescaling jitter
+                    custom_plot.enableAutoRange(axis='y', enable=False)
+                    custom_plot.setAutoVisible(y=False)
+                    # Hide Y-axis labels
+                    custom_plot.showAxis('left', False)
+                    # Add legend (movable by default in PyQtGraph)
+                    custom_plot.addLegend(offset=(10, 10))
+                    # Link X axis for synchronized zoom/pan but NOT Y axis
+                    custom_plot.setXLink(main_plot)
+                    # Disable Y-axis zoom and pan for this subplot
+                    custom_plot.setMouseEnabled(y=False)
+                    custom_plot.getViewBox().setMouseEnabled(y=False)
+                    self.view.finplot_axes.append(custom_plot)
+                    self.view.custom_plot = custom_plot
+                    row_idx += 1
+                else:
+                    self.view.custom_plot = None
+
+                # Recreate volume subplot with better height and auto-range
+                # Always add volume plot at the bottom with the date axis
+                date_axis = DateAxisItem(orientation='bottom')
+                volume_plot = graphics_layout.addPlot(row=row_idx, col=0, axisItems={'bottom': date_axis})
+                volume_plot.setLabel('left', 'Volume')
+                volume_plot.setMaximumHeight(70)  # Reduced height to minimize space
+                volume_plot.showGrid(x=True, y=True, alpha=0.3)
+                volume_plot.setContentsMargins(0, 0, 0, 0)
+                volume_plot.getViewBox().setContentsMargins(0, 0, 0, 0)
+                # Disable auto-range to prevent jitter (set fixed range instead)
+                volume_plot.enableAutoRange(axis='y', enable=False)
+                volume_plot.setAutoVisible(y=False)
+                # Hide Y-axis labels (volume values not important)
+                volume_plot.showAxis('left', False)
+                # Link x-axis to main plot for synchronized zoom/pan
+                volume_plot.setXLink(main_plot)
+                self.view.finplot_axes.append(volume_plot)
+                self.view.volume_plot = volume_plot
+                self.view.volume_bars = None  # Reset volume bars reference
+
+                # Re-plot forecasts from saved data (items are invalidated after graphics_layout.clear())
+                try:
+                    from .forecast_service import get_forecast_service
+                    forecast_svc = get_forecast_service(self.controller, self.view, create=False)
+                    if forecast_svc and hasattr(forecast_svc, '_forecasts') and forecast_svc._forecasts:
+                        logger.debug(f"Re-plotting {len(forecast_svc._forecasts)} forecasts after subplot change")
+                        # Save forecasts data before clearing
+                        saved_forecasts = []
+                        for f in forecast_svc._forecasts:
+                            saved_forecasts.append(f.get("quantiles"))
+                        # Clear artists (they're invalid now)
+                        forecast_svc._forecasts = []
+                        # Re-plot each forecast
+                        for quantiles in saved_forecasts:
+                            if quantiles:
+                                source = quantiles.get("source", "basic")
+                                forecast_svc._plot_forecast_overlay(quantiles, source=source)
+                        logger.debug(f"Successfully re-plotted {len(saved_forecasts)} forecasts")
+                except Exception as e:
+                    logger.warning(f"Failed to restore forecasts after subplot change: {e}")
+            else:
+                # Remove only candlestick/indicator items from previous render, preserve forecast overlays
+                # Check if we have saved chart items from previous render
+                if hasattr(self, '_chart_items'):
+                    for plot, items in self._chart_items.items():
+                        for item in items:
+                            try:
+                                plot.removeItem(item)
+                            except Exception:
+                                pass
+                    # PlutoTouch logger.debug(f"Removed {sum(len(items) for items in self._chart_items.values())} chart items, preserved forecasts")
+
+                # Initialize dict to save new chart items (candlestick + indicators)
+                self._chart_items = {}
+
+                # Ensure references are set correctly
+                if len(self.view.finplot_axes) >= 1:
+                    self.view.main_plot = self.view.finplot_axes[0]
+
+                # Set normalized and custom plot references based on what exists
+                row_idx = 1
+                if has_normalized and len(self.view.finplot_axes) > row_idx:
+                    self.view.normalized_plot = self.view.finplot_axes[row_idx]
+                    row_idx += 1
+                else:
+                    self.view.normalized_plot = None
+
+                if has_custom and len(self.view.finplot_axes) > row_idx:
+                    self.view.custom_plot = self.view.finplot_axes[row_idx]
+                else:
+                    self.view.custom_plot = None
+
+            # Get plot references
+            ax_price = self.view.main_plot
+            ax_normalized = getattr(self.view, 'normalized_plot', None)
+            ax_custom = getattr(self.view, 'custom_plot', None)
+
+            # Check if data needs pip format conversion for display
+            sample_close = df2['close'].iloc[0] if 'close' in df2.columns else df2[y_col].iloc[0]
+            is_pip_format = sample_close > 100
+            pip_divisor = 10000.0 if is_pip_format else 1.0
+
+            # Determine chart mode (candles vs line)
+            chart_mode = get_setting('chart.price_mode', 'candles')
+
+            # Plot price data (convert from pip format if needed)
+            if chart_mode == 'candles' and {'open', 'high', 'low', 'close'}.issubset(df2.columns):
+                # Convert candlestick data from pip format
+                candle_df = df2[['open', 'high', 'low', 'close']].copy()
+                if is_pip_format:
+                    candle_df = candle_df / pip_divisor
+                # Get candle colors from settings
+                up_color = get_setting('candle_up_color', '#2ecc71')
+                down_color = get_setting('candle_down_color', '#e74c3c')
+                candle_item = add_candlestick(ax_price, candle_df, up_color=up_color, down_color=down_color)
+                # Save reference to candlestick item for later removal
+                if not hasattr(self, '_chart_items'):
+                    self._chart_items = {}
+                if ax_price not in self._chart_items:
+                    self._chart_items[ax_price] = []
+                self._chart_items[ax_price].append(candle_item)
+            else:
+                # Plot line chart (convert from pip format) using timestamps
+                x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
+                y_data = df2[y_col].values / pip_divisor
+                symbol = getattr(self.view, 'symbol', 'Price')
+                # Get price line color from settings
+                price_line_color = get_setting('price_line_color', '#2196F3')
+                line_item = ax_price.plot(x_data, y_data, pen=pg.mkPen(price_line_color, width=1.5), name=symbol)
+                # Save reference to line item for later removal
+                if not hasattr(self, '_chart_items'):
+                    self._chart_items = {}
+                if ax_price not in self._chart_items:
+                    self._chart_items[ax_price] = []
+                self._chart_items[ax_price].append(line_item)
+
+            # Plot volume bars on volume subplot (1/10 height, 66% opacity)
+            if hasattr(self.view, 'volume_plot') and 'volume' in df2.columns:
+                ax_volume = self.view.volume_plot
+
+                # Clear existing volume bars
+                if hasattr(self.view, 'volume_bars') and self.view.volume_bars is not None:
+                    ax_volume.removeItem(self.view.volume_bars)
+                    self.view.volume_bars = None
+
+                # Prepare volume data
+                x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
+                volume_data = df2['volume'].values
+
+                # Determine bar colors based on price movement (green=up, red=down)
+                # Compare close vs open (or close vs previous close if open not available)
+                if 'close' in df2.columns and 'open' in df2.columns:
+                    colors = np.where(df2['close'] >= df2['open'],
+                                     '#2ecc71',  # Green for up
+                                     '#e74c3c')  # Red for down
+                elif 'close' in df2.columns:
+                    # Use close vs previous close
+                    close_diff = df2['close'].diff()
+                    colors = np.where(close_diff >= 0,
+                                     '#2ecc71',  # Green for up
+                                     '#e74c3c')  # Red for down
+                else:
+                    colors = ['#2196F3'] * len(x_data)  # Default blue
+
+                # Create volume bars with 66% opacity
+                # Calculate bar width (spacing between timestamps)
+                if len(x_data) > 1:
+                    bar_width = (x_data[-1] - x_data[-2]) * 0.8  # 80% of spacing
+                else:
+                    bar_width = 60  # Default 60 seconds
+
+                # Create individual bars with colors and 66% opacity
+                brushes = []
+                for color in colors:
+                    qcolor = QColor(color)
+                    qcolor.setAlphaF(0.66)  # 66% opacity
+                    brushes.append(qcolor)
+
+                # Use BarGraphItem for volume bars
+                volume_bars = pg.BarGraphItem(
+                    x=x_data,
+                    height=volume_data,
+                    width=bar_width,
+                    brushes=brushes,
+                    pen=None  # No border for cleaner look
+                )
+                ax_volume.addItem(volume_bars)
+                self.view.volume_bars = volume_bars
+
+                # Auto-scale volume axis
+                ax_volume.enableAutoRange(axis='y')
+
+            # Plot indicators
+            if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
+                indicators_system = BTALibIndicators()
+
+                # Prepare OHLCV DataFrame
+                # Check if data is in pip format (values > 100 indicate pip format for forex)
+                sample_close = df2['close'].iloc[0] if 'close' in df2.columns else df2[y_col].iloc[0]
+                is_pip_format = sample_close > 100  # Forex prices are typically 0.5-2.0, so >100 means pip format
+
+                if is_pip_format:
+                    # Convert from pip format (11700) to actual price (1.1700)
+                    pip_divisor = 10000.0
+                    logger.debug(f"Converting price data from pip format (divisor={pip_divisor})")
+                    indicator_df = pd.DataFrame({
+                        'open': df2.get('open', df2[y_col]) / pip_divisor,
+                        'high': df2.get('high', df2[y_col]) / pip_divisor,
+                        'low': df2.get('low', df2[y_col]) / pip_divisor,
+                        'close': (df2['close'] if 'close' in df2.columns else df2[y_col]) / pip_divisor,
+                        'volume': df2.get('volume', pd.Series([1.0] * len(df2), index=df2.index))
+                    })
+                else:
+                    indicator_df = pd.DataFrame({
+                        'open': df2.get('open', df2[y_col]),
+                        'high': df2.get('high', df2[y_col]),
+                        'low': df2.get('low', df2[y_col]),
+                        'close': df2['close'] if 'close' in df2.columns else df2[y_col],
+                        'volume': df2.get('volume', pd.Series([1.0] * len(df2), index=df2.index))
+                    })
+
+                # Debug: log price data range
+                # PlutoTouch logger.debug(f"Price data range - close: min={indicator_df['close'].min():.6f}, max={indicator_df['close'].max():.6f}")
+
+                for indicator_name in enabled_indicator_names:
+                    try:
+                        # Calculate indicator using correct API
+                        result_dict = indicators_system.calculate_indicator(indicator_df, indicator_name)
+
+                        if not result_dict:
+                            continue
+
+                        # Extract first result or all results for multi-series
+                        if len(result_dict) == 1:
+                            result = next(iter(result_dict.values()))
+                        else:
+                            # Multi-series indicator - plot all
+                            result = result_dict
+
+                        # Get subplot recommendation
+                        range_info = indicator_range_classifier.get_range_info(indicator_name)
+                        subplot_type = range_info.subplot_recommendation if range_info else 'main_chart'
+
+                        # Get color
+                        color = indicator_colors.get(indicator_name, None)
+
+                        # Plot based on subplot
+                        if subplot_type == 'normalized_subplot' and ax_normalized:
+                            target_ax = ax_normalized
+                        elif subplot_type == 'custom_subplot' and ax_custom:
+                            target_ax = ax_custom
+                        else:
+                            target_ax = ax_price
+
+                        # Prepare x-axis data (timestamps in seconds)
+                        x_data = df2.index.astype(np.int64) / 10**9  # Convert datetime to timestamp (seconds)
+
+                        # Convert color to PyQtGraph format
+                        pg_pen = pg.mkPen(color if color else '#FFA726', width=1.5)
+
+                        if isinstance(result, pd.Series):
+                            # Single series - plot with PyQtGraph
+                            y_data = result.values
+                            # Debug: log indicator value range
+                            valid_data = y_data[~np.isnan(y_data)]
+                            # PlutoTouch if len(valid_data) > 0:
+                                # PlutoTouch logger.debug(f"Indicator {indicator_name} ({subplot_type}) - min={valid_data.min():.2f}, max={valid_data.max():.2f}, mean={valid_data.mean():.2f}")
+                            if len(y_data) == len(x_data):
+                                indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=indicator_name)
+                                # Save reference to indicator item for later removal
+                                if not hasattr(self, '_chart_items'):
+                                    self._chart_items = {}
+                                if target_ax not in self._chart_items:
+                                    self._chart_items[target_ax] = []
+                                self._chart_items[target_ax].append(indicator_item)
+                        elif isinstance(result, dict):
+                            # Multi-series (MACD, Bollinger Bands, etc.)
+                            for i, (key, series) in enumerate(result.items()):
+                                if isinstance(series, pd.Series):
+                                    y_data = series.values
+                                    if len(y_data) == len(x_data):
+                                        # Use different colors for multi-series
+                                        colors = ['#FFA726', '#66BB6A', '#EF5350']
+                                        pg_pen = pg.mkPen(colors[i % len(colors)], width=1.5)
+                                        indicator_item = target_ax.plot(x_data, y_data, pen=pg_pen, name=key)
+                                        # Save reference to indicator item for later removal
+                                        if not hasattr(self, '_chart_items'):
+                                            self._chart_items = {}
+                                        if target_ax not in self._chart_items:
+                                            self._chart_items[target_ax] = []
+                                        self._chart_items[target_ax].append(indicator_item)
+
+                    except Exception as e:
+                        logger.error(f"Failed to plot indicator {indicator_name}: {e}")
+
+            # Store axis reference
+            self.ax = ax_price
+
+            # Check if we have a saved view range to restore
+            saved_view_range = getattr(self, '_saved_view_range', None)
+
+            if saved_view_range is not None and saved_view_range is not False:
+                # Restore previous view range
+                try:
+                    x_range, y_range = saved_view_range
+                    ax_price.setXRange(x_range[0], x_range[1], padding=0)
+                    ax_price.setYRange(y_range[0], y_range[1], padding=0)
+                    ax_price.enableAutoRange(enable=False)
+                    # PlutoTouch logger.debug(f"Restored view range: X={x_range}, Y={y_range}")
+                except Exception as e:
+                    logger.warning(f"Failed to restore view range: {e}")
+                    saved_view_range = None
+            elif saved_view_range is False:
+                # False means user intentionally changed timeframe/range, reset to None for future saves
+                self._saved_view_range = None
+                saved_view_range = None
+                logger.debug("Skipped view range restore due to user action")
+
+            # Set initial zoom only if no saved view range
+            if saved_view_range is None:
+                # Show last N bars based on timeframe
+                n_bars_to_show = 100  # Default for 1m
+                if hasattr(self, 'timeframe'):
+                    tf = self.timeframe.lower()
+                    if '1m' in tf:
+                        n_bars_to_show = 100
+                    elif '5m' in tf:
+                        n_bars_to_show = 80
+                    elif '15m' in tf:
+                        n_bars_to_show = 60
+                    elif '1h' in tf or '60m' in tf:
+                        n_bars_to_show = 40
+                    elif '4h' in tf:
+                        n_bars_to_show = 30
+                    elif '1d' in tf:
+                        n_bars_to_show = 20
+
+                # Set X range to show last n_bars_to_show
+                if len(x_data) > n_bars_to_show:
+                    x_min = x_data[-n_bars_to_show]
+                    x_max = x_data[-1]
+                    ax_price.setXRange(x_min, x_max, padding=0.02)
+
+                    # Set Y range based on visible data
+                    visible_y = y_data[-n_bars_to_show:]
+                    y_min = np.nanmin(visible_y)
+                    y_max = np.nanmax(visible_y)
+                    y_padding = (y_max - y_min) * 0.1
+                    ax_price.setYRange(y_min - y_padding, y_max + y_padding, padding=0)
+
+                    # Disable auto-range after setting initial range
+                    ax_price.enableAutoRange(enable=False)
+
+            # Setup mouse tracking for coordinates display
+            self._setup_mouse_tracking(ax_price, df2)
+
+            # Apply theme colors to PyQtGraph elements
+            self.apply_theme_to_pyqtgraph()
+
+            # PlutoTouch logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
+
+        except Exception as e:
+            logger.error(f"Error in _update_plot_finplot: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _setup_mouse_tracking(self, plot_item, df):
+        """Setup mouse tracking to display coordinates and price"""
+        from PySide6.QtWidgets import QLabel, QVBoxLayout, QDialog, QFrame
+        from PySide6.QtCore import Qt as QtCore_Qt, QPoint
+        from PySide6.QtGui import QFont
+        from datetime import datetime
+        from ..services.draggable_legend import DraggableLegend
+
+        # Create or update mouse position label as draggable QFrame widget
+        if self._mouse_label is None:
+            # Get the plot widget as parent
+            parent = getattr(self.view, 'finplot_widget', self.view)
+
+            # Create draggable frame
+            mouse_frame = QFrame(parent)
+            mouse_frame.setFrameStyle(QFrame.Box | QFrame.Plain)
+            mouse_frame.setLineWidth(1)
+            mouse_frame.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(40, 40, 40, 220);
+                    border: 1px solid #666;
+                    border-radius: 4px;
+                    padding: 5px;
+                }
+            """)
+
+            # Add label inside frame
+            layout = QVBoxLayout(mouse_frame)
+            layout.setContentsMargins(6, 4, 6, 4)
+            label = QLabel("X: --\nY: --\nPrice: --")
+            label_font = QFont()
+            label_font.setPointSize(8)
+            label.setFont(label_font)
+            label.setStyleSheet("color: #ffffff; background: transparent; border: none;")
+            layout.addWidget(label)
+
+            # Make it draggable
+            mouse_frame._dragging = False
+            mouse_frame._drag_offset = QPoint()
+            mouse_frame._label = label
+
+            def mousePressEvent(event):
+                if event.button() == QtCore_Qt.MouseButton.LeftButton:
+                    mouse_frame._dragging = True
+                    mouse_frame._drag_offset = event.pos()
+                    mouse_frame.setCursor(QtCore_Qt.CursorShape.ClosedHandCursor)
+
+            def mouseMoveEvent(event):
+                if mouse_frame._dragging:
+                    new_pos = mouse_frame.mapToParent(event.pos() - mouse_frame._drag_offset)
+                    mouse_frame.move(new_pos)
+
+            def mouseReleaseEvent(event):
+                if event.button() == QtCore_Qt.MouseButton.LeftButton and mouse_frame._dragging:
+                    mouse_frame._dragging = False
+                    mouse_frame.setCursor(QtCore_Qt.CursorShape.ArrowCursor)
+                    # Save position
+                    from forex_diffusion.utils.user_settings import set_setting
+                    set_setting('mouse_info_position', {'x': mouse_frame.x(), 'y': mouse_frame.y()})
+
+            mouse_frame.mousePressEvent = mousePressEvent
+            mouse_frame.mouseMoveEvent = mouseMoveEvent
+            mouse_frame.mouseReleaseEvent = mouseReleaseEvent
+
+            # Load saved position or default to top-right
+            from forex_diffusion.utils.user_settings import get_setting
+            saved_pos = get_setting('mouse_info_position')
+            if saved_pos and isinstance(saved_pos, dict):
+                mouse_frame.move(saved_pos.get('x', 10), saved_pos.get('y', 10))
+            else:
+                # Default: top-right with margin
+                mouse_frame.move(parent.width() - 200, 10)
+
+            mouse_frame.show()
+            mouse_frame.raise_()
+            self._mouse_label = mouse_frame
+
+        # Remove old proxy if exists
+        if self._mouse_proxy is not None:
+            try:
+                plot_item.scene().sigMouseMoved.disconnect(self._mouse_proxy)
+            except:
+                pass
+
+        # Create mouse move handler
+        def mouse_moved(pos):
+            try:
+                if plot_item.sceneBoundingRect().contains(pos):
+                    mouse_point = plot_item.vb.mapSceneToView(pos)
+                    x_timestamp = mouse_point.x()
+                    y_price = mouse_point.y()
+
+                    # Convert timestamp to datetime
+                    try:
+                        dt = datetime.fromtimestamp(x_timestamp)
+                        date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        date_str = f"{x_timestamp:.0f}"
+
+                    # Update QLabel text inside frame
+                    label_text = f"X: {date_str}\nY: {y_price:.5f}\nPrice: {y_price:.5f}"
+                    self._mouse_label._label.setText(label_text)
+                    self._mouse_label.adjustSize()  # Resize frame to fit content
+            except Exception as e:
+                pass
+
+        # Connect signal
+        self._mouse_proxy = mouse_moved
+        plot_item.scene().sigMouseMoved.connect(mouse_moved)
+
+        # Set up mouse click handler for forecast (Alt+Click)
+        def mouse_clicked(event):
+            from PySide6.QtCore import Qt as QtCore_Qt
+
+            # PyQtGraph MouseClickEvent doesn't have type() method - it's already a click event
+            # Get modifiers from the event
+            try:
+                modifiers = event.modifiers()
+                button = event.button()
+                logger.debug(f"Mouse clicked: button={button}, modifiers={modifiers}, Alt={bool(modifiers & QtCore_Qt.KeyboardModifier.AltModifier)}")
+            except Exception as e:
+                logger.debug(f"Failed to get event modifiers: {e}")
+                return
+
+            # Check if click is on any scatter plot items (e.g., pattern badges)
+            # PyQtGraph scatter items handle their own events via sigClicked
+            # We need to check if there are any clickable scatter items and give them priority
+            # by not consuming the event if click might be on a scatter point
+            try:
+                # Get all items in the plot
+                all_items = plot_item.listDataItems()
+                # Check if any ScatterPlotItem exists with connected signals
+                has_clickable_scatters = any(
+                    hasattr(item, 'sigClicked') and
+                    hasattr(item, 'scatter') and  # ScatterPlotItem has scatter attribute
+                    item.scatter is not None
+                    for item in all_items
+                )
+
+                if has_clickable_scatters:
+                    # There are clickable scatter items - check if click is near any point
+                    scene_pos = event.scenePos()
+                    view_pos = plot_item.vb.mapSceneToView(scene_pos)
+
+                    for item in all_items:
+                        if hasattr(item, 'scatter') and item.scatter is not None:
+                            # Get scatter points
+                            try:
+                                points = item.scatter.points()
+                                for point in points:
+                                    point_pos = point.pos()
+                                    # Calculate distance in view coordinates
+                                    dx = abs(point_pos.x() - view_pos.x())
+                                    dy = abs(point_pos.y() - view_pos.y())
+
+                                    # Get view range to calculate pixel distance
+                                    view_range = plot_item.vb.viewRange()
+                                    view_width = view_range[0][1] - view_range[0][0]
+                                    view_height = view_range[1][1] - view_range[1][0]
+
+                                    # Widget size
+                                    widget_rect = plot_item.vb.rect()
+                                    px_per_unit_x = widget_rect.width() / view_width if view_width > 0 else 1
+                                    px_per_unit_y = widget_rect.height() / view_height if view_height > 0 else 1
+
+                                    # Distance in pixels
+                                    dist_px = ((dx * px_per_unit_x) ** 2 + (dy * px_per_unit_y) ** 2) ** 0.5
+
+                                    # If within 20 pixels of a scatter point, let it handle the event
+                                    if dist_px < 20:
+                                        logger.debug(f"Click near scatter point (dist={dist_px:.1f}px), letting item handle it")
+                                        return
+                            except Exception as e:
+                                logger.debug(f"Error checking scatter points: {e}")
+                                continue
+            except Exception as e:
+                logger.debug(f"Error checking for clickable items: {e}")
+
+            # Check for left button + Alt modifier (forecast trigger)
+            # button is MouseButton enum, check for LeftButton
+            if button == QtCore_Qt.MouseButton.LeftButton and (modifiers & QtCore_Qt.KeyboardModifier.AltModifier):
+                logger.info("Alt+Click detected, triggering forecast")
+                # Get mouse position in view coordinates
+                scene_pos = event.scenePos()
+                if plot_item.sceneBoundingRect().contains(scene_pos):
+                    view_pos = plot_item.vb.mapSceneToView(scene_pos)
+
+                    # Create a mock event object compatible with _on_canvas_click
+                    class MockGUI:
+                        def __init__(self, mods):
+                            self._mods = mods
+                        def modifiers(self):
+                            return self._mods
+
+                    class MockEvent:
+                        def __init__(self, x_timestamp, y_price, modifiers):
+                            self.xdata = x_timestamp
+                            self.ydata = y_price
+                            self.button = 1
+                            self._gui_event = MockGUI(modifiers)
+
+                        @property
+                        def guiEvent(self):
+                            return self._gui_event
+
+                    mock_event = MockEvent(view_pos.x(), view_pos.y(), modifiers)
+
+                    # Call forecast handler from interaction service
+                    try:
+                        from ..services.interaction_service import InteractionService
+                        if hasattr(self, 'controller') and hasattr(self.controller, 'interaction_service'):
+                            self.controller.interaction_service._on_canvas_click(mock_event)
+                    except Exception as e:
+                        logger.error(f"Failed to trigger forecast: {e}")
+
+        # Install event filter on the scene
+        if not hasattr(self, '_click_filter_installed') or not self._click_filter_installed:
+            plot_item.scene().sigMouseClicked.connect(mouse_clicked)
+            self._click_filter_installed = True
+            logger.info("Mouse click handler installed for forecast functionality")
 
     def _render_candles(self, df2: pd.DataFrame, x_dt: Optional[pd.Series] = None):
         """Render OHLC candles on the main axis."""
@@ -644,6 +1510,148 @@ class PlotService(ChartServiceBase):
             except Exception:
                 pass
 
+    def _plot_enhanced_indicators(self, df2: pd.DataFrame, x_dt: pd.Series):
+        """
+        Plot enhanced indicators from EnhancedIndicatorsDialog using MatplotlibSubplotService
+        """
+        if not ENHANCED_INDICATORS_AVAILABLE:
+            return
+
+        try:
+            # Get enabled indicators from settings
+            enabled_indicator_names = get_setting("indicators.enabled_list", [])
+            if not enabled_indicator_names or not isinstance(enabled_indicator_names, list):
+                return
+
+            # Get indicator colors from settings
+            indicator_colors = get_setting("indicators.colors", {})
+
+            logger.debug(f"Plotting {len(enabled_indicator_names)} enhanced indicators")
+
+            # Initialize BTALibIndicators system
+            indicators_system = BTALibIndicators()
+
+            # Prepare OHLCV data for indicator calculation
+            close = df2['close'] if 'close' in df2.columns else df2['price']
+            high = df2.get('high', close)
+            low = df2.get('low', close)
+            open_price = df2.get('open', close)
+            volume = df2.get('volume', pd.Series([1.0] * len(close), index=close.index))
+
+            # Check if we have normalized indicators
+            has_normalized = any(
+                indicator_range_classifier.get_range_info(name).subplot_recommendation == 'normalized_subplot'
+                for name in enabled_indicator_names
+                if indicator_range_classifier.get_range_info(name)
+            )
+
+            # Enable subplot service if we have normalized indicators
+            if has_normalized:
+                if not self._subplot_enabled:
+                    self.enable_indicator_subplots()
+
+                if self._subplot_service:
+                    # Create subplots: main chart + normalized subplot
+                    self._subplot_service.create_subplots(has_normalized=True)
+
+            # Prepare DataFrame for indicator calculation
+            indicator_df = pd.DataFrame({
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume
+            })
+
+            # Calculate and plot each indicator
+            for indicator_name in enabled_indicator_names:
+                try:
+                    # Get indicator config from enabled_indicators dict
+                    indicator_config = indicators_system.enabled_indicators.get(indicator_name)
+                    if not indicator_config:
+                        logger.warning(f"Indicator {indicator_name} not found in system")
+                        continue
+
+                    # Calculate indicator using correct API: calculate_indicator(data, indicator_name, custom_params)
+                    result_dict = indicators_system.calculate_indicator(indicator_df, indicator_name)
+
+                    if not result_dict:
+                        continue
+
+                    # Get subplot recommendation
+                    range_info = indicator_range_classifier.get_range_info(indicator_name)
+                    subplot_type = range_info.subplot_recommendation if range_info else 'main_chart'
+
+                    # Get indicator color
+                    color = indicator_colors.get(indicator_name, None)
+
+                    # Determine if multi-series or single series
+                    is_multi_series = len(result_dict) > 1
+
+                    # Plot based on subplot type
+                    if subplot_type == 'main_chart' and not self._subplot_enabled:
+                        # Overlay on main price chart
+                        if is_multi_series:
+                            # Handle multi-series indicators (like Bollinger Bands, MACD)
+                            for key, series in result_dict.items():
+                                if isinstance(series, pd.Series):
+                                    self.ax.plot(x_dt, series.values, alpha=0.6, linewidth=1.0,
+                                               label=key, linestyle='--')
+                        else:
+                            # Single series
+                            result = next(iter(result_dict.values()))
+                            if isinstance(result, pd.Series):
+                                plot_kwargs = {'alpha': 0.7, 'linewidth': 1.2, 'label': indicator_name}
+                                if color:
+                                    plot_kwargs['color'] = color
+                                self.ax.plot(x_dt, result.values, **plot_kwargs)
+
+                    elif self._subplot_enabled and self._subplot_service:
+                        # Use subplot service
+                        if is_multi_series:
+                            # Handle multi-series (e.g., bands)
+                            # Check for common band patterns
+                            keys_lower = [k.lower() for k in result_dict.keys()]
+                            has_bands = any(k in keys_lower for k in ['upper', 'top', 'middle', 'lower', 'bottom'])
+
+                            if has_bands and len(result_dict) >= 3:
+                                # Try to identify upper, middle, lower
+                                series_list = list(result_dict.values())
+                                if len(series_list) == 3:
+                                    self._subplot_service.plot_bands(
+                                        indicator_name,
+                                        series_list[0],  # upper/top
+                                        series_list[1],  # middle
+                                        series_list[2]   # lower/bottom
+                                    )
+                            else:
+                                # Plot each series separately
+                                for key, series in result_dict.items():
+                                    if isinstance(series, pd.Series):
+                                        self._subplot_service.plot_indicator(key, series)
+                        else:
+                            # Single series
+                            result = next(iter(result_dict.values()))
+                            if isinstance(result, pd.Series):
+                                plot_kwargs = {}
+                                if color:
+                                    plot_kwargs['color'] = color
+                                self._subplot_service.plot_indicator(indicator_name, result, **plot_kwargs)
+
+                except Exception as e:
+                    logger.error(f"Failed to plot indicator {indicator_name}: {e}")
+                    continue
+
+            # Update legend if we added indicators to main axis
+            if not self._subplot_enabled:
+                try:
+                    self._refresh_legend_unique(loc='upper left')
+                except Exception as e:
+                    logger.error(f"Failed to refresh legend: {e}")
+
+        except Exception as e:
+            logger.error(f"Error in _plot_enhanced_indicators: {e}")
+
     def _sma(self, x: pd.Series, n: int) -> pd.Series:
         return x.rolling(n, min_periods=max(1, n // 2)).mean()
 
@@ -894,22 +1902,42 @@ class PlotService(ChartServiceBase):
     def _open_color_settings(self):
         try:
             from forex_diffusion.ui.color_settings_dialog import ColorSettingsDialog
-            dlg = ColorSettingsDialog(self)
+            dlg = ColorSettingsDialog(self.view)
+
+            # Connect the theme changed signal to refresh the chart
+            dlg.themeChanged.connect(lambda: self._refresh_theme_colors())
+
             if dlg.exec():
-                # re-draw to apply new colors
-                if self._last_df is not None and not self._last_df.empty:
-                    self.update_plot(self._last_df)
-                # ri-applica il tema per aggiornare QSS/palette
-                self._apply_theme(self.theme_combo.currentText())
+                # Theme has already been applied via signal if colors were saved
+                pass
         except Exception as e:
             QMessageBox.warning(self.view, "Colors", str(e))
 
+    def _refresh_theme_colors(self):
+        """Refresh chart with new theme colors"""
+        try:
+            # Apply PyQtGraph theme
+            self.apply_theme_to_pyqtgraph()
+
+            # Re-draw plot to apply new colors to data
+            if self._last_df is not None and not self._last_df.empty:
+                self.update_plot(self._last_df)
+
+            # Apply matplotlib theme if applicable
+            if hasattr(self.view, 'theme_combo') and self.view.theme_combo:
+                self._apply_theme(self.view.theme_combo.currentText())
+
+            logger.info("Theme colors refreshed")
+        except Exception as e:
+            logger.error(f"Failed to refresh theme colors: {e}")
+
     def _toggle_drawbar(self, visible: bool):
         try:
-            if hasattr(self, "_drawbar") and self._drawbar is not None:
-                self._drawbar.setVisible(bool(visible))
-        except Exception:
-            pass
+            if hasattr(self.view, "_drawbar") and self.view._drawbar is not None:
+                self.view._drawbar.setVisible(bool(visible))
+                logger.debug(f"Drawbar visibility set to {visible}")
+        except Exception as e:
+            logger.debug(f"Failed to toggle drawbar: {e}")
 
     def _refresh_legend_unique(self, loc: str = "upper left"):
         """Refresh legend showing only visible, unique labels (main + oscillator axes)."""
@@ -1029,6 +2057,134 @@ class PlotService(ChartServiceBase):
             return float(x_r) - float(segs[-1][2])
         except Exception:
             return float(x_r)
+
+    def _compress_weekend_periods(self, x_dt: pd.Series, y_vals: np.ndarray, df: pd.DataFrame = None) -> tuple:
+        """
+        Compress time axis by removing weekend periods (Friday 22:00 - Sunday 22:00).
+        Returns compressed time series, values, weekend boundary markers, and compressed DataFrame.
+        """
+        try:
+            from forex_diffusion.utils.time_utils import is_in_weekend_range, WEEKEND_START_HOUR, WEEKEND_END_HOUR
+
+            # Convert to timezone-aware UTC if not already
+            if x_dt.dt.tz is None:
+                x_dt_utc = x_dt.dt.tz_localize('UTC')
+            else:
+                x_dt_utc = x_dt.dt.tz_convert('UTC')
+
+            # Find indices where weekend periods start and end
+            weekend_starts = []
+            weekend_ends = []
+            compressed_indices = []
+
+            prev_was_weekend = False
+
+            for i, dt in enumerate(x_dt_utc):
+                is_weekend = is_in_weekend_range(dt.to_pydatetime())
+
+                if not prev_was_weekend and is_weekend:
+                    # Entering weekend - mark end of trading week
+                    weekend_starts.append(i)
+                elif prev_was_weekend and not is_weekend:
+                    # Exiting weekend - mark start of new trading week
+                    weekend_ends.append(i)
+
+                if not is_weekend:
+                    compressed_indices.append(i)
+
+                prev_was_weekend = is_weekend
+
+            # Create compressed arrays
+            if compressed_indices:
+                x_compressed = x_dt.iloc[compressed_indices].reset_index(drop=True)
+                y_compressed = y_vals[compressed_indices]
+
+                # Compress DataFrame if provided
+                compressed_df = None
+                if df is not None:
+                    compressed_df = df.iloc[compressed_indices].reset_index(drop=True)
+
+                # Calculate weekend markers in compressed coordinates
+                weekend_markers = []
+                compressed_pos = 0
+
+                for orig_idx in compressed_indices:
+                    # Check if this is the first point after a weekend
+                    if orig_idx in weekend_ends:
+                        weekend_markers.append(compressed_pos)
+                    compressed_pos += 1
+
+                # Store weekend markers for drawing yellow lines
+                self._weekend_markers = weekend_markers
+                self._compressed_x_dt = x_compressed
+
+                return x_compressed, y_compressed, weekend_markers, compressed_df
+            else:
+                return x_dt, y_vals, [], df
+
+        except Exception as e:
+            logger.debug(f"Error compressing weekend periods: {e}")
+            return x_dt, y_vals, [], df
+
+    def _draw_weekend_markers(self):
+        """Draw yellow dashed lines at weekend boundaries (PyQtGraph version)"""
+        try:
+            if not hasattr(self, '_weekend_markers') or not hasattr(self, '_compressed_x_dt'):
+                return
+
+            if not hasattr(self, '_weekend_lines'):
+                self._weekend_lines = []
+
+            # Clear existing weekend lines
+            for line in self._weekend_lines:
+                try:
+                    if hasattr(self.ax, 'removeItem'):
+                        # PyQtGraph
+                        self.ax.removeItem(line)
+                    else:
+                        # matplotlib fallback
+                        line.remove()
+                except Exception:
+                    pass
+            self._weekend_lines = []
+
+            # Draw new weekend markers
+            for marker_pos in self._weekend_markers:
+                if marker_pos < len(self._compressed_x_dt):
+                    x_dt = self._compressed_x_dt.iloc[marker_pos]
+
+                    # Convert datetime to timestamp in seconds for PyQtGraph
+                    try:
+                        # PyQtGraph uses timestamp in seconds (or milliseconds depending on axis)
+                        x_timestamp = x_dt.timestamp()
+
+                        # Try PyQtGraph first (InfiniteLine)
+                        try:
+                            from PySide6.QtCore import Qt
+                            import pyqtgraph as pg
+
+                            line = pg.InfiniteLine(
+                                pos=x_timestamp,
+                                angle=90,  # Vertical line
+                                pen=pg.mkPen(color='gold', style=Qt.DashLine, width=1),
+                                movable=False
+                            )
+                            line.setZValue(5)  # Above candles but below overlays
+                            self.ax.addItem(line)
+                            self._weekend_lines.append(line)
+                            logger.debug(f"Drew weekend marker at timestamp {x_timestamp}")
+                        except Exception as e:
+                            # Fallback to matplotlib if PyQtGraph fails
+                            logger.debug(f"PyQtGraph weekend marker failed, trying matplotlib: {e}")
+                            line = self.ax.axvline(x=x_dt, color='gold', linestyle='--',
+                                                 linewidth=1.0, alpha=0.7, zorder=5)
+                            self._weekend_lines.append(line)
+
+                    except Exception as e:
+                        logger.debug(f"Error converting datetime to timestamp: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in _draw_weekend_markers: {e}")
 
 # TODO: Inserire manualmente:
 # from .patterns_hook import call_patterns_detection

@@ -3,19 +3,21 @@ Aggregator service: scheduled aggregation of market_data_ticks -> market_data_ca
 
 This service implements a stateful aggregation strategy to ensure data integrity and
 prevent data loss, even in cases of processing delays or restarts.
+
+Refactored to use ThreadedBackgroundService base class for better maintainability.
 """
 from __future__ import annotations
 
 import threading
-import time
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
 import pandas as pd
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
-from .db_service import DBService
+from .base_service import ThreadedBackgroundService
 from ..data import io as data_io
 
 # Standard timeframes to be aggregated
@@ -29,31 +31,39 @@ TF_RULES: Dict[str, Dict] = {
     "1d": {"rule": "1D", "minutes": 1440},
 }
 
-class AggregatorService:
+class AggregatorService(ThreadedBackgroundService):
     """
     A stateful background aggregator that periodically converts ticks into candles.
+    
+    Inherits from ThreadedBackgroundService for lifecycle management, error recovery,
+    and metrics collection.
     """
-    def __init__(self, engine, symbols: List[str] | None = None):
-        self.engine = engine
-        self.db = DBService(engine=self.engine)
-        self._symbols = symbols or []
-        self._stop_event = threading.Event()
-        self._thread = None
+    
+    def __init__(self, engine: Engine, symbols: List[str] | None = None, interval_seconds: float = 60.0):
+        """
+        Initialize aggregator service.
+        
+        Args:
+            engine: SQLAlchemy engine for database access
+            symbols: List of symbols to process (None = load from config)
+            interval_seconds: Interval between aggregation runs (default: 60s = 1 minute)
+        """
+        # Initialize base class with circuit breaker enabled
+        super().__init__(
+            engine=engine,
+            symbols=symbols,
+            interval_seconds=interval_seconds,
+            enable_circuit_breaker=True
+        )
+        
+        # Aggregator-specific state
         self._last_processed_ts: Dict[tuple[str, str], int] = {}
-
-    def start(self):
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        logger.info("AggregatorService started (symbols=%s)", self._symbols or "<all>")
-
-    def stop(self, timeout: float = 2.0):
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=timeout)
-        logger.info("AggregatorService stopped")
+        self._state_lock = threading.Lock()  # Thread safety for state dictionary
+    
+    @property
+    def service_name(self) -> str:
+        """Service name for logging."""
+        return "AggregatorService"
 
     def _get_last_candle_ts(self, symbol: str, timeframe: str) -> Optional[int]:
         """Retrieves the timestamp of the last saved candle from the database."""
@@ -69,28 +79,35 @@ class AggregatorService:
             logger.exception(f"Failed to get last candle timestamp for {symbol} {timeframe}: {e}")
             return None
 
-    def _run_loop(self):
+    def _process_iteration(self):
+        """
+        Process one aggregation iteration.
+        
+        Called by base class in background thread. Aggregates ticks to candles
+        for all configured symbols and timeframes at appropriate intervals.
+        """
+        # Wait until next minute boundary for time-aligned aggregation
         self._sleep_until_next_minute()
-        while not self._stop_event.is_set():
-            try:
-                ts_now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-                minute_idx = int(ts_now.timestamp() / 60)
+        
+        ts_now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        minute_idx = int(ts_now.timestamp() / 60)
 
-                symbols = self._symbols or self._get_symbols_from_config()
-                for sym in symbols:
-                    for tf, info in TF_RULES.items():
-                        if minute_idx % info["minutes"] == 0:
-                            self._aggregate_for_symbol(sym, tf, ts_now)
-
-            except Exception as e:
-                logger.exception(f"AggregatorService loop error: {e}")
-            
-            self._sleep_until_next_minute()
+        symbols = self.get_symbols()  # Use base class method
+        for sym in symbols:
+            for tf, info in TF_RULES.items():
+                # Only aggregate at appropriate intervals (e.g., 5m at 0,5,10,...)
+                if minute_idx % info["minutes"] == 0:
+                    self._aggregate_for_symbol(sym, tf, ts_now)
 
     def _aggregate_for_symbol(self, symbol: str, timeframe: str, ts_now: datetime):
         state_key = (symbol, timeframe)
         
-        last_ts = self._last_processed_ts.get(state_key) or self._get_last_candle_ts(symbol, timeframe)
+        # Thread-safe access to last processed timestamp
+        with self._state_lock:
+            last_ts = self._last_processed_ts.get(state_key)
+        
+        if last_ts is None:
+            last_ts = self._get_last_candle_ts(symbol, timeframe)
         if not last_ts:
             last_ts = int(ts_now.timestamp() * 1000) - (24 * 60 * 60 * 1000)
 
@@ -100,11 +117,15 @@ class AggregatorService:
         if start_ms >= end_ms:
             return
 
+        # Fetch ticks (read-only, no transaction needed)
         with self.engine.connect() as conn:
             # Corrected query to fetch ticks with the right timeframe
+            # Extended to support tick_volume and real_volume from multi-provider data
             query = text(
-                "SELECT ts_utc, price, bid, ask, volume FROM market_data_ticks "
-                "WHERE symbol = :symbol AND timeframe = 'tick' AND ts_utc > :start AND ts_utc <= :end ORDER BY ts_utc ASC"
+                "SELECT ts_utc, price, bid, ask, volume, tick_volume, real_volume, provider_source "
+                "FROM market_data_ticks "
+                "WHERE symbol = :symbol AND timeframe = 'tick' AND ts_utc > :start AND ts_utc <= :end "
+                "ORDER BY ts_utc ASC"
             )
             rows = conn.execute(query, {"symbol": symbol, "start": start_ms, "end": end_ms}).fetchall()
 
@@ -112,7 +133,7 @@ class AggregatorService:
             return
 
         # logger.info(f"Found {len(rows)} new ticks for {symbol} to aggregate into {timeframe}.")
-        df_ticks = pd.DataFrame(rows, columns=["ts_utc", "price", "bid", "ask", "volume"])
+        df_ticks = pd.DataFrame(rows, columns=["ts_utc", "price", "bid", "ask", "volume", "tick_volume", "real_volume", "provider_source"])
         df_ticks['price'] = df_ticks['price'].fillna((df_ticks['bid'] + df_ticks['ask']) / 2).ffill()
         if df_ticks.empty or df_ticks['price'].isnull().all():
             return
@@ -125,31 +146,52 @@ class AggregatorService:
         if ohlc.empty:
             return
 
+        # Aggregate volumes (sum for all volume types)
         vol = df_ticks["volume"].resample(rule, label="right", closed="right").sum() if "volume" in df_ticks.columns else None
+        tick_vol = df_ticks["tick_volume"].resample(rule, label="right", closed="right").sum() if "tick_volume" in df_ticks.columns else None
+        real_vol = df_ticks["real_volume"].resample(rule, label="right", closed="right").sum() if "real_volume" in df_ticks.columns else None
+
+        # Track provider source (use most recent)
+        provider = df_ticks["provider_source"].resample(rule, label="right", closed="right").last() if "provider_source" in df_ticks.columns else None
+
         candles = []
         for idx, row in ohlc.iterrows():
             if row.isnull().all(): continue
-            candles.append({
+            candle = {
                 "ts_utc": int(idx.timestamp() * 1000),
-                "open": row["first"], "high": row["max"], "low": row["min"], "close": row["last"],
-                "volume": vol.get(idx) if vol is not None else None
-            })
+                "open": row["first"],
+                "high": row["max"],
+                "low": row["min"],
+                "close": row["last"],
+                "volume": vol.get(idx) if vol is not None else None,
+                "tick_volume": tick_vol.get(idx) if tick_vol is not None else None,
+                "real_volume": real_vol.get(idx) if real_vol is not None else None,
+                "provider_source": provider.get(idx) if provider is not None else "tiingo",
+            }
+            candles.append(candle)
 
         if not candles:
             return
 
         df_candles = pd.DataFrame(candles)
-        report = data_io.upsert_candles(self.engine, df_candles, symbol, timeframe, resampled=(timeframe != '1m'))
-        # logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
-
-        self._last_processed_ts[state_key] = end_ms
-
-    def _get_symbols_from_config(self) -> List[str]:
-        from ..utils.config import get_config
-        cfg = get_config()
-        return getattr(cfg.data, "symbols", [])
+        
+        # Use transaction to ensure atomicity of upsert + state update
+        try:
+            report = data_io.upsert_candles(self.engine, df_candles, symbol, timeframe, resampled=(timeframe != '1m'))
+            # logger.info(f"AggregatorService: Upserted {len(df_candles)} candles for {symbol} {timeframe} (report={report})")
+            
+            # Only update state if upsert succeeded
+            # Thread-safe update of last processed timestamp
+            with self._state_lock:
+                self._last_processed_ts[state_key] = end_ms
+        except Exception as e:
+            logger.error(f"Failed to upsert candles for {symbol} {timeframe}: {e}")
+            # Don't update state if upsert failed - will retry next iteration
+            raise
 
     def _sleep_until_next_minute(self):
+        """Sleep until the next minute boundary for time-aligned aggregation."""
+        import time
         now = datetime.now(timezone.utc)
         to_sleep = 60 - now.second - (now.microsecond / 1_000_000)
         time.sleep(max(0, to_sleep))

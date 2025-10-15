@@ -3,6 +3,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
+from .primitives import time_array, safe_tz_convert
 from .primitives import atr, fit_line_indices
 
 class BroadeningDetector(DetectorBase):
@@ -27,12 +28,8 @@ class BroadeningDetector(DetectorBase):
         close = df["close"].astype(float).to_numpy()
 
 
-        ts = pd.to_datetime(df["ts_utc"], unit="ms", utc=True)
-        # Series → usare .dt; DatetimeIndex → metodo diretto
-        try:
-            ts = ts.dt.tz_convert(None)
-        except AttributeError:
-            ts = ts.tz_convert(None)
+        ts = time_array(df)
+        ts = safe_tz_convert(ts, None)
 
 
         n = len(df)

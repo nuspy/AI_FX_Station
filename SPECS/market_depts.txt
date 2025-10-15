@@ -1,0 +1,1287 @@
+================================================================================
+MARKET DEPTH (ORDER BOOKS) INTEGRATION - FUNCTIONAL SPECIFICATIONS
+================================================================================
+
+Document Version: 1.0
+Date: 2025-10-13
+Status: Ready for Implementation
+Priority: HIGH (P0-P3 tasks defined)
+
+================================================================================
+OVERVIEW
+================================================================================
+
+Purpose:
+Integrate Level II Market Depth (Order Books/DOM) data into the trading engine
+to improve execution quality, position sizing, risk management, and trading
+decisions.
+
+Current State:
+- DOM data IS collected via cTrader WebSocket
+- DOM data IS stored in database (market_depth table)
+- DOM data IS NOT used by trading logic
+- Critical issue: Hardcoded spread values in trading engine
+
+Target State:
+- DOM data drives execution cost estimation
+- DOM data constrains position sizing
+- DOM data validates market impact
+- DOM data enhances pattern confirmation
+- DOM data displayed in real-time UI
+
+Expected Benefits:
+- 30-50% reduction in slippage
+- 40% reduction in market impact
+- 25-35% improvement in position sizing accuracy
+- 2-5% increase in win rate
+
+================================================================================
+TASK 1: FIX HARDCODED SPREAD IN TRADING ENGINE
+================================================================================
+
+Priority: P0 (CRITICAL - IMMEDIATE)
+Complexity: LOW
+Estimated Effort: 1 day
+Impact: HIGH
+
+Location:
+File: src/forex_diffusion/trading/automated_trading_engine.py
+Method: _open_position()
+Line: 551
+
+Problem:
+Current implementation uses hardcoded spread value:
+    current_spread = price * 0.0001  (always 1 pip regardless of market)
+
+This causes:
+- Inaccurate execution cost estimates
+- Wrong stop loss buffer calculations
+- No detection of spread widening events
+- Same spread assumed for all symbols and sessions
+
+Functional Requirements:
+
+1. Replace Hardcoded Spread with Real Market Data
+   - Query DOM aggregator service for latest spread
+   - Use method: dom_service.get_latest_dom_metrics(symbol)
+   - Extract real-time spread from returned data structure
+
+2. Calculate Average Spread for Comparison
+   - Query historical spread data (last 1 hour)
+   - Calculate rolling average as baseline
+   - Store per-symbol spread statistics
+
+3. Add Spread Validation Logic
+   - Compare current spread to historical average
+   - If current > average * 2.0:
+     * Log warning: "Spread abnormally wide"
+     * Flag in execution context
+   - If current > average * 3.0:
+     * Consider delaying entry
+     * Alert user if manual trading
+
+4. Fallback Behavior
+   - If DOM data unavailable (service down, no recent data):
+     * Use statistical model based on symbol and time-of-day
+     * Log that fallback was used
+     * Do NOT fail execution, degrade gracefully
+
+5. Pass Real Spread to Downstream Components
+   - Adaptive stop loss manager receives accurate spread
+   - Execution optimizer uses real spread
+   - Position sizing aware of current spread cost
+
+Acceptance Criteria:
+□ Hardcoded spread line removed
+□ Real-time spread retrieved from DOM service
+□ Historical average calculated and used for comparison
+□ Spread anomaly detection implemented (warnings logged)
+□ Fallback logic handles missing DOM data gracefully
+□ Unit tests verify spread retrieval and fallback
+□ Integration test confirms adaptive SL receives correct spread
+
+Validation:
+- Backtest comparison: old method vs. new method
+- Expected: More accurate execution costs, better stop placement
+- Monitor: Spread anomaly warnings in live trading
+
+Dependencies:
+- DOM Aggregator Service must be running
+- Database contains recent market_depth records
+- WebSocket connection active for real-time data
+
+================================================================================
+TASK 2: INTEGRATE DOM INTO SMART EXECUTION OPTIMIZER
+================================================================================
+
+Priority: P0 (CRITICAL)
+Complexity: MEDIUM
+Estimated Effort: 3 days
+Impact: HIGH
+
+Location:
+File: src/forex_diffusion/execution/smart_execution.py
+Method: estimate_execution_cost()
+
+Problem:
+Current implementation estimates spread, slippage, and market impact using
+statistical models. These estimates can deviate significantly from reality,
+especially for large orders or during volatile periods.
+
+Functional Requirements:
+
+1. Add DOM Snapshot Parameter
+   - Method signature: add optional 'dom_snapshot' parameter
+   - Parameter contains: bids, asks, spread, depth, imbalance
+   - If not provided, fall back to existing estimation logic
+
+2. Use Real Spread Instead of Estimated
+   - If DOM snapshot available:
+     * Extract actual bid-ask spread
+     * Replace statistical spread calculation
+   - Benefits:
+     * 100% accuracy on current spread
+     * Detect spread widening in real-time
+
+3. Calculate Liquidity-Based Market Impact
+   - Sum available depth at top 10 bid/ask levels
+   - Determine: Is order size within available liquidity?
+   - Calculate impact:
+     * If order < depth: minimal impact (existing model)
+     * If order > depth: walk-through multiple levels
+   - Formula: Weighted average price across levels consumed
+
+4. Implement Depth-Aware Slippage Calculation
+   - Current: Generic slippage = f(order_size, avg_volume)
+   - Enhanced: Walk through order book levels
+   - Algorithm:
+     * Start at best bid/ask
+     * Fill order level-by-level
+     * Calculate: total_cost = sum(price_i * volume_i)
+     * Slippage = (avg_fill_price - entry_price) * order_size
+   - Result: Exact slippage for current market state
+
+5. Flag High-Impact Orders
+   - Threshold: Order > 20% of available top-5 depth
+   - Action: Set flag 'high_impact' = True
+   - Recommendation: "Consider splitting order (TWAP/VWAP)"
+   - Return: Suggested split count and timing
+
+6. Maintain Backward Compatibility
+   - If dom_snapshot = None:
+     * Use existing statistical estimation
+     * Log: "Using modeled execution cost (DOM not available)"
+   - Ensure existing code continues to work
+
+Acceptance Criteria:
+□ dom_snapshot parameter added to estimate_execution_cost()
+□ Real spread used when DOM data available
+□ Liquidity-based market impact calculation implemented
+□ Level-by-level slippage calculation functional
+□ High-impact order detection and flagging working
+□ Backward compatibility maintained (works without DOM)
+□ Unit tests cover DOM and non-DOM paths
+□ Integration test validates accuracy improvement
+
+Validation:
+- Compare estimated vs. actual execution costs (historical data)
+- Expected: 30-50% improvement in accuracy with DOM
+- Test edge cases: thin markets, large orders, news events
+
+Dependencies:
+- DOM Aggregator Service
+- Task 1 (hardcoded spread fix) completed first
+
+================================================================================
+TASK 3: IMPLEMENT LIQUIDITY CONSTRAINTS IN POSITION SIZING
+================================================================================
+
+Priority: P1 (HIGH)
+Complexity: MEDIUM
+Estimated Effort: 1 week
+Impact: HIGH
+
+Location:
+File: src/forex_diffusion/trading/automated_trading_engine.py
+Method: _calculate_position_size()
+
+Problem:
+Current position sizing considers:
+- Risk parameters (Kelly, fixed fractional)
+- Regime adjustments
+- Confidence levels
+
+But IGNORES:
+- Available market liquidity
+- Order book depth
+- Whether order will walk through multiple levels
+
+Functional Requirements:
+
+1. Query Current Market Depth
+   - Before calculating position size:
+     * Retrieve DOM snapshot for symbol
+     * Extract: total bid depth, total ask depth
+     * Use: top 20 levels (sufficient for most orders)
+
+2. Calculate Maximum Liquidity-Based Size
+   - Formula: max_size = (bid_depth + ask_depth) * 0.5
+   - Rationale: Don't exceed 50% of available depth
+   - Prevents: Walking through entire book
+   - Conservative: Leaves room for market volatility
+
+3. Add Liquidity as Position Size Constraint
+   - Existing constraints:
+     * Risk-based size (from risk %)
+     * Kelly criterion size (from win rate)
+     * Fixed fractional size (from max position %)
+     * Volatility adjusted size
+   - NEW constraint:
+     * Liquidity-based maximum size
+   - Final size = minimum of ALL constraints
+
+4. Implement Order Flow Adjustment
+   - Calculate DOM imbalance: (bid_vol - ask_vol) / total_vol
+   - Adjustment factors:
+     * Long + strong bids (+0.3): Boost size 1.2x (favorable)
+     * Long + strong asks (-0.3): Reduce size 0.7x (unfavorable)
+     * Short + strong asks (-0.3): Boost size 1.2x (favorable)
+     * Short + strong bids (+0.3): Reduce size 0.7x (unfavorable)
+   - Rationale: Size up when flow is with us, down when against
+
+5. Add Spread Cost Penalty
+   - Calculate spread in basis points
+   - If spread > 3 pips (30 bps for forex):
+     * Apply penalty factor: 0.7 (reduce size 30%)
+     * Rationale: High entry cost = reduce exposure
+   - If spread normal: penalty = 1.0 (no change)
+
+6. Log Sizing Adjustments
+   - When liquidity constraint active:
+     * Log: "Position size reduced from X to Y due to liquidity"
+   - When flow adjustment applied:
+     * Log: "Position size adjusted by Z% for order flow"
+   - When spread penalty applied:
+     * Log: "Position size reduced due to wide spread"
+   - Helps: Debugging and performance analysis
+
+7. Handle Missing DOM Data
+   - If DOM data unavailable:
+     * Skip liquidity constraint
+     * Skip flow adjustment
+     * Use only traditional constraints
+     * Log: "Liquidity-aware sizing unavailable, using defaults"
+
+Acceptance Criteria:
+□ DOM snapshot retrieved in _calculate_position_size()
+□ Liquidity-based max size calculated correctly
+□ Liquidity added as position size constraint
+□ Order flow adjustment logic implemented
+□ Spread penalty logic functional
+□ Sizing decisions logged with reasoning
+□ Graceful handling of missing DOM data
+□ Unit tests verify all adjustment factors
+□ Integration test confirms position sizes within depth limits
+
+Validation:
+- Backtest: Compare position sizes before/after
+- Expected: 25-35% better alignment with market capacity
+- Monitor: Frequency of liquidity-constrained trades
+
+Dependencies:
+- Task 1 (spread fix) completed
+- DOM Aggregator Service available
+- Database market_depth table populated
+
+================================================================================
+TASK 4: ADD MARKET IMPACT VALIDATION TO RISK MANAGEMENT
+================================================================================
+
+Priority: P1 (HIGH)
+Complexity: MEDIUM
+Estimated Effort: 4 days
+Impact: MEDIUM-HIGH
+
+Location:
+File: src/forex_diffusion/backtesting/risk_management.py
+Class: PositionSizingEngine
+Method: calculate_position_size() (enhancement)
+
+Problem:
+Risk management calculates position size based on:
+- Account risk percentage
+- Kelly criterion
+- Volatility
+
+But does NOT validate:
+- Will this order move the market?
+- Is there sufficient depth?
+- What is the execution cost?
+
+Functional Requirements:
+
+1. Add DOM Metrics Parameter
+   - Enhance method signature: add optional dom_metrics parameter
+   - Contains: spread, bid_depth, ask_depth, imbalance
+   - If not provided: skip DOM-based validations
+
+2. Implement Liquidity Size Constraint
+   - Calculate available_depth = bid_depth + ask_depth
+   - Set: max_liquidity_size = available_depth * 0.5
+   - Add to existing constraints:
+     * Risk-based size
+     * Kelly size
+     * Fixed fractional size
+     * NEW: Liquidity size
+   - Final = minimum of all
+
+3. Add Spread Cost Adjustment
+   - Calculate spread in basis points
+   - Thresholds:
+     * Normal: < 3 bps → penalty = 1.0 (no change)
+     * Wide: 3-10 bps → penalty = 0.8 (reduce 20%)
+     * Very Wide: > 10 bps → penalty = 0.6 (reduce 40%)
+   - Apply penalty to calculated size
+   - Rationale: Wide spreads increase cost, reduce position
+
+4. Create Market Impact Risk Check Method
+   - New method: check_market_impact_risk()
+   - Inputs: proposed_size, entry_price, dom_data
+   - Calculation:
+     * order_value = size * price
+     * top_5_depth = sum of best 5 bid/ask levels
+     * impact_ratio = order_value / top_5_depth
+   - Thresholds:
+     * < 10%: LOW impact → approved
+     * 10-20%: MODERATE impact → approved with warning
+     * 20-50%: HIGH impact → recommend splitting
+     * > 50%: SEVERE impact → reject or heavily reduce
+   - Returns:
+     {
+       approved: boolean,
+       recommended_size: float,
+       impact_estimate: float (percentage),
+       reasoning: string,
+       suggested_action: string
+     }
+
+5. Integrate Impact Check into Sizing Flow
+   - After calculating optimal size:
+     * Run market impact check
+     * If impact > 20%:
+       - Reduce size to impact_threshold (20%)
+       - Log warning
+       - Set flag for order splitting consideration
+     * If impact > 50%:
+       - Reject size or reduce to 10% impact
+       - Log critical warning
+       - Recommend manual review
+
+6. Add DOM-Aware Reasoning
+   - Update PositionSizingResult reasoning field
+   - Include:
+     * "Liquidity constraint active: reduced from X to Y"
+     * "Spread penalty applied: Z%"
+     * "Market impact: A% of depth"
+   - Helps: Understanding why size was chosen
+
+7. Maintain Backward Compatibility
+   - If dom_metrics not provided:
+     * Skip all DOM-based checks
+     * Use only traditional risk-based sizing
+     * No impact on existing code
+
+Acceptance Criteria:
+□ dom_metrics parameter added to calculate_position_size()
+□ Liquidity constraint implemented and enforced
+□ Spread penalty calculation functional
+□ check_market_impact_risk() method created and tested
+□ Impact thresholds correctly applied
+□ Size reductions logged with clear reasoning
+□ Returns enhanced PositionSizingResult with DOM insights
+□ Backward compatible (works without DOM data)
+□ Unit tests cover all impact scenarios
+□ Integration test validates realistic market impact prevention
+
+Validation:
+- Test with various order sizes and depths
+- Expected: Large orders flagged and reduced automatically
+- Monitor: Frequency of impact-triggered size reductions
+
+Dependencies:
+- DOM Aggregator Service
+- Tasks 1-3 completed (for consistency)
+
+================================================================================
+TASK 5: CONNECT ORDER FLOW PANEL TO DOM DATA
+================================================================================
+
+Priority: P1 (HIGH)
+Complexity: LOW
+Estimated Effort: 2 days
+Impact: MEDIUM
+
+Location:
+File: src/forex_diffusion/ui/order_flow_panel.py
+Method: update_metrics() (existing, needs data connection)
+
+Problem:
+OrderFlowPanel widget is fully built with:
+- Spread display
+- Bid/Ask depth displays
+- Volume metrics
+- Imbalance progress bars
+- Alert sections (large orders, absorption, exhaustion)
+
+But NO component sends data to it! The update_metrics() method exists but
+is never called.
+
+Functional Requirements:
+
+1. Create Data Flow Connection
+   - Establish: ctrader_websocket → dom_aggregator → OrderFlowPanel
+   - Components:
+     * ctrader_websocket: Collects raw DOM from broker
+     * dom_aggregator: Calculates metrics (spread, depth, imbalance)
+     * OrderFlowPanel: Displays metrics to user
+
+2. Implement Auto-Refresh Timer
+   - Frequency: 2 seconds (matches panel's internal timer)
+   - Action: Query dom_aggregator for latest metrics
+   - Update: Call panel.update_metrics(data)
+   - Handle: Missing data gracefully (show "--" placeholders)
+
+3. Map DOM Data to Panel Format
+   - Required data structure:
+     {
+       'spread': float (in pips),
+       'bid_depth': float (total volume at top 10 bids),
+       'ask_depth': float (total volume at top 10 asks),
+       'buy_volume': float (recent buy volume),
+       'sell_volume': float (recent sell volume),
+       'depth_imbalance': float (-1 to +1),
+       'volume_imbalance': float (-1 to +1),
+       'large_order_detected': boolean,
+       'absorption_detected': boolean,
+       'exhaustion_detected': boolean
+     }
+   - Calculate each from DOM snapshot
+
+4. Implement Large Order Detection
+   - Algorithm:
+     * Compare each level's volume to average volume
+     * If volume > average * 3.0: Flag as large order
+     * Store: price level, size, side (bid/ask)
+   - Set: large_order_detected = True
+   - Display: Alert in panel
+
+5. Implement Absorption Detection
+   - Definition: Price stuck despite high volume
+   - Algorithm:
+     * Track: price range over last 30 seconds
+     * Track: total volume traded
+     * If: volume high but price_range < normal:
+       - Set: absorption_detected = True
+       - Interpretation: Support/resistance forming
+   - Display: Alert in panel
+
+6. Implement Exhaustion Detection
+   - Definition: Extreme imbalance but price not moving
+   - Algorithm:
+     * If: abs(imbalance) > 0.8 (very one-sided)
+     * And: price not moving in imbalance direction
+     * Then: exhaustion_detected = True
+     * Interpretation: Trend may be ending
+   - Display: Alert in panel
+
+7. Add Symbol Selection Support
+   - Panel has symbol combo box (line 45-48)
+   - On symbol change:
+     * Update data source to selected symbol
+     * Clear previous metrics
+     * Start showing new symbol's data
+   - Default: Show currently active chart symbol
+
+8. Handle Connection Status
+   - If WebSocket disconnected:
+     * Show status: "Disconnected" (red indicator)
+     * Display last known values with timestamp
+   - If WebSocket connected:
+     * Show status: "Connected" (green indicator)
+     * Display real-time values
+
+Acceptance Criteria:
+□ Data connection established: WebSocket → Aggregator → Panel
+□ Auto-refresh timer functional (2 second updates)
+□ All metrics correctly mapped and displayed
+□ Large order detection algorithm working
+□ Absorption detection functional
+□ Exhaustion detection operational
+□ Symbol selection changes data source
+□ Connection status properly indicated
+□ Graceful handling of missing data
+□ Unit tests verify metric calculations
+□ Integration test confirms end-to-end data flow
+
+Validation:
+- Visual inspection: Values update in real-time
+- Cross-check: Panel values match database values
+- Alert verification: Simulate conditions, verify alerts trigger
+
+Dependencies:
+- ctrader_websocket.py must be running
+- dom_aggregator.py service operational
+- market_depth table populated with recent data
+
+================================================================================
+TASK 6: ADD PRE-TRADE VALIDATION TO LIVE TRADING
+================================================================================
+
+Priority: P2 (MEDIUM)
+Complexity: MEDIUM
+Estimated Effort: 4 days
+Impact: MEDIUM
+
+Location:
+File: src/forex_diffusion/ui/live_trading_tab.py
+Method: _place_market_order() (enhancement)
+
+Problem:
+When user manually places market order:
+- No pre-trade checks performed
+- No liquidity validation
+- No spread anomaly detection
+- No slippage warning
+- User may be surprised by poor execution
+
+Functional Requirements:
+
+1. Add Pre-Execution Validation Dialog
+   - Trigger: Before executing market order in _place_market_order()
+   - Query: Get current DOM snapshot for symbol
+   - Calculate:
+     * Available liquidity for order size
+     * Estimated slippage
+     * Current spread vs. historical average
+     * Market impact estimate
+   - Display: Validation dialog with results
+
+2. Design Validation Dialog UI
+   - Title: "Order Execution Analysis"
+   - Sections:
+     * Order Summary (symbol, size, side)
+     * Market Conditions (spread current vs. avg)
+     * Liquidity Check (available depth, sufficiency)
+     * Cost Estimate (slippage, total cost)
+     * Recommendation (execute / wait / reduce size)
+   - Buttons:
+     * Wait: Close dialog, don't execute
+     * Reduce Size: Adjust order to recommended size
+     * Execute Anyway: Proceed with original order
+   - Colors:
+     * Green: Good conditions, execute
+     * Yellow: Acceptable but suboptimal
+     * Red: Poor conditions, warning
+
+3. Implement Liquidity Sufficiency Check
+   - Calculation:
+     * order_value = size * price
+     * available_depth = sum of bid/ask depth
+     * sufficiency_ratio = available_depth / order_value
+   - Thresholds:
+     * > 2.0: Excellent (green)
+     * 1.0-2.0: Adequate (yellow)
+     * < 1.0: Insufficient (red, warning)
+   - If insufficient:
+     * Recommendation: "Reduce order size to X"
+     * Show: Suggested size that fits depth
+
+4. Implement Spread Anomaly Detection
+   - Compare: current_spread vs. hourly_average_spread
+   - Ratios:
+     * < 1.5x: Normal (green)
+     * 1.5-3.0x: Elevated (yellow)
+     * > 3.0x: Extreme (red, warning)
+   - If extreme:
+     * Alert: "Spread 3.5x normal - Consider waiting"
+     * Reasoning: "May be news event or low liquidity"
+
+5. Calculate Execution Cost Estimate
+   - Use: SmartExecutionOptimizer (Task 2)
+   - Get: Spread cost, slippage cost, market impact
+   - Display:
+     * "Estimated Spread Cost: $X"
+     * "Estimated Slippage: $Y"
+     * "Estimated Total Cost: $Z"
+   - Comparison:
+     * Show normal cost for reference
+     * Highlight if current cost > normal * 1.5
+
+6. Generate Execution Recommendation
+   - Logic:
+     * If all conditions green: "Execute - Good conditions"
+     * If 1+ yellow: "Acceptable - Proceed with caution"
+     * If 1+ red: "NOT RECOMMENDED - Wait or reduce size"
+   - Specific recommendations:
+     * "Wait 5 minutes for spread to normalize"
+     * "Reduce size from 5.0 to 3.5 lots"
+     * "Split order into 3 parts over 10 minutes"
+
+7. Add Mini DOM Display
+   - Location: Next to order entry form
+   - Content: Top 3 bid/ask levels
+   - Format:
+     Ask: 1.10025 (320k units) ← Level 3
+     Ask: 1.10018 (280k units) ← Level 2
+     Ask: 1.10012 (240k units) ← Best Ask
+     ───────────────────────────
+     Spread: 1.2 pips
+     ───────────────────────────
+     Bid: 1.10000 (310k units) ← Best Bid
+     Bid: 1.09994 (290k units) ← Level 2
+     Bid: 1.09987 (350k units) ← Level 3
+   - Updates: Real-time (1 second refresh)
+
+8. Implement User Preference Options
+   - Settings:
+     * Auto-validate: Always show dialog (default ON)
+     * Skip validation: For advanced users (default OFF)
+     * Cost threshold: Only warn if cost > $X
+   - Allow: User to suppress dialogs if desired
+
+Acceptance Criteria:
+□ Validation dialog designed and implemented
+□ DOM snapshot retrieved before order execution
+□ Liquidity sufficiency check functional
+□ Spread anomaly detection working
+□ Execution cost estimate accurate
+□ Recommendations generated based on conditions
+□ Mini DOM display shows real-time data
+□ User preferences for validation behavior
+□ Dialog can be bypassed if needed
+□ All calculations logged for debugging
+□ Unit tests verify validation logic
+□ UI testing confirms usability
+
+Validation:
+- User testing: Get feedback on dialog usefulness
+- Simulation: Create scenarios (wide spread, low depth), verify warnings
+- Production: Track how often users heed recommendations
+
+Dependencies:
+- Task 2 (SmartExecutionOptimizer enhancement) for cost estimates
+- DOM Aggregator Service for real-time data
+
+================================================================================
+TASK 7: ENHANCE PATTERN DETECTION WITH DOM CONFIRMATION
+================================================================================
+
+Priority: P2 (MEDIUM)
+Complexity: HIGH
+Estimated Effort: 2 weeks
+Impact: MEDIUM-HIGH
+
+Location:
+File: src/forex_diffusion/ui/chart_components/services/patterns/patterns_service.py
+Multiple pattern detection files (33 files)
+
+Problem:
+Current pattern detection uses:
+- OHLCV data (candlestick patterns)
+- Technical indicators (RSI, MACD)
+- Price structure (S/R, trendlines)
+
+Missing:
+- Order flow confirmation
+- Volume depth validation
+- Imbalance-based filtering
+
+Result:
+- False signals (pattern forms but no flow support)
+- Missed opportunities (flow confirms but pattern ignored)
+- Suboptimal confidence scoring
+
+Functional Requirements:
+
+1. Add DOM Data to Pattern Context
+   - When pattern detected:
+     * Retrieve DOM snapshot at pattern time
+     * Store: spread, depth, imbalance alongside pattern
+     * Include in pattern event data structure
+
+2. Implement Breakout Confirmation
+   - Pattern: Bullish breakout above resistance
+   - Current confirmation: Volume increased
+   - DOM enhancement:
+     * Check bid depth below breakout level (support)
+     * Check ask depth above breakout level (cleared?)
+     * Check imbalance (buying pressure dominant?)
+   - Confidence adjustment:
+     * If DOM confirms: +10 to +15%
+     * If DOM contradicts: -15 to -25%
+
+3. Implement Reversal Validation
+   - Pattern: Bearish engulfing at resistance
+   - Current confirmation: Pattern recognized at resistance
+   - DOM enhancement:
+     * Check for "exhaustion" signals:
+       - Large bid imbalance but price not rising
+       - Bid depth shrinking
+       - Ask volume spiking
+     * If exhaustion detected:
+       - Confidence: +15%
+       - Priority: Increase
+       - Add flag: 'dom_confirmed'
+
+4. Implement False Breakout Filter
+   - Pattern: Bullish breakout detected
+   - DOM analysis:
+     * Calculate: bid depth above breakout
+     * Calculate: ask depth above breakout (resistance)
+     * If ask_depth >> bid_depth:
+       - Flag: Likely false breakout
+       - Confidence: Reduce by 30-40%
+       - Recommendation: Skip signal
+   - Example:
+     * Breakout at 1.1000
+     * Bid depth above: 80k (thin)
+     * Ask depth above: 500k (heavy wall)
+     * Conclusion: Insufficient support, high resistance
+
+5. Add Order Flow Momentum Indicator
+   - Calculate: Rate of imbalance change
+   - If imbalance shifting rapidly:
+     * From negative to positive: Bullish momentum
+     * From positive to negative: Bearish momentum
+   - Use to:
+     * Confirm trend continuations
+     * Detect potential reversals
+     * Adjust entry timing
+
+6. Implement Depth-Based Support/Resistance
+   - Identify: Price levels with heavy depth concentration
+   - Logic:
+     * Scan DOM for volume anomalies
+     * If level has 3x average depth: Mark as S/R
+   - Use for:
+     * Pattern formation validation
+     * Target setting
+     * Stop loss placement
+
+7. Create DOM Confidence Scoring System
+   - Base pattern confidence: 0-100%
+   - DOM adjustments:
+     * Breakout with depth confirmation: +10%
+     * Reversal with exhaustion: +15%
+     * Against order flow: -20%
+     * False breakout indicators: -35%
+   - Final confidence: base + sum of adjustments
+   - Cap: 0% to 95% (never 100%)
+
+8. Add DOM Metadata to Pattern Events
+   - Extend PatternEvent data structure:
+     * Add: dom_imbalance (at pattern time)
+     * Add: dom_depth_ratio (bid/ask ratio)
+     * Add: dom_spread_bps (spread at pattern)
+     * Add: dom_confirmed (boolean flag)
+     * Add: dom_reasoning (why confirmed/rejected)
+   - Store: For backtesting and analysis
+
+9. Implement Filtering by Liquidity
+   - Skip patterns if:
+     * Market depth insufficient for position size
+     * Spread too wide (> 3x normal)
+     * Imbalance extreme against signal direction
+   - Result: Higher quality signals, fewer losses
+
+10. Create DOM-Pattern Configuration
+    - Settings:
+      * Enable DOM confirmation (default: ON)
+      * Minimum depth threshold (default: 100k units)
+      * Maximum spread threshold (default: 3 pips)
+      * Imbalance weight (default: 0.3)
+    - Allow: Users to tune sensitivity
+
+Acceptance Criteria:
+□ DOM data retrieved and stored with each pattern
+□ Breakout confirmation logic implemented
+□ Reversal validation with exhaustion detection working
+□ False breakout filter functional
+□ Order flow momentum indicator created
+□ Depth-based S/R identification operational
+□ DOM confidence scoring system implemented
+□ Pattern events include DOM metadata
+□ Liquidity-based filtering active
+□ Configuration options for DOM parameters
+□ Backward compatible (works without DOM data)
+□ Unit tests verify all DOM confirmation scenarios
+□ Backtesting shows improvement in signal quality
+□ Integration test confirms end-to-end pattern enhancement
+
+Validation:
+- Backtest comparison: Patterns with/without DOM confirmation
+- Expected: 15-25% improvement in pattern accuracy
+- Expected: -25% reduction in false signals
+- Monitor: DOM confirmation rate, confidence adjustments
+
+Dependencies:
+- DOM Aggregator Service
+- Pattern detection system operational
+- Historical DOM data available for backtesting
+
+================================================================================
+TASK 8: ENHANCE DATA SERVICE WITH SPREAD ANALYTICS
+================================================================================
+
+Priority: P3 (LOW)
+Complexity: LOW
+Estimated Effort: 3 days
+Impact: LOW-MEDIUM
+
+Location:
+File: src/forex_diffusion/ui/chart_components/services/data_service.py
+Method: _update_market_quote() (enhancement)
+
+Problem:
+Current spread tracking:
+- Displays absolute spread value
+- Shows color-coded changes (widening/narrowing)
+- No context: Is 1.5 pips normal or high?
+- No alerts: User doesn't know when spread abnormal
+- No integration: Info stays in Market Watch list
+
+Functional Requirements:
+
+1. Implement Statistical Spread Baseline
+   - Track per symbol:
+     * Hourly average spread (by session)
+     * Daily average spread
+     * 95th percentile (high threshold)
+     * 5th percentile (tight threshold)
+     * Standard deviation
+   - Storage: In-memory cache + periodic database write
+   - Duration: Rolling 30-day window
+
+2. Calculate Real-Time Deviation
+   - For each tick:
+     * Compare: current_spread vs. hourly_average
+     * Calculate: z-score = (current - avg) / std_dev
+   - Thresholds:
+     * Normal: z-score < 1.0
+     * Elevated: z-score 1.0-2.0
+     * High: z-score 2.0-3.0
+     * Extreme: z-score > 3.0
+
+3. Add Contextual Spread Display
+   - Current display: "Spread: 1.2 pips"
+   - Enhanced display: "Spread: 1.2 pips (3.0x avg)"
+   - Colors:
+     * Green: Below average (tight, opportunity)
+     * White: Normal range (±1 std dev)
+     * Yellow: Elevated (1-2 std dev)
+     * Red: High/Extreme (>2 std dev)
+
+4. Implement Spread Anomaly Alerts
+   - Trigger conditions:
+     * current_spread > average * 2.0: Alert
+     * current_spread > average * 3.0: Critical alert
+   - Actions:
+     * Log warning to console
+     * Display popup notification (optional)
+     * Mark symbol in Market Watch (red background)
+     * Notify trading engine (pause entries)
+   - Alert message:
+     "EUR/USD spread EXTREME: 2.8 pips (avg 0.6 pips, 4.7x normal)"
+
+5. Implement Tight Spread Opportunities
+   - Trigger condition:
+     * current_spread < average * 0.5: Opportunity
+   - Actions:
+     * Log info: "Optimal execution conditions"
+     * Mark symbol in Market Watch (green highlight)
+     * Notify trading engine (prioritize this symbol)
+   - Message:
+     "GBP/USD spread TIGHT: 0.3 pips (avg 0.8 pips, 0.4x normal)"
+
+6. Add Session-Based Spread Tracking
+   - Sessions:
+     * Asian: 00:00-07:00 UTC (wider spreads)
+     * London: 07:00-16:00 UTC (normal spreads)
+     * NY: 13:00-21:00 UTC (normal spreads)
+     * Overlap: 13:00-16:00 UTC (tightest spreads)
+   - Track: Average spread per session per symbol
+   - Compare: Current to session-specific baseline
+   - Display: "Spread 1.5x normal for Asian session"
+
+7. Add Depth Imbalance to Market Watch
+   - Current display:
+     "EURUSD | Bid: 1.10000 | Ask: 1.10012 | Spread: 1.2"
+   - Enhanced display:
+     "EURUSD | Bid: 1.10000 | Ask: 1.10012 | Spread: 1.2 | ↑+45%"
+                                                              ↑
+                                        Imbalance indicator (bid-heavy)
+   - Symbols:
+     * ↑+XX%: Bid pressure (bullish)
+     * ↓-XX%: Ask pressure (bearish)
+     * ↔: Balanced (neutral)
+
+8. Implement Spread History Chart
+   - Add: Mini chart in Market Watch panel (optional)
+   - Shows: Spread over last 1 hour
+   - Highlights:
+     * Average line
+     * Current value
+     * Anomaly zones (>2 std dev)
+   - Helps: Visual detection of patterns
+
+9. Create Spread Alert Configuration
+   - Settings:
+     * Enable spread alerts (default: ON)
+     * Alert threshold (default: 2.0x average)
+     * Critical threshold (default: 3.0x average)
+     * Opportunity threshold (default: 0.5x average)
+     * Popup notifications (default: OFF)
+     * Auto-pause trading on critical (default: ON)
+   - Allow: Users to customize sensitivity
+
+10. Integrate with Trading Engine
+    - When extreme spread detected:
+      * Pause new entries for symbol (temporary)
+      * Duration: Until spread normalizes
+      * Override: Manual trading still allowed
+    - When tight spread detected:
+      * Boost priority for pending signals
+      * Execute delayed entries if present
+      * Log: "Optimal execution window"
+
+Acceptance Criteria:
+□ Statistical spread baseline tracking implemented
+□ Real-time deviation calculation functional
+□ Contextual spread display in Market Watch
+□ Spread anomaly alerts working (wide spread warnings)
+□ Tight spread opportunity detection operational
+□ Session-based spread tracking active
+□ Depth imbalance added to Market Watch display
+□ Spread history chart (optional) implemented
+□ Configuration options for alerts and thresholds
+□ Integration with trading engine for auto-pause
+□ All calculations logged for analysis
+□ Unit tests verify statistical calculations
+□ Integration test confirms alert triggering
+
+Validation:
+- Historical analysis: Identify spread anomaly events
+- Expected: Detect news events, session transitions
+- User feedback: Are alerts helpful or noisy?
+- Performance: No significant UI lag from calculations
+
+Dependencies:
+- DOM Aggregator Service
+- Database for historical spread storage
+- Market Watch UI component
+
+================================================================================
+IMPLEMENTATION PLAN
+================================================================================
+
+Phase 1: Critical Foundation (Week 1-2)
+---------------------------------------
+Priority: P0 Tasks
+Timeline: 2 weeks
+Deliverables:
+- Task 1: Fix hardcoded spread (1 day)
+- Task 2: Integrate DOM into execution optimizer (3 days)
+- Testing: Comprehensive validation (3 days)
+- Documentation: Update developer guides (1 day)
+
+Success Criteria:
+✓ Hardcoded spread eliminated
+✓ Real-time spread used throughout engine
+✓ Execution cost estimates 30-50% more accurate
+✓ All unit tests passing
+
+Phase 2: Position Sizing & Risk (Week 3-4)
+-------------------------------------------
+Priority: P1 Tasks
+Timeline: 2 weeks
+Deliverables:
+- Task 3: Liquidity constraints in position sizing (1 week)
+- Task 4: Market impact validation (4 days)
+- Task 5: Order Flow Panel connection (2 days)
+- Testing: Integration tests (3 days)
+
+Success Criteria:
+✓ Position sizes respect market depth
+✓ Market impact prevented for large orders
+✓ Order Flow Panel displays real-time data
+✓ Slippage reduced by 35-40%
+
+Phase 3: User Experience & Validation (Week 5-6)
+------------------------------------------------
+Priority: P2 Tasks
+Timeline: 2 weeks
+Deliverables:
+- Task 6: Pre-trade validation for live trading (4 days)
+- Task 7: Pattern detection enhancement (2 weeks)
+  Note: Task 7 runs parallel with other phases
+- Testing: User acceptance testing (2 days)
+
+Success Criteria:
+✓ Manual traders receive execution warnings
+✓ Pattern detection improved by 15-25%
+✓ User feedback positive (>80% satisfaction)
+
+Phase 4: Analytics & Optimization (Week 7-8)
+--------------------------------------------
+Priority: P3 Tasks
+Timeline: 1 week
+Deliverables:
+- Task 8: Data Service spread analytics (3 days)
+- Performance optimization (2 days)
+- Final documentation (2 days)
+
+Success Criteria:
+✓ Spread anomaly detection operational
+✓ System performance acceptable (<100ms latency)
+✓ Complete documentation delivered
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+Unit Testing
+------------
+Coverage: Each task requires unit tests
+Focus Areas:
+- DOM data retrieval and parsing
+- Calculation accuracy (depth, imbalance, metrics)
+- Edge cases (missing data, stale data, extreme values)
+- Fallback logic (graceful degradation)
+
+Target: 80%+ code coverage for new components
+
+Integration Testing
+------------------
+Scenarios:
+1. End-to-end data flow: WebSocket → Aggregator → Engine
+2. Position sizing with liquidity constraints
+3. Execution optimizer with real DOM data
+4. Pattern detection with DOM confirmation
+5. UI updates with real-time DOM feed
+
+Target: All critical paths validated
+
+Backtesting
+-----------
+Comparison:
+- Old method (without DOM) vs. New method (with DOM)
+- Metrics:
+  * Slippage reduction
+  * Execution cost improvement
+  * Position sizing accuracy
+  * Win rate change
+  * Profit factor improvement
+
+Target: 20-30% overall performance improvement
+
+User Acceptance Testing
+----------------------
+Participants: 3-5 traders
+Duration: 1 week paper trading
+Focus:
+- Pre-trade validation usefulness
+- Order Flow Panel clarity
+- Alert quality (helpful vs. noisy)
+- Overall satisfaction
+
+Target: >80% positive feedback
+
+Performance Testing
+------------------
+Metrics:
+- DOM update latency (<100ms)
+- Database query performance (<50ms)
+- UI responsiveness (no lag)
+- Memory usage (within limits)
+- CPU usage (within limits)
+
+Target: No degradation of user experience
+
+================================================================================
+DEPENDENCIES & PREREQUISITES
+================================================================================
+
+Required Services
+-----------------
+✓ ctrader_websocket.py: Running and collecting DOM
+✓ dom_aggregator.py: Service operational
+✓ market_depth table: Populated with recent data
+✓ Database: Accessible with good performance
+✓ Redis (optional): For high-performance caching
+
+Required Data
+-------------
+✓ Real-time DOM snapshots: <500ms old
+✓ Historical DOM data: 30+ days for baselines
+✓ Symbol configuration: Mapping and normalization
+✓ Session definitions: Trading hours per symbol
+
+Development Environment
+-----------------------
+✓ Python 3.9+
+✓ PySide6 for UI components
+✓ SQLAlchemy for database
+✓ pytest for testing
+✓ Development database with test data
+
+External Dependencies
+--------------------
+✓ cTrader API: WebSocket connection stable
+✓ Network: Low latency to broker (<100ms)
+✓ Hardware: Sufficient CPU/memory for real-time processing
+
+================================================================================
+RISK MITIGATION
+================================================================================
+
+Risk: Data Latency
+------------------
+Impact: Stale DOM data leads to wrong decisions
+Mitigation:
+- Add timestamp validation (reject >500ms old)
+- Fall back to statistical estimates if data stale
+- Monitor: Latency metrics, alert if degraded
+
+Risk: Data Quality
+------------------
+Impact: Sparse or incomplete DOM data
+Mitigation:
+- Minimum depth threshold (100k units)
+- Validate: Spread, depth, imbalance ranges
+- Use hybrid approach (model + DOM when quality sufficient)
+
+Risk: Performance Degradation
+-----------------------------
+Impact: System slowdown from DOM processing
+Mitigation:
+- Implement in-memory caching (Redis)
+- Batch database writes (not per-tick)
+- Asynchronous processing where possible
+- Performance monitoring and optimization
+
+Risk: Over-Optimization
+-----------------------
+Impact: Too dependent on current market structure
+Mitigation:
+- Regular parameter review (monthly)
+- A/B testing: Old vs. new methods
+- Keep fallback to non-DOM logic
+- Backtesting across multiple market regimes
+
+Risk: False Confidence
+---------------------
+Impact: DOM shows liquidity that evaporates (spoofing)
+Mitigation:
+- Historical depth validation
+- Anomaly detection (sudden depth changes)
+- Conservative usage (max 50% of shown depth)
+- Human override capability
+
+Risk: Integration Complexity
+---------------------------
+Impact: Multi-component coordination failures
+Mitigation:
+- Central event bus pattern
+- Standardized data formats
+- Comprehensive integration testing
+- Phased rollout (test each component independently)
+
+================================================================================
+ACCEPTANCE CRITERIA (OVERALL)
+================================================================================
+
+Functional Requirements
+-----------------------
+□ All 8 tasks completed and deployed
+□ DOM data flowing to all components
+□ Hardcoded values eliminated
+□ Real-time spread used throughout
+□ Liquidity constraints enforced
+□ Market impact validated
+□ Order Flow Panel displaying data
+□ Pattern confirmation enhanced
+□ Spread analytics operational
+
+Performance Requirements
+------------------------
+□ DOM update latency <100ms (95th percentile)
+□ Database queries <50ms (95th percentile)
+□ UI remains responsive (no freezing)
+□ Memory usage within acceptable limits
+□ System handles 10+ DOM updates/second
+
+Quality Requirements
+-------------------
+□ 80%+ unit test coverage for new code
+□ All integration tests passing
+□ Backtesting shows 20-30% improvement
+□ User acceptance >80% satisfaction
+□ No critical bugs in production
+
+Documentation Requirements
+--------------------------
+□ Developer documentation updated
+□ User guide created for new features
+□ Configuration guide written
+□ Troubleshooting guide available
+□ API documentation complete
+
+================================================================================
+SUCCESS METRICS
+================================================================================
+
+Key Performance Indicators (KPIs)
+---------------------------------
+1. Slippage Reduction: -30% to -50%
+2. Execution Cost Reduction: -35% to -45%
+3. Position Sizing Accuracy: +25% to +35%
+4. Win Rate Improvement: +2% to +5%
+5. Profit Factor: +10% to +15%
+6. False Signal Reduction: -20% to -30%
+
+Operational Metrics
+------------------
+1. DOM Data Availability: >99% uptime
+2. Latency: <100ms (95th percentile)
+3. Alert Accuracy: >90% (not false alarms)
+4. User Satisfaction: >80% positive
+
+Business Impact
+--------------
+Annual Savings (100k account, 500 trades/year):
+- Slippage: $2,500
+- Execution: $3,650
+- Avoided losses: $825
+- Better entries: $1,000
+Total: ~$8,000 (8% improvement)
+
+ROI: 800% (8k benefit / 1k implementation cost estimate)
+
+================================================================================
+SIGN-OFF
+================================================================================
+
+Document Reviewed By:
+_____________________ (Technical Lead)
+_____________________ (Product Owner)
+_____________________ (Risk Manager)
+
+Approved for Implementation: _____________________
+Date: _____________________
+
+Expected Completion: Q1 2025
+Progress Tracking: Weekly sprint reviews
+
+================================================================================
+END OF SPECIFICATIONS
+================================================================================

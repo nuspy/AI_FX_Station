@@ -1,0 +1,41 @@
+{
+  "finplot": {
+    "enabled": true,
+    "theme": "professional",
+    "performance_mode": true,
+    "real_time_updates": true,
+    "memory_optimization": true,
+    "max_candles": 10000,
+    "update_interval_ms": 1000
+  },
+  "fallback": {
+    "use_matplotlib": false,
+    "use_pyqtgraph": true,
+    "auto_fallback": true
+  },
+  "integration": {
+    "pattern_detection": true,
+    "indicators_system": "bta-lib",
+    "export_formats": [
+      "png",
+      "svg",
+      "pdf"
+    ],
+    "chart_types": [
+      "candlestick",
+      "line",
+      "volume"
+    ]
+  },
+  "deployment": {
+    "version": "2.0.0",
+    "date": "2025-09-29T16:01:25.684865",
+    "features": [
+      "finplot_primary_backend",
+      "bta_lib_indicators",
+      "pattern_detection_integration",
+      "real_time_streaming",
+      "professional_styling"
+    ]
+  }
+}

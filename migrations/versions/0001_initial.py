@@ -11,7 +11,7 @@ from alembic import op  # noqa: F401
 import sqlalchemy as sa  # noqa: F401
 
 # revision identifiers, used by Alembic.
-revision = "0001_initial"
+revision = "0001"
 down_revision = None
 branch_labels = None
 depends_on = None

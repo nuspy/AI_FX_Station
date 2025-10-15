@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 import time
+from pathlib import Path
 
-import matplotlib.dates as mdates
+# matplotlib removed - using finplot for all charting
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -13,22 +14,88 @@ from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDial
 from forex_diffusion.utils.user_settings import get_setting
 
 from .base import ChartServiceBase
+from .draggable_legend import DraggableLegend
+
+
+def get_forecast_service(controller, view, create=True):
+    """Get or create ForecastService instance."""
+    if hasattr(view, '_forecast_service_instance'):
+        return view._forecast_service_instance
+    elif create:
+        instance = ForecastService(view, controller)
+        view._forecast_service_instance = instance
+        return instance
+    return None
 
 
 class ForecastService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
+
+    # Color palette: 100 vivid, distinct colors (excluding black)
+    _COLOR_PALETTE = [
+        '#2196F3', '#E91E63', '#00BCD4', '#FFC107', '#FF5722', '#9C27B0', '#4CAF50', '#FF9800',
+        '#03A9F4', '#F44336', '#00E676', '#FFEB3B', '#673AB7', '#8BC34A', '#FF6F00', '#E040FB',
+        '#00ACC1', '#FF1744', '#76FF03', '#FDD835', '#5E35B1', '#C0CA33', '#FF3D00', '#D500F9',
+        '#0097A7', '#D32F2F', '#64DD17', '#F9A825', '#512DA8', '#AFB42B', '#DD2C00', '#AA00FF',
+        '#00838F', '#C62828', '#00C853', '#F57F17', '#4527A0', '#9E9D24', '#BF360C', '#6200EA',
+        '#006064', '#B71C1C', '#00E676', '#F57C00', '#311B92', '#827717', '#BF360C', '#304FFE',
+        '#0091EA', '#FF6D00', '#00B8D4', '#FFD600', '#6200EA', '#C6FF00', '#DD2C00', '#2962FF',
+        '#00B0FF', '#FF3D00', '#18FFFF', '#FFEA00', '#AA00FF', '#AEEA00', '#D50000', '#2979FF',
+        '#00E5FF', '#FF9100', '#1DE9B6', '#FFC400', '#D500F9', '#76FF03', '#FF1744', '#448AFF',
+        '#84FFFF', '#FFAB00', '#00E676', '#FFAB00', '#E040FB', '#64DD17', '#F50057', '#536DFE',
+        '#A7FFEB', '#FF6D00', '#69F0AE', '#FFD740', '#D500F9', '#C6FF00', '#FF5252', '#7C4DFF',
+        '#CCFF90', '#FFAB40', '#00E676', '#FFFF00', '#E040FB', '#F4FF81', '#FF1744', '#536DFE',
+        '#80D8FF', '#FF9E80', '#1DE9B6', '#F4FF81'
+    ]
+
+    # Class-level mapping: model_path -> color_index (persists across instances)
+    _model_color_mapping = {}
+
+    def _ensure_legend(self):
+        """Forecast items are automatically added to main chart legend via 'name' parameter."""
+        # PyQtGraph automatically handles legend via plot(..., name=model_name)
+        # No separate legend widget needed
+        pass
+
+    def _update_legend(self, model_path: str, model_name: str, color: str):
+        """Forecast items are automatically added to main chart legend via 'name' parameter."""
+        # PyQtGraph automatically handles legend via plot(..., name=model_name)
+        # No manual legend update needed
+        pass
+
+    def _get_color_for_model(self, model_path: str) -> str:
+        """
+        Get consistent color for a model based on its path.
+
+        Args:
+            model_path: Full path to the model file
+
+        Returns:
+            Hex color string
+        """
+        # Check if model already has a color assigned
+        if model_path in self._model_color_mapping:
+            color_idx = self._model_color_mapping[model_path]
+            return self._COLOR_PALETTE[color_idx % len(self._COLOR_PALETTE)]
+
+        # Find first unused color
+        used_indices = set(self._model_color_mapping.values())
+        for i in range(len(self._COLOR_PALETTE)):
+            if i not in used_indices:
+                self._model_color_mapping[model_path] = i
+                logger.debug(f"Assigned color #{i} to model {Path(model_path).name}")
+                return self._COLOR_PALETTE[i]
+
+        # If all colors used, cycle back (shouldn't happen with 100 colors)
+        fallback_idx = len(self._model_color_mapping) % len(self._COLOR_PALETTE)
+        self._model_color_mapping[model_path] = fallback_idx
+        return self._COLOR_PALETTE[fallback_idx]
 
     def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
         """
         Plot quantiles on the chart. quantiles expected to have keys 'q50','q05','q95'
         Each value can be a list/array of floats. Optionally 'future_ts' can provide UTC ms or datetimes.
         """
-
-        try:
-            logger.info("Q95: ", quantiles.get("q95")  )
-        except Exception:
-            pass
-
         try:
             # extract and coerce to arrays
             q50 = quantiles.get("q50")
@@ -86,35 +153,32 @@ class ForecastService(ChartServiceBase):
             if len(x_vals) != n:
                 x_vals = x_vals[:n]
 
-            # prepend point 0 (t0 = requested_at_ms) con last_close
+            # prepend point 0 (t0 = requested_at_ms) con anchor_price o last_close
             try:
                 req_ms = quantiles.get("requested_at_ms", None)
                 if req_ms is not None:
                     t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
-                    last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    # Use anchor_price if provided (from Alt+Click Y coordinate), else use last_close
+                    anchor_price = quantiles.get("anchor_price")
+                    if anchor_price is not None:
+                        last_close = float(anchor_price)
+                    else:
+                        last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    logger.debug(f"Prepending anchor point: t0={t0}, price={last_close}")
                     x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
                     import numpy as _np
                     q50_arr = _np.insert(q50_arr, 0, last_close)
                     if q05_arr is not None: q05_arr = _np.insert(q05_arr, 0, last_close)
                     if q95_arr is not None: q95_arr = _np.insert(q95_arr, 0, last_close)
-            except Exception:
-                pass
+                    logger.debug(f"After prepend: x_vals len={len(x_vals)}, q50 len={len(q50_arr)}")
+                else:
+                    logger.warning(f"No requested_at_ms in quantiles - forecast won't connect to price line")
+            except Exception as e:
+                logger.warning(f"Failed to prepend anchor point: {e}")
 
-            # color per sorgente e gestione legenda per modello
-            def _color_for(src: str):
-                try:
-                    import hashlib, colorsys
-                    key = str(src or "default").encode("utf-8")
-                    hnum = int(hashlib.sha1(key).hexdigest()[:8], 16)
-                    hue = (hnum % 360) / 360.0
-                    sat = 0.65
-                    val = 0.95
-                    r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
-                    return (r, g, b)
-                except Exception:
-                    palette = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
-                    return palette[abs(hash(src)) % len(palette)] if src else "tab:orange"
-            color = _color_for(quantiles.get("source", source))
+            # Get consistent color for this model
+            model_path = quantiles.get("model_path_used", quantiles.get("model_path", source))
+            color = self._get_color_for_model(model_path)
 
             # nome modello per legenda (mostra una sola volta)
             try:
@@ -127,16 +191,68 @@ class ForecastService(ChartServiceBase):
             if first_for_model:
                 self._legend_once.add(model_name)
 
+            # Convert datetime x_vals to numeric timestamps for PyQtGraph
+            import pyqtgraph as pg
+            if isinstance(x_vals, pd.DatetimeIndex):
+                x_numeric = x_vals.astype('int64') // 10**9  # Convert to Unix timestamp (seconds)
+            elif hasattr(x_vals, '__iter__'):
+                try:
+                    x_numeric = np.array([pd.Timestamp(x).timestamp() for x in x_vals])
+                except Exception:
+                    x_numeric = np.arange(len(x_vals))
+            else:
+                x_numeric = np.arange(len(q50_arr))
+
+            logger.debug(f"Forecast: {len(x_numeric)} points, x range: {x_numeric[0]:.1f} to {x_numeric[-1]:.1f}")
+
+            # Update legend with this model
+            self._update_legend(model_path, model_name, color)
+
             # linea di previsione con marker sui punti (etichetta solo la prima volta per il modello)
-            line50, = self.ax.plot(
-                x_vals, q50_arr,
-                color=color, linestyle='-',
-                marker='o', markersize=3.5,
-                markerfacecolor=color, markeredgecolor=color,
-                alpha=0.95,
-                label=(model_name if first_for_model else None)
+            # PyQtGraph returns single PlotDataItem, not tuple like matplotlib
+            line50 = self.ax.plot(
+                x_numeric, q50_arr,
+                pen=pg.mkPen(color, width=2),
+                symbol='o', symbolSize=3.5,
+                symbolBrush=pg.mkBrush(color), symbolPen=pg.mkPen(color),
+                name=(model_name if first_for_model else None)
             )
             artists = [line50]
+
+            # Add precision index badge if forecast was requested with Alt+Click
+            anchor_price = quantiles.get("anchor_price")
+            if anchor_price is not None:
+                # This forecast was requested with Alt+Click, show precision badge
+                try:
+                    from ....services.performance_registry import get_performance_registry
+                    registry = get_performance_registry()
+
+                    # Get model performance stats
+                    stats = registry.get_model_performance(model_name, days_back=30)
+                    accuracy = stats.accuracy
+
+                    # Create badge at the end of the forecast line
+                    last_x = x_numeric[-1]
+                    last_y = q50_arr[-1]
+
+                    # Create text with accuracy percentage
+                    accuracy_text = f"{accuracy*100:.1f}%"
+
+                    # Create TextItem for the badge
+                    text_item = pg.TextItem(
+                        text=accuracy_text,
+                        color=color,  # Border color = main line color
+                        fill=pg.mkBrush(color + '40'),  # Background = secondary line color (with alpha)
+                        anchor=(0, 0.5),  # Anchor to left-center
+                        border=pg.mkPen(color, width=2)  # Border
+                    )
+                    text_item.setPos(last_x, last_y)
+                    self.ax.addItem(text_item)
+                    artists.append(text_item)
+
+                    logger.debug(f"Added precision badge: {accuracy_text} for {model_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to add precision badge: {e}")
 
             # Se abilitato, calcola/disegna indicatori anche sulla porzione di forecast
             try:
@@ -169,51 +285,49 @@ class ForecastService(ChartServiceBase):
                     close_all = _np.concatenate([close_hist_tail.values, q50_arr])
                     f_start = len(close_all) - len(q50_arr)
 
-                    # SMA
+                    # SMA (PyQtGraph conversion)
                     if cfg.get("use_sma", False) and n_sma > 0:
                         sma_all = self._sma(pd.Series(close_all), n_sma).to_numpy()
                         try:
-                            ln, = self.ax.plot(x_vals, sma_all[f_start:], color=cfg.get("color_sma", "#7f7f7f"),
-                                               linestyle=":", linewidth=1.0, alpha=0.7, label=None)
+                            ln = self.ax.plot(x_numeric, sma_all[f_start:],
+                                            pen={'color': cfg.get("color_sma", "#7f7f7f"),
+                                                 'width': 1.0})  # Removed style - use default solid line
                             artists.append(ln)
                         except Exception:
                             pass
-                    # EMA
+                    # EMA (PyQtGraph conversion)
                     if cfg.get("use_ema", False):
                         if n_ef > 0:
                             emaf_all = self._ema(pd.Series(close_all), n_ef).to_numpy()
                             try:
-                                ln, = self.ax.plot(x_vals, emaf_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
-                                                   linestyle="--", linewidth=1.0, alpha=0.7, label=None)
+                                ln = self.ax.plot(x_numeric, emaf_all[f_start:],
+                                                pen={'color': cfg.get("color_ema", "#bcbd22"),
+                                                     'width': 1.0})
                                 artists.append(ln)
                             except Exception:
                                 pass
                         if n_es > 0:
                             emas_all = self._ema(pd.Series(close_all), n_es).to_numpy()
                             try:
-                                ln, = self.ax.plot(x_vals, emas_all[f_start:], color=cfg.get("color_ema", "#bcbd22"),
-                                                   linestyle=":", linewidth=1.0, alpha=0.6, label=None)
+                                ln = self.ax.plot(x_numeric, emas_all[f_start:],
+                                                pen={'color': cfg.get("color_ema", "#bcbd22"),
+                                                     'width': 1.0})
                                 artists.append(ln)
                             except Exception:
                                 pass
-                    # Bollinger
+                    # Bollinger (PyQtGraph conversion - simplified, no fill_between)
                     if cfg.get("use_bollinger", False) and n_bb > 0:
                         _, bb_up_all, bb_lo_all = self._bollinger(pd.Series(close_all), n_bb, float(cfg.get("bb_k", 2.0)))
                         bu = bb_up_all.to_numpy()[f_start:]
                         bl = bb_lo_all.to_numpy()[f_start:]
                         c_bb = cfg.get("color_bollinger", "#2ca02c")
                         try:
-                            l1, = self.ax.plot(x_vals, bu, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
-                            l2, = self.ax.plot(x_vals, bl, color=c_bb, linestyle=":", linewidth=0.9, alpha=0.7, label=None)
+                            l1 = self.ax.plot(x_numeric, bu, pen={'color': c_bb, 'width': 0.9})
+                            l2 = self.ax.plot(x_numeric, bl, pen={'color': c_bb, 'width': 0.9})
                             artists.extend([l1, l2])
-                            try:
-                                poly = self.ax.fill_between(x_vals, bl, bu, color=c_bb, alpha=0.06)
-                                artists.append(poly)
-                            except Exception:
-                                pass
                         except Exception:
                             pass
-                    # Keltner
+                    # Keltner (PyQtGraph conversion)
                     if cfg.get("use_keltner", False) and n_k > 0:
                         high_all = pd.Series(close_all)
                         low_all = pd.Series(close_all)
@@ -222,39 +336,76 @@ class ForecastService(ChartServiceBase):
                         kl = (kl_all.to_numpy() if hasattr(kl_all, "to_numpy") else kl_all.values)[f_start:]
                         c_k = cfg.get("color_keltner", "#17becf")
                         try:
-                            l1, = self.ax.plot(x_vals, ku, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
-                            l2, = self.ax.plot(x_vals, kl, color=c_k, linestyle="--", linewidth=0.9, alpha=0.7, label=None)
+                            l1 = self.ax.plot(x_numeric, ku, pen={'color': c_k, 'width': 0.9})
+                            l2 = self.ax.plot(x_numeric, kl, pen={'color': c_k, 'width': 0.9})
                             artists.extend([l1, l2])
                         except Exception:
                             pass
                 except Exception:
                     pass
 
-            # se disponibili, punti ad alta risoluzione (es. 1m) come scatter
+            # se disponibili, punti ad alta risoluzione (es. 1m) come scatter (PyQtGraph conversion)
             try:
                 f_hr = quantiles.get("future_ts_hr"); q50_hr = quantiles.get("q50_hr")
                 if f_hr and q50_hr and len(f_hr) == len(q50_hr):
-                    x_hr = pd.to_datetime(f_hr, unit="ms", utc=True).tz_convert(None)
-                    scat = self.ax.scatter(x_hr, q50_hr, s=10, color=color, alpha=0.6, edgecolors='none')
+                    x_hr_numeric = np.arange(len(f_hr))
+                    import pyqtgraph as pg
+                    scat = pg.ScatterPlotItem(x=x_hr_numeric, y=q50_hr, size=10,
+                                            brush=pg.mkBrush(color), pen=None)
+                    self.ax.addItem(scat)
                     artists.append(scat)
             except Exception:
                 pass
 
-            # evidenzia il punto 0 (istante richiesta) con marker più grande
+            # evidenzia il punto 0 (istante richiesta) con marker più grande (PyQtGraph conversion)
             try:
                 req_ms = quantiles.get("requested_at_ms", None)
                 if req_ms is not None and len(q50_arr) > 0:
-                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
-                    m0 = self.ax.scatter([t0], [float(q50_arr[0])], s=28, color=color, edgecolor='white', linewidths=0.8, zorder=3.5)
+                    import pyqtgraph as pg
+                    m0 = pg.ScatterPlotItem(x=[0], y=[float(q50_arr[0])], size=28,
+                                          brush=pg.mkBrush(color), pen=pg.mkPen('w', width=0.8))
+                    self.ax.addItem(m0)
                     artists.append(m0)
             except Exception:
                 pass
 
+            # Quantiles (PyQtGraph with filled area between q05 and q95)
             if q05_arr is not None and q95_arr is not None:
-                line05, = self.ax.plot(x_vals, q05_arr, color=color, linestyle='--', alpha=0.8, label=None)
-                line95, = self.ax.plot(x_vals, q95_arr, color=color, linestyle='--', alpha=0.8, label=None)
-                fill = self.ax.fill_between(x_vals, q05_arr, q95_arr, color=color, alpha=0.12, label=None)
-                artists.extend([line05, line95, fill])
+                from PySide6.QtCore import Qt
+                from PySide6.QtGui import QColor
+
+                # Parse color to get RGB values
+                if isinstance(color, tuple) and len(color) >= 3:
+                    r, g, b = int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)
+                else:
+                    # Fallback: try to parse as hex or use default
+                    try:
+                        if isinstance(color, str) and color.startswith('#'):
+                            qcolor = QColor(color)
+                            r, g, b = qcolor.red(), qcolor.green(), qcolor.blue()
+                        else:
+                            r, g, b = 33, 150, 243  # Default blue
+                    except Exception:
+                        r, g, b = 33, 150, 243
+
+                # Create semi-transparent colors for borders (alpha=180)
+                border_color = QColor(r, g, b, 180)
+                # Create fill color (alpha=100)
+                fill_color = QColor(r, g, b, 100)
+
+                # Draw filled area between q05 and q95
+                fill_curve = pg.FillBetweenItem(
+                    pg.PlotDataItem(x_numeric, q05_arr),
+                    pg.PlotDataItem(x_numeric, q95_arr),
+                    brush=pg.mkBrush(fill_color)
+                )
+                self.ax.addItem(fill_curve)
+                artists.append(fill_curve)
+
+                # Draw border lines with semi-transparent color
+                line05 = self.ax.plot(x_numeric, q05_arr, pen=pg.mkPen(border_color, width=1, style=Qt.PenStyle.DashLine))
+                line95 = self.ax.plot(x_numeric, q95_arr, pen=pg.mkPen(border_color, width=1, style=Qt.PenStyle.DashLine))
+                artists.extend([line05, line95])
 
                 # Fallback: compute adherence metrics if not provided in quantiles (best-effort)
                 try:
@@ -343,26 +494,32 @@ class ForecastService(ChartServiceBase):
                 except Exception:
                     metrics = {}
 
-                # Ensure forecast is visible in current axes (extend limits if needed)
+                # Ensure forecast is visible in current axes (extend limits if needed) - PyQtGraph version
                 try:
-                    last_x_dt = x_vals[-1]
-                    last_x_num = mdates.date2num(last_x_dt)
-                    xmin, xmax = self.ax.get_xlim()
-                    if last_x_num > xmax:
-                        span = (xmax - xmin) if (xmax > xmin) else 1.0
-                        margin = 0.02 * span
-                        self.ax.set_xlim(left=xmin, right=last_x_num + margin)
-                    ymin, ymax = self.ax.get_ylim()
-                    y_last = float(q95_arr[-1])
-                    pad = 0.02 * (ymax - ymin if ymax > ymin else 1.0)
-                    if y_last > ymax:
-                        self.ax.set_ylim(bottom=ymin, top=y_last + pad)
-                    elif y_last < ymin:
-                        self.ax.set_ylim(bottom=y_last - pad, top=ymax)
-                except Exception:
-                    pass
+                    last_x_num = x_numeric[-1] if len(x_numeric) > 0 else 0
+                    y_last = float(q95_arr[-1]) if len(q95_arr) > 0 else 0
 
-                # Draw adherence badge (oval) at the end of q95 with median color; always show
+                    # Get current view range
+                    view_range = self.ax.viewRange()
+                    if view_range:
+                        [[xmin, xmax], [ymin, ymax]] = view_range
+
+                        # Extend X range if needed
+                        if last_x_num > xmax:
+                            span = (xmax - xmin) if (xmax > xmin) else 1.0
+                            margin = 0.02 * span
+                            self.ax.setXRange(xmin, last_x_num + margin, padding=0)
+
+                        # Extend Y range if needed
+                        pad = 0.02 * (ymax - ymin if ymax > ymin else 1.0)
+                        if y_last > ymax:
+                            self.ax.setYRange(ymin, y_last + pad, padding=0)
+                        elif y_last < ymin:
+                            self.ax.setYRange(y_last - pad, ymax, padding=0)
+                except Exception as e:
+                    logger.debug(f"Failed to extend view range: {e}")
+
+                # Draw adherence badge (text annotation) - PyQtGraph version
                 try:
                     adh = (metrics or {}).get("adherence", None)
                     # Robust numeric conversion: handles numpy scalars too; fallback to "0.00"
@@ -373,34 +530,27 @@ class ForecastService(ChartServiceBase):
                     except Exception:
                         val = None
                     txt = f"{val:.2f}" if val is not None else "0.00"
-                    badge = self.ax.annotate(
-                        txt,
-                        xy=(x_vals[-1], float(q95_arr[-1])),
-                        xycoords="data",
-                        textcoords="offset points",
-                        xytext=(6, 0),
-                        ha="left",
-                        va="center",
-                        fontsize=15,
-                        fontweight="bold",
-                        bbox=dict(
-                            facecolor="white",
-                            edgecolor=color,           # same as median line color
-                            boxstyle="round,pad=0.38", # rounded -> oval-like; auto width fits text
-                            linewidth=1.4,
-                            alpha=0.98
-                        ),
-                        zorder=100,
-                        clip_on=False
+
+                    # Create text item for badge
+                    from PySide6.QtGui import QColor
+                    text_item = pg.TextItem(
+                        text=txt,
+                        color=QColor('white'),
+                        anchor=(0, 0.5)
                     )
-                    artists.append(badge)
-                    # register globally for hover-hide
+                    text_item.setPos(x_numeric[-1], float(q95_arr[-1]))
+                    self.ax.addItem(text_item)
+                    artists.append(text_item)
+
+                    # Register globally for hover-hide
                     try:
-                        self._adh_badges.append(badge)
+                        if not hasattr(self, '_adh_badges'):
+                            self._adh_badges = []
+                        self._adh_badges.append(text_item)
                     except Exception:
                         pass
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to add adherence badge: {e}")
 
             # aggiorna legenda unica (no duplicati per modello)
             try:
@@ -419,25 +569,13 @@ class ForecastService(ChartServiceBase):
             }
             self._forecasts.append(forecast)
             self._trim_forecasts()
-            # unique legend
-            try:
-                handles, labels = self.ax.get_legend_handles_labels()
-                uniq = {}
-                for h, l in zip(handles, labels):
-                    if not l:
-                        continue
-                    if l not in uniq:
-                        uniq[l] = h
-                self.ax.legend(list(uniq.values()), list(uniq.keys()))
-            except Exception:
-                try:
-                    self.ax.legend()
-                except Exception:
-                    pass
-            try:
-                self.canvas.draw_idle()
-            except Exception:
-                self.canvas.draw()
+
+            # Disable auto-range to prevent zoom changes when adding forecast
+            self.ax.enableAutoRange(enable=False)
+
+            # PyQtGraph handles legend and rendering automatically
+            # Legend items are added via the 'name' parameter in plot() calls
+            logger.debug(f"Forecast overlay added: {len(artists)} artists, model={model_name}")
         except Exception as e:
             logger.exception(f"Failed to plot forecast overlay: {e}")
 
@@ -447,7 +585,7 @@ class ForecastService(ChartServiceBase):
         # execute and then apply relevant runtime settings (max_forecasts, auto)
         dialog.exec()
         try:
-            settings = PredictionSettingsDialog.get_settings()
+            settings = PredictionSettingsDialog.get_settings_from_file()
             self.max_forecasts = int(settings.get("max_forecasts", self.max_forecasts))
             auto = bool(settings.get("auto_predict", False))
             interval = int(settings.get("auto_interval_seconds", self._auto_timer.interval() // 1000))
@@ -461,12 +599,14 @@ class ForecastService(ChartServiceBase):
 
     def _on_forecast_clicked(self):
         from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-        settings = PredictionSettingsDialog.get_settings()
-        if not settings.get("model_path"):
+        settings = PredictionSettingsDialog.get_settings_from_file()
+        logger.info(f"Forecast clicked. Settings loaded: model_paths={settings.get('model_paths')}, horizons={settings.get('horizons')}")
+        if not settings.get("model_paths") and not settings.get("model_path"):
             QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")
             return
 
         payload = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
+        logger.info(f"Forecast payload: {len(payload.get('model_paths', []))} models, horizons={payload.get('horizons')}")
         # add forecast granularity from UI
         try:
             if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None:
@@ -484,8 +624,8 @@ class ForecastService(ChartServiceBase):
     def _on_advanced_forecast_clicked(self):
         # advanced forecast: use same settings but tag source
         from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-        settings = PredictionSettingsDialog.get_settings()
-        if not settings.get("model_path"):
+        settings = PredictionSettingsDialog.get_settings_from_file()
+        if not settings.get("model_paths") and not settings.get("model_path"):
             QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")
             return
         payload = {"symbol": self.symbol, "timeframe": self.timeframe, "advanced": True, **settings}
@@ -503,24 +643,45 @@ class ForecastService(ChartServiceBase):
         Adds the forecast overlay without removing existing ones (trimming oldest if needed).
         """
         try:
-            # Plot overlay and keep previous views
-            self.update_plot(self._last_df, quantiles=None)  # redraw base chart preserving zoom
-            # Plot forecast overlay, source label if present
+            # Plot forecast overlay without redrawing the chart (which would clear previous forecasts)
+            # The chart is already displayed, we just add the overlay on top
             source = quantiles.get("source", "basic") if isinstance(quantiles, dict) else "basic"
             self._plot_forecast_overlay(quantiles, source=source)
         except Exception as e:
             logger.exception(f"Error handling forecast result: {e}")
 
     def clear_all_forecasts(self):
-        """Remove all forecast artists from axes and clear internal list."""
+        """Remove all forecast artists from axes and clear internal list.
+        Also clears all drawings on the chart."""
         try:
+            # Clear forecasts
             for f in self._forecasts:
                 for art in f.get("artists", []):
                     try:
-                        art.remove()
+                        # PyQtGraph: use removeItem instead of remove()
+                        if hasattr(art, 'scene') and art.scene():
+                            self.ax.removeItem(art)
+                        else:
+                            art.remove()  # Fallback for matplotlib-style artists
                     except Exception:
                         pass
             self._forecasts = []
+
+            # Clear drawings (TODO: implement drawing service)
+            # When drawing tools are implemented, clear them here
+            if hasattr(self, '_drawings'):
+                for drawing in getattr(self, '_drawings', []):
+                    try:
+                        if hasattr(drawing, 'scene') and drawing.scene():
+                            self.ax.removeItem(drawing)
+                    except Exception:
+                        pass
+                self._drawings = []
+
+            # Clear draggable legend
+            if hasattr(self, '_forecast_legend') and self._forecast_legend:
+                self._forecast_legend.clear_all()
+
             # reset legenda/registro modelli
             try:
                 self._legend_once = set()
@@ -532,7 +693,12 @@ class ForecastService(ChartServiceBase):
                         pass
             except Exception:
                 pass
-            self.canvas.draw()
+            # PyQtGraph updates automatically, only call draw for matplotlib
+            try:
+                if hasattr(self.canvas, 'draw'):
+                    self.canvas.draw()
+            except Exception:
+                pass
         except Exception as e:
             logger.exception(f"Failed to clear forecasts: {e}")
 
@@ -558,7 +724,7 @@ class ForecastService(ChartServiceBase):
         try:
             # Use saved settings to build payloads; emit two requests: basic and advanced
             from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-            settings = PredictionSettingsDialog.get_settings() or {}
+            settings = PredictionSettingsDialog.get_settings_from_file() or {}
             # Basic
             payload_basic = {"symbol": self.symbol, "timeframe": self.timeframe, **settings}
             self.forecastRequested.emit(payload_basic)

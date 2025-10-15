@@ -1,0 +1,233 @@
+{
+  "report_timestamp": "2025-09-29T16:04:25.883456",
+  "monitoring_duration": "0:00:04.359277",
+  "finplot_status": "operational",
+  "overall_health": "excellent",
+  "metrics_summary": {
+    "avg_render_time": 0.02240643501281738,
+    "max_render_time": 0.03901338577270508,
+    "avg_memory_usage": 1.2125,
+    "max_memory_usage": 3.18359375,
+    "success_rate": 100.0
+  },
+  "recommendations": [
+    "\u2713 Rendering performance exceeds targets",
+    "\u2713 Memory usage within targets",
+    "\u2713 CPU usage within targets",
+    "\u2713 No errors detected"
+  ],
+  "benchmarks": {
+    "target_render_time": 0.5,
+    "target_memory_mb": 50,
+    "target_cpu_percent": 30,
+    "target_success_rate": 99.0
+  },
+  "detailed_metrics": {
+    "performance": {
+      "test_1000": {
+        "timestamp": "2025-09-29T16:04:25.796464",
+        "data_size": 1000,
+        "render_time_seconds": 0.04400777816772461,
+        "memory_used_mb": 0.26171875,
+        "candles_per_second": 22723.255788755134,
+        "success": true,
+        "target_render_met": true,
+        "target_memory_met": true
+      },
+      "test_100": {
+        "timestamp": "2025-09-29T16:04:22.805705",
+        "data_size": 100,
+        "render_time_seconds": 0.014008283615112305,
+        "memory_used_mb": 0.45703125,
+        "candles_per_second": 7138.633307803591,
+        "success": true,
+        "target_render_met": true,
+        "target_memory_met": true
+      },
+      "test_500": {
+        "timestamp": "2025-09-29T16:04:25.748456",
+        "data_size": 500,
+        "render_time_seconds": 0.23799991607666016,
+        "memory_used_mb": 0.2890625,
+        "candles_per_second": 2100.841076931091,
+        "success": true,
+        "target_render_met": true,
+        "target_memory_met": true
+      },
+      "test_5000": {
+        "timestamp": "2025-09-29T16:04:25.878455",
+        "data_size": 5000,
+        "render_time_seconds": 0.06499981880187988,
+        "memory_used_mb": 0.3125,
+        "candles_per_second": 76923.2913593198,
+        "success": true,
+        "target_render_met": true,
+        "target_memory_met": true
+      },
+      "test_10000": {
+        "timestamp": "2025-09-29T16:04:24.926176",
+        "data_size": 10000,
+        "render_time_seconds": 0.03901338577270508,
+        "memory_used_mb": 3.18359375,
+        "candles_per_second": 256322.28021071415,
+        "success": true,
+        "target_render_met": true,
+        "target_memory_met": true
+      },
+      "stress_test": {
+        "timestamp": "2025-09-29T16:04:25.459375",
+        "results": {
+          "size_100": {
+            "timestamp": "2025-09-29T16:04:22.805705",
+            "data_size": 100,
+            "render_time_seconds": 0.014008283615112305,
+            "memory_used_mb": 0.45703125,
+            "candles_per_second": 7138.633307803591,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "size_500": {
+            "timestamp": "2025-09-29T16:04:23.322578",
+            "data_size": 500,
+            "render_time_seconds": 0.015002250671386719,
+            "memory_used_mb": 0.234375,
+            "candles_per_second": 33328.33259169792,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "size_1000": {
+            "timestamp": "2025-09-29T16:04:23.838446",
+            "data_size": 1000,
+            "render_time_seconds": 0.014008045196533203,
+            "memory_used_mb": 0.734375,
+            "candles_per_second": 71387.54808183272,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "size_5000": {
+            "timestamp": "2025-09-29T16:04:24.373637",
+            "data_size": 5000,
+            "render_time_seconds": 0.03000020980834961,
+            "memory_used_mb": 1.453125,
+            "candles_per_second": 166665.5010728761,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "size_10000": {
+            "timestamp": "2025-09-29T16:04:24.926176",
+            "data_size": 10000,
+            "render_time_seconds": 0.03901338577270508,
+            "memory_used_mb": 3.18359375,
+            "candles_per_second": 256322.28021071415,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          }
+        }
+      },
+      "test_200": {
+        "timestamp": "2025-09-29T16:04:25.507466",
+        "data_size": 200,
+        "render_time_seconds": 0.042999267578125,
+        "memory_used_mb": 0.359375,
+        "candles_per_second": 4651.242015613911,
+        "success": true,
+        "target_render_met": true,
+        "target_memory_met": true
+      }
+    },
+    "usage": {
+      "scenarios": {
+        "Quick Analysis": {
+          "scenario": {
+            "name": "Quick Analysis",
+            "candles": 200,
+            "indicators": 2
+          },
+          "performance": {
+            "timestamp": "2025-09-29T16:04:25.507466",
+            "data_size": 200,
+            "render_time_seconds": 0.042999267578125,
+            "memory_used_mb": 0.359375,
+            "candles_per_second": 4651.242015613911,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "timestamp": "2025-09-29T16:04:25.507466"
+        },
+        "Daily Review": {
+          "scenario": {
+            "name": "Daily Review",
+            "candles": 500,
+            "indicators": 5
+          },
+          "performance": {
+            "timestamp": "2025-09-29T16:04:25.748456",
+            "data_size": 500,
+            "render_time_seconds": 0.23799991607666016,
+            "memory_used_mb": 0.2890625,
+            "candles_per_second": 2100.841076931091,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "timestamp": "2025-09-29T16:04:25.748456"
+        },
+        "Deep Analysis": {
+          "scenario": {
+            "name": "Deep Analysis",
+            "candles": 1000,
+            "indicators": 8
+          },
+          "performance": {
+            "timestamp": "2025-09-29T16:04:25.796464",
+            "data_size": 1000,
+            "render_time_seconds": 0.04400777816772461,
+            "memory_used_mb": 0.26171875,
+            "candles_per_second": 22723.255788755134,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "timestamp": "2025-09-29T16:04:25.796464"
+        },
+        "Historical Backtest": {
+          "scenario": {
+            "name": "Historical Backtest",
+            "candles": 5000,
+            "indicators": 10
+          },
+          "performance": {
+            "timestamp": "2025-09-29T16:04:25.878455",
+            "data_size": 5000,
+            "render_time_seconds": 0.06499981880187988,
+            "memory_used_mb": 0.3125,
+            "candles_per_second": 76923.2913593198,
+            "success": true,
+            "target_render_met": true,
+            "target_memory_met": true
+          },
+          "timestamp": "2025-09-29T16:04:25.878455"
+        }
+      }
+    },
+    "system": {
+      "current": {
+        "timestamp": "2025-09-29T16:04:22.524695",
+        "cpu_percent": 9.3,
+        "memory_percent": 67.2,
+        "memory_available_gb": 20.87865447998047,
+        "disk_percent": 85.5,
+        "process_memory_mb": 73.81640625,
+        "process_cpu_percent": 0.0,
+        "cpu_target_met": true
+      }
+    },
+    "errors": []
+  }
+}

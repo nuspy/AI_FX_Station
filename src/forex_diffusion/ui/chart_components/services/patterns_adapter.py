@@ -107,7 +107,20 @@ def _infer_name(e: Any) -> str:
     n = getattr(e, "name", None) or getattr(e, "pattern_key", None) or getattr(e, "key", None) or e.__class__.__name__
     return str(n)
 
-def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 50) -> List[Any]:
+def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 50, dom_service=None, symbol: str = None) -> List[Any]:
+    """
+    Enrich pattern events with timestamps, targets, and optional DOM confirmation.
+
+    Args:
+        df: OHLC dataframe
+        events: List of pattern events
+        default_lookback: Default lookback bars for patterns without start_ts
+        dom_service: Optional DOM aggregator service for confidence adjustment
+        symbol: Trading symbol for DOM lookup
+
+    Returns:
+        List of enriched events with adjusted confidence scores
+    """
     out: List[Any] = []
     for e in events:
         try:
@@ -184,6 +197,61 @@ def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 5
                     setattr(e, "target_price", float(tgt))
             except Exception:
                 pass
+
+            # Calculate failure_price (stop loss / invalidation point) if not set
+            fail = getattr(e, "failure_price", None)
+            # Check if failure_price is actually a price (not a number of bars like 40.0)
+            # If it's close to the confirm_price, it's a real price; otherwise it's likely bars
+            if fail is not None:
+                try:
+                    fail_val = float(fail)
+                    # Check if it looks like a price value (within reasonable range of confirm_price)
+                    # If it's less than 1000 and px > 1000 (pip format), or if it's very far from px, it's probably not a price
+                    if abs(fail_val - float(px)) > (float(px) * 10):  # More than 10x away = not a price
+                        fail = None  # Reset and recalculate
+                except Exception:
+                    fail = None
+
+            if fail is None:
+                # Calculate stop loss based on direction and amplitude
+                amp = _amplitude_guess(df, e)
+                if amp is not None:
+                    d = str(direction).lower()
+                    # Stop loss is opposite direction from target
+                    # For bull patterns: stop below entry
+                    # For bear patterns: stop above entry
+                    # Use 0.5 * amplitude as stop distance (risk/reward = 1:2)
+                    stop_distance = 0.5 * float(amp)
+                    if d in ("down", "bear", "bearish", "short", "sell"):
+                        fail = float(px) + stop_distance  # Stop above for bear patterns
+                    else:
+                        fail = float(px) - stop_distance  # Stop below for bull patterns
+            try:
+                if fail is not None:
+                    setattr(e, "failure_price", float(fail))
+            except Exception:
+                pass
+
+            # Apply DOM confirmation if available
+            if dom_service and symbol:
+                try:
+                    from .....patterns.dom_confirmation import DOMPatternConfirmation
+                    confirmer = DOMPatternConfirmation(dom_service)
+
+                    # Get original score
+                    original_score = getattr(e, 'score', 0.5)
+
+                    # Get DOM confirmation
+                    confirmation = confirmer.confirm_pattern(direction, symbol, original_score)
+
+                    # Update score and add confirmation metadata
+                    setattr(e, 'score', confirmation['adjusted_score'])
+                    setattr(e, 'dom_confirmation', confirmation)
+                    setattr(e, 'dom_aligned', confirmation['dom_aligned'])
+
+                except Exception as dom_err:
+                    # Silently continue if DOM confirmation fails
+                    pass
 
             out.append(e)
         except Exception:

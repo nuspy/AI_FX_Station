@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
+from .primitives import time_array
 from .primitives import atr
 
 class HeadAndShouldersDetector(DetectorBase):
@@ -16,7 +17,7 @@ class HeadAndShouldersDetector(DetectorBase):
         c = df["close"].astype(float).to_numpy()
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
+        ts = time_array(df)
         a = atr(df, 14).to_numpy()
         events: List[PatternEvent] = []
         n=len(df)
@@ -34,10 +35,27 @@ class HeadAndShouldersDetector(DetectorBase):
                 L, H, R = locs[i], locs[i+1], locs[i+2]
                 # Head higher than shoulders by tol
                 if seg[H] > seg[L]*(1+self.tol) and seg[H] > seg[R]*(1+self.tol) and abs(seg[L]-seg[R]) <= seg[H]*self.tol*2:
-                    # neckline between troughs
+                    # neckline between troughs - calculate neckline and failure price
                     confirm_idx = end
                     direction = "bear" if not self.inverse else "bull"
-                    events.append(PatternEvent(self.key,"chart",direction, ts[start+L], ts[confirm_idx], "confirmed", 0.55, float(a[end]), 3, self.window, None, self.window//3, {"peaks":(start+L,start+H,start+R)}))
+
+                    # Calculate neckline level (average of left and right shoulders)
+                    if not self.inverse:
+                        neckline = (l[start+L] + l[start+R]) / 2
+                        target_price = neckline - (seg[H] - neckline)  # Target below neckline
+                        failure_price = neckline * 1.005  # Failure 0.5% above neckline for bear pattern
+                    else:
+                        neckline = (h[start+L] + h[start+R]) / 2
+                        target_price = neckline + (neckline - seg[H])  # Target above neckline
+                        failure_price = neckline * 0.995  # Failure 0.5% below neckline for bull pattern
+
+                    events.append(PatternEvent(
+                        self.key, "chart", direction,
+                        ts[start+L], ts[confirm_idx], "confirmed",
+                        0.55, float(a[end]), 3, self.window,
+                        target_price, failure_price, self.window//3,
+                        {"peaks":(start+L,start+H,start+R), "neckline": neckline}
+                    ))
                     if len(events)>=self.max_events: return events
         return events
 

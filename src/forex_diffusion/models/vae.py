@@ -167,6 +167,9 @@ class VAE(nn.Module):
         # Initialize weights
         self._init_weights()
 
+        # Apply torch.compile for 20-40% speedup (PyTorch 2.0+)
+        self._compile_if_available()
+
     def _init_weights(self):
         def _init(m):
             if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d, nn.Linear)):
@@ -174,6 +177,43 @@ class VAE(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
         self.apply(_init)
+
+    def _compile_if_available(self):
+        """
+        Compile encoder/decoder with torch.compile for 20-40% speedup.
+
+        torch.compile (PyTorch 2.0+) optimizes model execution by:
+        - Fusing operations into single CUDA kernels
+        - Reducing Python overhead
+        - Optimizing memory access patterns
+
+        Automatically falls back to standard execution if:
+        - PyTorch version < 2.0
+        - CUDA not available
+        - Compilation fails
+        """
+        if not torch.cuda.is_available():
+            return
+
+        try:
+            # Check if torch.compile is available (PyTorch 2.0+)
+            if hasattr(torch, 'compile'):
+                # Compile encoder and decoder separately for better flexibility
+                # mode="reduce-overhead": balanced between compile time and runtime speedup
+                self.encoder = torch.compile(self.encoder, mode="reduce-overhead")
+                self.decoder = torch.compile(self.decoder, mode="reduce-overhead")
+
+                # Note: Don't compile fc_mu, fc_logvar, fc_dec (small linear layers, not worth it)
+
+                from loguru import logger
+                logger.info(
+                    "VAE encoder/decoder compiled with torch.compile "
+                    "(expected 20-40% speedup on GPU)"
+                )
+        except Exception as e:
+            # Compilation failed, continue with standard execution
+            from loguru import logger
+            logger.warning(f"torch.compile failed for VAE, using standard execution: {e}")
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """

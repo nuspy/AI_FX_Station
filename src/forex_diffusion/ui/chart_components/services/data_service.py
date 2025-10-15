@@ -3,19 +3,58 @@ from __future__ import annotations
 from typing import Optional
 import pandas as pd
 import numpy as np
+import time
 from loguru import logger
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtWidgets import QMessageBox, QTableWidgetItem, QListWidgetItem
 
 from .base import ChartServiceBase
 
 
 class DataService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
+    
+    def _load_1m_fallback_for_ticks(self, symbol: str):
+        """Load 1m candles when timeframe='tick' but no ticks available.
+        
+        This runs ONCE on startup if buffer is empty. It fills the chart with
+        historical 1m candles. Real-time ticks will append/update on top.
+        """
+        try:
+            logger.info(f"Loading 1m fallback data for tick chart: {symbol}")
+            db_service = getattr(self.view, 'db_service', None)
+            if not db_service:
+                logger.warning("No db_service available for 1m fallback")
+                return
+            
+            # Query last 3000 1m candles
+            query = f"""
+                SELECT ts_utc, open, high, low, close, volume
+                FROM candles
+                WHERE symbol = '{symbol}' AND timeframe = '1m'
+                ORDER BY ts_utc DESC
+                LIMIT 3000
+            """
+            
+            df = pd.read_sql(query, db_service.engine)
+            if not df.empty:
+                df = df.sort_values('ts_utc').reset_index(drop=True)
+                self._last_df = df
+                
+                # Mark as dirty to trigger redraw
+                self._rt_dirty = True
+                
+                logger.info(f"Loaded {len(df)} 1m candles as fallback for tick chart")
+            else:
+                logger.warning(f"No 1m candles found for {symbol}")
+                
+        except Exception as e:
+            logger.error(f"Failed to load 1m fallback: {e}", exc_info=True)
 
     def _handle_tick(self, payload: dict):
         """Thread-safe entrypoint: enqueue tick to GUI thread."""
         try:
+            logger.debug(f"📊 TICK RECEIVED: symbol={payload.get('symbol')}, price={payload.get('price', payload.get('bid'))}")
             self.tickArrived.emit(payload)
         except Exception as e:
             logger.exception("Failed to emit tick: {}", e)
@@ -23,48 +62,120 @@ class DataService(ChartServiceBase):
     def _on_tick_main(self, payload: dict):
         """GUI-thread handler: aggiorna Market Watch e buffer, delega il redraw al throttler."""
         try:
+            logger.debug(f"🔄 Processing tick in main thread: {payload.get('symbol')}")
             if not isinstance(payload, dict):
                 return
             sym = payload.get("symbol") or getattr(self, "symbol", None)
+            
+            # Fallback: if timeframe='tick' and no tick data in buffer, load 1m candles
+            current_tf = getattr(self, 'timeframe', '1m')
+            if current_tf == 'tick' and (self._last_df is None or self._last_df.empty):
+                self._load_1m_fallback_for_ticks(sym)
+
+            # Update active provider label (get from settings)
+            # DISABLED: causes widget deletion errors
+            # self._update_provider_label()
+
             # Market watch update
             try:
                 if sym:
                     bid_val = payload.get('bid')
                     ask_val = payload.get('ask', payload.get('offer'))
+                    logger.debug(f"📊 Updating market watch: {sym} bid={bid_val} ask={ask_val}")
                     self._update_market_quote(sym, bid_val, ask_val, payload.get('ts_utc'))
-            except Exception:
-                pass
+                    
+                    # Update order books widget if available (from parent ChartTab)
+                    if hasattr(self.view, 'order_books_widget') and self.view.order_books_widget:
+                        # Get actual DOM data from dom_service (passed to ChartTab)
+                        dom_service = getattr(self.view, 'dom_service', None)
+                        logger.debug(f"Order books update: has_widget={True}, has_dom_service={dom_service is not None}")
+                        if dom_service:
+                            dom_snapshot = dom_service.get_latest_dom_snapshot(sym)
+                            if dom_snapshot:
+                                bids = dom_snapshot.get('bids', [])
+                                asks = dom_snapshot.get('asks', [])
+                                logger.debug(f"Updating order books widget: {len(bids)} bids, {len(asks)} asks")
+                                self.view.order_books_widget.update_dom(bids, asks)
+                                
+                                # Update order flow bar
+                                if hasattr(self.view, 'order_flow_bar') and bids and asks:
+                                    total_bid = sum(b.get('size', 0) for b in bids)
+                                    total_ask = sum(a.get('size', 0) for a in asks)
+                                    if total_bid + total_ask > 0:
+                                        imbalance = int(((total_bid - total_ask) / (total_bid + total_ask)) * 100)
+                                        self.view.order_flow_bar.setValue(imbalance)
+                                        self.view.order_flow_label.setText(f"Bid: {total_bid:.2f} | Ask: {total_ask:.2f}")
+            except Exception as e:
+                logger.error(f"Failed to update market watch: {e}")
 
             # Update chart buffer only for current symbol (O(1) append)
-            if sym and sym == getattr(self, "symbol", None):
+            current_symbol = getattr(self, "symbol", None)
+            logger.debug(f"Chart update check: sym={sym}, current_symbol={current_symbol}, match={sym == current_symbol}")
+            if sym and sym == current_symbol:
                 try:
-                    ts = int(payload.get("ts_utc"))
-                    y = payload.get("close", payload.get("price"))
+                    # Get timestamp (try ts_utc, then timestamp, then now)
+                    ts = payload.get("ts_utc") or payload.get("timestamp") or int(time.time() * 1000)
+                    if not isinstance(ts, int):
+                        ts = int(ts)
+                    
+                    # Get price (try close, price, or mid of bid/ask)
+                    y = payload.get("close") or payload.get("price")
                     bid_val = payload.get('bid')
                     ask_val = payload.get('ask', payload.get('offer'))
+                    
+                    # Calculate mid price if y not available
+                    if y is None and bid_val is not None and ask_val is not None:
+                        y = (bid_val + ask_val) / 2
+                    # Get current timeframe for aggregation
+                    current_tf = getattr(self, 'timeframe', '1m')
+                    
+                    # Calculate candle interval in milliseconds
+                    tf_map = {
+                        '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+                        '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000
+                    }
+                    candle_interval_ms = tf_map.get(current_tf, 60_000)  # Default 1m
+                    
+                    # Normalize timestamp to candle boundary
+                    candle_ts = (ts // candle_interval_ms) * candle_interval_ms
+                    
                     # se buffer vuoto: crea
                     if self._last_df is None or self._last_df.empty:
-                        row = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
+                        # Create with OHLC columns for candle charts
+                        row = {"ts_utc": candle_ts, "open": y, "high": y, "low": y, "close": y, "volume": 0, "bid": bid_val, "ask": ask_val}
                         self._last_df = pd.DataFrame([row])
                     else:
-                        last_ts = int(self._last_df["ts_utc"].iloc[-1])
-                        if ts > last_ts:
-                            # append
-                            self._last_df.loc[len(self._last_df)] = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
+                        last_candle_ts = int(self._last_df["ts_utc"].iloc[-1])
+                        
+                        if candle_ts > last_candle_ts:
+                            # New candle - append new row
+                            new_row = {"ts_utc": candle_ts, "open": y, "high": y, "low": y, "close": y, "volume": 0}
+                            if bid_val is not None:
+                                new_row["bid"] = bid_val
+                            if ask_val is not None:
+                                new_row["ask"] = ask_val
+                            self._last_df.loc[len(self._last_df)] = new_row
                             # trim buffer
                             if len(self._last_df) > 10000:
                                 self._last_df = self._last_df.iloc[-10000:].reset_index(drop=True)
-                        elif ts == last_ts:
-                            # update last row
-                            col = "close" if "close" in self._last_df.columns else "price"
-                            self._last_df.at[len(self._last_df)-1, col] = y
+                        else:
+                            # Same candle - update OHLC
+                            idx = len(self._last_df) - 1
+                            self._last_df.at[idx, "high"] = max(self._last_df.at[idx, "high"], y)
+                            self._last_df.at[idx, "low"] = min(self._last_df.at[idx, "low"], y)
+                            self._last_df.at[idx, "close"] = y
                             if bid_val is not None:
                                 self._last_df.at[len(self._last_df)-1, 'bid'] = bid_val
                             if ask_val is not None:
                                 self._last_df.at[len(self._last_df)-1, 'ask'] = ask_val
                         # se ts < last_ts, ignora (fuori ordine)
-                except Exception:
-                    pass
+                    
+                    # mark dirty for throttled redraw
+                    self._rt_dirty = True
+                    logger.debug(f"✓ Chart marked dirty for {sym}: price={y}, will redraw on next rt_flush")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to update chart buffer: {e}")
 
                 # update bid/ask label
                 try:
@@ -75,9 +186,7 @@ class DataService(ChartServiceBase):
                         self.bidask_label.setText(f"Bid: {payload.get('bid')}    Ask: {payload.get('ask')}")
                     except Exception:
                         pass
-
-                # mark dirty for throttled redraw
-                self._rt_dirty = True
+                        
         except Exception as e:
             logger.exception("Failed to handle tick on GUI: {}", e)
 
@@ -87,15 +196,36 @@ class DataService(ChartServiceBase):
             if not getattr(self, "_rt_dirty", False):
                 return
             self._rt_dirty = False
+            logger.debug("🔄 RT flush triggered, updating chart...")
+            
             # preserve current view
             try:
-                prev_xlim = self.ax.get_xlim()
-                prev_ylim = self.ax.get_ylim()
+                # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
+                if hasattr(self.ax, 'viewRange'):
+                    view_range = self.ax.viewRange()
+                    prev_xlim = view_range[0]
+                    prev_ylim = view_range[1]
+                else:
+                    prev_xlim = self.ax.get_xlim()
+                    prev_ylim = self.ax.get_ylim()
             except Exception:
                 prev_xlim = prev_ylim = None
             # redraw base chart (quantiles overlay mantenuti da _forecasts)
             if self._last_df is not None and not self._last_df.empty:
+                logger.debug(f"📊 Calling update_plot with {len(self._last_df)} rows")
+                logger.debug(f"   Columns: {list(self._last_df.columns)}")
+                logger.debug(f"   Last row: {self._last_df.iloc[-1].to_dict() if len(self._last_df) > 0 else 'empty'}")
+                
                 self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
+            else:
+                logger.warning(f"⚠️ Cannot update plot: _last_df is {'None' if self._last_df is None else 'empty'}")
+                # Trigger follow mode if enabled and timeout expired
+                try:
+                    if hasattr(self, '_follow_center_if_needed'):
+                        self._follow_center_if_needed()
+                except Exception:
+                    pass
+                    
         except Exception as e:
             logger.exception("Realtime flush failed: {}", e)
 
@@ -126,17 +256,20 @@ class DataService(ChartServiceBase):
 
     def _reload_view_window(self):
         """Reload only data covering [view_left .. view_right] plus one span of history."""
+        # TODO: Reimplement for PyQtGraph without matplotlib dependencies
+        # For now, disable dynamic reloading
+        return
         try:
             # get current view in data coordinates
-            xlim = self.ax.get_xlim()
+            if hasattr(self.ax, 'viewRange'):
+                # PyQtGraph
+                xlim = self.ax.viewRange()[0]
+            else:
+                # matplotlib (fallback)
+                xlim = self.ax.get_xlim()
+
             if not xlim or xlim[0] >= xlim[1]:
                 return
-            # matplotlib floats on X may be compressed (weekend removed) -> expand to real time
-            import matplotlib.dates as mdates
-            left_num = float(self._expand_compressed_x(float(xlim[0])))
-            right_num = float(self._expand_compressed_x(float(xlim[1])))
-            left_dt = mdates.num2date(left_num)
-            right_dt = mdates.num2date(right_num)
             # ensure UTC ms
             from datetime import timezone
             if left_dt.tzinfo is None:
@@ -166,8 +299,29 @@ class DataService(ChartServiceBase):
                 if start_ms >= c0 and end_ms <= c1:
                     return  # nulla da fare
 
-            # carica da DB solo la finestra necessaria
-            df = self._load_candles_from_db(sym, tf_req, limit=50000, start_ms=start_ms, end_ms=end_ms)
+            # OPTIMIZED: Load only viewport + 2x buffer on each side (dynamic loading)
+            # This prevents loading 50k candles when only ~500 are needed
+            # Buffer ensures smooth panning without reloading
+            viewport_size_ms = end_ms - start_ms
+            buffer_ms = viewport_size_ms * 2  # 2x buffer on each side
+            
+            buffered_start = max(0, start_ms - buffer_ms)
+            buffered_end = end_ms + buffer_ms
+            
+            # Calculate reasonable limit based on timeframe
+            # Viewport + 2x buffer before + 2x buffer after = 5x viewport
+            tf_to_ms = {
+                "1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+                "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000, "1w": 604_800_000,
+            }
+            candle_duration = tf_to_ms.get(tf_req, 60_000)
+            estimated_candles = int(viewport_size_ms / candle_duration) * 5
+            dynamic_limit = max(500, min(10000, int(estimated_candles)))
+            
+            logger.debug(f"Dynamic loading: viewport={start_ms}-{end_ms}, buffered={buffered_start}-{buffered_end}, limit={dynamic_limit}")
+            
+            # carica da DB solo la finestra necessaria con buffer
+            df = self._load_candles_from_db(sym, tf_req, limit=dynamic_limit, start_ms=buffered_start, end_ms=buffered_end)
             if df is None or df.empty:
                 return
 
@@ -228,25 +382,17 @@ class DataService(ChartServiceBase):
             if not sym or start_ms is None or end_ms is None or start_ms >= end_ms:
                 return []
             # load actual 1m candles in range
-            df1 = self._load_candles_from_db(sym, "1m", limit=500000, start_ms=int(start_ms), end_ms=int(end_ms))
+            df1 = self._load_candles_from_db(sym, "1m", limit=10000, start_ms=int(start_ms), end_ms=int(end_ms))
             actual = np.array([], dtype=np.int64)
             if df1 is not None and not df1.empty and "ts_utc" in df1.columns:
                 actual = df1["ts_utc"].astype("int64").dropna().values
-            # expected timestamps for each non-weekend segment
-            from forex_diffusion.utils.time_utils import split_range_avoid_weekend
+            # expected timestamps for full range (no weekend split - provider data already excludes weekends)
             import pandas as _pd
             sdt = _pd.to_datetime(int(start_ms), unit="ms", utc=True)
             edt = _pd.to_datetime(int(end_ms), unit="ms", utc=True)
-            segs = split_range_avoid_weekend(sdt.to_pydatetime(), edt.to_pydatetime())
-            expected_list: list[np.ndarray] = []
-            for (sd, ed) in segs:
-                s = _pd.to_datetime(sd, utc=True)
-                e = _pd.to_datetime(ed, utc=True)
-                # 1-min grid; include end boundary
-                idx = _pd.date_range(start=s, end=e, freq="1min", tz="UTC")
-                if len(idx):
-                    expected_list.append((idx.astype("int64") // 10**6).to_numpy(dtype=np.int64))
-            expected = np.concatenate(expected_list) if expected_list else np.array([], dtype=np.int64)
+            # 1-min grid; include end boundary
+            idx = _pd.date_range(start=sdt, end=edt, freq="1min", tz="UTC")
+            expected = (idx.astype("int64") // 10**6).to_numpy(dtype=np.int64) if len(idx) else np.array([], dtype=np.int64)
             if expected.size == 0:
                 return []
             # missing := expected \ actual
@@ -463,7 +609,10 @@ class DataService(ChartServiceBase):
         except Exception:
             start_ms_view = None
         try:
-            df = self._load_candles_from_db(self.symbol, self.timeframe, limit=3000, start_ms=start_ms_view)
+            # Load reasonable amount of candles on startup
+            limit_candles = 3000
+
+            df = self._load_candles_from_db(self.symbol, self.timeframe, limit=limit_candles, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
                 # backfill-on-open: fill data holes across the visible history (skip weekend closures)
@@ -480,17 +629,94 @@ class DataService(ChartServiceBase):
         """Handle symbol change from combo: update context and reload candles from DB."""
         try:
             if not new_symbol:
+                logger.warning("Symbol changed to empty string, ignoring")
                 return
+
+            logger.info(f"Symbol changed from {getattr(self, 'symbol', None)} to {new_symbol}")
             self.symbol = new_symbol
+
+            # Update settings
+            from ...utils.user_settings import set_setting
+            set_setting('chart.symbol', new_symbol)
+
             # reset cache so next reload uses the new context
             self._current_cache_tf = None
             self._current_cache_range = None
-            # reset cache so next reload uses the new context
-            self._current_cache_tf = None
-            self._current_cache_range = None
-            # reset cache so next reload uses the new context
-            self._current_cache_tf = None
-            self._current_cache_range = None
+
+            # reload last candles for this symbol/timeframe (respect view range)
+            from datetime import datetime, timezone, timedelta
+            try:
+                yrs = int(self.years_combo.currentText() or "0")
+                mos = int(self.months_combo.currentText() or "0")
+                days = yrs * 365 + mos * 30
+                start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
+                logger.info(f"Loading candles for {new_symbol}: years={yrs}, months={mos}, days={days}, start_ms_view={start_ms_view}")
+            except Exception as e:
+                logger.warning(f"Failed to calculate date range: {e}")
+                start_ms_view = None
+
+            # Try to load candles from DB
+            # If no date range specified, load ALL available data
+            limit_candles = 50000 if start_ms_view is not None else 500000
+            current_timeframe = getattr(self, "timeframe", "1m")
+            logger.info(f"Loading {limit_candles} candles for {new_symbol} {current_timeframe}")
+            df = self._load_candles_from_db(new_symbol, current_timeframe, limit=limit_candles, start_ms=start_ms_view)
+
+            # If no data found, trigger auto-download
+            if df is None or df.empty:
+                logger.warning(f"No candles found for {new_symbol} {current_timeframe}, triggering auto-download...")
+                self._trigger_auto_download(new_symbol)
+                # Try loading again after download
+                df = self._load_candles_from_db(new_symbol, current_timeframe, limit=limit_candles, start_ms=start_ms_view)
+
+            if df is not None and not df.empty:
+                logger.info(f"Loaded {len(df)} candles for {new_symbol}, updating plot...")
+                self.update_plot(df)
+                logger.info(f"Plot updated successfully for {new_symbol}")
+                try:
+                    self._backfill_all_missing_1m()
+                except Exception:
+                    pass
+            else:
+                logger.error(f"No candles available for {new_symbol} {current_timeframe} after auto-download attempt")
+
+            try:
+                self._backfill_on_open(df)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.exception("Failed to switch symbol: {}", e)
+
+    def _trigger_auto_download(self, symbol: str):
+        """Trigger automatic download of candles when no data is available."""
+        try:
+            logger.info(f"Auto-downloading candles for {symbol}...")
+            from datetime import datetime, timezone, timedelta
+
+            # Download last 30 days of 1m candles
+            end_date = datetime.now(timezone.utc)
+            start_date = end_date - timedelta(days=30)
+
+            # Use existing download mechanism
+            if hasattr(self, 'data_manager') and self.data_manager:
+                self.data_manager.download_candles(
+                    symbol=symbol,
+                    timeframe='1m',
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                logger.info(f"Auto-download completed for {symbol}")
+            else:
+                logger.warning("Data manager not available for auto-download")
+        except Exception as e:
+            logger.error(f"Auto-download failed for {symbol}: {e}")
+
+    def _on_timeframe_changed(self, new_timeframe: str):
+        """Handle timeframe change: reload candles from DB with new timeframe."""
+        try:
+            if not new_timeframe:
+                return
+            self.timeframe = new_timeframe
             # reset cache so next reload uses the new context
             self._current_cache_tf = None
             self._current_cache_range = None
@@ -503,23 +729,15 @@ class DataService(ChartServiceBase):
                 start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
             except Exception:
                 start_ms_view = None
-            df = self._load_candles_from_db(new_symbol, getattr(self, "timeframe", "1m"), limit=3000, start_ms=start_ms_view)
+            df = self._load_candles_from_db(getattr(self, "symbol", "EURUSD"), new_timeframe, limit=50000, start_ms=start_ms_view)
             if df is not None and not df.empty:
                 self.update_plot(df)
                 try:
-                    self._backfill_all_missing_1m()
+                    self._backfill_on_open(df)
                 except Exception:
                     pass
-            try:
-                self._backfill_on_open(df)
-            except Exception:
-                pass
-            try:
-                self._backfill_on_open(df)
-            except Exception:
-                    pass
         except Exception as e:
-            logger.exception("Failed to switch symbol: {}", e)
+            logger.exception("Failed to switch timeframe: {}", e)
 
     # --- Backfill-on-open helpers ---
     def _period_includes_weekend(self, start_ms: int, end_ms: int) -> bool:
@@ -651,11 +869,11 @@ class DataService(ChartServiceBase):
             finished = Signal(bool)
 
         class BackfillJob(QRunnable):
-            def __init__(self, svc, symbol, timeframe, start_override, signals):
+            def __init__(self, svc, symbol, timeframes, start_override, signals):
                 super().__init__()
                 self.svc = svc
                 self.symbol = symbol
-                self.timeframe = timeframe
+                self.timeframes = timeframes  # Now accepts list of all timeframes
                 self.start_override = start_override
                 self.signals = signals
 
@@ -668,12 +886,18 @@ class DataService(ChartServiceBase):
                         self.svc.rest_enabled = True
                     except Exception:
                         pass
-                    def _cb(pct: int):
-                        try:
-                            self.signals.progress.emit(int(pct))
-                        except Exception:
-                            pass
-                    self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
+
+                    # Backfill ALL timeframes, not just the displayed one
+                    total_tfs = len(self.timeframes)
+                    for i, tf in enumerate(self.timeframes):
+                        def _cb(pct: int):
+                            try:
+                                # Calculate overall progress across all timeframes
+                                overall_pct = int((i * 100 + pct) / total_tfs)
+                                self.signals.progress.emit(overall_pct)
+                            except Exception:
+                                pass
+                        self.svc.backfill_symbol_timeframe(self.symbol, tf, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
                 except Exception as e:
                     ok = False
                 finally:
@@ -690,6 +914,7 @@ class DataService(ChartServiceBase):
         self.setDisabled(True)
         self.backfill_progress.setRange(0, 100)
         self.backfill_progress.setValue(0)
+        self.backfill_progress.setVisible(True)  # Show progress bar when starting
 
         self._bf_signals = BackfillSignals(self.view)
         self._bf_signals.progress.connect(self.backfill_progress.setValue)
@@ -709,15 +934,18 @@ class DataService(ChartServiceBase):
                 if df is not None and not df.empty:
                     self.update_plot(df)
                 if ok:
-                    QMessageBox.information(self.view, "Backfill", f"Backfill completato per {sym} {tf}.")
+                    QMessageBox.information(self.view, "Backfill", f"Backfill completato per {sym}.")
                 else:
                     QMessageBox.warning(self.view, "Backfill", "Backfill fallito (vedi log).")
             finally:
                 self.setDisabled(False)
                 self.backfill_progress.setValue(100)
+                self.backfill_progress.setVisible(False)  # Hide progress bar when done
 
         self._bf_signals.finished.connect(_on_done)
-        job = BackfillJob(ms, sym, tf, start_override, self._bf_signals)
+        # Backfill ALL timeframes, not just the currently displayed one
+        all_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+        job = BackfillJob(ms, sym, all_timeframes, start_override, self._bf_signals)
         QThreadPool.globalInstance().start(job)
 
     def _load_candles_from_db(self, symbol: str, timeframe: str, limit: int = 5000, start_ms: Optional[int] = None, end_ms: Optional[int] = None):
@@ -729,7 +957,10 @@ class DataService(ChartServiceBase):
             controller = getattr(self._main_window, "controller", None)
             eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
             if eng is None:
+                logger.warning(f"Cannot load candles: engine is None (controller={controller})")
                 return pd.DataFrame()
+
+            logger.debug(f"Loading candles from DB: symbol={symbol}, tf={timeframe}, limit={limit}, start_ms={start_ms}, end_ms={end_ms}")
             from sqlalchemy import MetaData, select, and_
             meta = MetaData()
             if str(timeframe).lower() == "tick":
@@ -805,7 +1036,10 @@ class DataService(ChartServiceBase):
                         .where(cond).order_by(tbl.c.ts_utc.desc()).limit(limit)
                     rows = conn.execute(stmt).fetchall()
                     if not rows:
+                        logger.warning(f"No candles found in DB for {symbol} {timeframe} (start_ms={start_ms}, end_ms={end_ms}, limit={limit})")
                         return pd.DataFrame()
+
+                    logger.debug(f"Loaded {len(rows)} candles from DB for {symbol} {timeframe}")
                     df = pd.DataFrame(rows, columns=["ts_utc","open","high","low","close","volume"])
                     # typing e ordinamento ASC
                     try:
@@ -832,11 +1066,142 @@ class DataService(ChartServiceBase):
             logger.exception("Load candles failed: {}", e)
             return pd.DataFrame()
 
-    def _refresh_orders(self):
-        """Pull open orders from broker and refresh the table."""
+    def _update_market_quote(self, symbol: str, bid: float, ask: float, ts_ms: int):
+        """
+        Update market watch with bid/ask prices and spread color coding.
+
+        TASK 1: Market Watch Quote Updates
+        Implements spread tracking with color coding:
+        - Green: Spread widening (compared to 10-tick history)
+        - Red: Spread narrowing
+        - Black: Stable (no significant change in 10+ ticks)
+        """
         try:
+            logger.debug(f"_update_market_quote called: {symbol}, bid={bid}, ask={ask}, has_widget={hasattr(self, 'market_watch')}")
+            if not hasattr(self, 'market_watch') or self.market_watch is None:
+                logger.warning(f"⚠️ Market watch widget not available")
+                return
+
+            if bid is None or ask is None:
+                logger.warning(f"⚠️ Bid or ask is None for {symbol}")
+                return
+
+            # Calculate spread
+            spread = ask - bid
+            spread_pips = spread * 10000  # Assuming EUR/USD-like pair
+            
+            # Calculate mid price for price change detection
+            mid_price = (bid + ask) / 2
+
+            # Initialize price history and last change time if needed
+            if not hasattr(self, '_price_history'):
+                self._price_history = {}
+            if not hasattr(self, '_last_price_change'):
+                self._last_price_change = {}
+            if not hasattr(self, '_last_color'):
+                self._last_color = {}
+
+            # Get or create price history for this symbol
+            if symbol not in self._price_history:
+                self._price_history[symbol] = mid_price
+                self._last_price_change[symbol] = time.time()
+                self._last_color[symbol] = "white"
+
+            last_price = self._price_history[symbol]
+            last_change_time = self._last_price_change[symbol]
+            current_time = time.time()
+
+            # Determine color based on price movement
+            price_color = self._last_color.get(symbol, "white")
+            
+            if mid_price > last_price:
+                # Price increased
+                price_color = "green"
+                self._last_price_change[symbol] = current_time
+                self._price_history[symbol] = mid_price
+                self._last_color[symbol] = "green"
+            elif mid_price < last_price:
+                # Price decreased
+                price_color = "red"
+                self._last_price_change[symbol] = current_time
+                self._price_history[symbol] = mid_price
+                self._last_color[symbol] = "red"
+            else:
+                # Price unchanged - check if >10 seconds since last change
+                if current_time - last_change_time > 10:
+                    price_color = "white"
+                    self._last_color[symbol] = "white"
+                # else: keep previous color
+
+            # Update market watch list widget
+            # Format: "SYMBOL | Bid: X.XXXXX | Ask: X.XXXXX | Spread: X.X pips"
+            display_text = f"{symbol} | Bid: {bid:.5f} | Ask: {ask:.5f} | Spread: {spread_pips:.1f}"
+
+            # Find existing item for this symbol or add new one
+            found = False
+            search_prefix = f"{symbol} |"
+            for i in range(self.market_watch.count()):
+                item = self.market_watch.item(i)
+                item_text = item.text() if item else ""
+                if item and item_text.startswith(search_prefix):
+                    item.setText(display_text)
+                    # Apply color based on price movement
+                    if price_color == "green":
+                        item.setForeground(Qt.green)
+                    elif price_color == "red":
+                        item.setForeground(Qt.red)
+                    else:
+                        item.setForeground(Qt.white)
+                    found = True
+                    break
+
+            if not found:
+                # Add new item
+                item = QListWidgetItem(display_text)
+                if price_color == "green":
+                    item.setForeground(Qt.green)
+                elif price_color == "red":
+                    item.setForeground(Qt.red)
+                else:
+                    item.setForeground(Qt.white)
+                self.market_watch.addItem(item)
+                # Widget auto-updates on addItem
+
+            # logger.debug(f"Market watch updated: {symbol} bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.1f} color={spread_color}")
+
+        except Exception as e:
+            logger.exception(f"Failed to update market quote for {symbol}: {e}")
+
+    def _refresh_orders(self):
+        """
+        Pull open orders from broker and refresh the table.
+
+        TASK 3: Orders Table Integration
+        Enhanced to draw order lines on chart as horizontal price levels.
+        """
+        try:
+            # Check if broker is available
+            if not hasattr(self, 'broker') or self.broker is None:
+                logger.debug("Broker not available for orders refresh")
+                return
+
             orders = self.broker.get_open_orders()
             self.orders_table.setRowCount(len(orders))
+
+            # Clear existing order lines
+            if not hasattr(self, '_order_lines'):
+                self._order_lines = []
+
+            # Remove old order lines from chart
+            for line in self._order_lines:
+                try:
+                    if hasattr(self, 'ax') and self.ax and hasattr(line, 'remove'):
+                        line.remove()
+                except Exception:
+                    pass
+            self._order_lines.clear()
+
+            # Populate table and draw order lines
             for r, o in enumerate(orders):
                 vals = [
                     str(o.get("id","")),
@@ -851,5 +1216,157 @@ class DataService(ChartServiceBase):
                 ]
                 for c, v in enumerate(vals):
                     self.orders_table.setItem(r, c, QTableWidgetItem(str(v)))
-        except Exception:
-            pass
+
+                # Draw order line on chart if symbol matches current chart symbol
+                try:
+                    order_symbol = o.get("symbol", "")
+                    order_price = o.get("price")
+                    order_side = o.get("side", "")
+
+                    if order_symbol == getattr(self, 'symbol', None) and order_price:
+                        self._draw_order_line(float(order_price), order_side, o.get("id", ""))
+                except Exception as e:
+                    logger.debug(f"Could not draw order line: {e}")
+
+            # PlutoTouch logger.debug(f"Refreshed {len(orders)} orders with chart overlays")
+
+        except Exception as e:
+            logger.debug(f"Orders refresh skipped: {e}")
+
+    def _draw_order_line(self, price: float, side: str, order_id: str):
+        """
+        Draw a horizontal line on the chart for an open order.
+
+        TASK 3: Orders Table Integration
+        """
+        try:
+            if not hasattr(self, 'ax') or self.ax is None:
+                return
+
+            # Determine color based on order side
+            color = 'blue' if side.upper() == 'BUY' else 'red'
+
+            # Try finplot/PyQtGraph approach first
+            try:
+                from pyqtgraph import InfiniteLine
+                line = InfiniteLine(pos=price, angle=0, pen={'color': color, 'style': 2}, movable=False)  # style 2 = dashed
+                line.setZValue(5)  # Above candles but below overlays
+                self.ax.addItem(line)
+                self._order_lines.append(line)
+                logger.debug(f"Drew order line at {price} ({side})")
+            except Exception:
+                # Fallback to matplotlib if finplot not available
+                try:
+                    line = self.ax.axhline(y=price, color=color, linestyle='--', linewidth=1, alpha=0.7)
+                    self._order_lines.append(line)
+                except Exception as e:
+                    logger.debug(f"Could not draw order line with matplotlib: {e}")
+
+        except Exception as e:
+            logger.exception(f"Failed to draw order line: {e}")
+
+    def _toggle_orders(self, visible: bool):
+        """
+        Toggle visibility of order lines on chart.
+
+        TASK 3: Orders Table Integration
+        """
+        try:
+            if not hasattr(self, '_order_lines'):
+                return
+
+            for line in self._order_lines:
+                try:
+                    if hasattr(line, 'setVisible'):
+                        line.setVisible(visible)
+                    elif hasattr(line, 'set_visible'):
+                        line.set_visible(visible)
+                except Exception:
+                    pass
+
+            logger.debug(f"Order lines visibility set to {visible}")
+
+        except Exception as e:
+            logger.exception(f"Failed to toggle order lines: {e}")
+
+    def _update_provider_label(self):
+        """Update the active provider label on the chart showing RT and historical providers."""
+        try:
+            if hasattr(self, 'provider_label') and self.provider_label is not None:
+                # Get settings
+                try:
+                    from forex_diffusion.utils.user_settings import get_setting
+                except ImportError:
+                    # Fallback to default values if import fails
+                    primary = "tiingo"
+                    use_ws = False
+                    show_label = True
+                else:
+                    # Get active provider from settings
+                    primary = get_setting("primary_data_provider", "tiingo")
+                    use_ws = get_setting("use_websocket_streaming", False)
+                    show_label = get_setting("show_provider_label", True)
+
+                # Check if label should be hidden
+                if not show_label:
+                    self.provider_label.setText("")
+                    return
+
+                # Verify if WebSocket is ACTUALLY active by checking connector
+                ws_actually_active = False
+                if hasattr(self, '_main_window') and self._main_window:
+                    # Check if Tiingo WebSocket connector exists and is running
+                    if hasattr(self._main_window, 'tiingo_ws_connector'):
+                        connector = self._main_window.tiingo_ws_connector
+                        if connector and hasattr(connector, '_thread'):
+                            if connector._thread and connector._thread.is_alive():
+                                ws_actually_active = True
+
+                # RT provider (WebSocket if ACTUALLY active, otherwise REST)
+                rt_provider = primary.upper()
+                rt_connection = "WS" if ws_actually_active else "REST"
+
+                # Historical provider (always REST)
+                historical_provider = primary.upper()
+                historical_connection = "REST"
+
+                # Check if main_window has active adapter info (more accurate)
+                if hasattr(self, '_main_window') and self._main_window:
+                    controller = getattr(self._main_window, "controller", None)
+                    if controller and hasattr(controller, 'active_adapter'):
+                        adapter = controller.active_adapter
+                        if adapter:
+                            # Get provider name from adapter
+                            adapter_name = getattr(adapter, 'name', primary).upper()
+
+                            # For RT connection, still check if WS is actually running
+                            # (adapter might support WS but not be using it)
+                            rt_provider = adapter_name
+                            # Keep the previously determined ws_actually_active value
+                            # Don't override it based on adapter alone
+
+                            historical_provider = adapter_name
+
+                # Build label text with RT and Historical on separate lines
+                label_text = f"RT data: {rt_provider} ({rt_connection})\nHistorical: {historical_provider} (REST)"
+
+                # Update text (check if widget still valid)
+                if hasattr(self, 'provider_label') and self.provider_label is not None:
+                    try:
+                        # Test if C++ object still exists
+                        _ = self.provider_label.toPlainText()
+                        self.provider_label.setText(label_text)
+                        
+                        # Update position to top-right corner
+                        if hasattr(self, 'main_plot') and self.main_plot is not None:
+                            view_range = self.main_plot.viewRange()
+                            if view_range and len(view_range) == 2:
+                                x_range, y_range = view_range
+                                # Position at top-right: max_x, max_y
+                                self.provider_label.setPos(x_range[1], y_range[1])
+                    except (RuntimeError, AttributeError):
+                        # Widget deleted, clear reference
+                        self.provider_label = None
+
+        except Exception as e:
+            logger.debug(f"Failed to update provider label: {e}")

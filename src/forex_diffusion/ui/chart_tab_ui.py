@@ -1,10 +1,10 @@
-# src/forex_diffusion/ui/chart_tab_ui.py
+"""Chart Tab UI - Modular Implementation Bridge"""
 from __future__ import annotations
 
-from typing import Optional, Dict, List
-import pandas as pd
-import time
+from .chart_tab import ChartTabUI as RefactoredChartTabUI
+from .chart_tab import DraggableOverlay
 
+<<<<<<< HEAD
 import numpy as np
 
 import matplotlib.dates as mdates
@@ -1450,3 +1450,8 @@ class ChartTabUI(QWidget):
         yaml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '..', '..', 'configs', 'patterns.yaml')
         dlg = PatternsConfigDialog(self, yaml_path=yaml_path)
         dlg.exec()
+=======
+ChartTabUI = RefactoredChartTabUI
+
+__all__ = ['ChartTabUI', 'DraggableOverlay']
+>>>>>>> origin/Debug-2025108

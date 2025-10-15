@@ -38,6 +38,10 @@ class DBService:
             Column("bid", Float, nullable=True),
             Column("ask", Float, nullable=True),
             Column("volume", Float, nullable=True),
+            # Multi-provider support columns (added for aggregator service)
+            Column("tick_volume", Integer, nullable=True),  # Number of ticks/trades in the period
+            Column("real_volume", Float, nullable=True),    # Real traded volume (if available from provider)
+            Column("provider_source", String(32), nullable=True),  # Data provider identifier (e.g., 'tiingo', 'ctrader')
             Column("ts_created_ms", Integer, nullable=False),
             UniqueConstraint("symbol", "timeframe", "ts_utc", name="uq_market_data_ticks")
         )

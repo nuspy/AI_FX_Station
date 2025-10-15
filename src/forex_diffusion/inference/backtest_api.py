@@ -274,7 +274,7 @@ def apply_config(job_id: int, req: ApplyConfigRequest) -> Dict[str, Any]:
             "model_paths": [payload.get("model")] if payload.get("model") else [],
         }
         # persist by loading current and merging
-        current = PredictionSettingsDialog.get_settings()
+        current = PredictionSettingsDialog.get_settings_from_file()
         current.update(mapped)
         from pathlib import Path
         import json as _json

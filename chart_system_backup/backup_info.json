@@ -1,0 +1,9 @@
+{
+  "timestamp": "2025-09-29T16:01:25.674859",
+  "backed_up_files": [
+    "chart_system_backup\\plot_service_backup_20250929_160125.py",
+    "chart_system_backup\\chart_tab_ui_backup_20250929_160125.py",
+    "chart_system_backup\\chart_controller_backup_20250929_160125.py"
+  ],
+  "backup_location": "chart_system_backup/"
+}

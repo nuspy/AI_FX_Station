@@ -8,8 +8,6 @@ FastAPI inference service for MagicForex.
 """
 
 from __future__ import annotations
-
-import json
 import subprocess
 from dataclasses import dataclass
 import os
@@ -17,7 +15,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from loguru import logger
 from sqlalchemy import create_engine, select, Table, MetaData

@@ -1,0 +1,1841 @@
+================================================================================
+FOREXGPT - MISSING FEATURES IMPLEMENTATION GUIDE
+Operational Instructions for AI Agent Implementation
+================================================================================
+
+Document Version: 1.0
+Date: October 7, 2025
+Status: Ready for Implementation
+Format: Functional-Level Operational Guide
+
+================================================================================
+MANDATORY IMPLEMENTATION CONSTRAINTS
+================================================================================
+
+Before starting ANY implementation task, the following constraints MUST be
+respected throughout the entire implementation process:
+
+CONSTRAINT 1: DATABASE UPDATES
+All database schema changes MUST be managed through SQLAlchemy and Alembic
+migrations. Direct SQL execution for schema changes is prohibited. Every table,
+column, index, or constraint modification must have a corresponding migration
+script that can be applied and rolled back.
+
+CONSTRAINT 2: DEPENDENCY MANAGEMENT
+All new Python libraries and packages MUST be declared in the project's
+pyproject.toml file (or equivalent dependency manifest). Include version
+constraints where appropriate. No undeclared dependencies are permitted.
+
+CONSTRAINT 3: CODE CLEANUP
+No orphaned files, unused methods, dead code, or dangling imports may remain
+after implementation. Every created file must be imported and used. Every
+method must be called. Every import must be necessary. Perform cleanup passes
+to remove any scaffolding or test code.
+
+CONSTRAINT 4: WORKFLOW INTEGRATION
+Every new component must integrate with existing workflows. Data flows must
+connect to existing pipelines. Services must register with existing service
+managers. New functionality must hook into existing event systems. Nothing
+should exist in isolation.
+
+CONSTRAINT 5: GUI CONNECTION
+All new business logic, data sources, and parameters must be accessible through
+the GUI. If a parameter exists in configuration, it must have a corresponding
+UI control in the settings dialog. If data is calculated, there must be a way
+to view it. If a service exists, its status must be visible.
+
+CONSTRAINT 6: VERSION CONTROL DISCIPLINE
+After completing each task and subtask, perform a Git commit with a descriptive
+message. The commit message must contain a functional description of what was
+accomplished, why it matters, and how it integrates with existing code. Use
+conventional commit prefixes (feat, fix, refactor, integrate, ui, db, config).
+
+CONSTRAINT 7: NO TIME ESTIMATES
+Do not include time estimates, effort predictions, or schedule projections
+anywhere in the implementation or in commit messages. Focus purely on
+functionality and integration.
+
+================================================================================
+IMPLEMENTATION OVERVIEW
+================================================================================
+
+PURPOSE:
+Complete the Volume and Depth of Market (DOM) functionality in ForexGPT by
+implementing missing components, integrating existing analysis engines with
+the UI, and establishing proper data flows between providers, storage,
+processing, and visualization layers.
+
+SCOPE:
+This implementation covers four major areas:
+1. Database schema completion for DOM storage
+2. Real-time DOM data acquisition and processing
+3. Volume analysis integration (Volume Profile, VSA, Order Flow)
+4. User interface components for visualization and control
+
+CURRENT STATE:
+- Volume data acquisition: FUNCTIONAL
+- Volume storage: FUNCTIONAL
+- Volume Profile calculation: FUNCTIONAL but not integrated with UI
+- VSA analysis: FUNCTIONAL but not generating signals
+- Order Flow analysis: FUNCTIONAL but not connected to DOM
+- DOM acquisition: PLACEHOLDER only
+- DOM storage: NOT IMPLEMENTED
+- DOM visualization: NOT IMPLEMENTED
+
+TARGET STATE:
+- Complete end-to-end data flow from provider to visualization
+- All analysis engines generating actionable signals
+- UI components displaying real-time and historical analysis
+- User-configurable parameters exposed in settings
+- Proper service lifecycle management
+
+================================================================================
+PHASE 1: DATABASE FOUNDATION
+================================================================================
+
+PHASE 1 OBJECTIVE:
+Establish database schema and persistence layer for DOM data and analysis
+results. All subsequent phases depend on this foundation.
+
+--------------------------------------------------------------------------------
+TASK 1.1: Create market_depth Table Schema
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Design and implement a database table to store order book snapshots. Each row
+represents the complete bid/ask ladder at a specific moment for a symbol.
+
+REQUIREMENTS:
+- Table name: market_depth
+- Primary key: auto-incrementing integer ID
+- Symbol column: string, indexed for fast filtering
+- Timestamp column: integer milliseconds UTC, indexed for time-range queries
+- Bids column: structured data storing array of [price, volume] pairs
+- Asks column: structured data storing array of [price, volume] pairs
+- Mid price column: float, calculated weighted average
+- Spread column: float, difference between best bid and ask
+- Imbalance column: float, ratio of total bid volume to ask volume
+- Provider source column: string, identifies data origin
+- Created timestamp: integer milliseconds, insertion time
+- Unique constraint on (symbol, timestamp) to prevent duplicates
+
+STRUCTURED DATA STORAGE:
+The bids and asks columns must store arrays of price-volume pairs. Choose
+appropriate database column type:
+- JSON column if database supports native JSON
+- TEXT column with JSON serialization if native not available
+- Ensure proper indexing strategy for querying within structured data
+
+MIGRATION CREATION:
+- Use Alembic to generate migration script
+- Migration must include table creation with all columns
+- Migration must include index creation (symbol, timestamp, composite)
+- Migration must include unique constraint
+- Migration must be reversible (down migration drops table)
+
+INTEGRATION:
+- Add table definition to SQLAlchemy models
+- Ensure DBService recognizes new table
+- Update any existing database health checks to validate table existence
+
+COMMIT INSTRUCTION:
+Create commit with message:
+"db: Create market_depth table for order book snapshot storage
+
+Implemented complete schema for storing bid/ask ladder snapshots with
+calculated metrics (mid price, spread, imbalance). Table indexed on symbol
+and timestamp for efficient querying. Includes provider tracking and
+de-duplication via unique constraint. Migration reversible via Alembic."
+
+--------------------------------------------------------------------------------
+TASK 1.2: Create Volume Analysis Cache Tables (Optional Optimization)
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Create tables to cache pre-calculated volume profile metrics, reducing
+computational overhead for frequently accessed data.
+
+REQUIREMENTS:
+- Table name: volume_profile_cache
+- Columns: symbol, timeframe, window_start, window_end, poc_price, vah, val,
+  hvn_prices (JSON array), lvn_prices (JSON array), calculated_at
+- Indexes on (symbol, timeframe, window_start) for cache lookup
+- Unique constraint preventing duplicate cache entries
+
+CACHE INVALIDATION TRACKING:
+- Additional column: is_valid (boolean)
+- Logic to invalidate cache when new candles arrive in window
+- Automatic cleanup of stale cache entries older than configurable threshold
+
+MIGRATION:
+- Alembic migration for cache table creation
+- Include down migration for rollback
+
+INTEGRATION:
+- Connect to Volume Profile calculation engine
+- Implement cache lookup before calculation
+- Store calculation results in cache after computation
+- Query cache in visualization components before triggering calculation
+
+DECISION POINT:
+Evaluate whether caching is necessary based on performance testing. If
+calculation speed is acceptable without caching, this task may be deferred.
+
+COMMIT INSTRUCTION:
+"db: Add volume_profile_cache table for performance optimization
+
+Created cache table storing pre-calculated POC, VA, HVN, LVN values per
+symbol/timeframe/window. Includes invalidation flag and automatic expiry.
+Reduces redundant calculations for frequently viewed analysis."
+
+--------------------------------------------------------------------------------
+TASK 1.3: Extend Existing Tables for Signal Storage
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Verify and extend existing signals table to accommodate VSA and Order Flow
+signals with proper categorization and metadata.
+
+REQUIREMENTS:
+Check if signals table has:
+- Signal type column (for VSA, Order Flow, Pattern, etc.)
+- Signal subtype column (for specific VSA pattern like "accumulation")
+- Strength column (float 0-1)
+- Confidence column (float 0-1)
+- Direction column (bullish/bearish/neutral)
+- Metadata column (JSON for signal-specific details)
+- Entry/target/stop price columns
+- Symbol and timestamp columns
+- Timeframe column
+
+MIGRATION IF NEEDED:
+If columns missing, create Alembic migration to add them. Ensure backward
+compatibility with existing signal types.
+
+INTEGRATION:
+- Update signal generation code to use new columns
+- Ensure UI signal display can handle new signal types
+- Add filtering capability by signal type/subtype
+
+COMMIT INSTRUCTION:
+"db: Extend signals table for VSA and Order Flow signal types
+
+Added signal categorization columns (type, subtype, strength, confidence)
+and direction/price fields. Supports storing detailed metadata per signal
+type. Maintains compatibility with existing pattern-based signals."
+
+================================================================================
+PHASE 2: DATA ACQUISITION LAYER
+================================================================================
+
+PHASE 2 OBJECTIVE:
+Implement real-time DOM data streaming from providers and establish robust
+connection management with reconnection logic.
+
+--------------------------------------------------------------------------------
+TASK 2.1: Implement WebSocket DOM Subscription in cTrader Provider
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Transform the placeholder _get_market_depth_impl method in cTraderProvider
+into a fully functional DOM data receiver that subscribes to order book
+updates via WebSocket.
+
+CONNECTION REQUIREMENTS:
+- Establish WebSocket connection to cTrader protobuf endpoint
+- Implement authentication flow using existing credentials
+- Register message handlers for DOM-specific message types
+- Track connection state (connected, disconnected, reconnecting)
+
+SUBSCRIPTION LOGIC:
+- Accept list of symbols to subscribe
+- Send subscription request messages to provider
+- Track active subscriptions per symbol
+- Handle subscription confirmations and rejections
+- Implement unsubscribe logic for cleanup
+
+MESSAGE PARSING:
+- Identify DOM message types from provider protocol
+- Extract bid array (price, volume pairs) from message
+- Extract ask array (price, volume pairs) from message
+- Parse timestamp from message
+- Normalize price/volume values to standard units
+- Validate data completeness before processing
+
+DATA NORMALIZATION:
+- Convert provider-specific price format (e.g., multiplied integers) to floats
+- Convert provider-specific volume units to standard volume
+- Convert timestamp to UTC milliseconds
+- Create standardized internal format for DOM snapshot
+
+ERROR HANDLING:
+- Detect malformed messages and log without crashing
+- Handle partial data gracefully
+- Report errors to provider health monitoring
+- Increment error counter in provider health status
+
+RECONNECTION STRATEGY:
+- Detect connection loss via heartbeat timeout
+- Implement exponential backoff for reconnection attempts
+- Restore subscriptions automatically after reconnection
+- Notify downstream components of connection status changes
+
+INTEGRATION:
+- Route parsed DOM snapshots to DOM aggregator service queue
+- Emit DOMSnapshotUpdate event via event bus
+- Update provider health status with last message timestamp
+- Connect to existing provider lifecycle (start/stop on app lifecycle)
+
+COMMIT INSTRUCTION:
+"feat: Implement WebSocket DOM streaming in cTrader provider
+
+Completed DOM data subscription and real-time message handling. Parses
+bid/ask ladders from protobuf messages, normalizes to internal format,
+and routes to processing pipeline. Includes reconnection logic and health
+monitoring. Integrates with existing provider architecture."
+
+--------------------------------------------------------------------------------
+TASK 2.2: Implement DOM Streaming in Additional Providers (If Applicable)
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+If other providers (Tiingo, etc.) support order book data, implement similar
+DOM streaming functionality following the same pattern as cTrader.
+
+REQUIREMENTS:
+- Check provider capabilities for Level 2 market data
+- Implement provider-specific WebSocket connection if different protocol
+- Parse provider-specific DOM message formats
+- Normalize to same internal format as cTrader
+- Ensure consistent behavior across providers
+
+ABSTRACTION:
+- Use BaseProvider abstract method structure
+- Maintain provider-agnostic downstream processing
+- Document provider-specific quirks and limitations
+
+COMMIT INSTRUCTION:
+"feat: Add DOM streaming support to [Provider Name]
+
+Implemented order book subscription and parsing for [provider]. Normalizes
+DOM snapshots to standard internal format. Maintains consistency with
+cTrader implementation. Includes provider-specific error handling."
+
+--------------------------------------------------------------------------------
+TASK 2.3: Implement Historical DOM Data Retrieval (If Available)
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+If any provider offers historical order book snapshots via REST API, implement
+retrieval functionality for backfilling and analysis.
+
+REQUIREMENTS:
+- Define API endpoint and authentication
+- Implement request batching for large date ranges
+- Parse historical snapshot format
+- Store in market_depth table with historical flag
+- Handle rate limiting
+- Provide progress indication for large downloads
+
+INTEGRATION:
+- Add to data acquisition menu/commands
+- Connect to backfill workflow
+- Use same storage format as real-time snapshots
+
+DECISION POINT:
+Skip this task if no provider offers historical DOM data.
+
+COMMIT INSTRUCTION:
+"feat: Add historical DOM snapshot retrieval from [Provider]
+
+Implemented batched downloading of historical order book data. Stores
+snapshots in market_depth table for historical analysis. Respects rate
+limits and provides progress feedback. Extends existing backfill framework."
+
+================================================================================
+PHASE 3: PROCESSING AND AGGREGATION LAYER
+================================================================================
+
+PHASE 3 OBJECTIVE:
+Activate background services that process raw market data, calculate derived
+metrics, generate signals, and maintain analysis pipelines.
+
+--------------------------------------------------------------------------------
+TASK 3.1: Activate and Complete DOM Aggregation Service
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Transform DOMAggreg atorService from placeholder to fully operational background
+service that processes DOM snapshots, calculates metrics, and persists results.
+
+SERVICE LIFECYCLE:
+- Initialize service instance on application startup
+- Pass database engine reference to service
+- Configure symbols to monitor (from user settings or all available)
+- Configure processing interval (e.g., every 5 seconds)
+- Start background thread or async task
+- Register cleanup on application shutdown
+
+PROCESSING LOOP:
+- Continuously check for new DOM snapshots in queue or database
+- For each unprocessed snapshot, extract bids and asks arrays
+- Calculate mid price (simple average of best bid and ask)
+- Calculate spread (best ask - best bid)
+- Calculate bid depth (sum of all bid volumes)
+- Calculate ask depth (sum of all ask volumes)
+- Calculate imbalance ratio (bid depth / ask depth)
+- Optionally calculate weighted mid price (volume-weighted)
+
+PERSISTENCE:
+- Update same row in market_depth table with calculated metrics
+- Use database transaction to ensure atomicity
+- Handle concurrent writes if multiple instances running
+- Log successful processing with symbol and timestamp
+
+EVENT EMISSION:
+- After processing each snapshot, emit DOMSnapshotUpdate event
+- Include symbol, timestamp, and calculated metrics in event payload
+- Event subscribers (UI components) receive notification of new data
+
+ERROR HANDLING:
+- Catch exceptions during calculation without crashing loop
+- Log errors with context (symbol, timestamp, error details)
+- Continue processing next snapshot
+- Track error rate and alert if exceeds threshold
+
+INTEGRATION:
+- Connect to provider message queue/stream
+- Store results in market_depth table (Phase 1)
+- Emit events to event bus for UI updates
+- Expose service status in application monitoring
+
+COMMIT INSTRUCTION:
+"feat: Activate DOM aggregation service for metric calculation
+
+Completed DOMAggreg atorService implementation with real-time processing of
+order book snapshots. Calculates mid price, spread, and imbalance metrics.
+Persists results to database and emits events for UI updates. Integrated
+with application lifecycle and provider data streams."
+
+--------------------------------------------------------------------------------
+TASK 3.2: Integrate Volume Profile with Real-Time Data Updates
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Connect the existing Volume Profile calculation engine to the real-time data
+pipeline so profiles automatically recalculate when new candles arrive.
+
+EVENT SUBSCRIPTION:
+- Subscribe Volume Profile component to MarketDataUpdate events
+- Filter events by symbol and timeframe of interest
+- Trigger profile calculation on relevant candle completion
+
+CALCULATION TRIGGER LOGIC:
+- Determine if new candle affects current analysis window
+- If window size is 100 bars and new candle arrives, recalculate
+- Cache previous calculation to avoid full recomputation if possible
+- Use rolling window approach for efficiency
+
+RESULT STORAGE:
+- Store calculated POC, VAH, VAL in volume_profile_cache (if implemented)
+- Or maintain in-memory cache with LRU eviction policy
+- Emit VolumeProfileCalculated event with results
+
+MULTI-TIMEFRAME HANDLING:
+- Calculate profiles for multiple timeframes concurrently
+- Allow user selection of which timeframe profiles to display
+- Maintain separate state per timeframe
+
+INTEGRATION:
+- Connect to existing Volume Profile calculation code
+- Subscribe to event bus for candle updates
+- Store/cache results for UI consumption
+- Emit events for UI refresh
+
+COMMIT INSTRUCTION:
+"integrate: Connect Volume Profile to real-time data pipeline
+
+Automated Volume Profile recalculation on new candle arrival. Subscribes to
+MarketDataUpdate events and triggers POC/VA/HVN/LVN calculation. Caches
+results and emits VolumeProfileCalculated events for UI. Supports multiple
+timeframes concurrently."
+
+--------------------------------------------------------------------------------
+TASK 3.3: Implement VSA Signal Generation Pipeline
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Connect the existing VSA analyzer to the data pipeline and generate signals
+that are stored in the database and displayed on charts.
+
+PROCESSING WORKFLOW:
+- Subscribe to MarketDataUpdate events for candle completion
+- For each completed candle, pass OHLCV data to VSA analyzer
+- Analyzer returns VSA signal type (accumulation, distribution, climax, etc.)
+- If signal detected, create signal record with classification and strength
+
+SIGNAL CREATION:
+- Populate signal type: "VSA"
+- Populate signal subtype: specific pattern (e.g., "buying_climax")
+- Populate strength: from analyzer (0-1 scale)
+- Populate direction: bullish or bearish based on pattern
+- Populate confidence: from analyzer
+- Populate symbol, timestamp, timeframe
+- Store entry price (current close), target, stop if applicable
+
+SIGNAL FILTERING:
+- Apply minimum strength threshold (configurable, e.g., 0.5)
+- Filter out neutral signals unless user wants all
+- Deduplicate consecutive similar signals
+
+PERSISTENCE:
+- Insert signal record into signals table
+- Ensure transaction succeeds before emitting event
+
+EVENT EMISSION:
+- Emit VSASignalDetected event with signal details
+- UI subscribes to event for chart annotation
+
+INTEGRATION:
+- Use existing VSA analyzer code from features/vsa.py
+- Connect to event bus for candle updates
+- Store in signals table (Phase 1)
+- Emit events for UI overlay rendering
+
+COMMIT INSTRUCTION:
+"feat: Implement VSA signal generation and storage pipeline
+
+Connected VSA analyzer to real-time candle feed. Generates and persists
+VSA signals (accumulation, distribution, climax, etc.) with strength and
+confidence metrics. Filters signals by threshold and emits events for UI
+chart overlays. Integrates with existing signals table."
+
+--------------------------------------------------------------------------------
+TASK 3.4: Implement Order Flow Signal Generation Pipeline
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Connect Order Flow analyzer to both DOM data and candle data to generate
+signals based on volume imbalance, absorption, and exhaustion patterns.
+
+DATA INPUT REQUIREMENTS:
+- DOM snapshots for bid/ask depth and imbalance
+- Completed candles for volume metrics
+- ATR values for target/stop calculation
+
+PROCESSING WORKFLOW:
+- Subscribe to both DOMSnapshotUpdate and MarketDataUpdate events
+- Maintain rolling buffer of recent DOM metrics
+- On each candle completion, compute Order Flow metrics
+- Generate signals for detected patterns
+
+SIGNAL TYPES:
+- Liquidity Imbalance: volume imbalance exceeds Z-score threshold
+- Absorption: large orders filled with minimal price movement
+- Exhaustion: declining volume during price trend
+- Large Player Activity: unusual order sizes detected
+- Spread Anomaly: abnormal spread widening/tightening
+
+SIGNAL STORAGE:
+- Same format as VSA signals in signals table
+- Signal type: "OrderFlow"
+- Signal subtype: specific pattern type
+- Include metadata: imbalance value, Z-score, large order count
+
+INTEGRATION:
+- Use Order Flow analyzer from analysis/order_flow_analyzer.py
+- Combine DOM data from market_depth table with candle data
+- Calculate required metrics (spread, imbalance, volume ratios)
+- Store signals and emit events for UI
+
+COMMIT INSTRUCTION:
+"feat: Implement Order Flow signal generation with DOM integration
+
+Connected Order Flow analyzer to DOM and candle data streams. Generates
+signals for liquidity imbalance, absorption, exhaustion, and large player
+activity. Combines bid/ask depth with volume metrics. Stores in signals
+table and emits events for UI display."
+
+================================================================================
+PHASE 4: USER INTERFACE COMPONENTS
+================================================================================
+
+PHASE 4 OBJECTIVE:
+Create and integrate UI widgets and visualizations that display volume
+analysis, order book data, and generated signals to the user.
+
+--------------------------------------------------------------------------------
+TASK 4.1: Add Volume Indicators to Main Chart (Subplot 1)
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Implement volume visualization in the first subplot below the main price chart,
+with multiple display modes and overlays.
+
+UI COMPONENT LOCATION:
+- Within chart_tab_ui.py or related chart rendering module
+- Subplot 1 (first panel below price chart)
+- Use existing subplot framework/API
+
+VOLUME HISTOGRAM:
+- Render vertical bars representing volume per candle
+- Bar height proportional to volume magnitude
+- Color bars: green for up-candles, red for down-candles
+- Alternative: color by buy/sell volume if available
+- Align bars precisely with corresponding price candles
+
+VOLUME MOVING AVERAGE OVERLAY:
+- Calculate moving average of volume (e.g., 20-period)
+- Render as line overlay on volume histogram
+- Allow user to configure MA period in settings
+- Different color/style from volume bars for clarity
+
+VOLUME PROFILE HORIZONTAL OVERLAY:
+- Render horizontal bars on price chart representing volume at price levels
+- Position bars to the right side of chart (or user-configurable side)
+- Bar length proportional to volume at that price
+- Highlight POC (Point of Control) with distinct color/marker
+- Shade Value Area (70% volume zone) with translucent overlay
+- Mark HVN (High Volume Nodes) with small icons/markers
+- Mark LVN (Low Volume Nodes) with different icons
+
+CONFIGURATION OPTIONS:
+- Toggle volume display on/off
+- Select display mode: histogram, MA, profile, combined
+- Adjust subplot height
+- Customize colors for volume bars, MA line, POC, VA, HVN, LVN
+- Set volume profile window size (number of candles)
+
+DATA BINDING:
+- Query volume data from market_data_candles table
+- Query Volume Profile metrics from calculation service or cache
+- Subscribe to VolumeProfileCalculated events for real-time updates
+- Refresh display when symbol or timeframe changes
+
+INTEGRATION:
+- Use existing chart rendering infrastructure (finplot, matplotlib, or other)
+- Connect to Volume Profile calculation results
+- Respect user preferences from settings
+- Update dynamically with new data
+
+COMMIT INSTRUCTION:
+"ui: Add volume indicators and Volume Profile to chart subplot
+
+Implemented volume histogram with color-coded bars and moving average overlay
+in chart subplot 1. Added horizontal Volume Profile visualization with POC,
+Value Area shading, and HVN/LVN markers on price chart. User-configurable
+display modes and styling. Integrated with real-time volume data pipeline."
+
+--------------------------------------------------------------------------------
+TASK 4.2: Add VSA Signal Overlays to Price Chart
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Display VSA signals as visual markers directly on price candles where patterns
+are detected.
+
+MARKER RENDERING:
+- For each VSA signal in database, find corresponding candle on chart
+- Render marker (icon, symbol, or shape) at candle position
+- Marker type varies by signal pattern (accumulation, distribution, etc.)
+- Marker color indicates bullish (green) or bearish (red) bias
+- Marker size or opacity indicates signal strength
+
+HOVER TOOLTIP:
+- On mouse hover over marker, display tooltip with:
+  - Signal type and subtype
+  - Strength and confidence values
+  - Entry/target/stop prices if available
+  - Timestamp and additional metadata
+
+SIGNAL FILTERING:
+- Allow user to toggle VSA signals on/off
+- Filter by minimum strength threshold
+- Filter by signal type (show only certain patterns)
+- Configuration accessible in settings or chart context menu
+
+DATA BINDING:
+- Query signals table for VSA signals matching current symbol and timeframe
+- Subscribe to VSASignalDetected events for real-time additions
+- Redraw markers when new signals arrive
+- Clear markers when symbol or timeframe changes
+
+INTEGRATION:
+- Use chart overlay API to draw markers
+- Connect to signals table
+- Respect user preferences
+- Ensure markers don't clutter chart (configurable density)
+
+COMMIT INSTRUCTION:
+"ui: Add VSA signal markers to price chart
+
+Rendered VSA pattern indicators on candles with pattern-specific icons and
+color coding. Hover tooltips show signal details. User-configurable filtering
+by type and strength. Subscribed to real-time signal events for dynamic
+updates. Integrated with chart rendering pipeline."
+
+--------------------------------------------------------------------------------
+TASK 4.3: Create Order Book Floating Widget
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Implement a dockable/floating panel that displays live order book (DOM) data
+with bid/ask ladders, volume bars, and imbalance indicators.
+
+WIDGET ARCHITECTURE:
+- Create new QWidget or similar UI component class
+- Make widget dockable (can attach to main window edges)
+- Make widget floatable (can detach and position anywhere)
+- Save and restore widget position and size in user preferences
+
+HEADER SECTION:
+- Display current symbol
+- Display last update timestamp
+- Display connection status indicator (green = connected, red = disconnected)
+- Include refresh button for manual update
+
+BID TABLE SECTION:
+- Table with columns: Price | Volume | Cumulative | % of Total
+- Rows ordered descending by price (highest bid at top)
+- Number of rows configurable (5, 10, 20, 50 levels)
+- Format prices with appropriate decimal places
+- Format volumes with thousands separators
+- Best bid row highlighted with distinct background color
+
+ASK TABLE SECTION:
+- Table with columns: Price | Volume | Cumulative | % of Total
+- Rows ordered ascending by price (lowest ask at top)
+- Same formatting as bid table
+- Best ask row highlighted
+
+MID SECTION (Between Bid and Ask):
+- Display current spread value
+- Display mid price
+- Display imbalance ratio (bid/ask volume)
+- Visual indicator: bar chart showing bid vs ask volume proportion
+
+VOLUME BARS:
+- Horizontal bars next to each price level
+- Bar length proportional to volume at that level
+- Color gradient based on volume intensity (heatmap style)
+- Maximum bar length normalized to largest volume in visible range
+
+REAL-TIME UPDATES:
+- Subscribe to DOMSnapshotUpdate events
+- On event receipt, update bid/ask tables with new data
+- Animate changes: flash cells that changed, smooth bar transitions
+- Throttle updates if data arrives faster than display refresh rate
+
+INTERACTION FEATURES:
+- Click on price level to copy price to clipboard (or place order if trading)
+- Right-click for context menu (export snapshot, customize display)
+- Hover over level for additional details tooltip
+- Drag column headers to reorder columns
+
+WIDGET CONTROLS (Footer):
+- Dropdown to select depth level (5/10/20/50)
+- Checkbox to toggle auto-scroll (keep best bid/ask centered)
+- Checkbox to toggle cumulative volume display
+- Button to export current snapshot to CSV
+- Settings button to open detailed widget configuration
+
+CONFIGURATION:
+- Store widget preferences: position, size, depth, display mode
+- Load preferences on startup
+- Allow reset to defaults
+
+DATA BINDING:
+- Query market_depth table for latest snapshot of current symbol
+- Subscribe to real-time DOM updates
+- Handle missing data gracefully (show "No Data" message)
+
+INTEGRATION:
+- Add menu item in View menu: "Show Order Book"
+- Add toolbar button to toggle widget visibility
+- Connect to settings system for persistence
+- Emit events when user interacts with widget (if relevant)
+
+COMMIT INSTRUCTION:
+"ui: Create Order Book floating widget with live DOM display
+
+Implemented dockable/floating widget showing real-time bid/ask ladder with
+volume bars and imbalance indicators. Tables update dynamically from DOM
+snapshots. User-configurable depth levels and display options. Includes
+interaction features (copy price, export snapshot). Integrated with View
+menu and settings persistence."
+
+--------------------------------------------------------------------------------
+TASK 4.4: Implement DOM Heatmap Visualization
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Create a visualization showing order book depth evolution over time as a
+heatmap, with price on Y-axis, time on X-axis, and color intensity
+representing volume.
+
+WIDGET TYPE:
+- Standalone widget or embeddable in main chart interface
+- Use plotting library capable of heatmap rendering (matplotlib, plotly, etc.)
+
+DATA PREPARATION:
+- Query market_depth table for historical snapshots over selected time range
+- Extract price levels and volumes from each snapshot
+- Create 2D matrix: rows = price levels, columns = time points
+- Populate matrix cells with volume values at price/time intersections
+
+HEATMAP RENDERING:
+- X-axis: Time (labeled with timestamps)
+- Y-axis: Price levels (labeled with price values)
+- Color: Volume intensity (low = cool colors, high = warm colors)
+- Color scale: Logarithmic or linear based on user preference
+- Overlay: Current price line moving horizontally across time
+
+ANNOTATIONS:
+- Mark POC (Point of Control) as it moves over time (line or dots)
+- Highlight support/resistance levels derived from HVN
+- Optionally overlay price chart as transparent layer
+
+INTERACTION:
+- Zoom in/out on time axis
+- Pan left/right to view different time periods
+- Hover to see exact volume at price/time
+- Click to see detailed snapshot at that time
+
+TIME RANGE SELECTOR:
+- Dropdown or slider to select time window (1h, 4h, 1d, custom)
+- "Play" button to animate heatmap evolution over time
+
+CONFIGURATION:
+- Color scheme selection (heat, cool, grayscale, custom)
+- Price range (auto, manual)
+- Sampling resolution (balance detail vs performance)
+- Overlay toggles (price, POC, support/resistance)
+
+DATA BINDING:
+- Query historical DOM snapshots
+- Calculate aggregated volume per price level
+- Update when time range changes
+- Handle large datasets efficiently (downsampling if needed)
+
+INTEGRATION:
+- Add menu item: "View -> DOM Heatmap"
+- Or add as tab in main chart interface
+- Allow docking/floating similar to Order Book widget
+- Connect to settings for configuration persistence
+
+COMMIT INSTRUCTION:
+"ui: Implement DOM heatmap visualization for depth evolution
+
+Created heatmap widget displaying order book depth over time. Price on Y-axis,
+time on X-axis, volume intensity color-coded. Includes POC tracking overlay
+and interaction features (zoom, pan, hover details). Configurable time range
+and color scheme. Queries historical DOM snapshots for rendering."
+
+--------------------------------------------------------------------------------
+TASK 4.5: Add Order Flow Indicators to Chart
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Display Order Flow signals and metrics as overlays on the price chart.
+
+SIGNAL MARKERS:
+- Similar to VSA markers, render Order Flow signals on candles
+- Use distinct icons for each signal type (imbalance, absorption, exhaustion)
+- Color code by bullish/bearish
+- Size by signal strength
+
+VOLUME IMBALANCE INDICATOR:
+- Line plot below chart (or in separate subplot) showing cumulative volume delta
+- Positive = buy pressure, negative = sell pressure
+- Color gradient along line
+- Zero line clearly marked
+
+ABSORPTION PATTERN HIGHLIGHTS:
+- When absorption detected, highlight candle or price range
+- Annotate with text or icon indicating absorption
+- Show large order detection count if available
+
+EXHAUSTION WARNINGS:
+- Visual indicator on chart when exhaustion detected
+- Could be icon, text label, or background color change
+- Alert user to potential reversal
+
+CONFIGURATION:
+- Toggle each indicator type on/off
+- Adjust thresholds for visibility
+- Customize colors and styles
+
+DATA BINDING:
+- Query Order Flow signals from signals table
+- Subscribe to OrderFlowSignalDetected events
+- Calculate cumulative volume delta from candle data
+- Refresh on symbol/timeframe change
+
+INTEGRATION:
+- Use chart overlay API
+- Connect to signals table and Order Flow analyzer
+- Respect user preferences
+- Coordinate with other overlays to avoid clutter
+
+COMMIT INSTRUCTION:
+"ui: Add Order Flow indicators and signal overlays to chart
+
+Rendered Order Flow signal markers with type-specific icons. Added cumulative
+volume delta line plot and absorption/exhaustion visual indicators. User-
+configurable display options. Subscribed to real-time signal events.
+Integrated with chart rendering infrastructure."
+
+================================================================================
+PHASE 5: SETTINGS AND CONFIGURATION
+================================================================================
+
+PHASE 5 OBJECTIVE:
+Expose all new parameters and preferences in the GUI settings system, allowing
+users to configure analysis engines and visualization options.
+
+--------------------------------------------------------------------------------
+TASK 5.1: Add Volume Analysis Settings Section
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Create or extend settings dialog with section dedicated to volume analysis
+configuration parameters.
+
+SETTINGS LOCATION:
+- Within existing settings dialog (settings_dialog.py or similar)
+- Create new tab or section: "Volume Analysis"
+- Group related settings logically
+
+VOLUME PROFILE SETTINGS:
+- Window size (number of bars): integer input, default 100
+- Value Area percentage: float input (0-1), default 0.70
+- HVN prominence threshold: float input (0-1), default 0.2
+- LVN prominence threshold: float input (0-1), default 0.1
+- Enable/disable Volume Profile: checkbox
+
+VSA ANALYSIS SETTINGS:
+- Volume MA period: integer input, default 20
+- Spread MA period: integer input, default 20
+- High volume threshold (multiplier): float input, default 1.5
+- Ultra-high volume threshold: float input, default 2.0
+- Low volume threshold: float input, default 0.7
+- Narrow spread threshold: float input, default 0.7
+- Wide spread threshold: float input, default 1.5
+- Enable/disable VSA: checkbox
+
+ORDER FLOW SETTINGS:
+- Rolling window size: integer input, default 20
+- Imbalance threshold: float input (0-1), default 0.3
+- Z-score threshold: float input, default 2.0
+- Large order percentile: float input (0-1), default 0.95
+- Absorption threshold: float input, default 0.4
+- Exhaustion volume decline: float input (0-1), default 0.3
+- Enable/disable Order Flow: checkbox
+
+UI COMPONENTS:
+- Use QSpinBox for integer inputs
+- Use QDoubleSpinBox for float inputs
+- Use QCheckBox for enable/disable toggles
+- Add descriptive labels and tooltips
+- Group related settings in collapsible sections or tabs
+
+VALIDATION:
+- Enforce min/max ranges on numeric inputs
+- Provide sensible defaults
+- Warn user if invalid combinations entered
+- Prevent settings that would cause errors
+
+PERSISTENCE:
+- Save settings to configuration file on Apply/OK
+- Load settings on application startup
+- Provide "Reset to Defaults" button per section
+
+INTEGRATION:
+- Connect settings to analysis engine configuration
+- When settings change, recalculate affected metrics
+- Emit events so components refresh with new parameters
+
+COMMIT INSTRUCTION:
+"ui: Add Volume Analysis settings section to settings dialog
+
+Created dedicated settings panel for Volume Profile, VSA, and Order Flow
+configuration. Exposed all analysis parameters with appropriate input controls,
+validation, and tooltips. Settings persist across sessions. Changes trigger
+recalculation of affected metrics."
+
+--------------------------------------------------------------------------------
+TASK 5.2: Add DOM Settings Section
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Create settings section for DOM-related configuration: connection, display,
+and data retention.
+
+CONNECTION SETTINGS:
+- Enable DOM streaming: checkbox (master switch)
+- Auto-connect on startup: checkbox
+- Reconnection max attempts: integer input
+- Reconnection backoff delay: float input (seconds)
+
+DISPLAY SETTINGS:
+- Default depth level: dropdown (5, 10, 20, 50)
+- Update rate: dropdown (real-time, 1s, 5s throttling)
+- Order Book widget default position: dropdown (left, right, bottom, floating)
+- Volume bar display: checkbox
+- Cumulative volume display: checkbox
+
+DATA RETENTION SETTINGS:
+- Snapshot retention period: integer input (days)
+- Auto-cleanup enabled: checkbox
+- Cleanup schedule: time picker (e.g., daily at 2 AM)
+
+UI COMPONENTS:
+- Standard Qt widgets for inputs
+- Tooltips explaining each setting
+- Preview of Order Book widget appearance with settings applied
+
+INTEGRATION:
+- Connect to DOM aggregator service configuration
+- Apply display settings to Order Book widget
+- Configure cleanup cron job or scheduled task
+- Settings take effect immediately or on next restart (as appropriate)
+
+COMMIT INSTRUCTION:
+"ui: Add DOM settings section with connection and display options
+
+Implemented settings panel for DOM streaming configuration. Includes
+connection management, display preferences, and data retention policies.
+Applies to Order Book widget and aggregation service. Settings persisted
+and loaded on startup."
+
+--------------------------------------------------------------------------------
+TASK 5.3: Add Visualization Settings Section
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Centralize all visualization-related preferences: colors, overlays, performance.
+
+CHART OVERLAYS:
+- Show Volume Profile: checkbox
+- Show VSA signals: checkbox
+- Show Order Flow indicators: checkbox
+- Show volume histogram: checkbox
+- Each with individual color pickers
+
+COLOR SCHEMES:
+- Volume bars: up color, down color pickers
+- VSA signal colors: per signal type
+- Order Flow signal colors: per signal type
+- DOM heatmap palette: dropdown (heat, cool, grayscale, custom)
+- Volume Profile colors: POC, VA, HVN, LVN
+
+PERFORMANCE SETTINGS:
+- Rendering throttle (FPS cap): integer input
+- Max visible data points: integer input
+- Enable/disable animations: checkbox
+- Downsampling threshold: integer input (auto-downsample if more than N points)
+
+UI COMPONENTS:
+- Color picker dialogs for color customization
+- Checkboxes for overlay visibility
+- Sliders or spin boxes for numeric settings
+- Preview pane showing example chart with current settings
+
+INTEGRATION:
+- Connect to chart rendering components
+- Apply color changes to active charts
+- Settings affect all chart tabs
+- Provide "Reset to Defaults" for entire section
+
+COMMIT INSTRUCTION:
+"ui: Add visualization settings for chart overlays and color schemes
+
+Created centralized visualization preferences panel. User-configurable colors
+for all indicators, signals, and overlays. Performance settings for throttling
+and downsampling. Changes apply to all charts. Settings persist across sessions."
+
+================================================================================
+PHASE 6: INTEGRATION AND WORKFLOWS
+================================================================================
+
+PHASE 6 OBJECTIVE:
+Ensure all new components connect to existing application workflows seamlessly,
+with proper lifecycle management and event propagation.
+
+--------------------------------------------------------------------------------
+TASK 6.1: Integrate Services with Application Startup/Shutdown
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Connect new services (DOM aggregator, signal generators) to the main
+application lifecycle so they start and stop appropriately.
+
+STARTUP SEQUENCE:
+- In main application initialization (app.py or similar):
+  1. Initialize database connection (already exists)
+  2. Create DOM aggregation service instance
+  3. Start DOM aggregator service thread/async task
+  4. Initialize provider connections (already exists)
+  5. Subscribe providers to DOM streaming if enabled
+  6. Start VSA signal generator subscription to candle events
+  7. Start Order Flow signal generator subscription to events
+  8. Load user settings and apply to services
+
+SERVICE REGISTRATION:
+- Maintain registry of active services
+- Provide method to get service instance by name
+- Implement service health monitoring dashboard
+
+SHUTDOWN SEQUENCE:
+- In application shutdown handler:
+  1. Stop all background service threads/tasks gracefully
+  2. Unsubscribe from WebSocket streams
+  3. Close provider connections
+  4. Flush pending data to database
+  5. Save user settings
+  6. Release resources
+
+ERROR HANDLING:
+- If service fails to start, log error and continue (don't crash app)
+- Provide UI notification of service unavailability
+- Allow manual restart of failed services
+
+INTEGRATION:
+- Modify main app initialization code
+- Ensure services respect enable/disable settings
+- Connect to existing service management infrastructure
+
+COMMIT INSTRUCTION:
+"integrate: Connect new services to application lifecycle
+
+Integrated DOM aggregator, VSA signal generator, and Order Flow signal
+generator into app startup sequence. Services start automatically if enabled,
+respect user settings, and stop gracefully on shutdown. Registered in service
+health monitoring. Error-tolerant initialization."
+
+--------------------------------------------------------------------------------
+TASK 6.2: Connect Symbol Change Workflow
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+When user switches symbols in the chart, all components must update to show
+data for the new symbol.
+
+WORKFLOW STEPS:
+1. User selects new symbol from dropdown/input
+2. Emit SymbolChanged event with new symbol
+3. Provider services unsubscribe from old symbol's DOM stream
+4. Provider services subscribe to new symbol's DOM stream
+5. Chart components clear current data and request new symbol data
+6. Volume Profile recalculates for new symbol
+7. VSA signals load from database for new symbol
+8. Order Flow signals load for new symbol
+9. Order Book widget refreshes with new symbol's DOM data
+10. Settings remain unchanged (apply to new symbol)
+
+EVENT HANDLING:
+- All components subscribe to SymbolChanged event
+- Components update internal state with new symbol
+- Components trigger data refresh for new symbol
+- UI updates smoothly without flickering
+
+DATA LOADING:
+- Query historical data for new symbol
+- Load last N candles for immediate display
+- Trigger backfill if insufficient historical data
+- Update calculations with new symbol data
+
+INTEGRATION:
+- Modify symbol selector widget to emit event
+- Ensure all new components subscribe to event
+- Test with multiple rapid symbol changes
+- Verify no memory leaks or dangling subscriptions
+
+COMMIT INSTRUCTION:
+"integrate: Connect symbol change workflow to new components
+
+Implemented symbol change event handling across DOM aggregator, Volume Profile,
+VSA, Order Flow, and Order Book widget. Components unsubscribe from old symbol,
+subscribe to new, reload data, and refresh displays. Smooth transitions without
+data corruption or memory leaks."
+
+--------------------------------------------------------------------------------
+TASK 6.3: Connect Timeframe Change Workflow
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+When user switches timeframes, components adjust calculations and displays
+accordingly.
+
+WORKFLOW STEPS:
+1. User selects new timeframe from dropdown
+2. Emit TimeframeChanged event with new timeframe
+3. Chart loads candle data for new timeframe
+4. Volume Profile recalculates with appropriate window for timeframe
+5. VSA signals load for new timeframe
+6. Order Flow adjusts rolling window based on timeframe
+7. Volume indicators adjust bar width and MA period
+8. DOM data remains timeframe-agnostic (snapshot based)
+
+TIMEFRAME-SPECIFIC ADJUSTMENTS:
+- Volume Profile window size scales with timeframe (e.g., 100 bars on 1h vs 1d)
+- VSA MA periods adjust proportionally
+- Order Flow window adapts to timeframe granularity
+
+EVENT HANDLING:
+- Subscribe all timeframe-sensitive components to event
+- Components query data for new timeframe
+- Recalculate metrics with timeframe-appropriate parameters
+
+INTEGRATION:
+- Modify timeframe selector to emit event
+- Ensure calculations respect timeframe
+- Test across all supported timeframes (1m, 5m, 15m, 1h, 4h, 1d, 1w)
+
+COMMIT INSTRUCTION:
+"integrate: Connect timeframe change workflow to analysis components
+
+Implemented timeframe change event handling. Volume Profile, VSA, and Order
+Flow adjust calculation windows and parameters based on selected timeframe.
+Data reloaded and recalculated. Displays update without user intervention.
+Supports all standard timeframes."
+
+--------------------------------------------------------------------------------
+TASK 6.4: Connect Real-Time Data Update Workflow
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+As new market data arrives (ticks, candles, DOM snapshots), all components
+refresh automatically without blocking UI.
+
+DATA FLOW PIPELINE:
+1. Provider receives new data from WebSocket
+2. Provider normalizes and validates data
+3. Provider pushes data to appropriate service queue
+4. Service processes data (aggregation, signal generation)
+5. Service persists data to database
+6. Service emits update event
+7. UI components receive event and refresh display
+
+ASYNCHRONOUS PROCESSING:
+- Use background threads or async tasks for data processing
+- Queue incoming data to avoid blocking provider connection
+- Process queue in batches if high-frequency data
+- Limit queue size to prevent memory overflow
+
+UI UPDATE THROTTLING:
+- Limit UI refresh rate (e.g., max 30 FPS)
+- Batch multiple data updates into single UI refresh
+- Skip intermediate updates if data arriving faster than rendering
+- Use smooth animations for transitions
+
+EVENT PRIORITIZATION:
+- Critical events (errors, disconnections) take priority
+- Data update events queued and processed in order
+- UI refresh events coalesced to reduce overhead
+
+INTEGRATION:
+- Verify event bus handles high-frequency events
+- Test with real-time data stream
+- Monitor CPU and memory usage
+- Optimize bottlenecks
+
+COMMIT INSTRUCTION:
+"integrate: Establish real-time data update workflow with throttling
+
+Connected provider data streams to processing services and UI components via
+event bus. Implemented asynchronous processing with queue management. UI
+refresh throttled to maintain responsiveness. Tested with high-frequency DOM
+updates. Optimized for performance."
+
+================================================================================
+PHASE 7: TESTING AND VALIDATION
+================================================================================
+
+PHASE 7 OBJECTIVE:
+Verify all components work correctly individually and as an integrated system.
+
+--------------------------------------------------------------------------------
+TASK 7.1: Test Database Migrations
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Validate that all database migrations apply cleanly and are reversible.
+
+TESTING PROCEDURE:
+1. Start with fresh database (or backup existing)
+2. Apply all new migrations sequentially
+3. Verify each table created with correct schema
+4. Check indexes and constraints exist
+5. Attempt to insert sample data into each new table
+6. Verify data persists and can be queried
+7. Test rollback of each migration
+8. Verify tables dropped and data removed
+9. Re-apply migrations to ensure reproducibility
+
+VALIDATION CRITERIA:
+- All migrations succeed without errors
+- Tables match specification
+- Data integrity maintained
+- Rollback works without leaving orphans
+
+INTEGRATION:
+- Document migration order and dependencies
+- Provide migration testing script
+- Include in CI/CD pipeline if applicable
+
+COMMIT INSTRUCTION:
+"test: Validate database migrations for market_depth and related tables
+
+Tested all new migrations apply cleanly and rollback correctly. Verified
+schema matches specification, indexes created, constraints enforced. Sample
+data inserted and queried successfully. Migrations reproducible and reversible."
+
+--------------------------------------------------------------------------------
+TASK 7.2: Test Provider DOM Streaming
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Validate that DOM data flows correctly from provider to database.
+
+TESTING PROCEDURE:
+1. Configure provider with test credentials
+2. Enable DOM streaming for test symbol
+3. Start provider connection
+4. Verify WebSocket connection established
+5. Verify subscription confirmation received
+6. Wait for DOM snapshots to arrive
+7. Check snapshots queued for processing
+8. Verify DOM aggregator processes snapshots
+9. Query market_depth table for stored snapshots
+10. Verify data correctness (bids, asks, timestamps)
+11. Test reconnection after intentional disconnect
+12. Verify subscriptions restored after reconnect
+
+VALIDATION CRITERIA:
+- DOM data arrives within expected latency
+- Data format correct and complete
+- No data loss during normal operation
+- Reconnection successful
+- Error handling works as expected
+
+INTEGRATION:
+- Use test environment to avoid live trading issues
+- Log all messages for debugging
+- Monitor provider health status
+
+COMMIT INSTRUCTION:
+"test: Validate DOM streaming from cTrader provider to database
+
+Tested WebSocket DOM subscription and data flow. Snapshots arrive correctly,
+queue processed, data persisted to market_depth table. Reconnection logic
+verified. Error handling robust. Latency within acceptable range."
+
+--------------------------------------------------------------------------------
+TASK 7.3: Test Signal Generation Pipelines
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Verify VSA and Order Flow signals generate correctly from market data.
+
+TESTING PROCEDURE:
+1. Load historical candle data for test symbol
+2. Manually trigger signal generation process
+3. Verify VSA analyzer detects known patterns in data
+4. Verify Order Flow analyzer detects imbalances and patterns
+5. Check signals stored in database with correct attributes
+6. Verify signal strength and confidence values reasonable
+7. Test with edge cases (low volume, high volatility, etc.)
+8. Verify signals emit events correctly
+9. Test signal filtering by threshold
+
+VALIDATION CRITERIA:
+- Signals detected match expected patterns
+- Signal attributes populated correctly
+- Database storage successful
+- Events emitted
+- No false positives or missed patterns (within tolerance)
+
+INTEGRATION:
+- Use known test data with labeled patterns
+- Compare results to manual analysis
+- Adjust thresholds if needed
+
+COMMIT INSTRUCTION:
+"test: Validate VSA and Order Flow signal generation accuracy
+
+Tested signal pipelines with historical data. VSA patterns detected correctly,
+Order Flow imbalances calculated accurately. Signals stored in database with
+proper attributes. Events emitted. Filtering works as expected. Accuracy
+within acceptable range."
+
+--------------------------------------------------------------------------------
+TASK 7.4: Test UI Components Rendering
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Validate that all UI components display data correctly and respond to user
+interaction.
+
+TESTING PROCEDURE FOR EACH COMPONENT:
+- Volume Indicators:
+  1. Load chart with volume data
+  2. Verify volume bars render with correct heights and colors
+  3. Verify moving average overlays correctly
+  4. Verify Volume Profile horizontal bars align with price levels
+  5. Verify POC, VA, HVN, LVN markers appear
+
+- Order Book Widget:
+  1. Open widget
+  2. Verify bid/ask tables populate
+  3. Verify volume bars render proportionally
+  4. Verify real-time updates occur
+  5. Test depth level changes
+  6. Test interaction features (click, export)
+
+- DOM Heatmap:
+  1. Open heatmap visualization
+  2. Verify historical data loads
+  3. Verify heatmap renders with color gradient
+  4. Test zoom and pan
+  5. Verify overlays (POC, price line) display
+
+- VSA/Order Flow Overlays:
+  1. Enable signal overlays on chart
+  2. Verify markers appear at correct candle positions
+  3. Verify hover tooltips show signal details
+  4. Test filtering by signal type and strength
+
+VALIDATION CRITERIA:
+- All components render without errors
+- Data displays accurately
+- Interactions work as expected
+- No performance issues (smooth rendering)
+- Settings changes apply correctly
+
+INTEGRATION:
+- Test on different screen resolutions
+- Test with light and dark themes
+- Test with various data volumes
+
+COMMIT INSTRUCTION:
+"test: Validate UI component rendering and interaction
+
+Tested all new UI components (volume indicators, Order Book widget, DOM
+heatmap, signal overlays). Verified correct rendering, data accuracy,
+real-time updates, and user interactions. Performance acceptable across
+configurations. No visual glitches."
+
+--------------------------------------------------------------------------------
+TASK 7.5: Test Integration Workflows
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Validate that symbol changes, timeframe changes, and data updates propagate
+correctly through the system.
+
+TESTING PROCEDURE:
+1. Start application with default symbol and timeframe
+2. Verify all components load for default symbol
+3. Change symbol - verify all components update
+4. Change timeframe - verify calculations adjust
+5. Wait for new data to arrive - verify real-time updates
+6. Change settings - verify components reconfigure
+7. Test rapid symbol/timeframe changes - verify stability
+8. Test with multiple chart tabs - verify isolation
+
+VALIDATION CRITERIA:
+- All components respond to events
+- No stale data displayed
+- No crashes or errors
+- Memory usage stable
+- CPU usage acceptable
+
+INTEGRATION:
+- Monitor logs for errors
+- Use profiling tools to identify bottlenecks
+- Test with simulated high-frequency data
+
+COMMIT INSTRUCTION:
+"test: Validate end-to-end integration workflows
+
+Tested symbol change, timeframe change, and real-time data update workflows.
+All components respond correctly to events. Data propagates without loss.
+UI remains responsive. No memory leaks. System stable under load."
+
+================================================================================
+PHASE 8: DOCUMENTATION AND FINALIZATION
+================================================================================
+
+PHASE 8 OBJECTIVE:
+Complete user-facing documentation, code documentation, and prepare for
+production deployment.
+
+--------------------------------------------------------------------------------
+TASK 8.1: Document New Features in User Guide
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Create user-facing documentation explaining how to use new features.
+
+DOCUMENTATION SECTIONS:
+- Volume Analysis:
+  - Explanation of Volume Profile (POC, VA, HVN, LVN)
+  - How to enable and configure Volume Profile on charts
+  - Interpreting volume indicators for trading decisions
+  - Configuring VSA settings and understanding signals
+
+- Order Book (DOM):
+  - What is Depth of Market
+  - How to enable DOM streaming
+  - Using the Order Book widget
+  - Interpreting bid/ask imbalance
+  - Understanding DOM heatmap
+
+- Signal Overlays:
+  - VSA signal types and meanings
+  - Order Flow signal types and meanings
+  - How to filter and customize signal display
+  - Using signals in trading strategy
+
+FORMAT:
+- Plain text, Markdown, or HTML format
+- Include screenshots of UI components
+- Step-by-step tutorials for common tasks
+- FAQ section for troubleshooting
+
+LOCATION:
+- Store in project docs/ folder
+- Or integrate into in-app help system
+- Link from settings dialog
+
+COMMIT INSTRUCTION:
+"docs: Add user guide for Volume Analysis and DOM features
+
+Created comprehensive user documentation covering Volume Profile, VSA, Order
+Flow, and Order Book usage. Includes screenshots, tutorials, and FAQ. Stored
+in docs/ folder. Accessible from application help menu."
+
+--------------------------------------------------------------------------------
+TASK 8.2: Document Configuration Parameters
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Create reference documentation for all configuration parameters.
+
+DOCUMENTATION FORMAT:
+For each parameter:
+- Name
+- Type and valid range
+- Default value
+- Description of what it controls
+- Impact on performance or behavior
+- Recommended values for different use cases
+
+SECTIONS:
+- Volume Profile Parameters
+- VSA Analysis Parameters
+- Order Flow Parameters
+- DOM Connection Parameters
+- Display and Visualization Parameters
+- Performance Parameters
+
+LOCATION:
+- Configuration reference file (config_reference.md or .txt)
+- Also include inline tooltips in settings UI
+
+COMMIT INSTRUCTION:
+"docs: Document all configuration parameters for new features
+
+Created configuration reference documenting all Volume Profile, VSA, Order
+Flow, and DOM parameters. Includes descriptions, valid ranges, defaults, and
+usage recommendations. Assists users in optimizing settings."
+
+--------------------------------------------------------------------------------
+TASK 8.3: Code Documentation and Comments
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Ensure all new code has adequate docstrings and comments.
+
+REQUIREMENTS:
+- Every new function has docstring with:
+  - Purpose description
+  - Parameter descriptions (name, type, meaning)
+  - Return value description
+  - Exceptions raised (if any)
+  - Usage example (if non-trivial)
+
+- Every new class has docstring with:
+  - Class purpose
+  - Key methods overview
+  - Usage example
+
+- Complex logic has inline comments explaining:
+  - Algorithm choice rationale
+  - Non-obvious code sections
+  - Edge case handling
+
+REVIEW PROCESS:
+- Review all new files for documentation completeness
+- Ensure consistency with existing code documentation style
+- Fix any missing or unclear docstrings
+
+COMMIT INSTRUCTION:
+"docs: Complete code documentation for new components
+
+Added comprehensive docstrings to all new functions and classes. Inline
+comments explain complex logic. Documentation follows project conventions.
+Facilitates code maintenance and future development."
+
+--------------------------------------------------------------------------------
+TASK 8.4: Cleanup and Optimization Pass
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Perform final review to remove unused code, optimize performance, and polish
+implementation.
+
+CLEANUP TASKS:
+- Remove unused imports
+- Delete orphaned files
+- Remove commented-out code
+- Consolidate duplicated logic
+- Standardize naming conventions
+
+OPTIMIZATION TASKS:
+- Profile critical paths (data processing, rendering)
+- Optimize database queries (add indexes if missing)
+- Reduce redundant calculations
+- Implement caching where beneficial
+- Optimize UI rendering (batch updates, reduce redraws)
+
+CODE QUALITY:
+- Run linter and fix warnings
+- Format code consistently
+- Remove debug print statements
+- Check for security issues (SQL injection, etc.)
+
+COMMIT INSTRUCTION:
+"refactor: Cleanup and optimization pass for new features
+
+Removed unused code, optimized database queries, improved rendering
+performance. Standardized naming and formatting. Ran linter and fixed
+warnings. Code quality enhanced."
+
+--------------------------------------------------------------------------------
+TASK 8.5: Final Integration Test
+--------------------------------------------------------------------------------
+
+FUNCTIONAL DESCRIPTION:
+Conduct comprehensive end-to-end test with real-world usage scenario.
+
+TEST SCENARIO:
+1. Start application fresh (clean database)
+2. Configure provider credentials
+3. Enable DOM streaming
+4. Select symbol and timeframe
+5. Wait for data to populate
+6. Verify all indicators display correctly
+7. Interact with Order Book widget
+8. Change symbol and timeframe multiple times
+9. Adjust settings and verify changes apply
+10. Run for extended period (hours) to check stability
+11. Shut down gracefully
+
+VALIDATION:
+- No crashes or errors
+- Memory usage stable (no leaks)
+- CPU usage reasonable
+- All features work as documented
+- User experience smooth
+
+COMMIT INSTRUCTION:
+"test: Final end-to-end integration test passed
+
+Conducted comprehensive test with real-world usage. All features functional,
+stable, and performant. No errors or crashes. Memory and CPU usage acceptable.
+Ready for production deployment."
+
+================================================================================
+IMPLEMENTATION COMPLETION CHECKLIST
+================================================================================
+
+Before considering implementation complete, verify ALL of the following:
+
+DATABASE:
+[ ] market_depth table created via Alembic migration
+[ ] All columns and indexes present
+[ ] Unique constraints enforced
+[ ] Migration reversible
+[ ] Optional cache tables created if implemented
+
+PROVIDER LAYER:
+[ ] DOM WebSocket connection functional
+[ ] Subscription/unsubscription working
+[ ] Message parsing correct
+[ ] Data normalization consistent
+[ ] Reconnection logic tested
+[ ] Error handling robust
+
+PROCESSING LAYER:
+[ ] DOM aggregation service active
+[ ] Metrics calculated correctly
+[ ] Volume Profile integration complete
+[ ] VSA signal generation functional
+[ ] Order Flow signal generation functional
+[ ] All services registered in app lifecycle
+
+UI COMPONENTS:
+[ ] Volume indicators on chart rendering
+[ ] Volume Profile overlay displaying
+[ ] VSA signal markers appearing
+[ ] Order Flow indicators showing
+[ ] Order Book widget functional
+[ ] DOM heatmap operational
+[ ] All widgets respond to real-time updates
+
+SETTINGS:
+[ ] Volume Analysis settings section present
+[ ] DOM settings section present
+[ ] Visualization settings section present
+[ ] All parameters exposed and functional
+[ ] Settings persist across sessions
+[ ] Defaults sensible
+
+INTEGRATION:
+[ ] Services start on app startup
+[ ] Services stop on app shutdown
+[ ] Symbol change workflow working
+[ ] Timeframe change workflow working
+[ ] Real-time data update workflow working
+[ ] Event bus connections verified
+
+CODE QUALITY:
+[ ] No orphaned files
+[ ] No unused methods
+[ ] All imports necessary
+[ ] All dependencies declared in pyproject.toml
+[ ] Code documented with docstrings
+[ ] Linter warnings addressed
+
+TESTING:
+[ ] Database migrations tested
+[ ] Provider streaming tested
+[ ] Signal generation tested
+[ ] UI rendering tested
+[ ] Integration workflows tested
+[ ] Stability tested under load
+
+DOCUMENTATION:
+[ ] User guide written
+[ ] Configuration reference created
+[ ] Code documentation complete
+[ ] README updated if needed
+
+VERSION CONTROL:
+[ ] All tasks committed
+[ ] All subtasks committed
+[ ] Commit messages descriptive and functional
+[ ] No uncommitted changes
+
+CONSTRAINTS VERIFIED:
+[ ] Database updates via Alembic (CONSTRAINT 1)
+[ ] Dependencies in pyproject.toml (CONSTRAINT 2)
+[ ] No orphaned code (CONSTRAINT 3)
+[ ] Workflows integrated (CONSTRAINT 4)
+[ ] GUI connected (CONSTRAINT 5)
+[ ] Commits after each task (CONSTRAINT 6)
+[ ] No time estimates (CONSTRAINT 7)
+
+================================================================================
+POST-IMPLEMENTATION STEPS
+================================================================================
+
+After completing all phases and verifying the checklist:
+
+1. Create final summary commit:
+   "feat: Complete Volume and DOM implementation
+
+   Implemented full Volume Profile, VSA, and Order Flow analysis with
+   real-time DOM streaming. UI components include volume indicators,
+   Order Book widget, signal overlays, and DOM heatmap. All services
+   integrated with application lifecycle. Settings exposed in GUI.
+   Documentation complete. Ready for production."
+
+2. Tag release in Git (if applicable):
+   git tag -a v1.0.0-volume-dom -m "Volume and DOM features complete"
+
+3. Update main project README if needed
+
+4. Notify stakeholders of completion
+
+5. Monitor initial production usage for issues
+
+6. Address any bugs or user feedback in subsequent iterations
+
+================================================================================
+NOTES FOR AI IMPLEMENTATION AGENT
+================================================================================
+
+DECISION AUTHORITY:
+You have full authority to make implementation decisions regarding:
+- Specific algorithms and data structures
+- Code organization within files
+- Library selection (within project constraints)
+- Performance optimizations
+- Refactoring approaches
+- Error handling strategies
+
+CONSTRAINTS TO RESPECT:
+You must adhere to:
+- Existing project architecture and patterns
+- Database management via SQLAlchemy/Alembic
+- Event bus patterns already established
+- UI framework (Qt, matplotlib, etc.) already in use
+- Configuration management approach
+
+WHEN TO SEEK CLARIFICATION:
+Request clarification if:
+- Specification contradicts existing code
+- Requirements ambiguous or incomplete
+- Technical limitation prevents direct implementation
+- Breaking change required to existing API
+- Security concern identified
+
+IMPLEMENTATION APPROACH:
+- Work through phases sequentially
+- Complete each task fully before moving to next
+- Commit after each task/subtask
+- Test as you go
+- Document as you implement
+
+QUALITY OVER SPEED:
+- Take time to do it right
+- Don't rush through phases
+- Ensure each component solid before proceeding
+- Refactor if initial approach suboptimal
+
+COMMUNICATION:
+- Log progress in commit messages
+- Document decisions in code comments
+- Note any deviations from spec in commit messages
+- Report blockers immediately
+
+================================================================================
+END OF IMPLEMENTATION GUIDE
+================================================================================
+
+This document provides complete operational instructions for implementing
+Volume Analysis and Depth of Market features in ForexGPT. Follow phases
+sequentially, respect all constraints, and verify checklist before marking
+implementation complete.
+
+The implementation agent has full authority over implementation details while
+adhering to architectural patterns and mandatory constraints. All decisions
+should prioritize code quality, maintainability, and user experience.
+
+Document Status: READY FOR IMPLEMENTATION
+Next Action: BEGIN PHASE 1 - DATABASE FOUNDATION
+
+================================================================================

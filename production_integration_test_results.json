@@ -1,0 +1,120 @@
+{
+  "start_time": "2025-09-29T16:02:58.758529",
+  "tests": {
+    "finplot_realistic": {
+      "success": true,
+      "candles": 720,
+      "render_time": 0.141004,
+      "performance": 5106.2381209043715,
+      "indicators": [
+        "SMA 20",
+        "SMA 50",
+        "EMA 12",
+        "EMA 26",
+        "Bollinger Bands"
+      ]
+    },
+    "pattern_detection": {
+      "success": true,
+      "patterns_count": 13,
+      "pattern_types": {
+        "resistance": 3,
+        "support": 2,
+        "uptrend": 6,
+        "downtrend": 2
+      },
+      "patterns": [
+        {
+          "type": "resistance",
+          "timestamp": "2024-09-11 12:00:00",
+          "price": 1.1212828745112313,
+          "confidence": 0.75,
+          "timeframe": "1H"
+        },
+        {
+          "type": "support",
+          "timestamp": "2024-09-12 12:00:00",
+          "price": 1.118584403861657,
+          "confidence": 0.75,
+          "timeframe": "1H"
+        },
+        {
+          "type": "resistance",
+          "timestamp": "2024-09-17 00:00:00",
+          "price": 1.1344823094482905,
+          "confidence": 0.75,
+          "timeframe": "1H"
+        },
+        {
+          "type": "support",
+          "timestamp": "2024-09-19 00:00:00",
+          "price": 1.1321733376003156,
+          "confidence": 0.75,
+          "timeframe": "1H"
+        },
+        {
+          "type": "resistance",
+          "timestamp": "2024-09-23 12:00:00",
+          "price": 1.1401643652109594,
+          "confidence": 0.75,
+          "timeframe": "1H"
+        },
+        {
+          "type": "uptrend",
+          "timestamp": "2024-09-07 06:00:00",
+          "price": 1.1064588934103823,
+          "confidence": 0.9,
+          "strength": 0.00013167491024257183,
+          "timeframe": "1H"
+        },
+        {
+          "type": "uptrend",
+          "timestamp": "2024-09-09 08:00:00",
+          "price": 1.1125833811223615,
+          "confidence": 0.9,
+          "strength": 0.00011712728150264809,
+          "timeframe": "1H"
+        },
+        {
+          "type": "uptrend",
+          "timestamp": "2024-09-11 10:00:00",
+          "price": 1.1189344983970435,
+          "confidence": 0.9,
+          "strength": 0.00011593701037873213,
+          "timeframe": "1H"
+        },
+        {
+          "type": "uptrend",
+          "timestamp": "2024-09-13 12:00:00",
+          "price": 1.1223346397102252,
+          "confidence": 0.9,
+          "strength": 0.0001037335335484367,
+          "timeframe": "1H"
+        },
+        {
+          "type": "uptrend",
+          "timestamp": "2024-09-15 14:00:00",
+          "price": 1.1290062281620272,
+          "confidence": 0.9,
+          "strength": 0.00010442619073437139,
+          "timeframe": "1H"
+        }
+      ]
+    },
+    "indicators_integration": {
+      "success": true,
+      "system": "bta-lib",
+      "indicators_count": 0,
+      "indicators": []
+    },
+    "real_time_updates": {
+      "success": true,
+      "updates_processed": 5,
+      "final_size": 725,
+      "latest_price": 1.1279248884404443,
+      "processing_time_ms": 10
+    }
+  },
+  "overall_status": "success",
+  "end_time": "2025-09-29T16:02:59.266131"
+}

@@ -1,0 +1,2423 @@
+================================================================================
+FOREXGPT END-TO-END & INTEGRATION TEST SPECIFICATIONS
+================================================================================
+Version: 1.0
+Date: 2025-10-08
+Purpose: Comprehensive automated testing from historical data download to 
+         automated trading order generation with AI training, pattern 
+         optimization, and system integration validation.
+
+================================================================================
+TEST CONFIGURATION & RESOURCE LIMITS
+================================================================================
+
+Resource Footprint Limits:
+--------------------------
+- Historical Data Period: MAX 3 months (90 days)
+- AI Models Generated: MAX 3 models
+- Backtesting Cycles: MAX 10 cycles
+- Candle Optimization Cycles: MAX 5 cycles
+- Trading System Optimization Cycles: MAX 10 cycles
+- Target Open Positions: 5 operations
+
+Test Execution Modes:
+---------------------
+1. STANDARD MODE (default)
+   Command: pytest tests/test_e2e_complete.py
+   
+2. CONCURRENCY MODE (optional - Point 12)
+   Command: pytest tests/test_e2e_complete.py --enable-concurrency
+   Environment: E2E_TEST_CONCURRENCY=true
+   
+   When enabled:
+   - Parallel model training (max 2 concurrent)
+   - Thread-safety validation for database operations
+   - Race condition detection in trading operations
+   - Concurrent backtest execution
+
+IMPORTANT - Training/Backtesting Limits:
+-----------------------------------------
+• Training STOPS after 3 models successfully completed
+• Backtesting STOPS after 10 cycles completed
+• Pattern optimization STOPS after 5 cycles completed
+• Trading continues until 5 positions opened OR 15 minute timeout
+• Checkpoint test (Phase 3.4) uses a 4th model for testing only - 
+  this model is INTERRUPTED at epoch 25 and does NOT count toward the 3 model limit
+
+Test Output:
+------------
+- Log File: data/e2e_test_results_{timestamp}.log
+- Report HTML: data/e2e_test_report_{timestamp}.html
+- Metrics JSON: data/e2e_test_metrics_{timestamp}.json
+- Error Traces: data/e2e_errors_{timestamp}.txt
+
+================================================================================
+PHASE 0: PRE-TEST SETUP & VALIDATION (Enhancement Point 1)
+================================================================================
+
+Objective: Ensure system readiness before running main tests
+Duration Target: < 30 seconds
+
+0.1 Database Schema Validation
+-------------------------------
+Target: All required tables exist with correct schema
+
+Tables to Verify:
+- candles (from migration 0002)
+- market_data_ticks (from migration 0002)
+- training_runs (from database_models.py - TrainingRun)
+- inference_backtests (from database_models.py - InferenceBacktest)
+- regime_definitions (from database_models.py - RegimeDefinition)
+- regime_best_models (from database_models.py - RegimeBestModel)
+- training_queue (from database_models.py - TrainingQueue)
+- optimized_parameters (from database_models.py - OptimizedParameters)
+- risk_profiles (from database_models.py - RiskProfile)
+- advanced_metrics (from database_models.py - AdvancedMetrics)
+- pattern_* tables (from migration 0005)
+- backtest_* tables (from migration 0004)
+
+Validation Steps:
+1. Connect to database (SQLite: D:\Projects\ForexGPT\data\market.db)
+2. Query schema for each table
+3. Verify column definitions match database_models.py
+4. Check indexes exist as defined
+5. Validate foreign key constraints
+
+Success Criteria:
+✓ All tables present
+✓ No schema mismatches
+✓ All indexes created
+✓ Foreign keys valid
+
+Failure Actions:
+✗ Run migrations: alembic upgrade head
+✗ Log missing/incorrect tables
+✗ ABORT test if critical tables missing
+
+0.2 Clear Database Tables
+--------------------------
+Target: Clean slate for reproducible testing
+
+Tables to Clear (in order to respect FK constraints):
+1. inference_backtests
+2. regime_best_models
+3. training_runs
+4. training_queue
+5. optimized_parameters
+6. advanced_metrics
+7. market_data_ticks
+8. candles
+9. All pattern_* tables
+10. All backtest_* tables
+
+Validation:
+- Verify row count = 0 for each table after clearing
+- Log number of rows deleted per table
+- Measure clearing time per table
+
+Success Criteria:
+✓ All tables empty (SELECT COUNT(*) = 0)
+✓ Total time < 10 seconds
+
+0.3 Provider Connectivity Check
+--------------------------------
+Target: Verify cTrader API is accessible
+
+Tests:
+1. Load cTrader credentials from environment/config
+   - CTRADER_CLIENT_ID
+   - CTRADER_CLIENT_SECRET
+   - CTRADER_ACCESS_TOKEN
+   
+2. Test connection to cTrader API
+   - Endpoint: Check src/forex_diffusion/providers/ctrader_provider.py
+   - Method: test_connection() or equivalent
+   
+3. Verify API rate limits and quotas
+   - Check remaining API calls
+   - Verify subscription status
+
+Success Criteria:
+✓ Connection established
+✓ Authentication successful
+✓ API quota available (> 1000 calls)
+
+Failure Actions:
+✗ Log connection error details
+✗ ABORT if provider unavailable
+✗ Suggest fallback to cached data if available
+
+0.4 Environment Configuration Validation
+-----------------------------------------
+Target: All required environment variables set
+
+Required Variables:
+- FOREX_DB_SQLITE (default: D:\Projects\ForexGPT\data\market.db)
+- FOREX_DB_DUCKDB (optional: D:\Projects\ForexGPT\data\market.duckdb)
+- FOREX_DATA_DIR (default: D:\Projects\ForexGPT\data)
+- CTRADER_* credentials (as above)
+- GPU availability check (optional but logged)
+
+Validation:
+1. Check .env file exists
+2. Load and parse environment variables
+3. Validate paths exist or can be created
+4. Check GPU availability (nvidia-smi or torch.cuda.is_available())
+
+Success Criteria:
+✓ All critical vars set
+✓ Paths accessible
+✓ GPU status logged (available or CPU-only mode)
+
+0.5 Disk Space Validation
+--------------------------
+Target: Sufficient space for data and models
+
+Checks:
+1. Available space on data directory drive
+   - Minimum required: 5 GB
+   - Recommended: 10 GB
+   
+2. Space for model storage
+   - Estimate: 500 MB per model x 3 models = 1.5 GB
+   
+3. Space for logs and reports
+   - Estimate: 100 MB
+
+Success Criteria:
+✓ Available space > 5 GB
+
+Failure Actions:
+✗ WARN if space < 10 GB
+✗ ABORT if space < 5 GB
+✗ Log current disk usage
+
+================================================================================
+PHASE 1: HISTORICAL DATA DOWNLOAD & VALIDATION (Enhancement Points 2, 8, 11)
+================================================================================
+
+Objective: Download 3 months of historical data and validate quality
+Duration Target: < 5 minutes
+
+1.1 Data Download from cTrader
+-------------------------------
+Target: Complete OHLC + extended data for all required timeframes
+
+Symbols to Download:
+- EUR/USD (primary test pair)
+- Optional: GBP/USD, USD/JPY (if multi-symbol test enabled)
+
+Timeframes Required:
+- 1m (1 minute)
+- 5m (5 minutes)
+- 15m (15 minutes)
+- 1h (1 hour)
+- 4h (4 hours)
+- 1d (1 day)
+
+Data Period:
+- Start: 3 months ago from test start date
+- End: Current date/time
+- Expected candles per timeframe:
+  * 1m: ~129,600 candles
+  * 5m: ~25,920 candles
+  * 15m: ~8,640 candles
+  * 1h: ~2,160 candles
+  * 4h: ~540 candles
+  * 1d: ~90 candles
+
+Download Process:
+1. Call ctrader_provider.download_historical()
+2. Store in candles table
+3. Log download progress (every 10%)
+4. Handle rate limiting (backoff strategy)
+5. Retry failed chunks (max 3 attempts)
+
+Data Fields Required (Enhancement Point 2):
+- ts_utc (timestamp in milliseconds UTC)
+- open (price)
+- high (price)
+- low (price)
+- close (price)
+- volume (trade volume)
+- spread (bid-ask spread) - if available
+- tick_volume (number of ticks) - if available
+- volatility (ATR or similar) - calculated if not provided
+
+Success Criteria:
+✓ All timeframes downloaded
+✓ No gaps > 5 consecutive candles
+✓ All required fields present
+✓ Timestamp range matches 3 months
+
+Failure Actions:
+✗ Log missing timeframes/gaps
+✗ Attempt gap filling from backup source
+✗ ABORT if critical data missing
+
+1.2 Data Quality Validation (Enhancement Point 2)
+--------------------------------------------------
+Target: Ensure data integrity and consistency
+
+Quality Checks:
+
+A) OHLC Consistency:
+   - Verify: High >= Open, High >= Close
+   - Verify: Low <= Open, Low <= Close
+   - Verify: High >= Low
+   - Tolerance: Allow 0.0001 pip deviation for floating point errors
+
+B) Timestamp Validation:
+   - No duplicate timestamps
+   - Sequential ordering (ascending)
+   - No timestamps in future
+   - Weekend gap validation (Forex closed Saturday-Sunday)
+   
+C) Volume Validation:
+   - No negative volumes
+   - Flag suspicious zero volumes (> 10% of candles)
+   - Volume spikes detection (> 10x median volume)
+   
+D) Price Movement Validation:
+   - Flag abnormal jumps (> 5% in single candle)
+   - Check for decimal point errors (prices off by factor 10/100)
+   
+E) Cross-Timeframe Consistency:
+   - Verify 5x 1m candles = 1x 5m candle (OHLC aggregation)
+   - Verify 3x 5m candles = 1x 15m candle
+   - Check volume aggregation consistency
+
+F) Statistical Outlier Detection:
+   - Calculate z-scores for price changes
+   - Flag candles with z-score > 5
+   - Check for data recording errors
+
+Database Verification:
+- Query: SELECT COUNT(*) FROM candles WHERE symbol=? AND timeframe=?
+- Compare with expected counts
+- Verify all ts_utc within requested range
+- Check for NULL values in critical columns
+
+Success Criteria:
+✓ OHLC consistency > 99.9%
+✓ No duplicate timestamps
+✓ Gap ratio < 0.1%
+✓ Volume present in > 90% candles
+✓ Cross-timeframe consistency > 99%
+
+Failure Actions:
+✗ Log all validation errors with details
+✗ Generate data quality report
+✗ ABORT if critical issues found (> 5% bad data)
+✗ WARN if minor issues (< 1% anomalies)
+
+1.3 Data Persistence Validation (Enhancement Point 8)
+------------------------------------------------------
+Target: Verify data correctly saved to database
+
+Tests:
+1. Transaction Integrity:
+   - Verify all candles committed to DB
+   - Check no partial writes (rollback test)
+   - Validate foreign key constraints
+   
+2. Data Retrieval Test:
+   - Fetch back downloaded data using db_adapter.py
+   - Compare with original download
+   - Verify data types preserved
+   
+3. Index Performance:
+   - Query performance on (symbol, timeframe, ts_utc)
+   - Should be < 100ms for single symbol query
+   
+4. Backup/Recovery Test:
+   - Create database backup
+   - Simulate corruption scenario
+   - Verify recovery process
+
+Success Criteria:
+✓ All data persisted correctly
+✓ Query performance acceptable
+✓ Backup created successfully
+✓ Referential integrity maintained
+
+1.4 Edge Case Testing (Enhancement Point 11)
+---------------------------------------------
+Target: Test data handling under abnormal conditions
+
+Test Cases:
+
+A) Missing Data Simulation:
+   - Delete 10 random candles from DB
+   - Verify system detects gaps
+   - Test gap filling strategy
+   
+B) Corrupted Data Simulation:
+   - Inject NaN values in random candles
+   - Verify data cleaning functions
+   - Test fallback mechanisms
+   
+C) Invalid Symbol Test:
+   - Request data for "INVALID/PAIR"
+   - Verify graceful error handling
+   - Check error messages clarity
+   
+D) Network Error Simulation:
+   - Simulate connection timeout
+   - Verify retry mechanism
+   - Test exponential backoff
+   
+E) Timezone Edge Cases:
+   - Test daylight saving time transitions
+   - Verify UTC conversion consistency
+   - Test cross-timezone data consistency
+
+Success Criteria:
+✓ All edge cases handled gracefully
+✓ No uncaught exceptions
+✓ Appropriate error messages
+✓ System recovers automatically where possible
+
+================================================================================
+PHASE 2: REAL-TIME DATA INTEGRATION (Enhancement Point 3, 11)
+================================================================================
+
+Objective: Validate real-time data feed integration
+Duration Target: 2 minutes of live streaming
+
+2.1 Real-Time Connection Establishment
+---------------------------------------
+Target: Connect to live cTrader data feed
+
+Connection Steps:
+1. Initialize WebSocket connection (ctrader_provider.py)
+2. Subscribe to live ticks for EUR/USD
+3. Subscribe to order book updates (if available)
+4. Subscribe to trade updates
+
+Success Criteria:
+✓ Connection established within 5 seconds
+✓ Subscription confirmed
+✓ First tick received within 10 seconds
+
+2.2 Real-Time Data Validation
+------------------------------
+Target: Verify completeness and quality of live data
+
+Data Checks:
+
+A) Tick Data:
+   - Verify tick arrival frequency (should be continuous)
+   - Fields present: timestamp, bid, ask, last, volume
+   - Bid < Ask (spread is positive)
+   - Prices within reasonable range of historical close
+   
+B) Order Book Data (if available):
+   - Bid side has entries
+   - Ask side has entries
+   - Spread matches tick spread
+   - Depth levels populated (at least 5 levels)
+   
+C) Trade Data:
+   - Trade execution prices
+   - Trade volumes
+   - Trade timestamps
+   
+D) Aggregated Candles:
+   - 1-minute candles formed from ticks
+   - OHLC consistency
+   - Volume aggregation
+
+Data Collection:
+- Collect 2 minutes of live data
+- Store in market_data_ticks table
+- Calculate statistics:
+  * Ticks per second (avg, min, max)
+  * Spread statistics (avg, min, max)
+  * Volume per time interval
+
+Success Criteria:
+✓ Continuous tick stream (> 1 tick/second avg)
+✓ All required fields present
+✓ Latency < 100ms (timestamp to receipt)
+✓ No data corruption or malformed messages
+✓ Order book depth > 3 levels (if available)
+
+Failure Actions:
+✗ Log connection drops with timestamps
+✗ Measure reconnection time
+✗ Verify automatic reconnection
+
+2.3 Latency & Performance Monitoring (Enhancement Point 7)
+-----------------------------------------------------------
+Target: Verify low-latency data delivery
+
+Metrics to Measure:
+1. Network Latency:
+   - Time from tick generation to receipt
+   - Target: < 100ms (50ms ideal)
+   
+2. Processing Latency:
+   - Time from receipt to database storage
+   - Target: < 50ms
+   
+3. End-to-End Latency:
+   - From tick generation to availability for trading logic
+   - Target: < 200ms
+   
+4. Throughput:
+   - Ticks processed per second
+   - Target: > 100 ticks/sec
+
+Monitoring:
+- Log every 100th tick with latency measurement
+- Calculate percentiles (p50, p95, p99)
+- Detect latency spikes (> 500ms)
+
+Success Criteria:
+✓ p95 latency < 150ms
+✓ p99 latency < 300ms
+✓ No latency spikes > 1 second
+✓ Throughput meets target
+
+2.4 Reconnection & Error Handling (Enhancement Points 3, 11)
+-------------------------------------------------------------
+Target: Validate robustness of real-time connection
+
+Tests:
+
+A) Connection Drop Simulation:
+   - Force disconnect WebSocket
+   - Verify automatic reconnection
+   - Measure reconnection time (target < 5 seconds)
+   - Verify no data loss during reconnection
+   
+B) Intermittent Network Issues:
+   - Simulate packet loss (5% drop rate)
+   - Verify data integrity maintained
+   - Test buffering mechanism
+   
+C) Server-Side Errors:
+   - Simulate server rejection
+   - Verify exponential backoff
+   - Test max retry limit
+   
+D) Invalid Message Handling:
+   - Inject malformed message
+   - Verify parser doesn't crash
+   - Check error logging
+
+Success Criteria:
+✓ Automatic reconnection successful
+✓ Reconnection time < 10 seconds
+✓ No unhandled exceptions
+✓ Error messages descriptive
+✓ System continues operation after recovery
+
+2.5 Candle vs Tick Consistency
+-------------------------------
+Target: Verify tick data aggregates correctly to candles
+
+Test Process:
+1. Collect 1 minute of tick data
+2. Calculate OHLC from ticks manually
+3. Compare with system-generated 1m candle
+4. Verify volume aggregation
+
+Validation:
+- Open: First tick price
+- High: Maximum tick price
+- Low: Minimum tick price
+- Close: Last tick price
+- Volume: Sum of tick volumes
+
+Success Criteria:
+✓ Manual OHLC matches system candle
+✓ Volume difference < 1%
+✓ Timestamp alignment correct
+
+================================================================================
+PHASE 3: AI TRAINING & OPTIMIZATION (Enhancement Points 4, 7, 8, 9)
+================================================================================
+
+Objective: Train and optimize forecasting models
+Duration Target: < 15 minutes for 3 models
+CRITICAL: Training STOPS after 3 models successfully completed
+
+3.1 Feature Engineering Validation (Enhancement Point 4)
+---------------------------------------------------------
+Target: Ensure no lookahead bias and correct feature computation
+
+Feature Categories to Validate:
+1. Price-based features (OHLC transformations)
+2. Technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands)
+3. Volume-based features
+4. Volatility features (ATR, Historical Volatility)
+5. Regime indicators
+6. Multi-timeframe features
+
+Lookahead Bias Tests:
+- Verify features at time T only use data from time <= T
+- Check no future data leakage in indicator calculations
+- Validate train/test split (no overlap)
+- Test expanding window vs rolling window
+
+Implementation Check:
+- Review feature computation in training_pipeline
+- Verify indicator_tfs configuration in database_models.py
+- Check additional_features JSON structure
+
+Success Criteria:
+✓ Zero lookahead bias detected
+✓ Features align correctly with target
+✓ All indicators computed correctly
+✓ Multi-timeframe alignment verified
+
+3.2 Model Training - Run 1 (Enhancement Points 4, 7, 9)
+--------------------------------------------------------
+Target: Train first forecasting model successfully
+
+Model Configuration:
+- Model Type: Diffusion or VAE (from models/__init__.py)
+- Encoder: LSTM or Transformer
+- Symbol: EUR/USD
+- Base Timeframe: 15m
+- Days History: 90 days
+- Horizon: 24 steps (6 hours for 15m)
+- Indicator TFs: {"rsi": ["5m", "15m"], "sma": ["15m", "1h"]}
+
+Training Process:
+1. Create training_run record in database
+   - Status: 'pending'
+   - Generate run_uuid
+   - Save configuration (model_hyperparams JSON)
+   
+2. Load and preprocess data
+   - Fetch from candles table (db_adapter.py)
+   - Apply feature engineering
+   - Split train/validation/test (60/20/20)
+   
+3. Initialize model
+   - Load model from models/ directory
+   - Configure hyperparameters
+   - Initialize optimizer (AdamW typical)
+   
+4. Training loop
+   - Batch size: 32
+   - Epochs: 50 (early stopping if no improvement for 10 epochs)
+   - Learning rate: 1e-4 with ReduceLROnPlateau
+   - Loss: MSE or custom diffusion loss
+   
+5. Checkpoint saving
+   - Save best model based on validation loss
+   - Save every 10 epochs
+   - Store in models/ directory
+   
+6. Update training_run record
+   - Status: 'completed'
+   - Save training_metrics (MAE, RMSE, R2)
+   - Save model_file_path
+   - Calculate training_duration_seconds
+
+Monitoring (Enhancement Point 7):
+- Memory usage every 10 epochs
+- GPU utilization (if available)
+- Training speed (samples/second)
+- Gradient statistics (mean, std)
+
+Validation (Enhancement Point 4):
+- Overfitting check: train_loss vs val_loss
+  * If val_loss > 1.5 * train_loss → WARN
+- Training metrics threshold:
+  * MAE < 0.05 (5% error)
+  * R2 > 0.6
+- Model size check: file size < 200 MB
+
+Persistence (Enhancement Point 8):
+- Verify model file written to disk
+- Verify database record updated
+- Test model can be loaded back
+- Verify config_hash computed correctly
+
+Logging (Enhancement Point 9):
+- Log every epoch metrics
+- Log hyperparameters used
+- Log data split sizes
+- Log feature list (feature_count)
+- Log any warnings or errors
+- Timestamp all events
+
+Success Criteria:
+✓ Training completes without errors
+✓ Validation metrics meet threshold
+✓ Model file saved correctly
+✓ Database record consistent
+✓ No overfitting detected
+✓ Training time < 5 minutes
+
+Failure Actions:
+✗ Log full error stack trace
+✗ Save partial results for analysis
+✗ Update training_run.status = 'failed'
+✗ Continue to next model (don't abort)
+
+3.3 Model Training - Runs 2 & 3
+--------------------------------
+Target: Train 2 additional models with different configurations
+CRITICAL: After these 2 models complete, training STOPS (3 total models)
+
+Model 2 Configuration:
+- Model Type: VAE (different from Model 1)
+- Encoder: Transformer
+- Horizon: 48 steps (12 hours)
+- Different indicator_tfs configuration
+
+Model 3 Configuration:
+- Model Type: Ensemble (StackingEnsemble)
+- Combine results from Model 1 & 2
+- Meta-learner: LightGBM or similar
+
+Process: Repeat steps from 3.2 for each model
+
+Success Criteria:
+✓ All 3 models trained successfully
+✓ Different architectures tested
+✓ Ensemble model combines base models
+✓ Total training time < 15 minutes
+
+IMPORTANT: After Model 3 completes, NO MORE MODELS are trained for this test
+(except for the checkpoint test below which is special-purpose)
+
+3.4 Checkpoint & Recovery Testing (Enhancement Point 4)
+--------------------------------------------------------
+Target: Validate training can resume from checkpoint
+NOTE: This uses a 4th model ONLY for testing checkpoint functionality
+      This model is INTERRUPTED and does NOT count toward the 3 model limit
+
+Test Process:
+1. Start training a 4th model (TEST ONLY - not counted in limits)
+2. Interrupt training at epoch 25
+3. Verify checkpoint file exists
+4. Restart training from checkpoint
+5. Verify training continues from correct epoch
+6. Compare final results with uninterrupted training
+
+Success Criteria:
+✓ Checkpoint saved correctly
+✓ Recovery loads correct state
+✓ Training continues smoothly
+✓ Final model equivalent to uninterrupted
+
+IMPORTANT: This 4th model is for checkpoint testing ONLY and is not completed
+
+3.5 Model Serialization/Deserialization (Enhancement Point 4)
+--------------------------------------------------------------
+Target: Verify model persistence and loading
+
+Tests for each trained model (Models 1, 2, 3):
+1. Save model to disk (pickle or torch.save)
+2. Load model back into memory
+3. Run inference on sample data
+4. Compare predictions before/after save-load cycle
+5. Verify all model weights preserved
+
+Success Criteria:
+✓ All 3 models serializable
+✓ Predictions match before/after loading
+✓ No memory leaks during repeated load
+✓ File sizes reasonable (< 200 MB each)
+
+3.6 Overfitting Analysis (Enhancement Point 4)
+-----------------------------------------------
+Target: Detect and quantify overfitting
+
+Analysis per Model (Models 1, 2, 3):
+1. Calculate metrics on train/val/test sets
+2. Compute overfitting score:
+   - Score = (val_loss - train_loss) / train_loss
+   - Threshold: < 0.5 (50% degradation acceptable)
+   
+3. Out-of-sample performance:
+   - Test set R2 should be > 0.5
+   - Test MAE should be < 2x train MAE
+   
+4. Cross-validation:
+   - K-fold CV (k=5) on training data
+   - Compute CV score variance
+   - Low variance indicates stability
+
+Success Criteria:
+✓ Overfitting score < 0.5 for all models
+✓ Test performance within acceptable range
+✓ CV variance < 0.1
+
+Failure Actions:
+✗ Flag overfitted models
+✗ Recommend regularization increase
+✗ Log detailed overfitting report
+
+================================================================================
+PHASE 4: INFERENCE & BACKTESTING (Enhancement Points 4, 5, 7, 9)
+================================================================================
+
+Objective: Test inference methods and backtest strategies
+Duration Target: < 10 minutes for 10 backtest cycles
+CRITICAL: Backtesting STOPS after 10 cycles completed
+
+4.1 Inference Configuration Testing
+------------------------------------
+Target: Validate all inference methods work correctly
+
+Inference Methods to Test (from INFERENCE_SETTINGS_COMPLETE_GUIDE.md):
+1. Direct Single-Step
+2. Direct Multi-Step
+3. Recursive Multi-Step
+4. Ensemble (Mean)
+5. Ensemble (Weighted)
+6. Ensemble (Stacking)
+
+Tests per Method:
+1. Load trained model from Phase 3
+2. Configure inference parameters:
+   - prediction_method: (one of above)
+   - confidence_threshold: 0.7
+   - lookback_window: 100
+   
+3. Run inference on test dataset
+4. Validate predictions:
+   - Shape matches expected horizon
+   - Values are reasonable (not NaN, Inf)
+   - Predictions within historical price range +/- 20%
+   
+5. Measure inference time
+   - Single prediction: < 100ms
+   - Batch prediction (100 samples): < 2 seconds
+
+Success Criteria:
+✓ All inference methods execute successfully
+✓ Predictions are valid
+✓ Inference time meets targets
+✓ No errors or warnings
+
+4.2 Backtest Execution - Cycles 1-10 (Enhancement Points 5, 7, 9)
+------------------------------------------------------------------
+Target: Run 10 backtesting cycles with different configurations
+CRITICAL: After 10 backtests complete, backtesting STOPS
+
+Backtest Configuration Matrix:
+- 3 Models × 3 Inference Methods = 9 backtests
+- Plus 1 ensemble backtest = 10 backtests TOTAL
+
+Each Backtest Process:
+1. Create inference_backtest record in database
+   - Link to training_run_id
+   - Save inference_params JSON
+   
+2. Load trained model and inference configuration
+3. Initialize backtesting engine (from backtesting/ directory)
+4. Define trading rules:
+   - Entry: When prediction > current_price + threshold
+   - Exit: Stop-loss (2% below) or Take-profit (5% above)
+   - Position sizing: Fixed 1% risk per trade
+   
+5. Run backtest on out-of-sample data (test set)
+6. Collect metrics:
+   - Total Return %
+   - Sharpe Ratio
+   - Max Drawdown %
+   - Win Rate %
+   - Number of Trades
+   - Average Trade Duration
+   - Profit Factor
+   
+7. Save results to database:
+   - Update inference_backtest record
+   - Save backtest_metrics JSON
+   - Link to advanced_metrics table
+
+Performance Monitoring (Enhancement Point 7):
+- Memory usage per backtest
+- Execution time per backtest (target < 1 minute)
+- CPU usage tracking
+
+Logging (Enhancement Point 9):
+- Log each trade executed
+- Log entry/exit prices and timestamps
+- Log P&L per trade
+- Log any errors or warnings
+
+Success Criteria:
+✓ All 10 backtests complete
+✓ Metrics computed correctly
+✓ Results saved to database
+✓ No trades executed outside data range
+✓ Position sizing respected
+✓ Total backtest time < 10 minutes
+
+IMPORTANT: After 10 backtests complete, NO MORE BACKTESTS run in this test
+
+4.3 Regime-Based Performance Analysis (Enhancement Point 5)
+------------------------------------------------------------
+Target: Evaluate model performance across different market regimes
+
+Regime Detection:
+1. Identify regimes in test data:
+   - Bull (uptrend): SMA20 > SMA50, price > SMA20
+   - Bear (downtrend): SMA20 < SMA50, price < SMA20
+   - Sideways (range): ADX < 25
+   - Volatile: ATR > 1.5x median ATR
+   
+2. Label each candle with regime
+3. Split backtest results by regime
+
+Analysis per Model:
+1. Calculate metrics per regime:
+   - Return % per regime
+   - Sharpe per regime
+   - Win rate per regime
+   
+2. Identify best regime for each model
+3. Save to regime_best_models table:
+   - Link model to regime
+   - Save performance_score (Sharpe ratio)
+   - Save secondary_metrics JSON
+
+Stability Testing (Enhancement Point 5):
+- Run same backtest configuration twice
+- Compare results (should be identical)
+- Verify deterministic behavior
+
+Out-of-Sample Degradation (Enhancement Point 5):
+- Compare in-sample vs out-of-sample metrics
+- Calculate degradation score:
+  * Degradation = (in_sample_sharpe - out_of_sample_sharpe) / in_sample_sharpe
+  * Threshold: < 0.3 (30% degradation acceptable)
+
+Success Criteria:
+✓ Regime detection working
+✓ Performance varies meaningfully by regime
+✓ Best regime identified for each model
+✓ Results consistent across repeated runs
+✓ Out-of-sample degradation < 30%
+
+4.4 Advanced Metrics Calculation (Enhancement Point 10)
+--------------------------------------------------------
+Target: Compute comprehensive performance metrics
+
+Metrics to Calculate (from advanced_metrics table):
+1. Risk-Adjusted Returns:
+   - Sortino Ratio (downside deviation only)
+   - Calmar Ratio (return / max drawdown)
+   - MAR Ratio (CAGR / max drawdown)
+   - Omega Ratio (probability-weighted ratio of gains vs losses)
+   - Gain-to-Pain Ratio
+
+2. Drawdown Analysis:
+   - Max Drawdown %
+   - Max Drawdown Duration (days)
+   - Average Drawdown %
+   - Recovery Time (days)
+   - Ulcer Index (drawdown pain measure)
+
+3. Return Distribution:
+   - Skewness (asymmetry of returns)
+   - Kurtosis (tail thickness)
+   - VaR 95% (Value at Risk)
+   - CVaR 95% (Conditional Value at Risk)
+
+4. Win/Loss Analysis:
+   - Average Win %
+   - Average Loss %
+   - Largest Win %
+   - Largest Loss %
+   - Win/Loss Ratio
+   - Profit Factor
+
+5. Consistency Metrics:
+   - Max Win Streak
+   - Max Loss Streak
+   - Monthly Win Rate %
+   - Expectancy per Trade
+
+6. System Quality:
+   - System Quality Number (SQN)
+   - K-Ratio (consistency of returns)
+
+Calculation Process:
+1. Extract trade-by-trade results from backtest
+2. Calculate each metric using appropriate formula
+3. Store in advanced_metrics table
+4. Generate comparison report across all backtests
+
+Success Criteria:
+✓ All metrics calculated for all backtests
+✓ Values are reasonable (no NaN, Inf)
+✓ Metrics saved to database
+✓ Can rank backtests by different metrics
+
+4.5 Parameter Sensitivity Analysis (Enhancement Point 5)
+---------------------------------------------------------
+Target: Test robustness to parameter changes
+
+Parameters to Test:
+1. Stop-Loss levels: [1%, 2%, 3%, 4%, 5%]
+2. Take-Profit levels: [3%, 5%, 7%, 10%]
+3. Confidence threshold: [0.6, 0.7, 0.8, 0.9]
+4. Position size: [0.5%, 1%, 2%]
+
+Test Process:
+1. Select best performing model from Phase 3
+2. Run mini-backtest for each parameter variation
+3. Calculate Sharpe ratio for each
+4. Compute sensitivity:
+   - Sensitivity = StdDev(Sharpe) across parameter range
+   - Low sensitivity (< 0.5) indicates robustness
+
+Success Criteria:
+✓ Sensitivity analysis complete
+✓ Identified stable parameter regions
+✓ Parameter sensitivity < 0.5 for critical params
+✓ Results logged
+
+================================================================================
+PHASE 5: PATTERN OPTIMIZATION (Enhancement Points 5, 7, 8, 9)
+================================================================================
+
+Objective: Optimize pattern recognition and trading parameters
+Duration Target: < 10 minutes for 5 optimization cycles
+CRITICAL: Pattern optimization STOPS after 5 cycles completed
+
+5.1 Pattern Detection & Catalog
+--------------------------------
+Target: Identify patterns in historical data
+
+Patterns to Detect (from patterns/candles.py):
+1. Candlestick Patterns:
+   - Doji
+   - Hammer / Hanging Man
+   - Engulfing (Bull/Bear)
+   - Morning Star / Evening Star
+   - Three White Soldiers / Three Black Crows
+   
+2. Chart Patterns (from patterns/):
+   - Support / Resistance levels
+   - Trend lines
+   - Triangles (Ascending, Descending, Symmetrical)
+   - Head & Shoulders
+   - Double Top / Bottom
+
+Detection Process:
+1. Scan historical data (3 months)
+2. Apply pattern recognition algorithms
+3. Save detected patterns to pattern_* tables
+4. Classify by:
+   - Symbol
+   - Timeframe  
+   - Market regime
+   - Pattern type
+
+Statistics to Collect:
+- Total patterns detected per type
+- Frequency per regime
+- Success rate (% followed by expected move)
+
+Success Criteria:
+✓ Patterns detected in data
+✓ At least 50 pattern instances found
+✓ Patterns saved to database
+✓ Classification accurate
+
+5.2 Pattern Optimization - Cycles 1-5 (Enhancement Points 5, 7, 9)
+-------------------------------------------------------------------
+Target: Optimize pattern parameters for maximum profitability
+CRITICAL: After 5 cycles complete, pattern optimization STOPS
+
+Optimization Cycles:
+- Cycle 1: Candlestick patterns, EUR/USD, 15m, All regimes
+- Cycle 2: Candlestick patterns, EUR/USD, 15m, Bull regime
+- Cycle 3: Candlestick patterns, EUR/USD, 15m, Bear regime
+- Cycle 4: Chart patterns, EUR/USD, 1h, All regimes
+- Cycle 5: Combined patterns, EUR/USD, 15m, Volatile regime
+
+Each Optimization Cycle:
+
+1. Load pattern instances from database
+   
+2. Define parameter grid:
+   - Entry delay: [0, 1, 2, 3] candles after pattern
+   - Stop-Loss: [1%, 1.5%, 2%, 2.5%, 3%] below entry
+   - Take-Profit: [2%, 3%, 4%, 5%, 7%, 10%] above entry
+   - Minimum pattern strength: [0.5, 0.7, 0.9]
+   
+3. Run grid search optimization:
+   - For each parameter combination:
+     * Simulate trades based on pattern signals
+     * Calculate performance metrics
+     * Track best parameters
+   
+4. Select best parameters based on:
+   - Primary: Sharpe Ratio
+   - Secondary: Win Rate, Profit Factor
+   
+5. Save to optimized_parameters table:
+   - pattern_type
+   - symbol
+   - timeframe
+   - market_regime
+   - form_params (JSON)
+   - action_params (JSON with best SL/TP)
+   - performance_metrics (JSON)
+   - optimization_timestamp
+   - data_range (start/end)
+   - sample_count
+
+Performance Monitoring (Enhancement Point 7):
+- Optimization time per cycle (target < 2 minutes)
+- Memory usage during grid search
+- Number of parameter combinations tested
+
+Stability Testing (Enhancement Point 5):
+- Run same optimization twice
+- Compare results (parameters should be identical)
+- Verify deterministic behavior
+
+Logging (Enhancement Point 9):
+- Log parameter grid search progress
+- Log best parameters found
+- Log performance metrics for best params
+- Log sample trade examples
+
+Success Criteria:
+✓ All 5 optimization cycles complete
+✓ Best parameters identified for each
+✓ Results saved to database
+✓ Optimization stable and deterministic
+✓ Total time < 10 minutes
+
+IMPORTANT: After 5 cycles complete, NO MORE PATTERN OPTIMIZATION in this test
+
+5.3 Pattern Results Validation
+-------------------------------
+Target: Verify optimization results are properly stored and organized
+
+Validation Queries:
+1. Check optimized_parameters table:
+   - COUNT(*) should be >= 5 (one per cycle)
+   - Verify unique patterns per (symbol, timeframe, regime)
+   
+2. Verify data structure:
+   - form_params JSON is valid
+   - action_params contains SL/TP values
+   - performance_metrics contains Sharpe, Win Rate, etc.
+   
+3. Check regime-specific results:
+   - Bull regime params differ from Bear regime
+   - Parameters make intuitive sense (TP > SL)
+
+4. Cross-validation of results:
+   - Load parameters back from database
+   - Verify can reconstruct optimization config
+
+Success Criteria:
+✓ All optimization results in database
+✓ Data organized by asset/regime/pattern
+✓ Parameters contain SL/TP values
+✓ JSON fields parseable
+✓ Results queryable by regime
+
+5.4 Out-of-Sample Pattern Validation (Enhancement Point 5)
+-----------------------------------------------------------
+Target: Test pattern performance on unseen data
+
+Process:
+1. Split historical data: 70% optimization, 30% validation
+2. Run optimization on 70% (in-sample)
+3. Apply optimized parameters to 30% (out-of-sample)
+4. Compare performance:
+   - In-sample Sharpe vs Out-of-sample Sharpe
+   - In-sample Win Rate vs Out-of-sample Win Rate
+   
+5. Calculate degradation:
+   - Degradation = (in_sample - out_sample) / in_sample
+   - Acceptable: < 0.4 (40% degradation)
+
+Success Criteria:
+✓ Out-of-sample validation complete
+✓ Degradation < 40%
+✓ Patterns still profitable out-of-sample
+✓ Results logged and saved
+
+================================================================================
+PHASE 6: INTEGRATED TRADING SYSTEM (Enhancement Points 6, 7, 8, 9, 10)
+================================================================================
+
+Objective: Test complete trading system with AI + patterns + risk management
+Duration Target: < 15 minutes to open 5 positions
+CRITICAL: Trading continues until 5 positions opened OR 15 minute timeout
+
+6.1 Model & Parameter Loading (Enhancement Points 6, 8)
+--------------------------------------------------------
+Target: Correctly load optimized components from database
+
+Components to Load:
+
+A) AI Forecast Models (from Phase 3 - 3 completed models):
+   1. Query training_runs table for completed models
+   2. Load models based on current regime:
+      - Detect current market regime
+      - Query regime_best_models for best model
+      - Load model file from disk
+      - Verify model loaded successfully
+      
+   3. Load inference configuration:
+      - Query inference_backtests for best inference method
+      - Load inference_params JSON
+      
+B) Pattern Parameters (from Phase 5 - 5 optimization cycles):
+   1. Query optimized_parameters table
+   2. Filter by:
+      - symbol = EUR/USD
+      - timeframe = 15m (or current trading timeframe)
+      - market_regime = current regime
+   3. Parse form_params and action_params JSON
+   4. Extract SL/TP values
+
+C) Risk Profile:
+   1. Query risk_profiles table for active profile
+   2. Load risk management parameters:
+      - max_risk_per_trade_pct
+      - max_portfolio_risk_pct
+      - position_sizing_method
+      - base_sl_atr_multiplier
+      - base_tp_atr_multiplier
+      - max_correlated_positions
+      - max_total_positions
+
+Validation:
+- Verify all components loaded without errors
+- Check data consistency (e.g., SL < entry < TP)
+- Validate regime detection accuracy
+
+Success Criteria:
+✓ All AI models loaded correctly
+✓ Pattern parameters retrieved from DB
+✓ Risk profile loaded
+✓ Current regime detected
+✓ No loading errors
+
+6.2 Signal Generation & Integration (Enhancement Point 6)
+----------------------------------------------------------
+Target: Generate trading signals using AI + patterns
+
+Signal Generation Process:
+
+1. AI Forecast Signal:
+   - Run inference on latest candles
+   - Generate price forecast for next N steps
+   - Calculate signal strength:
+     * Signal = (forecast - current_price) / current_price
+     * Strong Buy: Signal > +2%
+     * Buy: Signal > +1%
+     * Neutral: -1% < Signal < +1%
+     * Sell: Signal < -1%
+     * Strong Sell: Signal < -2%
+   
+2. Pattern Recognition Signal:
+   - Scan latest candles for patterns
+   - Check if pattern detected matches optimized patterns
+   - Get pattern confidence score
+   - Apply pattern-specific SL/TP from optimized_parameters
+   
+3. Signal Combination:
+   - Combine AI and Pattern signals
+   - Weighting strategy:
+     * If both agree (same direction): Strong signal
+     * If one neutral: Weak signal
+     * If disagree: No signal
+   
+4. Regime Adjustment:
+   - Adjust signal strength based on regime confidence
+   - Apply regime-specific thresholds
+
+Integration Validation:
+- Test signal generation with various data scenarios
+- Verify signal strength calculation
+- Check signal combination logic
+- Validate regime adjustments
+
+Success Criteria:
+✓ AI signals generated correctly
+✓ Pattern signals detected
+✓ Signal combination working
+✓ Regime adjustments applied
+✓ Signal strength reasonable
+
+6.3 Risk Management & Position Sizing (Enhancement Point 6)
+------------------------------------------------------------
+Target: Apply comprehensive risk management
+
+Risk Calculations:
+
+1. Position Size Calculation:
+   - Method: Kelly Criterion or Fixed Fractional
+   - Account balance: $100,000 (simulated)
+   - Max risk per trade: 1% = $1,000
+   - Calculate position size based on stop-loss
+   
+2. Stop-Loss Determination:
+   - Base SL from pattern optimization
+   - Adjust for ATR: SL = base_sl * atr_multiplier
+   - Apply volatility adjustment if enabled
+   - Minimum SL: 20 pips, Maximum SL: 200 pips
+   
+3. Take-Profit Determination:
+   - Base TP from pattern optimization
+   - Risk-Reward ratio: TP should be >= 1.5x SL
+   - Adjust based on AI forecast target
+   
+4. Portfolio Risk Checks:
+   - Calculate current portfolio risk
+   - Verify: portfolio_risk + new_trade_risk <= max_portfolio_risk
+   - Check correlation with existing positions
+   - Verify position count <= max_total_positions
+   
+5. Diversification Rules:
+   - Max 1 position per symbol per timeframe
+   - Max correlated positions based on correlation_threshold
+   - Spread risk across different regimes if possible
+
+Validation Tests:
+- Test position sizing with different account sizes
+- Verify SL/TP placement logic
+- Test portfolio risk aggregation
+- Validate diversification rules
+
+Success Criteria:
+✓ Position sizes calculated correctly
+✓ SL/TP values reasonable
+✓ Portfolio risk within limits
+✓ Diversification rules respected
+✓ All risk checks pass
+
+6.4 Order Generation & Execution (Enhancement Points 6, 9)
+-----------------------------------------------------------
+Target: Generate and execute 5 trading operations
+CRITICAL: Loop continues until 5 positions opened OR 15 minute timeout
+
+Order Generation Loop:
+
+1. Wait for trading signal
+   - Poll every 5 seconds for new candle
+   - Generate signal using Section 6.2 logic
+   
+2. When strong signal detected:
+   - Verify signal meets entry criteria
+   - Check risk management rules (Section 6.3)
+   - If all checks pass, prepare order
+   
+3. Order Details:
+   - Symbol: EUR/USD
+   - Direction: Buy or Sell (based on signal)
+   - Volume: Calculated position size (lots)
+   - Entry Price: Current market price (or limit price)
+   - Stop-Loss: Entry +/- SL distance
+   - Take-Profit: Entry +/- TP distance
+   - Order Type: Market or Limit
+   - Timeframe: 15m (or configured)
+   
+4. Submit order:
+   - **NOTE: For E2E test, use PAPER TRADING mode**
+   - Log order submission
+   - Record order details in database (orders table)
+   - Verify order accepted/executed
+   
+5. Post-execution:
+   - Update position tracking
+   - Record in audit trail
+   - Log trade details
+
+Logging (Enhancement Point 9):
+- Log every signal evaluation
+- Log all risk checks and results
+- Log order details before submission
+- Log execution confirmation
+- Log any errors or rejections
+
+Trading Sequence:
+- Iterate until 5 positions opened OR 15 minute timeout
+- If timeout reached with < 5 positions, test continues to next phase
+
+Success Criteria:
+✓ Target 5 positions opened (or timeout reached)
+✓ All orders have correct SL/TP
+✓ No duplicate positions
+✓ Risk limits respected for all orders
+✓ All trades logged completely
+✓ Portfolio allocation within limits
+
+Failure Actions:
+✗ Log reason for failed order
+✗ Continue attempting until timeout
+✗ Generate report of all attempts
+
+6.5 Portfolio-Level Risk Management (Enhancement Point 6)
+----------------------------------------------------------
+Target: Validate portfolio-wide risk controls
+
+Portfolio Metrics to Monitor:
+
+1. Total Exposure:
+   - Sum of all position sizes
+   - Should be <= 100% of capital (no over-leverage)
+   
+2. Aggregated Risk:
+   - Sum of max potential loss (position_size * SL%)
+   - Should be <= max_portfolio_risk_pct
+   
+3. Correlation Matrix:
+   - Calculate pairwise correlation of positions
+   - Flag highly correlated positions (> correlation_threshold)
+   - Max correlated positions rule enforced
+   
+4. Regime Diversification:
+   - Count positions per regime
+   - Ideal: spread across regimes
+   - Avoid concentration in single regime
+
+5. Drawdown Monitoring:
+   - Track portfolio value over time
+   - Calculate current drawdown
+   - Verify: current_dd <= max_drawdown_pct
+   - If exceeded, trigger recovery mode
+
+Recovery Mode Test:
+- Simulate portfolio loss of 15%
+- Verify recovery mode activates
+- Check: risk_multiplier reduced per risk_profile
+- Validate conservative position sizing
+
+Success Criteria:
+✓ Portfolio exposure within limits
+✓ Aggregated risk managed correctly
+✓ Correlation limits respected
+✓ Regime diversification achieved
+✓ Drawdown protection active
+✓ Recovery mode functions correctly
+
+6.6 Slippage & Commission Simulation (Enhancement Point 6)
+-----------------------------------------------------------
+Target: Test realistic trading costs
+
+Cost Components:
+
+1. Slippage:
+   - Market orders: 1-2 pips typical
+   - Volatile periods: up to 5 pips
+   - Simulate slippage on entry and exit
+   
+2. Commission:
+   - Per-lot commission: $5 typical
+   - Or spread-based: 0.5-2 pips
+   
+3. Overnight Fees (Swap):
+   - Long EUR/USD: -0.002% per day
+   - Short EUR/USD: +0.001% per day
+
+Test Process:
+1. Execute order at market price
+2. Apply slippage: execution_price = market_price +/- slippage
+3. Subtract commission from P&L
+4. Calculate impact on profitability
+5. Compare metrics with/without costs
+
+Success Criteria:
+✓ Slippage applied realistically
+✓ Commission calculated correctly
+✓ Costs reduce profitability appropriately
+✓ Still profitable after costs
+
+6.7 Extreme Market Scenario Testing (Enhancement Point 6)
+----------------------------------------------------------
+Target: Validate system behavior under stress
+
+Scenarios to Simulate:
+
+A) Flash Crash:
+   - Sudden 5% price drop in 1 minute
+   - Test stop-loss execution
+   - Verify no system freeze
+   - Check error handling
+   
+B) High Volatility:
+   - ATR spikes to 3x normal
+   - Verify risk adjustments activate
+   - Test position sizing reduction
+   - Check signal filtering (wider thresholds)
+   
+C) Order Rejection:
+   - Simulate broker rejecting order
+   - Verify retry mechanism
+   - Test fallback strategies
+   - Check error logging
+
+D) Margin Call Simulation:
+   - Simulate account equity < margin requirement
+   - Verify positions closed/reduced
+   - Test risk de-escalation
+   - Check recovery procedures
+
+Success Criteria:
+✓ System handles all scenarios gracefully
+✓ No crashes or hangs
+✓ Risk controls activate appropriately
+✓ Recovery mechanisms work
+✓ All errors logged clearly
+
+================================================================================
+PHASE 7: PERFORMANCE & RESOURCE MONITORING (Enhancement Point 7)
+================================================================================
+
+Objective: Comprehensive system performance analysis
+Duration: Continuous throughout test
+
+7.1 Memory Usage Tracking
+--------------------------
+Target: Ensure no memory leaks and efficient usage
+
+Monitoring Points:
+1. Baseline (test start): Record initial memory
+2. After data download (Phase 1)
+3. During each model training (Phase 3)
+4. During backtesting (Phase 4)
+5. During pattern optimization (Phase 5)
+6. During trading operations (Phase 6)
+7. Test end: Final memory
+
+Metrics:
+- Total RAM used (MB)
+- Peak memory usage
+- Memory growth rate (MB/minute)
+- Memory released after operations
+
+Memory Leak Detection:
+- Run garbage collection between phases
+- Compare memory before/after
+- Flag if memory not released (leak suspected)
+
+Thresholds:
+- Peak usage: < 8 GB (target 4-6 GB)
+- Memory leak: < 100 MB unreclaimed
+- Growth rate: < 50 MB/minute average
+
+Success Criteria:
+✓ Peak memory within threshold
+✓ No significant memory leaks
+✓ Memory released appropriately
+✓ Growth rate acceptable
+
+7.2 CPU/GPU Utilization
+------------------------
+Target: Efficient compute resource usage
+
+CPU Monitoring:
+- Track CPU % per core
+- Overall CPU utilization
+- Identify bottlenecks
+- Target: 60-80% during training (good utilization)
+
+GPU Monitoring (if available):
+- GPU utilization %
+- GPU memory usage
+- GPU temperature
+- Target: > 80% during training (good utilization)
+
+Process:
+1. Sample every 10 seconds
+2. Calculate statistics (min, mean, max, p95)
+3. Identify idle periods vs compute periods
+4. Generate utilization report
+
+Success Criteria:
+✓ CPU utilization efficient (not idle)
+✓ GPU utilized when training (if available)
+✓ No thermal throttling
+✓ Resource usage logged
+
+7.3 Execution Time Profiling
+-----------------------------
+Target: Identify performance bottlenecks
+
+Time Measurements per Phase:
+1. Phase 0 (Setup): < 30 seconds
+2. Phase 1 (Data Download): < 5 minutes
+3. Phase 2 (Real-time): 2 minutes
+4. Phase 3 (Training): < 15 minutes
+5. Phase 4 (Backtesting): < 10 minutes
+6. Phase 5 (Pattern Opt): < 10 minutes
+7. Phase 6 (Trading): < 15 minutes
+   
+Total Target: < 60 minutes
+
+Detailed Profiling:
+- Time per model training
+- Time per backtest
+- Time per pattern optimization cycle
+- Time per order generation
+
+Bottleneck Identification:
+- Slowest operation per phase
+- Cumulative time per operation type
+- Suggestions for optimization
+
+Success Criteria:
+✓ Total test time < 60 minutes
+✓ No single operation > 5 minutes
+✓ Time distribution logged
+✓ Bottlenecks identified
+
+7.4 Throughput Metrics
+-----------------------
+Target: Measure data processing speed
+
+Metrics:
+1. Candles processed/second
+2. Ticks processed/second
+3. Inferences/second
+4. Backtest trades/second
+
+Benchmarks:
+- Data loading: > 1000 candles/sec
+- Inference: > 10 predictions/sec
+- Backtest: > 100 trades simulated/sec
+
+Success Criteria:
+✓ Throughput meets benchmarks
+✓ No significant slowdowns during test
+✓ Throughput logged and graphed
+
+7.5 Disk I/O Monitoring
+------------------------
+Target: Track database and file operations
+
+Metrics:
+- Read operations count
+- Write operations count
+- Total bytes read
+- Total bytes written
+- Read/write latency
+
+Focus Areas:
+- Database queries during training
+- Model file saves/loads
+- Candle data reads
+
+Optimization Flags:
+- WARN if single query > 500ms
+- WARN if disk I/O > 100 MB/sec sustained
+
+Success Criteria:
+✓ I/O operations efficient
+✓ No extremely slow queries
+✓ Disk usage within limits
+
+================================================================================
+PHASE 8: LOGGING & AUDIT TRAIL (Enhancement Point 9)
+================================================================================
+
+Objective: Complete traceability of all operations
+Duration: Continuous throughout test
+
+8.1 Comprehensive Logging
+--------------------------
+Target: Log all significant events with detail
+
+Log Levels:
+- DEBUG: Detailed diagnostic info
+- INFO: General informational messages
+- WARNING: Potential issues (non-critical)
+- ERROR: Errors that don't stop test
+- CRITICAL: Fatal errors that stop test
+
+What to Log:
+
+A) System Events:
+   - Test start/end with timestamp
+   - Phase transitions
+   - Configuration loaded
+   - Database connections
+   
+B) Data Operations:
+   - Data downloads (start, progress, end)
+   - Database writes (table, row count)
+   - File I/O operations
+   
+C) Training Events:
+   - Model training start/end
+   - Epoch progress (every 10 epochs)
+   - Best model updates
+   - Training metrics per epoch
+   
+D) Inference & Backtest:
+   - Inference start/end per backtest
+   - Trade signals generated
+   - Trade executions
+   - P&L calculations
+   
+E) Trading System:
+   - Signal evaluations
+   - Risk check results
+   - Order submissions
+   - Execution confirmations
+   - Position updates
+   
+F) Errors & Warnings:
+   - Full exception stack traces
+   - Warning messages with context
+   - Recovery attempts
+   - Fallback activations
+
+Log Format:
+[TIMESTAMP] [LEVEL] [COMPONENT] [MESSAGE] [CONTEXT]
+
+Example:
+[2025-10-08 14:32:15.123] [INFO] [Training] Model training started [run_uuid=abc-123, symbol=EUR/USD]
+
+Log Files:
+- Main log: e2e_test_{timestamp}.log
+- Error log: e2e_errors_{timestamp}.log
+- Audit trail: e2e_audit_{timestamp}.log
+
+Success Criteria:
+✓ All events logged with timestamp
+✓ Log levels used appropriately
+✓ Error stack traces complete
+✓ Logs parseable and searchable
+✓ Log files created successfully
+
+8.2 Audit Trail for Trading Decisions
+--------------------------------------
+Target: Complete record of every trading decision
+
+Audit Record per Signal:
+1. Timestamp (ms precision)
+2. Signal source (AI, Pattern, Combined)
+3. Signal strength and direction
+4. All input data (prices, indicators, etc.)
+5. Risk calculations performed
+6. Decision outcome (trade or no trade)
+7. If traded: order details
+8. If not traded: reason for rejection
+
+Storage:
+- Database table: trading_decisions
+- Include rejected signals (important for analysis)
+- Link to executed orders table
+
+Query Capabilities:
+- Filter by signal type
+- Filter by decision outcome
+- Time range queries
+- Performance by signal source
+
+Success Criteria:
+✓ Every signal logged
+✓ Rejected signals included
+✓ Full decision context recorded
+✓ Queryable database records
+
+8.3 Parameter Tracking
+-----------------------
+Target: Record all parameters used throughout test
+
+Parameters to Track:
+
+1. Test Configuration:
+   - Resource limits
+   - Symbols tested
+   - Timeframes used
+   - Date ranges
+   
+2. Model Hyperparameters:
+   - Per model: all config values
+   - Training settings
+   - Inference settings
+   
+3. Pattern Parameters:
+   - Pattern types searched
+   - Optimization grids
+   - Best parameters found
+   
+4. Trading Parameters:
+   - Risk management settings
+   - Position sizing method
+   - SL/TP calculations
+   
+5. System Settings:
+   - Database paths
+   - Provider settings
+   - API configurations
+
+Storage Format: JSON files per category
+- test_config.json
+- model_params_{model_id}.json
+- pattern_params_{cycle}.json
+- trading_params.json
+- system_config.json
+
+Success Criteria:
+✓ All parameters captured
+✓ JSON files valid and readable
+✓ Parameters linked to results
+✓ Reproducibility possible
+
+8.4 Error Documentation
+------------------------
+Target: Detailed documentation of all errors
+
+Error Record Structure:
+1. Error ID (unique)
+2. Timestamp
+3. Phase/component where occurred
+4. Error type (exception class)
+5. Error message
+6. Full stack trace
+7. System state at error
+8. Recovery action taken
+9. Recovery success/failure
+
+Error Categories:
+- Data errors (missing, corrupt)
+- Model errors (training failure, inference error)
+- Database errors (connection, query)
+- API errors (provider, timeout)
+- System errors (memory, disk)
+
+Analysis:
+- Count errors by category
+- Identify most frequent errors
+- Track resolution success rate
+- Generate error summary report
+
+Success Criteria:
+✓ All errors documented
+✓ Stack traces complete
+✓ Error categories assigned
+✓ Recovery documented
+✓ Error report generated
+
+================================================================================
+PHASE 9: FINAL REPORTING & METRICS (Enhancement Point 10)
+================================================================================
+
+Objective: Comprehensive test results report
+Duration: < 5 minutes
+
+9.1 Test Summary Dashboard
+---------------------------
+Target: High-level overview of test results
+
+Summary Sections:
+
+A) Test Execution:
+   - Start time
+   - End time
+   - Total duration
+   - Test status (Pass/Fail/Partial)
+   
+B) Phase Completion:
+   - Phase 0: ✓/✗ + duration
+   - Phase 1: ✓/✗ + duration
+   - Phase 2: ✓/✗ + duration
+   - Phase 3: ✓/✗ + duration (3 models completed)
+   - Phase 4: ✓/✗ + duration (10 backtests completed)
+   - Phase 5: ✓/✗ + duration (5 pattern optimizations completed)
+   - Phase 6: ✓/✗ + duration (5 positions or timeout)
+   
+C) Resource Usage:
+   - Peak memory: X GB
+   - Avg CPU: Y%
+   - Avg GPU: Z% (if available)
+   - Total disk I/O: W MB
+   
+D) Data Statistics:
+   - Candles downloaded: X
+   - Ticks received: Y
+   - Models trained: 3 (completed)
+   - Backtests run: 10
+   - Patterns optimized: 5 cycles
+   - Orders executed: U (target 5)
+
+E) Quick Metrics:
+   - Best model Sharpe ratio
+   - Best backtest return %
+   - Best pattern win rate
+   - Overall system profitability
+
+Format: HTML dashboard with charts
+
+9.2 Detailed Performance Report
+--------------------------------
+Target: In-depth analysis of all results
+
+Report Sections:
+
+1. Data Quality Report:
+   - Download statistics
+   - Quality validation results
+   - Gap analysis
+   - Anomaly detection summary
+   
+2. Training Report per Model (3 models):
+   - Model configuration
+   - Training metrics (MAE, RMSE, R2)
+   - Training curves (loss over epochs)
+   - Overfitting analysis
+   - Model file details
+   
+3. Backtesting Report (10 backtests):
+   - Backtest configuration matrix
+   - Metrics per backtest
+   - Comparison table
+   - Best performing configurations
+   - Regime-specific performance
+   
+4. Pattern Optimization Report (5 cycles):
+   - Patterns detected
+   - Optimization results per cycle
+   - Best parameters per pattern
+   - Out-of-sample validation results
+   
+5. Trading System Report:
+   - Signals generated
+   - Risk management performance
+   - Orders executed
+   - Position analysis
+   - Portfolio metrics
+   
+6. Performance Analysis:
+   - Execution time breakdown
+   - Resource utilization graphs
+   - Throughput metrics
+   - Bottleneck identification
+
+Format: Multi-page HTML report with:
+- Interactive charts (plotly)
+- Sortable tables
+- Expandable sections
+- Export to PDF option
+
+9.3 Metrics Export
+------------------
+Target: Machine-readable results for further analysis
+
+Export Formats:
+
+A) JSON Export:
+   File: e2e_test_metrics_{timestamp}.json
+   
+   Structure:
+   {
+     "test_info": {...},
+     "phases": {
+       "phase_0": {...},
+       "phase_1": {...},
+       ...
+     },
+     "models": [
+       {
+         "model_id": ...,
+         "metrics": {...}
+       },
+       ...
+     ],
+     "backtests": [...],
+     "patterns": [...],
+     "trading": {...},
+     "performance": {...}
+   }
+
+B) CSV Exports:
+   - models_metrics.csv (one row per model - 3 rows)
+   - backtests_metrics.csv (one row per backtest - 10 rows)
+   - patterns_metrics.csv (one row per optimization - 5 rows)
+   - trades_log.csv (one row per trade - up to 5 rows)
+   - performance_metrics.csv (time-series data)
+
+C) Database Dump:
+   - SQLite database export
+   - Contains all tables with test data
+   - Can be queried for custom analysis
+
+Success Criteria:
+✓ All export files created
+✓ JSON structure valid
+✓ CSV files parseable
+✓ Database export complete
+✓ Data integrity maintained
+
+9.4 Comparison with Baselines
+------------------------------
+Target: Compare results with expected performance
+
+Baseline Metrics (from previous tests or theoretical):
+- Expected Sharpe ratio: > 1.5
+- Expected win rate: > 55%
+- Expected max drawdown: < 20%
+- Expected training time: < 5 min/model
+- Expected test duration: < 60 minutes
+
+Comparison:
+1. Load baseline metrics
+2. Compare actual vs baseline
+3. Calculate differences/ratios
+4. Flag significant deviations
+5. Generate comparison report
+
+Interpretation:
+- Green: Actual better than baseline
+- Yellow: Actual within 10% of baseline
+- Red: Actual > 10% worse than baseline
+
+Success Criteria:
+✓ Comparison completed
+✓ Deviations analyzed
+✓ Report includes recommendations
+✓ Pass/fail determination clear
+
+9.5 Recommendations & Next Steps
+---------------------------------
+Target: Actionable insights from test results
+
+Analysis Areas:
+
+1. Model Performance:
+   - Which of the 3 models performed best?
+   - Which should be deployed?
+   - Which need retraining?
+   
+2. Pattern Effectiveness:
+   - Which patterns most profitable?
+   - Which patterns to focus on?
+   - Which to exclude?
+   
+3. Risk Management:
+   - Was risk management too conservative?
+   - Were limits appropriate?
+   - Suggested adjustments?
+   
+4. System Optimization:
+   - Performance bottlenecks identified
+   - Optimization opportunities
+   - Resource allocation improvements
+   
+5. Next Test Iterations:
+   - Parameters to adjust
+   - Additional tests needed
+   - Production readiness assessment
+
+Output: recommendations.txt file with:
+- Prioritized action items
+- Specific parameter suggestions
+- Risk areas to address
+- Timeline for next steps
+
+Success Criteria:
+✓ Recommendations generated
+✓ Actionable and specific
+✓ Prioritized by impact
+✓ File created successfully
+
+================================================================================
+PHASE 10: CLEANUP & FINALIZATION
+================================================================================
+
+Objective: Clean up resources and finalize test
+Duration: < 2 minutes
+
+10.1 Resource Cleanup
+----------------------
+Target: Release all allocated resources
+
+Cleanup Actions:
+1. Close all database connections
+2. Close WebSocket connections (real-time data)
+3. Release GPU memory (if used)
+4. Stop background threads
+5. Close file handles
+6. Clear temporary files
+
+Validation:
+- Verify connections closed
+- Check temp directory cleaned
+- Confirm processes terminated
+
+Success Criteria:
+✓ All resources released
+✓ No hanging connections
+✓ Temp files removed
+✓ Clean shutdown
+
+10.2 Test Artifacts Organization
+---------------------------------
+Target: Organize all generated files
+
+Directory Structure:
+data/
+  e2e_test_results_{timestamp}/
+    logs/
+      - main_log.log
+      - error_log.log
+      - audit_trail.log
+    reports/
+      - test_summary.html
+      - detailed_report.html
+      - metrics.json
+    exports/
+      - models_metrics.csv (3 rows)
+      - backtests_metrics.csv (10 rows)
+      - patterns_metrics.csv (5 rows)
+      - trades_log.csv (up to 5 rows)
+    database/
+      - market.db (copy of test database)
+    models/
+      - model_1_{uuid}.pth
+      - model_2_{uuid}.pth
+      - model_3_{uuid}.pth
+
+Actions:
+1. Create directory structure
+2. Move all files to appropriate locations
+3. Create README.txt with test info
+4. Create manifest.txt listing all files
+
+Success Criteria:
+✓ All files organized
+✓ Directory structure created
+✓ README and manifest present
+✓ Files accessible
+
+10.3 Final Validation
+----------------------
+Target: Verify test completed successfully
+
+Validation Checklist:
+- [ ] All phases completed or documented reason for skip
+- [ ] Database in consistent state
+- [ ] All target metrics achieved or documented
+- [ ] 3 models trained successfully
+- [ ] 10 backtests completed successfully
+- [ ] 5 pattern optimization cycles completed
+- [ ] Trading phase completed (5 positions or timeout)
+- [ ] Reports generated successfully
+- [ ] Exports created successfully
+- [ ] No critical errors unresolved
+- [ ] Cleanup completed
+
+Overall Test Status Determination:
+- PASS: All critical criteria met
+- PARTIAL PASS: Major criteria met, minor issues
+- FAIL: Critical criteria not met
+
+Status File: test_status.txt
+Contains:
+- Final status (PASS/PARTIAL/FAIL)
+- Summary of results
+- List of any failures
+- Recommendations
+
+Success Criteria:
+✓ Status determined
+✓ Status file created
+✓ Test marked complete in database
+
+10.4 Archive & Backup
+---------------------
+Target: Preserve test results for future reference
+
+Archive Actions:
+1. Create ZIP archive of all test artifacts
+   - File: e2e_test_{timestamp}.zip
+   - Include all reports, logs, exports
+   
+2. Create database backup
+   - File: market_backup_{timestamp}.db
+   - Preserve all test data
+   
+3. Generate test manifest
+   - File: test_manifest.json
+   - List all files with checksums
+   - Include test metadata
+
+Storage:
+- Archive directory: data/archives/
+- Retention: Keep last 10 test archives
+- Cleanup: Delete older archives if needed
+
+Success Criteria:
+✓ Archive created successfully
+✓ Database backed up
+✓ Manifest generated
+✓ Files preserved
+
+================================================================================
+OPTIONAL: CONCURRENCY TESTING (Enhancement Point 12)
+================================================================================
+
+Activation: --enable-concurrency flag or E2E_TEST_CONCURRENCY=true
+
+Objective: Test system under concurrent operations
+Duration: Adds ~10 minutes to test
+
+12.1 Parallel Model Training
+-----------------------------
+Target: Train 2 models simultaneously
+
+Test Process:
+1. Start Model 1 training in Thread 1
+2. Start Model 2 training in Thread 2 (after 30 sec delay)
+3. Monitor both training processes
+4. Verify no interference between threads
+5. Check both complete successfully
+
+Validation:
+- Thread safety: No database lock errors
+- Resource contention: CPU/GPU shared appropriately
+- Memory isolation: No cross-thread memory corruption
+- Result integrity: Both models train correctly
+
+Success Criteria:
+✓ Both models train successfully
+✓ No thread safety errors
+✓ Training time similar to sequential
+✓ Results identical to non-concurrent training
+
+12.2 Database Concurrency Tests
+--------------------------------
+Target: Test database thread-safety
+
+Tests:
+
+A) Concurrent Reads:
+   - 5 threads reading candles simultaneously
+   - Verify no read errors
+   - Check read consistency
+   
+B) Concurrent Writes:
+   - 2 threads writing to different tables
+   - Verify no lock conflicts
+   - Check data integrity
+   
+C) Read-Write Concurrency:
+   - 2 threads reading while 1 writes
+   - Verify readers see consistent data
+   - Check no deadlocks
+   
+D) Transaction Isolation:
+   - 2 threads with overlapping transactions
+   - Verify transaction boundaries respected
+   - Check rollback behavior
+
+Success Criteria:
+✓ No database errors
+✓ No deadlocks or lock timeouts
+✓ Data consistency maintained
+✓ Transactions isolated correctly
+
+12.3 Concurrent Backtest Execution
+-----------------------------------
+Target: Run 3 backtests in parallel
+
+Test Process:
+1. Start Backtest 1 (Thread 1)
+2. Start Backtest 2 (Thread 2) after 10 sec
+3. Start Backtest 3 (Thread 3) after 20 sec
+4. All use same historical data
+5. Verify no conflicts
+
+Validation:
+- Each backtest completes independently
+- Results are deterministic
+- No race conditions in metrics calculation
+- Database writes don't conflict
+
+Success Criteria:
+✓ All backtests complete successfully
+✓ Results match sequential execution
+✓ No race conditions detected
+✓ Database integrity maintained
+
+12.4 Race Condition Detection
+------------------------------
+Target: Identify potential race conditions
+
+Tests:
+
+A) Shared State Access:
+   - Multiple threads accessing global variables
+   - Test with/without locks
+   - Verify data corruption without locks
+   
+B) Order Submission Race:
+   - 2 threads try to submit orders simultaneously
+   - Verify only one succeeds or both handled correctly
+   - Check position limit enforcement
+   
+C) Portfolio Update Race:
+   - Concurrent position updates
+   - Verify balance calculations correct
+   - Check no double-counting
+
+Detection Methods:
+- Add deliberate delays to expose races
+- Run tests 10 times (races are intermittent)
+- Use thread sanitizer tools if available
+
+Success Criteria:
+✓ Known race conditions detected
+✓ Proper locking mechanisms validated
+✓ Critical sections identified
+✓ Recommendations for fixes provided
+
+12.5 Thread Safety Report
+--------------------------
+Target: Document thread-safety status
+
+Report Contents:
+1. List of thread-safe components
+2. List of components requiring locks
+3. Detected race conditions
+4. Performance impact of locking
+5. Recommendations for improvements
+
+Classification:
+- Thread-safe: Can be used concurrently
+- Requires locking: Must use locks
+- Not thread-safe: Single-threaded only
+
+Success Criteria:
+✓ All components classified
+✓ Race conditions documented
+✓ Report generated
+✓ Recommendations provided
+
+================================================================================
+SUCCESS CRITERIA SUMMARY
+================================================================================
+
+Test passes if ALL of the following are met:
+
+CRITICAL CRITERIA (Must Pass):
+-------------------------------
+✓ All database tables created and empty at start
+✓ Historical data downloaded for all timeframes
+✓ Data quality validation passes (>99% clean data)
+✓ Exactly 3 models trained successfully (training STOPS after 3)
+✓ Exactly 10 backtests completed (backtesting STOPS after 10)
+✓ Exactly 5 pattern optimization cycles completed (optimization STOPS after 5)
+✓ At least 3 trading orders executed with correct SL/TP (target 5, timeout 15min)
+✓ No critical unhandled exceptions
+✓ Database in consistent state at end
+✓ All reports and exports generated
+
+PERFORMANCE CRITERIA (Should Pass):
+------------------------------------
+✓ Total test duration < 75 minutes (60 min target + 25% buffer)
+✓ Peak memory usage < 10 GB
+✓ All phases complete within target times (±25%)
+✓ Real-time data latency < 200ms (p95)
+✓ Model training MAE < 0.1
+✓ Backtest Sharpe ratio > 1.0 for at least one config
+✓ Pattern optimization finds profitable parameters
+
+QUALITY CRITERIA (Nice to Have):
+---------------------------------
+✓ No data gaps in historical download
+✓ Training/validation loss ratio < 1.5
+✓ Out-of-sample performance degradation < 40%
+✓ All edge case tests pass
+✓ Resource utilization efficient (>60% CPU during compute)
+✓ Thread safety tests pass (if concurrency enabled)
+
+FAILURE CONDITIONS:
+-------------------
+✗ ABORT: Database schema invalid
+✗ ABORT: Provider connection fails
+✗ ABORT: Insufficient disk space
+✗ ABORT: Critical data quality issues (>5% bad data)
+✗ ABORT: All models fail to train
+✗ FAIL: <2 models trained successfully
+✗ FAIL: <8 backtests completed
+✗ FAIL: <3 orders executed
+✗ FAIL: Major data persistence issues
+✗ FAIL: Reports not generated
+
+================================================================================
+TEST ARTIFACTS & OUTPUT FILES
+================================================================================
+
+After test completion, the following files will be available:
+
+1. Logs:
+   - main_log.log (complete test log)
+   - error_log.log (errors only)
+   - audit_trail.log (trading decisions)
+
+2. Reports:
+   - test_summary.html (dashboard)
+   - detailed_report.html (full analysis)
+   - recommendations.txt (action items)
+
+3. Metrics:
+   - metrics.json (all metrics)
+   - models_metrics.csv (3 model results)
+   - backtests_metrics.csv (10 backtest results)
+   - patterns_metrics.csv (5 optimization results)
+   - trades_log.csv (up to 5 trading operations)
+
+4. Database:
+   - market.db (complete test database)
+   - market_backup.db (backup copy)
+
+5. Models:
+   - model_1_{uuid}.pth (trained model 1)
+   - model_2_{uuid}.pth (trained model 2)
+   - model_3_{uuid}.pth (trained model 3)
+
+6. Status:
+   - test_status.txt (final status)
+   - test_manifest.json (file listing)
+
+7. Archive:
+   - e2e_test_{timestamp}.zip (complete archive)
+
+All files organized in: data/e2e_test_results_{timestamp}/
+
+================================================================================
+END OF E2E TEST SPECIFICATIONS
+================================================================================
+
+Document Version: 1.0
+Last Updated: 2025-10-08
+Estimated Total Test Duration: 45-60 minutes (standard mode)
+                                55-70 minutes (with concurrency)
+Minimum System Requirements:
+  - RAM: 8 GB minimum, 16 GB recommended
+  - Disk: 10 GB free space
+  - CPU: 4 cores minimum, 8 cores recommended
+  - GPU: Optional but recommended (NVIDIA CUDA capable)
+
+For test implementation, use this specification to generate:
+1. pytest test file: tests/test_e2e_complete.py
+2. Test utilities: tests/e2e_utils.py
+3. Report generator: tests/e2e_reporting.py
+4. Result visualizer: tests/e2e_dashboard.py
+
+Next Steps:
+-----------
+1. Review and approve specifications
+2. Implement test framework
+3. Create report templates
+4. Run initial test
+5. Iterate based on results
+
+================================================================================

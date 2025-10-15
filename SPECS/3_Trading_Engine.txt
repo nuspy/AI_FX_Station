@@ -1,0 +1,1716 @@
+# ForexGPT - Trading Engine: Issues, Bugs & Optimizations
+
+Version: 1.0
+Date: 2025-10-13
+Status: Comprehensive Analysis
+
+================================================================================
+CRITICAL STRUCTURAL ISSUES
+================================================================================
+
+## STRUCT-001: THREE SEPARATE BACKTEST ENGINES WITH OVERLAPPING FUNCTIONALITY
+Severity: CRITICAL
+Category: Code Duplication, Architecture
+Impact: Maintenance Nightmare, Inconsistent Results
+
+**Problem**:
+Three completely separate backtest engines exist with overlapping functionality:
+
+1. **`backtest/engine.py`** (403 lines)
+   - Walk-forward validation
+   - Quantile-based strategy
+   - Random walk baseline
+   - Transaction costs modeling
+
+2. **`backtesting/forecast_backtest_engine.py`** (555 lines)
+   - Probabilistic forecast evaluation
+   - Multi-horizon validation
+   - CRPS, PIT metrics
+   - NO trade execution
+
+3. **`backtest/integrated_backtest.py`** (849 lines)
+   - Full system backtest
+   - Multi-timeframe ensemble
+   - Regime detection
+   - Smart execution
+   - Multi-level stops
+
+**Issues**:
+- No clear hierarchy or documentation on which to use
+- Cannot compare results (different metrics)
+- Maintenance burden (fix bugs in 3 places)
+- New developers confused
+- Wasted computational resources running wrong engine
+
+**Usage Confusion**:
+```python
+# Which one to use?
+from ..backtest.engine import BacktestEngine  # Option 1
+from ..backtesting.forecast_backtest_engine import ForecastBacktestEngine  # Option 2
+from ..backtest.integrated_backtest import IntegratedBacktest  # Option 3
+```
+
+**Files Affected**:
+- `backtest/engine.py`
+- `backtesting/forecast_backtest_engine.py`
+- `backtest/integrated_backtest.py`
+- All files importing these modules (20+ files)
+
+**Recommendation**:
+
+CONSOLIDATE into single unified system with clear plugins:
+
+```python
+# backtest/unified_engine.py
+class BacktestEngine:
+    """Unified backtesting engine with pluggable strategies"""
+    
+    def __init__(self, strategy: BacktestStrategy, config: BacktestConfig):
+        self.strategy = strategy
+        self.config = config
+    
+    def run(self, data: pd.DataFrame) -> BacktestResult:
+        # Common walk-forward logic
+        # Common metrics calculation
+        # Pluggable strategy execution
+        pass
+
+# backtest/strategies/
+class QuantileStrategy(BacktestStrategy):
+    """Original engine.py logic"""
+    pass
+
+class ForecastEvaluationStrategy(BacktestStrategy):
+    """forecast_backtest_engine.py logic (no execution)"""
+    pass
+
+class IntegratedSystemStrategy(BacktestStrategy):
+    """integrated_backtest.py logic (full system)"""
+    pass
+```
+
+**Migration Path**:
+1. Extract common logic → `backtest/core.py`
+2. Convert each engine → strategy plugin
+3. Update all imports → `from backtest.unified_engine import BacktestEngine`
+4. Deprecate old engines with warnings
+5. Remove after 2 release cycles
+
+**Estimated Effort**: 20 hours
+**Risk**: HIGH (many files depend on these)
+
+--------------------------------------------------------------------------------
+
+## STRUCT-002: TWO SEPARATE POSITION SIZER IMPLEMENTATIONS
+Severity: HIGH
+Category: Code Duplication
+Impact: Inconsistent Position Sizing, API Confusion
+
+**Problem**:
+Two completely separate position sizer implementations with overlapping functionality:
+
+1. **`risk/position_sizer.py`** (419 lines)
+   - Methods: fixed_fractional, kelly, optimal_f, volatility_adjusted
+   - Comprehensive safety constraints
+   - Drawdown reduction
+   - Well-documented
+
+2. **`portfolio/position_sizer.py`** (327 lines)
+   - Similar methods
+   - Portfolio-level constraints
+   - Correlation-based sizing
+   - Different API
+
+**API Inconsistency**:
+```python
+# risk/position_sizer.py
+sizer = PositionSizer(base_risk_pct=2.0)
+size = sizer.calculate_position_size(
+    account_balance=10000,
+    entry_price=1.1000,
+    stop_loss=1.0950,
+    method='kelly',
+    trade_history=history
+)
+
+# portfolio/position_sizer.py
+sizer = PositionSizer(config={'risk_per_trade': 0.02})
+size = sizer.get_position_size(
+    capital=10000,
+    price=1.1000,
+    stop=1.0950,
+    strategy='kelly'
+)  # Different method names, parameters!
+```
+
+**Files Affected**:
+- `risk/position_sizer.py`
+- `portfolio/position_sizer.py`
+- `trading/automated_trading_engine.py` (uses both!)
+- `backtest/integrated_backtest.py`
+
+**Recommendation**:
+
+KEEP `risk/position_sizer.py` (more comprehensive), ENHANCE with portfolio features:
+
+```python
+# risk/position_sizer.py (enhanced)
+class PositionSizer:
+    """Unified position sizing with portfolio-level constraints"""
+    
+    def __init__(self, config: PositionSizingConfig):
+        self.config = config
+        
+        # Individual position limits
+        self.base_risk_pct = config.base_risk_pct
+        self.max_position_size_pct = config.max_position_size_pct
+        
+        # Portfolio-level limits (from old portfolio/position_sizer.py)
+        self.max_total_exposure_pct = config.max_total_exposure_pct
+        self.max_sector_exposure_pct = config.max_sector_exposure_pct
+        self.correlation_matrix = config.correlation_matrix
+    
+    def calculate_position_size(
+        self,
+        account_balance: float,
+        entry_price: float,
+        stop_loss: float,
+        method: str = 'fixed_fractional',
+        trade_history: Optional[BacktestTradeHistory] = None,
+        current_positions: Optional[List[Position]] = None  # NEW
+    ) -> float:
+        """Calculate position size with portfolio constraints"""
+        
+        # 1. Calculate base size (existing logic)
+        base_size = self._calculate_base_size(...)
+        
+        # 2. Apply portfolio constraints (NEW from portfolio/position_sizer.py)
+        if current_positions:
+            adjusted_size = self._apply_portfolio_constraints(
+                base_size, current_positions
+            )
+        else:
+            adjusted_size = base_size
+        
+        return adjusted_size
+```
+
+MIGRATE `portfolio/optimizer.py` to use unified sizer.
+
+DELETE `portfolio/position_sizer.py` after migration.
+
+**Estimated Effort**: 8 hours
+**Risk**: MEDIUM (need to test all callers)
+
+--------------------------------------------------------------------------------
+
+## STRUCT-003: TWO TRAINING PIPELINE DIRECTORIES
+Severity: HIGH
+Category: Code Duplication, Organizational Chaos
+Impact: Import Confusion, Circular Dependencies
+
+**Problem**:
+Two separate training pipeline directories with similar contents:
+
+1. **`training/training_pipeline/`**
+   - training_orchestrator.py (650 lines)
+   - inference_backtester.py (580 lines)
+   - regime_manager.py
+   - database.py
+
+2. **`training_pipeline/`** (root level)
+   - training_orchestrator.py (similar, 620 lines)
+   - inference_backtester.py (similar, 550 lines)
+   - data_loader.py
+   - __init__.py
+
+**Import Confusion**:
+```python
+# Some files do:
+from training.training_pipeline import TrainingOrchestrator
+
+# Others do:
+from training_pipeline import TrainingOrchestrator
+
+# WHICH ONE IS CORRECT??
+```
+
+**Files Importing**:
+```
+training/train.py: from .training_pipeline import ...
+training/auto_retrain.py: from .training_pipeline import ...
+ui/training_tab.py: from ..training_pipeline import ...  # ROOT level!
+```
+
+**Recommendation**:
+
+KEEP `training/training_pipeline/` (better organized, inside training module)
+
+MIGRATE code from root `training_pipeline/`:
+1. Copy unique code (data_loader.py) → `training/training_pipeline/`
+2. Update all imports to use `training.training_pipeline`
+3. Add deprecation warning to root `training_pipeline/__init__.py`:
+   ```python
+   import warnings
+   warnings.warn(
+       "training_pipeline is deprecated, use training.training_pipeline",
+       DeprecationWarning, stacklevel=2
+   )
+   # Re-export for backward compatibility
+   from training.training_pipeline import *
+   ```
+4. Delete root directory after 2 releases
+
+**Estimated Effort**: 6 hours
+**Risk**: MEDIUM (many imports to update)
+
+--------------------------------------------------------------------------------
+
+## STRUCT-004: TWO BROKER DIRECTORIES
+Severity: MEDIUM
+Category: Organizational Confusion
+Impact: Unclear Structure
+
+**Problem**:
+Two separate broker directories:
+
+1. **`broker/`** (1 file)
+   - ctrader_broker.py (378 lines)
+
+2. **`brokers/`** (3 files)
+   - base.py (base class)
+   - paper_broker.py
+   - fxpro_ctrader.py (416 lines) ← DUPLICATE cTrader implementation!
+
+**Duplicate cTrader Implementations**:
+```python
+# broker/ctrader_broker.py
+class CTraderBroker:
+    def connect(self): ...
+    def place_order(self): ...
+
+# brokers/fxpro_ctrader.py
+class FxProCTrader:
+    def connect(self): ...  # SAME LOGIC!
+    def place_order(self): ...  # SAME LOGIC!
+```
+
+**Recommendation**:
+
+CONSOLIDATE to `brokers/`:
+1. Keep `brokers/` directory (has base class)
+2. Merge `broker/ctrader_broker.py` + `brokers/fxpro_ctrader.py` → single implementation
+3. Delete `broker/` directory
+4. Update imports in `trading/automated_trading_engine.py`
+
+**Estimated Effort**: 4 hours
+**Risk**: LOW (only a few imports)
+
+--------------------------------------------------------------------------------
+
+## STRUCT-005: SEVEN DIFFERENT TRAINING SCRIPTS WITH NO CLEAR HIERARCHY
+Severity: HIGH
+Category: Code Proliferation, Documentation Gap
+Impact: Confusion, Inconsistent Training
+
+**Problem**:
+Seven different training scripts with unclear purposes and overlapping functionality:
+
+| Script | Lines | Purpose | Status |
+|--------|-------|---------|--------|
+| `train.py` | 500 | Original training script | ❓ Legacy? |
+| `train_sklearn.py` | 1,845 | Sklearn models (Ridge, RF) | ✅ Active |
+| `train_sklearn_btalib.py` | 924 | Sklearn + BTALib features | ✅ Active |
+| `train_optimized.py` | 450 | GPU-optimized training | ⚠️ Experimental |
+| `train_sssd.py` | 525 | SSSD diffusion training | ⚠️ Specialized |
+| `optimized_trainer.py` | 510 | Performance-optimized? | ❓ Unclear |
+| `auto_retrain.py` | 720 | Scheduled retraining | ✅ Utility |
+
+**No Documentation** on:
+- Which script to use when?
+- What are the differences?
+- Which one is recommended?
+- Which ones are deprecated?
+
+**Inconsistent Outputs**:
+- Different feature sets
+- Different model metadata formats
+- Different directory structures
+
+**Recommendation**:
+
+CONSOLIDATE to 3 MAIN SCRIPTS with clear purposes:
+
+1. **`train_sklearn.py`** → Main training script
+   - Merge BTALib features (make it a flag: `--use-btalib`)
+   - Merge GPU optimization (flag: `--use-gpu`)
+   - Support all algorithms: ridge, rf, xgboost, lgbm
+   - Clear CLI interface
+
+2. **`train_sssd.py`** → Diffusion models ONLY
+   - Keep separate (specialized architecture)
+   - Document when to use (probabilistic forecasts)
+
+3. **`auto_retrain.py`** → Scheduled retraining utility
+   - Keep as-is (utility, not training logic)
+   - Update to call consolidated train_sklearn.py
+
+**Deprecate**:
+- `train.py` → add warning, merge useful code into train_sklearn.py
+- `train_optimized.py` → merge GPU features into train_sklearn.py
+- `optimized_trainer.py` → unclear purpose, remove if duplicate
+
+**CLI Standardization**:
+```bash
+# Main training
+python train_sklearn.py \
+  --symbol EUR/USD \
+  --timeframe 15m \
+  --horizon 4 \
+  --algo ridge \
+  --use-btalib \
+  --use-gpu \
+  --artifacts-dir artifacts/
+
+# Diffusion training
+python train_sssd.py \
+  --symbol EUR/USD \
+  --timeframe 15m \
+  --horizons 1h,4h,1d \
+  --artifacts-dir artifacts/
+
+# Auto-retrain (cron job)
+python auto_retrain.py \
+  --config auto_retrain_config.yaml \
+  --check-interval 24h
+```
+
+**Estimated Effort**: 12 hours
+**Risk**: MEDIUM (need to test all model types)
+
+================================================================================
+LOGICAL ERRORS & BUGS
+================================================================================
+
+## BUG-001: NO ERROR RECOVERY IN AUTOMATED TRADING ENGINE
+Severity: CRITICAL
+Category: Error Handling, Live Trading Safety
+Impact: Silent Failures, Potential Losses
+
+**Problem**:
+`trading/automated_trading_engine.py` has minimal error handling in live trading loop:
+
+Location: automated_trading_engine.py, lines 800-850
+
+```python
+def _trading_loop(self):
+    """Main trading loop"""
+    while self.state == TradingState.RUNNING:
+        try:
+            # Update market data
+            self._update_market_data()
+            
+            # Generate signals
+            signals = self._generate_signals()
+            
+            # Execute trades
+            for signal in signals:
+                self._execute_trade(signal)  # ← NO ERROR HANDLING!
+            
+            # Monitor positions
+            self._monitor_positions()  # ← NO ERROR HANDLING!
+            
+            time.sleep(self.config.update_interval_seconds)
+            
+        except Exception as e:
+            logger.error(f"Trading loop error: {e}")  # ← JUST LOG, NO RECOVERY!
+            # Loop continues, but what if broker disconnected?
+            # What if we have orphaned positions?
+```
+
+**Critical Scenarios**:
+
+1. **Broker Connection Lost**:
+   ```python
+   # Current behavior:
+   try:
+       broker.place_order(...)
+   except ConnectionError:
+       logger.error("Connection lost")  # SILENT FAILURE
+       # Position size calculated but order NOT placed
+       # System thinks position opened, but it's NOT
+       # DISASTER!
+   ```
+
+2. **Insufficient Funds**:
+   ```python
+   # Current:
+   try:
+       broker.place_order(size=1.5 lots)
+   except InsufficientFundsError:
+       logger.error("Insufficient funds")  # SILENT FAILURE
+       # Should reduce size and retry
+   ```
+
+3. **Position Monitoring Failure**:
+   ```python
+   # Current:
+   try:
+       self._monitor_positions()
+   except Exception:
+       logger.error("Monitor failed")  # STOPS MONITORING!
+       # Positions now unmonitored
+       # Stops won't trigger
+       # MAJOR LOSS RISK!
+   ```
+
+**Recommendation**:
+
+IMPLEMENT COMPREHENSIVE ERROR HANDLING:
+
+```python
+def _trading_loop(self):
+    """Main trading loop with error recovery"""
+    consecutive_errors = 0
+    max_consecutive_errors = 5
+    
+    while self.state == TradingState.RUNNING:
+        try:
+            # Update market data
+            self._update_market_data_with_retry()
+            
+            # Generate signals
+            signals = self._generate_signals()
+            
+            # Execute trades with error handling
+            for signal in signals:
+                try:
+                    self._execute_trade_with_recovery(signal)
+                except BrokerConnectionError as e:
+                    logger.error(f"Broker connection error: {e}")
+                    self._reconnect_broker()
+                    self._retry_execute_trade(signal)
+                except InsufficientFundsError as e:
+                    logger.warning(f"Insufficient funds: {e}")
+                    reduced_signal = self._reduce_position_size(signal)
+                    self._retry_execute_trade(reduced_signal)
+                except InvalidOrderError as e:
+                    logger.error(f"Invalid order: {e}")
+                    self._alert_administrator(f"Invalid order: {signal}")
+                    continue  # Skip this signal
+            
+            # Monitor positions with isolation
+            try:
+                self._monitor_positions()
+            except Exception as e:
+                logger.critical(f"Position monitoring failed: {e}")
+                # Monitoring failure is CRITICAL
+                self._emergency_monitor_fallback()
+            
+            # Reset error counter on success
+            consecutive_errors = 0
+            
+            time.sleep(self.config.update_interval_seconds)
+            
+        except CriticalSystemError as e:
+            logger.critical(f"Critical error: {e}")
+            self._emergency_close_all_positions()
+            self._alert_administrator(f"CRITICAL: {e}")
+            self.state = TradingState.ERROR
+            break
+            
+        except Exception as e:
+            consecutive_errors += 1
+            logger.error(f"Trading loop error {consecutive_errors}/{max_consecutive_errors}: {e}")
+            
+            if consecutive_errors >= max_consecutive_errors:
+                logger.critical("Too many consecutive errors, entering ERROR state")
+                self._emergency_close_all_positions()
+                self._alert_administrator("System entering ERROR state")
+                self.state = TradingState.ERROR
+                break
+            
+            # Exponential backoff
+            time.sleep(2 ** consecutive_errors)
+
+def _execute_trade_with_recovery(self, signal):
+    """Execute trade with retry logic"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return self._execute_trade(signal)
+        except TransientError as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                logger.warning(f"Trade execution failed (attempt {attempt+1}/{max_retries}), retrying in {wait_time}s: {e}")
+                time.sleep(wait_time)
+            else:
+                raise
+
+def _emergency_close_all_positions(self):
+    """Emergency procedure to close all positions"""
+    logger.critical("EMERGENCY: Closing all positions")
+    for position in self.positions.values():
+        try:
+            self.broker_api.close_position(position.symbol, reason="emergency")
+        except Exception as e:
+            logger.critical(f"Failed to close {position.symbol} in emergency: {e}")
+            # Try multiple times, use market orders
+            for _ in range(3):
+                try:
+                    self.broker_api.market_close(position.symbol)
+                    break
+                except:
+                    time.sleep(1)
+
+def _alert_administrator(self, message: str):
+    """Send alert to administrator"""
+    # Email, SMS, Slack, PagerDuty, etc.
+    logger.critical(f"ADMIN ALERT: {message}")
+    # TODO: Implement actual alerting
+```
+
+**Estimated Effort**: 6 hours
+**Risk**: CRITICAL (affects live trading)
+
+--------------------------------------------------------------------------------
+
+## BUG-002: WALK-FORWARD VALIDATION DATA LEAKAGE RISK
+Severity: HIGH
+Category: Data Integrity, Backtest Accuracy
+Impact: Overly Optimistic Results
+
+**Problem**:
+Walk-forward implementation in multiple engines doesn't properly enforce purge and embargo periods.
+
+Location: `backtest/engine.py`, lines 180-220
+
+**Current Logic** (simplified):
+```python
+def walk_forward_split(data, train_days, test_days):
+    """Split data for walk-forward"""
+    splits = []
+    for i in range(n_splits):
+        train_end = start + timedelta(days=train_days)
+        test_start = train_end  # ← NO PURGE!
+        test_end = test_start + timedelta(days=test_days)
+        
+        train_data = data[start:train_end]
+        test_data = data[test_start:test_end]  # ← LEAKAGE!
+        
+        splits.append((train_data, test_data))
+    return splits
+```
+
+**Data Leakage Scenarios**:
+
+1. **No Purge Period**:
+   ```
+   Train: [Day 1 --------- Day 730] ← Last bar close = 17:00 Day 730
+   Test:  [Day 731 ---------------] ← First bar open = 00:00 Day 731
+                                    ← Only 7 hours gap!
+   
+   Issue: Features calculated on Day 730 17:00 may include 
+          information about Day 731 00:00 (e.g., news events)
+   ```
+
+2. **No Embargo Period**:
+   ```
+   Train: Uses data up to Day 730
+   Optimize: Finds best parameters on Day 731-820
+   Test: Tests parameters on Day 821-910
+   
+   Issue: Parameters optimized on Day 731-820 may be 
+          influenced by characteristics of Day 821-910
+          if markets are correlated
+   ```
+
+**Correct Implementation** (from `training/optimization/backtest_runner.py`):
+```python
+def walk_forward_split_proper(data, train_days, val_days, test_days, purge_days=1, embargo_days=2):
+    """Walk-forward with purge and embargo"""
+    splits = []
+    for i in range(n_splits):
+        # Training period
+        train_start = start + (i * step_days)
+        train_end = train_start + timedelta(days=train_days)
+        
+        # PURGE: Remove data immediately after training
+        purge_end = train_end + timedelta(days=purge_days)
+        
+        # Validation period (for parameter selection)
+        val_start = purge_end
+        val_end = val_start + timedelta(days=val_days)
+        
+        # EMBARGO: Remove data immediately after validation
+        embargo_end = val_end + timedelta(days=embargo_days)
+        
+        # Test period (out-of-sample)
+        test_start = embargo_end
+        test_end = test_start + timedelta(days=test_days)
+        
+        train_data = data[train_start:train_end]
+        val_data = data[val_start:val_end]
+        test_data = data[test_start:test_end]
+        
+        splits.append((train_data, val_data, test_data))
+    
+    return splits
+```
+
+**Visualization**:
+```
+PROPER WALK-FORWARD WITH PURGE AND EMBARGO:
+
+|--- Train (730d) ---|P|-- Val (90d) --|E|--- Test (90d) ---|
+
+Train: Day 1 - Day 730
+Purge: Day 731 (removed)
+Val:   Day 732 - Day 821
+Embargo: Day 822-823 (removed)
+Test:  Day 824 - Day 913
+
+P = Purge (1 day)
+E = Embargo (2 days)
+```
+
+**Recommendation**:
+
+UPDATE `backtest/engine.py`:
+1. Add `purge_days` and `embargo_days` parameters (default 1, 2)
+2. Implement proper gap enforcement
+3. Add validation to ensure no overlap
+4. Add warning if gaps too small
+
+**Estimated Effort**: 3 hours
+**Risk**: MEDIUM (changes backtest results)
+
+--------------------------------------------------------------------------------
+
+## BUG-003: TRANSACTION COST MODELING INCONSISTENT ACROSS ENGINES
+Severity: MEDIUM
+Category: Backtest Accuracy
+Impact: Unrealistic Performance Estimates
+
+**Problem**:
+Different backtest engines use different transaction cost models:
+
+**Engine 1**: `backtest/engine.py`
+```python
+spread_pips: float = 0.5          # 0.5 pips spread
+slippage_pips: float = 0.2        # 0.2 pips slippage
+# Total: 0.7 pips per trade
+# For EURUSD: 0.7 * 0.0001 = 0.00007 = 0.007%
+```
+
+**Engine 2**: `backtest/integrated_backtest.py`
+```python
+spread_pct: float = 0.0002        # 0.02% = 2 pips
+commission_pct: float = 0.0001    # 0.01% commission
+slippage_pct: float = 0.0001      # 0.01% = 1 pip
+# Total: 0.0004 = 0.04% = 4 pips per trade
+```
+
+**HUGE DIFFERENCE**:
+- Engine 1: 0.7 pips per trade
+- Engine 2: 4.0 pips per trade
+- **5.7x difference!**
+
+**Impact on Results**:
+```python
+# Example: 100 trades, 0.1 lot each, EURUSD
+
+# Engine 1 costs:
+cost_per_trade = 0.7 pips = $0.70
+total_cost = 100 * $0.70 = $70
+
+# Engine 2 costs:
+cost_per_trade = 4.0 pips = $4.00
+total_cost = 100 * $4.00 = $400
+
+# Difference: $330!
+# If system made $500 profit before costs:
+# Engine 1: $500 - $70 = $430 profit (good!)
+# Engine 2: $500 - $400 = $100 profit (marginal!)
+```
+
+**Recommendation**:
+
+1. **Measure Real Costs**:
+   ```python
+   # Connect to broker API
+   # Measure actual spreads (bid-ask) for 1 week
+   # Calculate average spread per timeframe
+   # Measure actual slippage on executed orders
+   ```
+
+2. **Standardize Cost Model**:
+   ```python
+   @dataclass
+   class TransactionCostModel:
+       """Standardized transaction costs"""
+       # Spread (varies by timeframe and volatility)
+       spread_pips_base: float = 1.0     # Base spread (normal conditions)
+       spread_multiplier_volatile: float = 2.0  # Multiply in high volatility
+       
+       # Commission (fixed per broker)
+       commission_per_lot: float = 0.0   # Most forex brokers: zero
+       commission_pct: float = 0.0       # Alternative: % of trade value
+       
+       # Slippage (varies by order type and size)
+       slippage_pips_market: float = 0.5  # Market order slippage
+       slippage_pips_limit: float = 0.0   # Limit order (no slippage)
+       slippage_multiplier_large: float = 1.5  # Multiply for large orders
+       
+       # Market impact (for large orders)
+       market_impact_threshold_lots: float = 10.0
+       market_impact_pips_per_lot: float = 0.1
+   
+   def calculate_transaction_cost(
+       order: Order,
+       market_conditions: MarketConditions
+   ) -> float:
+       """Calculate realistic transaction cost"""
+       # Spread
+       spread = spread_pips_base
+       if market_conditions.volatility > threshold:
+           spread *= spread_multiplier_volatile
+       
+       # Slippage
+       if order.type == "market":
+           slippage = slippage_pips_market
+       else:
+           slippage = 0.0  # Limit order
+       
+       if order.size > slippage_multiplier_large:
+           slippage *= slippage_multiplier_large
+       
+       # Market impact (large orders)
+       if order.size > market_impact_threshold_lots:
+           impact = (order.size - market_impact_threshold_lots) * market_impact_pips_per_lot
+       else:
+           impact = 0.0
+       
+       # Commission
+       commission = commission_per_lot * order.size
+       
+       # Total cost in pips
+       total_pips = spread + slippage + impact
+       
+       # Convert to currency
+       pip_value = 0.0001 * order.size * 100000  # Standard lot
+       total_cost = total_pips * pip_value + commission
+       
+       return total_cost
+   ```
+
+3. **Update All Engines** to use standardized model
+
+4. **Add to Configuration**:
+   ```yaml
+   # config.yaml
+   transaction_costs:
+     spread_pips_base: 1.0
+     spread_multiplier_volatile: 2.0
+     commission_per_lot: 0.0
+     slippage_pips_market: 0.5
+     slippage_pips_limit: 0.0
+   ```
+
+**Estimated Effort**: 4 hours (+ time to measure real costs)
+**Risk**: MEDIUM (changes backtest results)
+
+--------------------------------------------------------------------------------
+
+## BUG-004: NO PERFORMANCE DEGRADATION DETECTION IN LIVE TRADING
+Severity: HIGH
+Category: Monitoring, Live Trading Safety
+Impact: No Early Warning of System Failure
+
+**Problem**:
+`automated_trading_engine.py` has NO system to detect when live performance diverges from backtest expectations.
+
+**Scenario**:
+```
+Backtest Results (last 3 months):
+  Win rate: 58%
+  Sharpe: 1.8
+  Max DD: 8%
+
+Live Trading (first month):
+  Win rate: 45%  ← DOWN 13%!
+  Sharpe: 0.9    ← DOWN 50%!
+  Max DD: 15%    ← DOUBLE!
+
+System: Keeps trading normally, no alerts!
+```
+
+**Recommendation**:
+
+IMPLEMENT PERFORMANCE MONITORING:
+
+```python
+@dataclass
+class PerformanceExpectations:
+    """Expected performance from backtest"""
+    expected_win_rate: float = 0.58
+    expected_sharpe: float = 1.8
+    expected_max_dd: float = 0.08
+    
+    # Thresholds for alerts
+    win_rate_degradation_threshold: float = 0.10  # Alert if 10% drop
+    sharpe_degradation_threshold: float = 0.30     # Alert if 30% drop
+    max_dd_threshold: float = 0.12                 # Alert if exceeds 12%
+
+class PerformanceDegradationDetector:
+    """Detect when live performance degrades vs backtest"""
+    
+    def __init__(self, expectations: PerformanceExpectations):
+        self.expectations = expectations
+        self.rolling_window_days = 30
+        self.check_interval_hours = 24
+    
+    def check_degradation(self, trades: List[Trade]) -> Optional[DegradationAlert]:
+        """Check if performance has degraded"""
+        # Calculate rolling metrics
+        recent_trades = self._filter_recent_trades(trades, days=self.rolling_window_days)
+        
+        if len(recent_trades) < 10:
+            return None  # Not enough data
+        
+        # Calculate current metrics
+        current_win_rate = self._calculate_win_rate(recent_trades)
+        current_sharpe = self._calculate_sharpe(recent_trades)
+        current_max_dd = self._calculate_max_dd(recent_trades)
+        
+        # Check for degradation
+        alerts = []
+        
+        # Win rate
+        if current_win_rate < self.expectations.expected_win_rate - self.expectations.win_rate_degradation_threshold:
+            alerts.append(DegradationAlert(
+                metric="win_rate",
+                expected=self.expectations.expected_win_rate,
+                actual=current_win_rate,
+                severity="high"
+            ))
+        
+        # Sharpe ratio
+        sharpe_degradation = (self.expectations.expected_sharpe - current_sharpe) / self.expectations.expected_sharpe
+        if sharpe_degradation > self.expectations.sharpe_degradation_threshold:
+            alerts.append(DegradationAlert(
+                metric="sharpe_ratio",
+                expected=self.expectations.expected_sharpe,
+                actual=current_sharpe,
+                severity="medium"
+            ))
+        
+        # Max drawdown
+        if current_max_dd > self.expectations.max_dd_threshold:
+            alerts.append(DegradationAlert(
+                metric="max_drawdown",
+                expected=self.expectations.expected_max_dd,
+                actual=current_max_dd,
+                severity="critical"
+            ))
+        
+        if alerts:
+            return DegradationAlert(
+                alerts=alerts,
+                timestamp=datetime.now(),
+                recommended_action="PAUSE_TRADING" if any(a.severity == "critical" for a in alerts) else "REVIEW_SYSTEM"
+            )
+        
+        return None
+
+# In automated_trading_engine.py:
+def _check_performance_degradation(self):
+    """Check for performance degradation (run periodically)"""
+    alert = self.degradation_detector.check_degradation(self.trade_history)
+    
+    if alert:
+        logger.warning(f"Performance degradation detected: {alert}")
+        
+        if alert.recommended_action == "PAUSE_TRADING":
+            logger.critical("CRITICAL degradation, pausing trading")
+            self.state = TradingState.PAUSED
+            self._alert_administrator(f"Trading paused due to degradation: {alert}")
+        else:
+            self._alert_administrator(f"Performance degradation alert: {alert}")
+```
+
+**Estimated Effort**: 8 hours
+**Risk**: LOW (monitoring only, doesn't change trading logic)
+
+================================================================================
+OPTIMIZATION OPPORTUNITIES
+================================================================================
+
+## OPT-001: PARALLEL MODEL TRAINING
+Severity: MEDIUM
+Category: Performance
+Impact: 3-5x Training Speedup
+
+**Problem**:
+Training scripts train models sequentially, even when training multiple (symbol, timeframe, horizon) combinations.
+
+**Current** (train_sklearn.py):
+```python
+for symbol in symbols:
+    for timeframe in timeframes:
+        for horizon in horizons:
+            train_model(symbol, timeframe, horizon)  # SEQUENTIAL
+            # Takes ~10 minutes per model
+            # Total: 3 symbols × 4 timeframes × 3 horizons = 36 models
+            # Time: 36 × 10min = 6 hours!
+```
+
+**Optimized**:
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+combinations = [
+    (symbol, timeframe, horizon)
+    for symbol in symbols
+    for timeframe in timeframes
+    for horizon in horizons
+]
+
+with ProcessPoolExecutor(max_workers=8) as executor:
+    futures = [
+        executor.submit(train_model, symbol, tf, horizon)
+        for symbol, tf, horizon in combinations
+    ]
+    
+    for future in as_completed(futures):
+        result = future.result()
+        # Time: 36 / 8 = 4.5 models per worker
+        # Time: 4.5 × 10min = 45 minutes!
+```
+
+**Speedup**: 6 hours → 45 minutes = **8x faster**
+
+**Recommendation**:
+1. Add `--parallel` flag to train_sklearn.py
+2. Use ProcessPoolExecutor (not ThreadPoolExecutor, due to GIL)
+3. Max workers = min(cpu_count, len(combinations))
+
+**Estimated Effort**: 3 hours
+**Risk**: LOW
+
+--------------------------------------------------------------------------------
+
+## OPT-002: CACHE FEATURE CALCULATIONS
+Severity: MEDIUM
+Category: Performance
+Impact: 2-3x Inference Speedup
+
+**Problem**:
+Features are recalculated from scratch on every inference, even though most features depend on historical data that doesn't change.
+
+**Current** (every 1-minute):
+```python
+def predict():
+    # Load last 1000 bars
+    data = load_data(bars=1000)
+    
+    # Calculate ALL features from scratch
+    features = calculate_features(data)  # SLOW: ~500ms
+    # - SMA(20), SMA(50), SMA(200)
+    # - EMA, RSI, MACD, Bollinger Bands
+    # - ATR, ADX, Stochastic
+    # - Volume indicators
+    
+    # Predict
+    prediction = model.predict(features[-1:])  # FAST: ~10ms
+```
+
+**Optimized with Caching**:
+```python
+class FeatureCache:
+    def __init__(self):
+        self.cache = {}
+        self.last_update = None
+    
+    def get_features_incremental(self, new_bar):
+        """Update features incrementally"""
+        if self.cache is None:
+            # First time: calculate all features
+            self.cache = calculate_features_full(data)
+        else:
+            # Update only what changed
+            self._update_incremental(new_bar)
+        
+        return self.cache
+    
+    def _update_incremental(self, new_bar):
+        """Update features with new bar"""
+        # Most indicators can be updated incrementally
+        # Example: SMA
+        # Old: SMA_20 = (sum of last 20) / 20
+        # New: SMA_20 = (old_sum - oldest_bar + new_bar) / 20
+        
+        # RSI: similar incremental update
+        # MACD: update EMA incrementally
+        # etc.
+
+def predict_with_cache():
+    new_bar = get_latest_bar()
+    
+    features = feature_cache.get_features_incremental(new_bar)  # FAST: ~50ms
+    
+    prediction = model.predict(features[-1:])  # FAST: ~10ms
+    
+    # Total: 60ms vs 510ms = 8.5x faster!
+```
+
+**Recommendation**:
+1. Implement FeatureCache class
+2. Support incremental updates for common indicators
+3. Fall back to full calculation if cache invalidated
+
+**Estimated Effort**: 6 hours
+**Risk**: MEDIUM (need to ensure correctness of incremental updates)
+
+--------------------------------------------------------------------------------
+
+## OPT-003: LAZY LOADING OF MODELS IN PARALLEL INFERENCE
+Severity: LOW
+Category: Performance, Memory
+Impact: Faster Startup, Lower Memory
+
+**Problem**:
+`parallel_inference.py` loads ALL models into memory at startup, even if not needed.
+
+**Current**:
+```python
+class ParallelInference:
+    def __init__(self, model_dir):
+        # Load ALL models at startup
+        self.models = []
+        for model_path in glob(f"{model_dir}/**/*.pkl"):
+            model = load_model(model_path)  # SLOW: ~1s per model
+            self.models.append(model)
+        
+        # Startup time: N models × 1s = 30s for 30 models!
+        # Memory: N models × 500MB = 15GB for 30 models!
+```
+
+**Optimized with Lazy Loading**:
+```python
+class ParallelInference:
+    def __init__(self, model_dir):
+        # Just scan for model paths
+        self.model_paths = list(glob(f"{model_dir}/**/*.pkl"))
+        self.loaded_models = {}  # Cache
+        
+        # Startup time: <1s (just scanning)
+        # Memory: minimal
+    
+    def predict(self, symbol, timeframe, horizon):
+        """Load model on demand"""
+        model_key = f"{symbol}_{timeframe}_{horizon}"
+        
+        # Check cache
+        if model_key not in self.loaded_models:
+            # Load on demand
+            model_path = self._find_model_path(model_key)
+            self.loaded_models[model_key] = load_model(model_path)
+        
+        # Use cached model
+        return self.loaded_models[model_key].predict(...)
+    
+    def unload_unused_models(self):
+        """Free memory from unused models"""
+        # LRU policy: keep last N used models
+        if len(self.loaded_models) > MAX_CACHED_MODELS:
+            # Remove least recently used
+            oldest_key = min(self.loaded_models, key=lambda k: self.last_used[k])
+            del self.loaded_models[oldest_key]
+```
+
+**Benefits**:
+- Startup: 30s → <1s
+- Memory: 15GB → 1-2GB (only loaded models)
+- Flexibility: Can load/unload dynamically
+
+**Recommendation**:
+1. Implement lazy loading with LRU cache
+2. Make MAX_CACHED_MODELS configurable (default: 10)
+
+**Estimated Effort**: 4 hours
+**Risk**: LOW
+
+================================================================================
+PROCEDURAL ERRORS
+================================================================================
+
+## PROC-001: NO AUTOMATED TESTING FOR TRADING LOGIC
+Severity: HIGH
+Category: Quality Assurance
+Impact: Bugs Go Undetected Until Live Trading
+
+**Problem**:
+No unit tests or integration tests for critical trading logic:
+- Position sizing
+- Stop loss calculations
+- Order execution
+- Risk management
+
+**Critical Functions Without Tests**:
+```python
+# risk/position_sizer.py
+def calculate_position_size(...)  # NO TESTS!
+def calculate_kelly_position(...)  # NO TESTS!
+
+# risk/multi_level_stop_loss.py
+def calculate_stops(...)  # NO TESTS!
+def update_trailing_stop(...)  # NO TESTS!
+
+# trading/automated_trading_engine.py
+def _execute_trade(...)  # NO TESTS!
+def _monitor_positions(...)  # NO TESTS!
+```
+
+**Consequences**:
+- Bugs only discovered in live trading (when money is at risk)
+- Difficult to refactor (no safety net)
+- Can't verify correctness of position sizing
+- Can't verify stop loss triggers correctly
+
+**Recommendation**:
+
+IMPLEMENT COMPREHENSIVE TEST SUITE:
+
+```python
+# tests/test_position_sizer.py
+import pytest
+from forex_diffusion.risk.position_sizer import PositionSizer
+
+class TestPositionSizer:
+    
+    def test_fixed_fractional_basic(self):
+        """Test basic fixed fractional sizing"""
+        sizer = PositionSizer(base_risk_pct=2.0)
+        
+        size = sizer.calculate_position_size(
+            account_balance=10000,
+            entry_price=1.1000,
+            stop_loss=1.0950,  # 50 pips stop
+            method='fixed_fractional'
+        )
+        
+        # Risk = 2% of $10,000 = $200
+        # Stop distance = 50 pips = $50 per lot
+        # Position size = $200 / $50 = 4 lots
+        assert size == pytest.approx(4.0, rel=0.01)
+    
+    def test_kelly_criterion(self):
+        """Test Kelly criterion sizing"""
+        from forex_diffusion.risk.position_sizer import BacktestTradeHistory
+        
+        history = BacktestTradeHistory(
+            total_trades=100,
+            winning_trades=55,
+            losing_trades=45,
+            avg_win=150.0,
+            avg_loss=100.0,
+            max_consecutive_losses=5
+        )
+        
+        sizer = PositionSizer(kelly_fraction=0.25)
+        
+        size = sizer.calculate_position_size(
+            account_balance=10000,
+            entry_price=1.1000,
+            stop_loss=1.0950,
+            method='kelly',
+            trade_history=history
+        )
+        
+        # Kelly % = W - (1-W)/R = 0.55 - 0.45/1.5 = 0.25
+        # Quarter Kelly = 0.25 / 4 = 0.0625 = 6.25%
+        # Position = $10,000 * 0.0625 / (50 pips * $10/pip) = 1.25 lots
+        assert size == pytest.approx(1.25, rel=0.01)
+    
+    def test_max_position_constraint(self):
+        """Test max position size constraint"""
+        sizer = PositionSizer(
+            base_risk_pct=10.0,  # High risk
+            max_position_size_pct=5.0  # But capped at 5%
+        )
+        
+        size = sizer.calculate_position_size(
+            account_balance=10000,
+            entry_price=1.1000,
+            stop_loss=1.0990,  # Small 10 pip stop
+            method='fixed_fractional'
+        )
+        
+        # Without cap: 10% / 10 pips = 100 lots
+        # With cap: max 5% = 5 lots (for 10 pip stop)
+        assert size <= 5.0
+
+# tests/test_stop_loss.py
+class TestMultiLevelStopLoss:
+    
+    def test_technical_stop(self):
+        """Test ATR-based technical stop"""
+        from forex_diffusion.risk.multi_level_stop_loss import MultiLevelStopLoss
+        
+        risk_manager = MultiLevelStopLoss()
+        
+        stop = risk_manager.calculate_technical_stop(
+            entry_price=1.1000,
+            direction='long',
+            atr=0.0010,  # 10 pips ATR
+            atr_multiplier=2.0
+        )
+        
+        # Stop = entry - (2 * ATR) = 1.1000 - 0.0020 = 1.0980
+        assert stop == pytest.approx(1.0980)
+    
+    def test_trailing_stop_activation(self):
+        """Test trailing stop activates after profit threshold"""
+        risk_manager = MultiLevelStopLoss()
+        
+        position = Position(
+            entry_price=1.1000,
+            direction='long',
+            stop_loss=1.0950
+        )
+        
+        # Update with price movement
+        new_stop = risk_manager.update_trailing_stop(
+            position=position,
+            current_price=1.1015,  # +15 pips profit (1.5%)
+            trail_activation_pct=1.0,
+            trail_pct=2.0
+        )
+        
+        # Should activate (profit > 1%)
+        # Trail at 2% = 1.1015 * 0.98 = 1.0795
+        assert new_stop > position.stop_loss  # Moved up
+
+# tests/test_trading_engine_integration.py
+class TestTradingEngineIntegration:
+    """Integration tests for full trading cycle"""
+    
+    def test_full_trade_cycle(self):
+        """Test complete trade from signal to exit"""
+        # Setup mock broker
+        broker = MockBroker(initial_balance=10000)
+        
+        # Setup engine
+        config = TradingConfig(
+            symbols=['EURUSD'],
+            timeframes=['15m'],
+            initial_balance=10000,
+            risk_per_trade_pct=2.0
+        )
+        engine = AutomatedTradingEngine(config, broker)
+        
+        # Generate signal
+        signal = {
+            'symbol': 'EURUSD',
+            'direction': 'long',
+            'entry_price': 1.1000,
+            'confidence': 0.75,
+            'target': 1.1050,
+            'invalidation': 1.0950
+        }
+        
+        # Execute trade
+        engine._execute_trade(signal)
+        
+        # Verify position opened
+        assert 'EURUSD' in engine.positions
+        position = engine.positions['EURUSD']
+        assert position.direction == 'long'
+        assert position.entry_price == 1.1000
+        
+        # Simulate price movement
+        broker.update_price('EURUSD', 1.1050)  # Hit target
+        
+        # Monitor positions (should close)
+        engine._monitor_positions()
+        
+        # Verify position closed
+        assert 'EURUSD' not in engine.positions
+        
+        # Verify P&L
+        expected_pnl = (1.1050 - 1.1000) * position.size * 100000
+        assert broker.balance == pytest.approx(10000 + expected_pnl, rel=0.01)
+```
+
+**Test Coverage Goals**:
+- Unit tests: 80%+ coverage
+- Integration tests: Critical paths
+- Continuous integration: Run tests on every commit
+
+**Estimated Effort**: 20 hours (initial), 2-3 hours per new feature
+**Risk**: LOW (testing doesn't change code)
+
+--------------------------------------------------------------------------------
+
+## PROC-002: PARAMETER REFRESH MANAGER NOT CONNECTED TO DATABASE
+Severity: MEDIUM
+Category: Integration Gap
+Impact: Feature Exists But Non-Functional
+
+**Problem**:
+`patterns/parameter_refresh_manager.py` was created but never connected to:
+1. Database queries (OptimizationStudy model doesn't exist)
+2. OptimizationEngine (for triggering re-optimization)
+3. Live trading system (for checking parameter age)
+
+**Current State**:
+```python
+# parameter_refresh_manager.py
+def _get_all_studies(self) -> List[Dict[str, Any]]:
+    """Get all optimization studies from database"""
+    # TODO: Query OptimizationStudy table
+    # For now, return empty list
+    return []  # NOT FUNCTIONAL!
+```
+
+**Recommendation**:
+
+COMPLETE INTEGRATION:
+
+1. **Create Database Models**:
+```python
+# data/models/optimization.py
+from sqlalchemy import Column, Integer, String, Float, DateTime, JSON
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class OptimizationStudy(Base):
+    __tablename__ = 'optimization_studies'
+    
+    id = Column(Integer, primary_key=True)
+    pattern_key = Column(String(100))
+    asset = Column(String(20))
+    timeframe = Column(String(10))
+    regime = Column(String(50), nullable=True)
+    
+    best_parameters = Column(JSON)
+    performance = Column(JSON)
+    
+    created_at = Column(DateTime)
+    last_updated = Column(DateTime)
+    status = Column(String(20))  # 'active', 'deprecated', 'archived'
+
+class PatternOutcome(Base):
+    __tablename__ = 'pattern_outcomes'
+    
+    id = Column(Integer, primary_key=True)
+    study_id = Column(Integer, ForeignKey('optimization_studies.id'))
+    
+    pattern_key = Column(String(100))
+    detection_time = Column(DateTime)
+    direction = Column(String(10))
+    
+    success = Column(Boolean)
+    pnl = Column(Float)
+    holding_period_hours = Column(Float)
+    
+    regime = Column(String(50), nullable=True)
+```
+
+2. **Connect to Parameter Refresh Manager**:
+```python
+# parameter_refresh_manager.py
+def _get_all_studies(self) -> List[Dict[str, Any]]:
+    """Get all optimization studies from database"""
+    if not self.db_session:
+        return []
+    
+    from ..data.models.optimization import OptimizationStudy
+    
+    studies = self.db_session.query(OptimizationStudy).filter(
+        OptimizationStudy.status == 'active'
+    ).all()
+    
+    return [study.to_dict() for study in studies]
+
+def _get_recent_performance(self, study: Dict[str, Any]) -> Optional[float]:
+    """Get recent performance for study"""
+    from ..data.models.optimization import PatternOutcome
+    
+    # Query outcomes from last 30 days
+    cutoff_date = datetime.now() - timedelta(days=30)
+    
+    outcomes = self.db_session.query(PatternOutcome).filter(
+        PatternOutcome.study_id == study['id'],
+        PatternOutcome.detection_time >= cutoff_date
+    ).all()
+    
+    if len(outcomes) < 20:
+        return None  # Not enough data
+    
+    # Calculate win rate
+    wins = sum(1 for o in outcomes if o.success)
+    win_rate = wins / len(outcomes)
+    
+    return win_rate
+```
+
+3. **Connect to OptimizationEngine**:
+```python
+# parameter_refresh_manager.py
+def queue_reoptimization(self, study_info: Dict[str, Any], priority: str = "medium") -> bool:
+    """Queue re-optimization"""
+    from ..training.optimization.engine import OptimizationEngine, OptimizationConfig
+    
+    # Create optimization config
+    config = OptimizationConfig(
+        pattern_key=study_info['pattern_key'],
+        asset=study_info['asset'],
+        timeframe=study_info['timeframe'],
+        regime_tag=study_info.get('regime'),
+        max_trials=500,  # Fewer than initial optimization
+        max_duration_hours=12.0
+    )
+    
+    # Initialize engine
+    engine = OptimizationEngine(config, self.db_session)
+    
+    # Queue for background execution
+    # (use Celery, RQ, or similar for async execution)
+    try:
+        task = engine.run_optimization_async(config)
+        logger.info(f"Queued re-optimization task: {task.id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to queue re-optimization: {e}")
+        return False
+```
+
+4. **Add to Trading Engine**:
+```python
+# trading/automated_trading_engine.py
+def _check_parameter_refresh(self):
+    """Check if parameters need refresh (run daily)"""
+    from ..patterns.parameter_refresh_manager import ParameterRefreshManager
+    
+    if not hasattr(self, 'refresh_manager'):
+        policy = RefreshPolicy(
+            max_age_days=90,
+            min_performance_degradation=0.15,
+            check_interval_hours=24
+        )
+        self.refresh_manager = ParameterRefreshManager(self.db_session, policy)
+    
+    # Check all studies
+    decisions = self.refresh_manager.check_all_studies()
+    
+    # Queue high-priority refreshes
+    for decision in decisions:
+        if decision.priority == "high":
+            self.refresh_manager.queue_reoptimization(
+                decision.study_info,
+                decision.priority
+            )
+```
+
+**Estimated Effort**: 10 hours
+**Risk**: MEDIUM (database integration)
+
+================================================================================
+DEAD CODE
+================================================================================
+
+## DEAD-001: UNUSED IMPORTS IN MULTIPLE FILES
+Severity: LOW
+Category: Code Cleanup
+Impact: Clutter, Confusion
+
+**Problem**:
+Many files have unused imports.
+
+**Examples**:
+
+`training/train.py`:
+```python
+import torch  # Used
+import torch.nn as nn  # Used
+import torch.optim as optim  # NOT USED
+from torch.utils.data import DataLoader  # NOT USED
+import numpy as np  # Used
+import pandas as pd  # Used
+import matplotlib.pyplot as plt  # NOT USED (no plotting in this file)
+```
+
+`backtest/engine.py`:
+```python
+from typing import Dict, List, Optional, Tuple  # All used
+from datetime import datetime, timedelta  # datetime NOT USED, timedelta used
+import numpy as np  # Used
+import pandas as pd  # Used
+from loguru import logger  # Used
+import json  # NOT USED
+import pickle  # NOT USED
+```
+
+**Recommendation**:
+Run automated tool to remove unused imports:
+```bash
+autoflake --remove-all-unused-imports --in-place --recursive src/
+```
+
+**Estimated Effort**: 1 hour (automated)
+**Risk**: NONE
+
+--------------------------------------------------------------------------------
+
+## DEAD-002: COMMENTED OUT CODE IN MULTIPLE FILES
+Severity: LOW
+Category: Code Cleanup
+Impact: Clutter
+
+**Problem**:
+Large blocks of commented-out code throughout codebase.
+
+**Example** (backtest/engine.py, lines 250-280):
+```python
+def simulate_trades(self, ...):
+    # ... active code ...
+    
+    # Old implementation (commented out 6 months ago):
+    # for bar in df.iterrows():
+    #     if bar.close > target:
+    #         exit_price = target
+    #         break
+    #     elif bar.close < stop:
+    #         exit_price = stop
+    #         break
+    # # END old implementation
+    
+    # New implementation:
+    for bar in df.iterrows():
+        # ... actual code ...
+```
+
+**Recommendation**:
+Remove commented code (use git history if needed):
+1. Review each block
+2. Delete if truly obsolete
+3. If uncertain, create issue to discuss
+4. Use git blame to see when/why commented
+
+**Estimated Effort**: 4 hours (manual review)
+**Risk**: NONE (just cleanup)
+
+================================================================================
+IMPORT INCONSISTENCIES
+================================================================================
+
+## IMPORT-001: MIXED IMPORT STYLES FOR BACKTEST ENGINES
+Severity: MEDIUM
+Category: Code Consistency
+Impact: Confusion, Import Errors
+
+**Problem**:
+Some files import from `backtest`, others from `backtesting`:
+
+**Pattern 1** (20 files):
+```python
+from ..backtest.engine import BacktestEngine
+from ..backtest.db import BacktestDB
+```
+
+**Pattern 2** (8 files):
+```python
+from ..backtesting.advanced_backtest_engine import AdvancedBacktestEngine
+from ..backtesting.forecast_backtest_engine import ForecastBacktestEngine
+```
+
+**Pattern 3** (3 files):
+```python
+from forex_diffusion.backtest import BacktestEngine  # Absolute
+from forex_diffusion.backtesting import ForecastBacktestEngine  # Absolute
+```
+
+**Recommendation**:
+After consolidating backtest engines (STRUCT-001):
+1. Standardize on `backtest` (singular)
+2. Use relative imports: `from ..backtest import ...`
+3. Update all 31 files
+4. Add to style guide
+
+**Estimated Effort**: 2 hours
+**Risk**: LOW
+
+================================================================================
+SUMMARY STATISTICS
+================================================================================
+
+Total Issues Found: 21
+- Critical: 2 (duplicate engines, no error recovery)
+- High: 7 (training scripts, position sizers, monitoring, etc.)
+- Medium: 9 (costs, caching, integration, etc.)
+- Low: 3 (dead code, unused imports)
+
+Severity Distribution:
+- CRITICAL (Structural/Bugs): 2
+- HIGH (Structural/Bugs/Procedural): 7
+- MEDIUM (Optimization/Integration): 9
+- LOW (Cleanup): 3
+
+Estimated Total Effort: 140-180 hours (3-4 weeks of work)
+
+Recommended Priority (Top 10):
+1. STRUCT-001: Consolidate backtest engines (20h, CRITICAL)
+2. BUG-001: Add error recovery to live trading (6h, CRITICAL)
+3. STRUCT-005: Consolidate training scripts (12h, HIGH)
+4. STRUCT-002: Consolidate position sizers (8h, HIGH)
+5. BUG-004: Add performance monitoring (8h, HIGH)
+6. STRUCT-003: Consolidate training pipeline directories (6h, HIGH)
+7. BUG-002: Fix walk-forward data leakage (3h, HIGH)
+8. PROC-001: Add automated tests (20h, HIGH)
+9. BUG-003: Standardize transaction costs (4h, MEDIUM)
+10. PROC-002: Connect parameter refresh manager (10h, MEDIUM)
+
+Quick Wins (<4 hours, high impact):
+- BUG-002: Fix walk-forward data leakage (3h)
+- DEAD-001: Remove unused imports (1h, automated)
+- BUG-003: Standardize transaction costs (4h)
+- OPT-001: Add parallel training (3h)
+
+================================================================================
+ACTIONABLE NEXT STEPS
+================================================================================
+
+PHASE 1: Critical Fixes (40 hours, 1 week)
+1. Add error recovery to live trading (BUG-001)
+2. Fix walk-forward data leakage (BUG-002)
+3. Add performance monitoring (BUG-004)
+4. Standardize transaction costs (BUG-003)
+5. Remove unused imports (DEAD-001)
+
+PHASE 2: Structural Cleanup (60 hours, 1.5 weeks)
+1. Consolidate backtest engines (STRUCT-001)
+2. Consolidate position sizers (STRUCT-002)
+3. Consolidate training scripts (STRUCT-005)
+4. Consolidate training pipeline directories (STRUCT-003)
+5. Consolidate broker directories (STRUCT-004)
+6. Standardize imports (IMPORT-001)
+
+PHASE 3: Testing & Integration (40 hours, 1 week)
+1. Add comprehensive tests (PROC-001)
+2. Connect parameter refresh manager (PROC-002)
+3. Add feature caching (OPT-002)
+4. Add parallel training (OPT-001)
+5. Add lazy model loading (OPT-003)
+
+Total: 140 hours (3.5 weeks)
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+Generated: 2025-10-13
+Analyzer: Factory AI
+Version: 1.0

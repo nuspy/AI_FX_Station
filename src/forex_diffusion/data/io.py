@@ -262,6 +262,7 @@ def ensure_candles_table(engine: Engine) -> Table:
         Column("close", Float, nullable=False),
         Column("volume", Float, nullable=True),
         Column("resampled", Boolean, default=False),
+        Column("provider_source", String(32), nullable=False, default="tiingo"),  # Track data source
     )
     metadata.create_all(engine)
     # Create a unique composite index if not present (SQLite supports)
@@ -275,10 +276,18 @@ def ensure_candles_table(engine: Engine) -> Table:
     return candles
 
 
-def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str, resampled: bool = False) -> Dict:
+def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str, resampled: bool = False, provider_source: str = "tiingo") -> Dict:
     """
     Upsert candles into the DB. Uses SQLite 'INSERT OR REPLACE' semantics where available.
     Returns a QA report including rows_inserted, rows_upserted, n_dups_resolved.
+
+    Args:
+        engine: SQLAlchemy engine
+        df: DataFrame with candle data
+        symbol: Trading symbol (e.g., "EUR/USD")
+        timeframe: Timeframe (e.g., "5m", "1h")
+        resampled: Whether data is resampled from lower timeframe
+        provider_source: Data provider name (e.g., "tiingo", "ctrader", "alphavantage")
     """
     if df.empty:
         return {"rows_inserted": 0, "rows_upserted": 0, "note": "empty_dataframe"}
@@ -329,6 +338,7 @@ def upsert_candles(engine: Engine, df: pd.DataFrame, symbol: str, timeframe: str
             "close": float(r["close"]),
             "volume": vol,
             "resampled": bool(resampled),
+            "provider_source": provider_source,  # Track which provider supplied this data
         }
         rows.append(row)
 
@@ -416,11 +426,11 @@ def backfill_from_provider(
     # LOG: explicitly record upsert details to help debug missing writes
     try:
         # report is expected to contain upsert metadata (inserted/updated/counts); log it plainly
-        logger.info("Backfill persistence details for %s %s: %s", symbol, timeframe, report)
+        logger.info("Backfill persistence details for {} {}: {}", symbol, timeframe, report)
     except Exception:
         # fallback: safe debug if formatting fails
         try:
-            logger.debug("Backfill persistence report (raw): %s", report)
+            logger.debug("Backfill persistence report (raw): {}", report)
         except Exception:
             pass
 
@@ -456,7 +466,7 @@ def backfill_from_provider(
                 # logger.info("Post-upsert DB rows for %s %s in [%s,%s]: %d", symbol, timeframe, start_ts_ms, end_ts_ms, int(cnt))
                 if int(cnt) == 0:
                     logger.warning(
-                        "Backfill verification: no rows found in DB for %s %s in [%s,%s] after upsert. Check upsert implementation.",
+                        "Backfill verification: no rows found in DB for {} {} in [{},{}] after upsert. Check upsert implementation.",
                         symbol,
                         timeframe,
                         start_ts_ms,

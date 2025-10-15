@@ -1,6 +1,35 @@
 """
-Feature pipeline for MagicForex.
+Feature pipeline for MagicForex - DEPRECATED
 
+⚠️ DEPRECATION WARNING ⚠️
+==========================
+
+This module is DEPRECATED as of 2025-01-08.
+Use feature_pipeline.py instead for all new code.
+
+Migration Guide:
+    OLD: from forex_diffusion.features.pipeline import atr, bollinger
+    NEW: from forex_diffusion.features.feature_pipeline import compute_features
+
+    OLD: features_df = pipeline_process(df, config)
+    NEW: features_df, scaler = compute_features(df, config)
+
+Why deprecated?
+- Code duplication with unified_pipeline.py and feature_engineering.py
+- Inconsistent function signatures
+- Multiple "pipeline" files cause confusion
+- No clear entry point
+
+Use instead:
+- feature_pipeline.py (main entry point)
+- feature_engineering.py (core feature functions)
+- consolidated_indicators.py (indicator computation)
+
+This file is kept for backward compatibility only and will be removed
+in a future version.
+
+Original Description:
+=====================
 Contains:
 - causal resampling (resample_candles -> uses pandas resample with right-closed bins)
 - technical indicators computed in a causal way (many: realized vol, ATR, Bollinger width, MACD, RSI, StochRSI, Keltner, Garman-Klass, Yang-Zhang, Hurst/Katz fractal, autocorr, tick rate, spread, bid-ask, EMA slope, Donchian position, round-number proximity, NN regime helper)
@@ -53,14 +82,36 @@ def to_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
 
 def realized_volatility(df: pd.DataFrame, col: str = "close", window: int = 60, out_col: str = "rv") -> pd.DataFrame:
     """
-    Realized volatility computed as sqrt(sum(returns^2)) over window (per-bar log returns).
-    window expressed in bars (e.g., 60 for 1 hour at 1m bars).
+    Realized volatility computed using standard financial formula.
+    
+    NOTE: This is now a wrapper around feature_engineering.realized_volatility_feature()
+    for consistency. The new version uses std() * sqrt(window) which is the standard
+    financial formula for annualized realized volatility.
+    
+    Args:
+        df: DataFrame with OHLC data
+        col: Column to compute volatility on (default: "close")
+        window: Rolling window size in bars
+        out_col: Output column name
+    
+    Returns:
+        DataFrame with single volatility column
     """
-    tmp = df.copy()
-    r = np.log(tmp[col]).diff().fillna(0.0)
-    rv = r.pow(2).rolling(window=window, min_periods=1).sum().apply(np.sqrt)
-    tmp[out_col] = rv
-    return tmp
+    from .feature_engineering import realized_volatility_feature
+    
+    # If col is not "close", we need to create temporary df with renamed column
+    if col != "close":
+        temp_df = df.copy()
+        temp_df["close"] = temp_df[col]
+        result = realized_volatility_feature(temp_df, window=window)
+        result.columns = [out_col]
+        return result
+    else:
+        result = realized_volatility_feature(df, window=window)
+        # Rename column if different from default
+        if f"rv_{window}" != out_col:
+            result.columns = [out_col]
+        return result
 
 
 
@@ -276,13 +327,20 @@ def resample_causal(df: pd.DataFrame, src_tf: str, tgt_tf: str) -> pd.DataFrame:
 
     res = res.dropna(subset=["open", "close"]).reset_index()
     res["ts_utc"] = (res["ts_dt"].view("int64") // 1_000_000).astype("int64")
+
+    # CRITICAL FIX (TASK 1.3): Calculate relative OHLC features on res, not tmp
+    # These features were being calculated but then lost because we returned res[cols]
+    res["hrel"] = (res["high"] - res["open"]) / res["open"].replace(0, np.nan).fillna(0.0)
+    res["lrel"] = (res["low"] - res["open"]) / res["open"].replace(0, np.nan).fillna(0.0)
+    res["crel"] = (res["close"] - res["open"]) / res["open"].replace(0, np.nan).fillna(0.0)
+
     cols = ["ts_utc", "open", "high", "low", "close"]
     if "volume" in res.columns:
         cols.append("volume")
-        # dopo il resample causale, aggiungi
-        tmp["hrel"] = (tmp["high"] - tmp["open"]) / tmp["open"].replace(0, np.nan)
-        tmp["lrel"] = (tmp["low"] - tmp["open"]) / tmp["open"].replace(0, np.nan)
-        tmp["crel"] = (tmp["close"] - tmp["open"]) / tmp["open"].replace(0, np.nan)
+
+    # Add relative features to output columns
+    cols.extend(["hrel", "lrel", "crel"])
+
     return res[cols]
 
 
@@ -317,15 +375,29 @@ def _wilder_ema(series: pd.Series, period: int) -> pd.Series:
 def atr(df: pd.DataFrame, n: int = 14, out_col: str = "atr") -> pd.DataFrame:
     """
     Average True Range (Wilder) computed causally.
+    
+    NOTE: This is now a wrapper around consolidated_indicators.atr()
+    for consistency. The consolidated version uses multiple backend
+    implementations (TA-Lib, TA, NumPy) with automatic fallback.
+    
+    Args:
+        df: DataFrame with OHLC data
+        n: ATR period (default 14)
+        out_col: Output column name (default "atr")
+        
+    Returns:
+        DataFrame with ATR column added
     """
-    tmp = df.copy()
-    prior_close = tmp["close"].shift(1)
-    tr1 = tmp["high"] - tmp["low"]
-    tr2 = (tmp["high"] - prior_close).abs()
-    tr3 = (tmp["low"] - prior_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    tmp[out_col] = _wilder_ema(tr.fillna(0.0), n)
-    return tmp
+    from .consolidated_indicators import atr as atr_calc
+    
+    # Call consolidated implementation (returns Series)
+    atr_series = atr_calc(df, n=n)
+    
+    # Convert to DataFrame format for backward compatibility
+    result = pd.DataFrame(index=df.index)
+    result[out_col] = atr_series
+    
+    return result
 
 
 def bollinger(df: pd.DataFrame, n: int = 20, k: float = 2.0, out_prefix: str = "bb") -> pd.DataFrame:

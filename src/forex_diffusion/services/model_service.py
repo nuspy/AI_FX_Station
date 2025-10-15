@@ -286,33 +286,13 @@ class ModelService:
                     credibility[h_label] = 1.0
                 diagnostics["samples"] = last_close_preds.tolist()
             except Exception as e:
-                logger.exception("ModelService: sampling using model failed, falling back to RW: {}", e)
+                logger.exception("ModelService: sampling using model failed: {}", e)
                 diagnostics["sampling_error"] = str(e)
-                # fallback RW...
-                for h_label in horizons:
-                    h_min = label2min.get(h_label) or (int(h_label[:-1]) if h_label.endswith("m") else 1)
-                    samples, qs = self._rw_forecast_quantiles(last_close, sigma_1, h_min, N_samples)
-                    quantiles_out[h_label] = {"q05": float(qs[0]), "q50": float(qs[1]), "q95": float(qs[2])}
-                    bands[h_label] = {"low": float(qs[0]), "high": float(qs[2])}
-                    credibility[h_label] = 0.5
-                    diagnostics.setdefault("fallback_rw", True)
+                # NO FALLBACK! Model must work or fail completely
+                raise RuntimeError(f"Model sampling failed: {e}") from e
         else:
-            # RW fallback...
-            for h_label in horizons:
-                h_min = label2min.get(h_label)
-                if h_min is None:
-                    if h_label.endswith("m"):
-                        h_min = int(h_label[:-1])
-                    elif h_label.endswith("h"):
-                        h_min = int(h_label[:-1]) * 60
-                    elif h_label.endswith("d"):
-                        h_min = int(h_label[:-1]) * 1440
-                    else:
-                        h_min = 1
-                samples, qs = self._rw_forecast_quantiles(last_close, sigma_1, h_min, N_samples)
-                quantiles_out[h_label] = {"q05": float(qs[0]), "q50": float(qs[1]), "q95": float(qs[2])}
-                bands[h_label] = {"low": float(qs[0]), "high": float(qs[2])}
-                credibility[h_label] = float(1.0 / (1.0 + (np.ptp(samples) / (sigma_1 + 1e-9))))
+            # NO MODEL LOADED - FAIL IMMEDIATELY
+            raise RuntimeError("No model loaded - cannot generate forecast without model")
 
         # Conformal calibration TODO: integrate historical predicted quantiles and apply weighted ICP
         # For now delta=0

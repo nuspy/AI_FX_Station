@@ -1,0 +1,1529 @@
+# ════════════════════════════════════════════════════════════════════════════
+# FOREXGPT - CRITICAL IMPLEMENTATION TASKS FOR CLAUDE CODE
+# ════════════════════════════════════════════════════════════════════════════
+# 
+# Project: ForexGPT Professional Trading System
+# Location: D:\Projects\ForexGPT
+# Language: Python 3.12
+# Database: SQLite/DuckDB with Alembic migrations
+# Framework: PyQt6, SQLAlchemy, Sklearn, PyTorch Lightning
+#
+# ════════════════════════════════════════════════════════════════════════════
+
+## 📊 CODEBASE STATUS SUMMARY
+
+IMPLEMENTED ✅:
+- Multi-provider data pipeline (Tiingo, cTrader, AlphaVantage)
+- Database schema (market_data_candles, market_depth, sentiment, news, calendar)
+- Sklearn training pipeline (Ridge/Lasso/ElasticNet/RF with PCA)
+- Professional charting (finplot - 10-100x performance improvement)
+- PyQt6 UI (Chart, Training, Backtesting, News, Calendar, Patterns tabs)
+- CLI commands (provider management, data backfill)
+- 21 unit tests + comprehensive documentation
+
+MISSING ❌ (7 CRITICAL TASKS):
+See detailed tasks below. These are blocking production deployment.
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 1: CONFORMAL PREDICTION CALIBRATION (HIGHEST PRIORITY)
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/inference/service.py (line 311)
+- Issue: delta = 0.0 (hardcoded placeholder)
+- Impact: Forecast confidence intervals are NOT calibrated to actual market behavior
+
+WHAT TO IMPLEMENT:
+
+1.1 DATABASE SCHEMA (using Alembic)
+────────────────────────────────────
+Action: Create new migration file
+Command: alembic revision -m "add_forecast_calibration_table"
+File: migrations/versions/0008_add_forecast_calibration.py
+
+Table Structure:
+- forecast_calibration table with columns:
+  * id (primary key, autoincrement)
+  * model_id (string, indexed) - identifies which model made prediction
+  * symbol (string, indexed) - currency pair
+  * timeframe (string) - e.g., "1H", "4H"
+  * horizon_bars (integer) - forecast horizon in bars
+  * forecast_timestamp (bigint) - when prediction was made (ms UTC)
+  * predicted_quantile_05, 25, 50, 75, 95 (float) - predicted percentiles
+  * actual_value (float, nullable) - realized value (filled later)
+  * absolute_error (float, nullable) - |predicted_median - actual|
+  * is_calibrated (boolean, indexed) - whether actual is available
+  * created_at (bigint) - record creation time
+  * updated_at (bigint) - last update time
+
+Indexes:
+- Composite index on (model_id, symbol, timeframe, horizon_bars, forecast_timestamp)
+- Index on (is_calibrated, forecast_timestamp) for querying pending calibrations
+
+Apply: alembic upgrade head
+
+1.2 WEIGHTED ICP CLASS
+──────────────────────
+File: src/forex_diffusion/inference/conformal_calibration.py (NEW FILE)
+
+Create class: WeightedICP
+Purpose: Implement Weighted Inductive Conformal Prediction with time-based weighting
+
+Key Methods:
+a) __init__(alpha=0.1, decay_rate=0.95, min_calibration_points=30)
+   - alpha: significance level (0.1 = 90% coverage target)
+   - decay_rate: exponential decay for time weighting (recent = higher weight)
+   - min_calibration_points: minimum data before calibration activates
+
+b) add_calibration_point(predicted_quantiles_dict, actual_value, timestamp)
+   Logic:
+   - Calculate non-conformity score: normalized distance from median
+   - Formula: score = |actual - median| / (q95 - q05)
+   - Store in internal list with timestamp
+   - Recalculate exponential weights (more recent = higher weight)
+   - Keep only last 1000 points to prevent memory bloat
+
+c) calculate_delta_adjustment() -> float
+   Logic:
+   - Calculate empirical coverage rate (weighted % of actuals within intervals)
+   - Compare to target coverage (1 - alpha)
+   - If empirical < target: return delta > 1.0 (widen intervals)
+   - If empirical > target: return delta < 1.0 (narrow intervals)
+   - If within ±2%: return delta = 1.0 (well calibrated)
+   - Clamp result to [0.5, 2.0] to avoid extreme adjustments
+
+d) _calculate_empirical_coverage() -> float
+   Logic:
+   - For each calibration point, check if |actual - median| <= interval_width
+   - Weight each check by time-based weight
+   - Return weighted average coverage rate
+
+e) get_calibration_stats() -> dict
+   Return:
+   - n_points: number of calibration points
+   - delta: current adjustment multiplier
+   - empirical_coverage: actual coverage achieved
+   - target_coverage: desired coverage (1 - alpha)
+   - coverage_error: empirical - target
+   - mean_absolute_error: weighted MAE
+   - is_calibrated: whether enough points available
+
+1.3 CALIBRATION MANAGER
+───────────────────────
+File: src/forex_diffusion/inference/conformal_calibration.py (same file)
+
+Create class: CalibrationManager
+Purpose: Manage multiple WeightedICP instances and database persistence
+
+Key Methods:
+a) __init__(engine: SQLAlchemy_Engine, alpha, decay_rate)
+   - Store engine for database access
+   - Initialize empty dict to cache WeightedICP instances
+   - Key format: (model_id, symbol, timeframe, horizon_bars)
+
+b) get_calibrator(model_id, symbol, timeframe, horizon_bars) -> WeightedICP
+   Logic:
+   - Check if calibrator exists in cache
+   - If not: create new WeightedICP and load historical data from DB
+   - Return cached/new calibrator
+
+c) _load_calibration_history(calibrator, model_id, symbol, timeframe, horizon)
+   Logic:
+   - Query forecast_calibration table for last 500 calibrated records
+   - WHERE: model_id, symbol, timeframe, horizon match AND actual_value IS NOT NULL
+   - ORDER BY: forecast_timestamp DESC
+   - For each row: call calibrator.add_calibration_point()
+
+d) store_forecast(model_id, symbol, timeframe, horizon, forecast_timestamp, quantiles_dict)
+   Logic:
+   - INSERT new row into forecast_calibration table
+   - Set is_calibrated = FALSE (actual not yet known)
+   - Store all 5 quantiles (0.05, 0.25, 0.50, 0.75, 0.95)
+
+e) update_with_actual(model_id, symbol, timeframe, horizon, forecast_timestamp, actual_value)
+   Logic:
+   - UPDATE forecast_calibration SET actual_value, absolute_error, is_calibrated=TRUE, updated_at
+   - WHERE: all identifiers match forecast_timestamp
+   - Fetch predicted_quantiles from that row
+   - Get calibrator from cache
+   - Call calibrator.add_calibration_point() to update in-memory state
+
+1.4 INTEGRATE INTO INFERENCESERVICE
+────────────────────────────────────
+File: src/forex_diffusion/inference/service.py (MODIFY EXISTING)
+
+Changes:
+a) Add to __init__():
+   - Create self.calibration_manager = CalibrationManager(engine, alpha=0.1, decay_rate=0.95)
+
+b) Modify/create predict_with_intervals() method:
+   Logic flow:
+   1. Get base prediction from model (existing code)
+   2. Get calibrator: calibrator = self.calibration_manager.get_calibrator(...)
+   3. Calculate delta: delta = calibrator.calculate_delta_adjustment()
+   4. Apply delta to quantiles:
+      - For each quantile, calculate distance from median
+      - Multiply distance by delta
+      - calibrated_value = median + (distance * delta)
+   5. Store forecast: self.calibration_manager.store_forecast(...)
+   6. Return dict with calibrated quantiles + delta + calibration stats
+
+c) Create method: update_forecast_with_actual(model_id, symbol, timeframe, horizon, forecast_ts, actual)
+   Logic:
+   - Simply call: self.calibration_manager.update_with_actual(...)
+
+d) Remove placeholder: DELETE line 311 with "delta = 0.0"
+
+1.5 BACKGROUND CALIBRATION UPDATER (OPTIONAL BUT RECOMMENDED)
+──────────────────────────────────────────────────────────────
+File: src/forex_diffusion/inference/calibration_updater.py (NEW FILE)
+
+Purpose: Periodically check for forecasts where actual values are now available
+
+Create class: CalibrationUpdater
+Logic:
+a) Run background thread/worker
+b) Every N minutes:
+   - Query forecast_calibration WHERE is_calibrated = FALSE AND forecast_timestamp + horizon_duration < now
+   - For each row: fetch actual value from market_data_candles table
+   - Call calibration_manager.update_with_actual()
+
+Integration point:
+- Start this worker in main application startup (src/forex_diffusion/ui/app.py)
+
+1.6 TESTING
+───────────
+File: tests/test_conformal_calibration.py (NEW FILE)
+
+Test cases:
+a) test_wic_initialization(): verify WeightedICP initializes with correct defaults
+b) test_add_calibration_point(): verify points are added and weights recalculated
+c) test_delta_calculation_low_coverage(): mock low coverage, verify delta > 1
+d) test_delta_calculation_high_coverage(): mock high coverage, verify delta < 1
+e) test_calibration_manager_caching(): verify get_calibrator returns same instance
+f) test_store_and_update_forecast(): integration test with real DB
+g) test_empirical_coverage_calculation(): verify weighted coverage formula
+
+Run: pytest tests/test_conformal_calibration.py -v
+
+1.7 DOCUMENTATION
+─────────────────
+File: docs/CONFORMAL_CALIBRATION.md (NEW FILE)
+
+Sections:
+- What is conformal prediction and why it matters
+- How weighted ICP works (math explained simply)
+- Configuration parameters (alpha, decay_rate)
+- Monitoring calibration quality (dashboard metrics)
+- Troubleshooting (low coverage, high coverage scenarios)
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 2: BROKER INTEGRATION FOR LIVE TRADING
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/services/brokers.py
+- Issue: All methods raise NotImplementedError
+- Impact: Cannot execute live trades, cannot get real positions/PnL
+
+WHAT TO IMPLEMENT:
+
+2.1 INTERACTIVE BROKERS INTEGRATION
+────────────────────────────────────
+Library: ib_insync (install: pip install ib_insync)
+
+Class: IBBroker (modify existing placeholder)
+
+Methods to implement:
+a) connect(host="127.0.0.1", port=7497, client_id=1)
+   Logic:
+   - Create IB() instance from ib_insync
+   - Call ib.connect(host, port, clientId=client_id)
+   - Subscribe to account updates
+   - Return True if connected, False otherwise
+   - Handle connection errors gracefully
+
+b) disconnect()
+   Logic:
+   - Call ib.disconnect()
+   - Clean up subscriptions
+
+c) get_positions() -> List[Position]
+   Logic:
+   - Call ib.positions()
+   - Convert IB Position objects to internal Position dataclass
+   - Return list of positions with: symbol, quantity, avg_price, market_price, unrealized_pnl
+
+d) place_order(symbol, action, quantity, order_type="MARKET", limit_price=None)
+   Logic:
+   - Create Contract object for symbol (forex pair)
+   - Create Order object (Market, Limit, Stop based on order_type)
+   - Call ib.placeOrder(contract, order)
+   - Return order_id or raise exception on error
+   - Handle errors: insufficient margin, invalid symbol, connection lost
+
+e) get_pnl() -> dict
+   Logic:
+   - Call ib.accountSummary()
+   - Extract: total_value, unrealized_pnl, realized_pnl, cash_balance
+   - Return dict with these values
+
+f) get_account_info() -> dict
+   Logic:
+   - Return account details: account_id, buying_power, margin_available, currency
+
+Error Handling:
+- Wrap all IB calls in try/except
+- Retry logic for transient errors
+- Logging for all operations
+
+2.2 METATRADER 5 INTEGRATION
+─────────────────────────────
+Library: MetaTrader5 (install: pip install MetaTrader5)
+
+Class: MT5Broker (new class, similar structure to IBBroker)
+
+Methods: Same as IBBroker but using MT5 API
+- mt5.initialize() instead of ib.connect()
+- mt5.positions_get() for positions
+- mt5.order_send() for orders
+- mt5.account_info() for account data
+
+Key differences:
+- MT5 requires terminal to be running locally
+- Different symbol naming (EURUSD vs EUR.USD)
+- Different order types syntax
+
+2.3 DATABASE SCHEMA FOR TRADES
+───────────────────────────────
+Migration: alembic revision -m "add_trading_tables"
+
+Tables:
+a) live_trades:
+   - id, broker, symbol, action, quantity, entry_price, entry_time
+   - exit_price, exit_time, realized_pnl, status (open/closed)
+   - order_id (broker's order ID)
+
+b) trading_sessions:
+   - id, broker, start_time, end_time, total_pnl
+   - total_trades, winning_trades, losing_trades
+
+Indexes:
+- (broker, symbol, status) for querying open positions
+- (broker, entry_time) for historical analysis
+
+2.4 BROKER MANAGER
+──────────────────
+File: src/forex_diffusion/services/broker_manager.py (NEW FILE)
+
+Purpose: Unified interface to multiple brokers
+
+Class: BrokerManager
+Methods:
+a) get_broker(broker_name: str) -> BaseBroker
+   - Return IBBroker or MT5Broker based on name
+   - Use factory pattern
+
+b) execute_signal(signal: TradingSignal) -> bool
+   - Translate signal to broker order
+   - Apply risk management (position sizing, stop loss)
+   - Place order via broker
+   - Log trade to database
+
+c) sync_positions() -> None
+   - Fetch positions from all connected brokers
+   - Update database with current state
+   - Calculate aggregate PnL
+
+2.5 RISK MANAGEMENT INTEGRATION
+────────────────────────────────
+Before placing any order, check:
+- Position size does not exceed risk limits (e.g., max 2% per trade)
+- Total exposure across all positions < max exposure limit
+- Account has sufficient margin
+- Stop loss and take profit levels are set
+
+Logic:
+- Create RiskManager class
+- validate_trade(signal, account_balance) -> bool
+- calculate_position_size(risk_per_trade, stop_loss_distance, account_balance) -> int
+
+2.6 TESTING
+───────────
+File: tests/test_broker_integration.py (NEW FILE)
+
+Tests:
+a) test_ib_connection(): Mock IB connection, verify success
+b) test_place_market_order(): Mock order placement
+c) test_get_positions(): Mock positions response
+d) test_error_handling(): Verify graceful error handling
+e) test_position_sizing(): Verify risk management calculations
+
+Use mocks/patches extensively - do NOT connect to real brokers in tests
+
+2.7 UI INTEGRATION
+──────────────────
+File: src/forex_diffusion/ui/trading_tab.py (NEW FILE)
+
+UI Components:
+- Broker connection status indicator (green=connected, red=disconnected)
+- Button to connect/disconnect
+- Table showing open positions with real-time PnL
+- Manual trade entry form (symbol, action, quantity)
+- Risk settings (max risk per trade, max exposure)
+- Trade history log
+
+Integration:
+- Add "Trading" tab to main UI
+- Connect to BrokerManager
+- Real-time updates via Qt signals
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 3: MULTI-HORIZON MODEL VALIDATION
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/backtesting/multi_horizon_validator.py (line 346)
+- Issue: Type dispatch placeholder - doesn't handle different model types
+- Impact: Cannot properly validate supervised vs diffusion vs ensemble models
+
+WHAT TO IMPLEMENT:
+
+3.1 MODEL TYPE REGISTRY
+───────────────────────
+File: src/forex_diffusion/models/model_registry.py (NEW FILE)
+
+Purpose: Register and identify model types
+
+Classes:
+a) ModelType enum:
+   - SUPERVISED_REGRESSION (sklearn Ridge/Lasso/ElasticNet/RF)
+   - SUPERVISED_CLASSIFICATION (sklearn classifiers)
+   - DIFFUSION (PyTorch diffusion models)
+   - ENSEMBLE (combination of multiple models)
+   - LSTM (PyTorch LSTM)
+   - TRANSFORMER (PyTorch Transformer)
+
+b) ModelMetadata dataclass:
+   - type: ModelType
+   - input_features: List[str]
+   - output_type: str (returns, classification, distribution)
+   - requires_quantiles: bool
+   - supports_uncertainty: bool
+
+c) ModelRegistry:
+   - register_model(model_id, metadata)
+   - get_model_type(model_id) -> ModelType
+   - get_model_metadata(model_id) -> ModelMetadata
+
+3.2 VALIDATION STRATEGIES
+──────────────────────────
+File: src/forex_diffusion/backtesting/validation_strategies.py (NEW FILE)
+
+Create abstract base class: ValidationStrategy
+Subclasses (one per model type):
+
+a) SupervisedRegressionValidator:
+   Metrics:
+   - R² score
+   - Mean Absolute Error (MAE)
+   - Root Mean Squared Error (RMSE)
+   - Direction accuracy (sign of prediction vs sign of actual)
+   Validation method:
+   - Walk-forward cross-validation with expanding window
+   - Train on [0, t], validate on [t, t+val_period]
+   - Slide window forward and repeat
+
+b) DiffusionModelValidator:
+   Metrics:
+   - Continuous Ranked Probability Score (CRPS)
+   - Calibration score (reliability diagram)
+   - Sharpness (interval width)
+   - Coverage (% of actuals within predicted intervals)
+   Validation method:
+   - Generate multiple samples per prediction
+   - Calculate empirical quantiles
+   - Compare to actual values
+
+c) EnsembleValidator:
+   Metrics:
+   - Individual model metrics
+   - Ensemble diversity (correlation between models)
+   - Ensemble improvement over best individual
+   Validation method:
+   - Validate each component model separately
+   - Validate ensemble predictions
+   - Calculate diversity metrics
+
+3.3 UPDATE MULTI_HORIZON_VALIDATOR
+───────────────────────────────────
+File: src/forex_diffusion/backtesting/multi_horizon_validator.py (MODIFY)
+
+Changes at line 346:
+
+Replace placeholder with:
+```
+def validate_model(self, model_id, model, X_val, y_val):
+    # Get model type from registry
+    model_type = self.model_registry.get_model_type(model_id)
+    
+    # Dispatch to appropriate validator
+    if model_type == ModelType.SUPERVISED_REGRESSION:
+        validator = SupervisedRegressionValidator()
+    elif model_type == ModelType.DIFFUSION:
+        validator = DiffusionModelValidator()
+    elif model_type == ModelType.ENSEMBLE:
+        validator = EnsembleValidator()
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+    
+    # Run validation and return metrics
+    return validator.validate(model, X_val, y_val)
+```
+
+3.4 WALK-FORWARD VALIDATION
+────────────────────────────
+File: src/forex_diffusion/backtesting/walk_forward.py (NEW FILE)
+
+Purpose: Implement proper time series cross-validation
+
+Class: WalkForwardValidator
+
+Methods:
+a) create_splits(data, n_splits, train_size, val_size) -> List[tuple]
+   Logic:
+   - Generate time-based train/val splits
+   - Ensure no data leakage (future data in training)
+   - Return list of (train_indices, val_indices)
+
+b) validate_with_walk_forward(model, X, y, splits) -> List[dict]
+   Logic:
+   - For each split:
+     * Train model on train split
+     * Predict on validation split
+     * Calculate metrics
+   - Return list of metric dicts (one per split)
+
+c) aggregate_metrics(split_metrics) -> dict
+   Logic:
+   - Calculate mean and std of each metric across splits
+   - Return aggregated metrics with confidence intervals
+
+3.5 TESTING
+───────────
+File: tests/test_multi_horizon_validation.py (NEW FILE)
+
+Tests:
+a) test_model_registry(): Verify registration and lookup
+b) test_supervised_validation(): Mock sklearn model, verify metrics
+c) test_diffusion_validation(): Mock diffusion model, verify CRPS
+d) test_ensemble_validation(): Mock ensemble, verify diversity metrics
+e) test_walk_forward_splits(): Verify no data leakage
+f) test_dispatcher(): Verify correct validator selected for each type
+
+3.6 DOCUMENTATION
+─────────────────
+Update: docs/BACKTESTING.md
+
+Add sections:
+- Model type validation strategies
+- Walk-forward cross-validation explanation
+- Metrics interpretation guide
+- How to register new model types
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 4: ML-BASED PATTERN DETECTION
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/backtesting/pattern_benchmark_suite.py (line 783)
+- File: src/forex_diffusion/ui/chart_components/services/enhanced_finplot_service.py (lines 89, 246, 352)
+- Issue: Placeholder logic, simulates detection, not production-ready
+- Impact: Pattern detection unreliable, UI shows fake patterns
+
+WHAT TO IMPLEMENT:
+
+4.1 PATTERN DATASET PREPARATION
+────────────────────────────────
+File: src/forex_diffusion/patterns/dataset_builder.py (NEW FILE)
+
+Purpose: Create training dataset for pattern classifier
+
+Class: PatternDatasetBuilder
+
+Methods:
+a) extract_candlestick_windows(df_candles, window_size=20) -> np.array
+   Logic:
+   - Sliding window over OHLC data
+   - Normalize each window (0-1 range or z-score)
+   - Return shape: (n_samples, window_size, 4) for OHLC
+
+b) label_patterns(df_candles) -> np.array
+   Logic:
+   - Use existing rule-based pattern detection as labeling function
+   - Patterns: double_top, double_bottom, head_shoulders, etc.
+   - Return labels: (n_samples,) with pattern type or "none"
+
+c) create_training_dataset(symbols, timeframes, date_range) -> tuple
+   Logic:
+   - Fetch historical data for all symbol/timeframe combinations
+   - Extract windows
+   - Label patterns
+   - Split into train/val/test (60/20/20)
+   - Return (X_train, y_train, X_val, y_val, X_test, y_test)
+
+4.2 CNN PATTERN CLASSIFIER
+───────────────────────────
+File: src/forex_diffusion/patterns/ml_classifier.py (NEW FILE)
+
+Purpose: Deep learning model for pattern recognition
+
+Architecture:
+- Input: (batch, sequence_length=20, features=4) for OHLC
+- Conv1D layers with residual connections
+- MaxPooling for feature extraction
+- Fully connected layers
+- Output: (batch, n_pattern_classes) with softmax
+
+Class: PatternCNN (PyTorch nn.Module)
+
+Layers:
+a) 3x Conv1D blocks (channels: 32, 64, 128)
+b) 2x Fully connected (256, n_classes)
+c) Dropout for regularization
+
+Training:
+- Loss: CrossEntropyLoss (multi-class classification)
+- Optimizer: Adam with learning rate scheduling
+- Early stopping based on validation loss
+- Data augmentation: horizontal flip, noise injection
+
+4.3 TRAINING PIPELINE
+──────────────────────
+File: src/forex_diffusion/patterns/train_pattern_classifier.py (NEW FILE)
+
+Purpose: Train and save pattern classifier
+
+Functions:
+a) train_model(X_train, y_train, X_val, y_val, epochs=100) -> PatternCNN
+   Logic:
+   - Create model instance
+   - Training loop with batch processing
+   - Validation after each epoch
+   - Save best model based on validation accuracy
+   - Return trained model
+
+b) evaluate_model(model, X_test, y_test) -> dict
+   Logic:
+   - Calculate accuracy, precision, recall, F1 per class
+   - Confusion matrix
+   - Return metrics dict
+
+c) save_model(model, path)
+   Logic:
+   - Save model state_dict
+   - Save model metadata (input size, classes, etc.)
+   - Save preprocessing parameters
+
+4.4 INFERENCE INTEGRATION
+──────────────────────────
+File: src/forex_diffusion/patterns/ml_detector.py (NEW FILE)
+
+Purpose: Use trained model for real-time pattern detection
+
+Class: MLPatternDetector
+
+Methods:
+a) __init__(model_path):
+   - Load trained PyTorch model
+   - Set to eval mode
+   - Load preprocessing parameters
+
+b) detect_patterns(df_candles, window_size=20) -> List[Pattern]
+   Logic:
+   - Extract last N candles
+   - Normalize using saved parameters
+   - Run through model
+   - Get confidence scores for each pattern class
+   - Threshold: only return patterns with confidence > 0.7
+   - Return list of detected patterns with confidence scores
+
+c) detect_real_time(latest_candle) -> Optional[Pattern]
+   Logic:
+   - Maintain rolling buffer of last 20 candles
+   - Add latest candle to buffer
+   - Run detection
+   - Return pattern if confidence high enough
+
+4.5 REPLACE PLACEHOLDERS
+─────────────────────────
+File: src/forex_diffusion/backtesting/pattern_benchmark_suite.py (MODIFY line 783)
+
+Replace with:
+```
+# Load ML pattern detector
+ml_detector = MLPatternDetector(model_path="artifacts/patterns/ml_classifier.pth")
+
+# Use ML-based detection
+patterns = ml_detector.detect_patterns(candles)
+```
+
+File: src/forex_diffusion/ui/chart_components/services/enhanced_finplot_service.py (MODIFY lines 89, 246, 352)
+
+Replace simulation logic with:
+```
+# Initialize ML detector once
+if not hasattr(self, 'ml_pattern_detector'):
+    self.ml_pattern_detector = MLPatternDetector(model_path="artifacts/patterns/ml_classifier.pth")
+
+# Real detection
+patterns = self.ml_pattern_detector.detect_patterns(df_candles)
+```
+
+4.6 UI VISUALIZATION
+────────────────────
+File: src/forex_diffusion/ui/chart_components/services/patterns/patterns_service.py (MODIFY line 746)
+
+Implement background processing:
+```
+# Use QThreadPool for async pattern detection
+worker = PatternDetectionWorker(ml_detector, candles)
+worker.signals.result.connect(self.on_patterns_detected)
+self.thread_pool.start(worker)
+```
+
+Create: src/forex_diffusion/ui/workers/pattern_worker.py
+
+Class: PatternDetectionWorker(QRunnable)
+- Run ML detection in background thread
+- Emit signal when complete
+- Prevent UI freezing
+
+4.7 TESTING
+───────────
+File: tests/test_ml_pattern_detection.py (NEW FILE)
+
+Tests:
+a) test_dataset_extraction(): Verify window extraction
+b) test_model_architecture(): Verify CNN builds correctly
+c) test_training_loop(): Mock training, verify loss decreases
+d) test_inference(): Mock model, verify detection output format
+e) test_confidence_thresholding(): Verify low confidence patterns filtered
+f) test_real_time_buffer(): Verify rolling buffer maintained correctly
+
+4.8 DOCUMENTATION
+─────────────────
+File: docs/ML_PATTERN_DETECTION.md (NEW FILE)
+
+Sections:
+- Why ML for pattern detection (advantages over rule-based)
+- Model architecture explanation
+- Training dataset creation
+- How to retrain with new data
+- Interpreting confidence scores
+- Performance benchmarks (accuracy, speed)
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 5: TEMPORAL UNET FOR DIFFUSION MODELS
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/models/diffusion.py (line 85)
+- Issue: Placeholder architecture not optimized for time series
+- Impact: Diffusion model performance suboptimal for forex forecasting
+
+WHAT TO IMPLEMENT:
+
+5.1 TEMPORAL UNET ARCHITECTURE
+───────────────────────────────
+File: src/forex_diffusion/models/temporal_unet.py (NEW FILE)
+
+Purpose: Time series-optimized UNet for diffusion models
+
+Key Components:
+
+a) Temporal Embedding:
+   - Sinusoidal positional encoding for time steps
+   - Learnable embedding for diffusion step t
+
+b) Encoder Path:
+   - Causal 1D convolutions (no future information leakage)
+   - Temporal attention layers
+   - Downsampling blocks
+
+c) Bottleneck:
+   - Self-attention across time dimension
+   - Capture long-range dependencies
+
+d) Decoder Path:
+   - Upsampling blocks
+   - Skip connections from encoder
+   - Causal convolutions
+
+e) Output:
+   - Predict noise residual (diffusion standard)
+
+Class: TemporalUNet(nn.Module)
+
+Layers (pseudocode structure):
+```
+Input: (batch, seq_len, features)
+├─ Temporal Embedding
+├─ Encoder Block 1 (features → 64, causal conv)
+│  ├─ Causal Conv1D
+│  ├─ Temporal Attention
+│  └─ Downsample
+├─ Encoder Block 2 (64 → 128)
+├─ Encoder Block 3 (128 → 256)
+├─ Bottleneck (256, self-attention)
+├─ Decoder Block 3 (256+256 → 128, skip connection)
+├─ Decoder Block 2 (128+128 → 64)
+├─ Decoder Block 1 (64+64 → features)
+└─ Output Projection
+```
+
+5.2 CAUSAL CONVOLUTION MODULE
+──────────────────────────────
+Purpose: Ensure no future information leakage
+
+Class: CausalConv1D(nn.Module)
+
+Logic:
+- Pad left side only (not both sides like standard Conv1D)
+- Padding size = kernel_size - 1
+- Ensures output[t] only depends on input[0:t], not input[t+1:]
+
+5.3 TEMPORAL ATTENTION MODULE
+──────────────────────────────
+Purpose: Capture long-range dependencies in time series
+
+Class: TemporalAttention(nn.Module)
+
+Logic:
+- Multi-head self-attention over time dimension
+- Causal masking (prevent attending to future)
+- Positional encoding injection
+
+5.4 DIFFUSION INTEGRATION
+──────────────────────────
+File: src/forex_diffusion/models/diffusion.py (MODIFY line 85)
+
+Replace placeholder with:
+```
+# Import TemporalUNet
+from forex_diffusion.models.temporal_unet import TemporalUNet
+
+# In DiffusionModel.__init__():
+self.backbone = TemporalUNet(
+    input_features=self.feature_dim,
+    hidden_channels=[64, 128, 256],
+    num_heads=8,
+    dropout=0.1
+)
+```
+
+5.5 TRAINING MODIFICATIONS
+───────────────────────────
+File: src/forex_diffusion/training/diffusion_trainer.py (MODIFY)
+
+Changes:
+- Use TemporalUNet as backbone instead of generic UNet
+- Add learning rate warmup (helps with temporal attention)
+- Gradient clipping (prevent instability)
+- EMA (Exponential Moving Average) of model weights
+
+5.6 INFERENCE OPTIMIZATION
+───────────────────────────
+Purpose: Make sampling faster
+
+Optimizations:
+a) Cache attention keys/values during sampling
+b) Use DDIM sampler (faster than DDPM)
+c) Reduce sampling steps (50 → 20 with same quality)
+
+File: src/forex_diffusion/inference/samplers.py (NEW FILE)
+
+Class: DDIMSampler
+- Faster deterministic sampling
+- Fewer steps needed (20-50 vs 1000)
+
+5.7 TESTING
+───────────
+File: tests/test_temporal_unet.py (NEW FILE)
+
+Tests:
+a) test_causal_convolution(): Verify no future leakage
+b) test_temporal_attention_masking(): Verify causal masking correct
+c) test_unet_forward_pass(): Verify output shape correct
+d) test_skip_connections(): Verify encoder-decoder connections work
+e) test_diffusion_training_step(): Verify training loop works
+f) test_sampling_speed(): Benchmark sampling time
+
+5.8 DOCUMENTATION
+─────────────────
+File: docs/TEMPORAL_UNET.md (NEW FILE)
+
+Sections:
+- Why temporal-specific architecture matters
+- Architecture diagram
+- Causal convolution explanation
+- Temporal attention mechanism
+- Training tips (learning rate, warmup, EMA)
+- Comparison to generic UNet (performance gains)
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 6: MODEL ARTIFACT LOADING & REGISTRY
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/inference/service.py (line 143)
+- Issue: Not implemented - cannot load models from storage
+- Impact: Inference service cannot function without model loading
+
+WHAT TO IMPLEMENT:
+
+6.1 MODEL ARTIFACT STRUCTURE
+─────────────────────────────
+Define standard artifact format:
+
+Directory structure:
+```
+artifacts/models/
+├─ {model_name}_{symbol}_{timeframe}_h{horizon}/
+│  ├─ model.pkl (or model.pth for PyTorch)
+│  ├─ metadata.json
+│  ├─ features.json (ordered list of feature names)
+│  ├─ preprocessing.pkl (standardizer, encoder, etc.)
+│  └─ performance_metrics.json
+```
+
+metadata.json format:
+```json
+{
+  "model_id": "ridge_EURUSD_1H_h5_v1",
+  "model_type": "supervised_regression",
+  "framework": "sklearn",
+  "version": "1.0.0",
+  "created_at": "2025-10-04T12:00:00Z",
+  "symbol": "EUR/USD",
+  "timeframe": "1H",
+  "horizon_bars": 5,
+  "feature_count": 42,
+  "output_type": "returns"
+}
+```
+
+6.2 MODEL REGISTRY
+──────────────────
+File: src/forex_diffusion/models/registry.py (NEW FILE)
+
+Purpose: Central registry for all trained models
+
+Class: ModelRegistry
+
+Database table (create migration):
+```
+models_registry:
+- id (primary key)
+- model_id (unique, indexed)
+- model_path (filesystem path to artifact)
+- model_type (supervised/diffusion/ensemble)
+- framework (sklearn/pytorch/...)
+- symbol, timeframe, horizon_bars
+- feature_count
+- version
+- performance_metrics (JSON)
+- created_at, updated_at
+- is_active (boolean - for model versioning)
+```
+
+Methods:
+a) register_model(model_id, model_path, metadata) -> int
+   Logic:
+   - Insert into models_registry table
+   - Validate artifact exists at model_path
+   - Return registry ID
+
+b) get_model_path(model_id) -> str
+   Logic:
+   - Query models_registry WHERE model_id
+   - Return filesystem path
+
+c) get_active_model(symbol, timeframe, horizon_bars, model_type) -> str
+   Logic:
+   - Query WHERE symbol/timeframe/horizon match AND is_active=True
+   - Return model_id of best performing model
+   - "Best" = highest validation score
+
+d) list_models(filters: dict) -> List[dict]
+   Logic:
+   - Query with optional filters (symbol, timeframe, model_type)
+   - Return list of model metadata
+
+e) deactivate_model(model_id) -> None
+   Logic:
+   - UPDATE models_registry SET is_active=False WHERE model_id
+
+6.3 MODEL LOADER
+────────────────
+File: src/forex_diffusion/models/loader.py (NEW FILE)
+
+Purpose: Load models from artifacts
+
+Class: ModelLoader
+
+Methods:
+a) load_model(model_path) -> tuple
+   Logic:
+   - Read metadata.json
+   - Determine framework (sklearn/pytorch)
+   - Load model file (model.pkl or model.pth)
+   - Load preprocessing artifacts
+   - Validate model compatibility
+   - Return (model, metadata, preprocessing_params)
+
+b) load_sklearn_model(artifact_path) -> dict
+   Logic:
+   - Load model.pkl using joblib/pickle
+   - Load preprocessing.pkl (standardizer, PCA, etc.)
+   - Load features.json
+   - Return dict with all components
+
+c) load_pytorch_model(artifact_path) -> dict
+   Logic:
+   - Load model.pth using torch.load
+   - Instantiate model architecture from metadata
+   - Load state_dict
+   - Load preprocessing params
+   - Return dict with all components
+
+d) validate_artifact(artifact_path) -> bool
+   Logic:
+   - Check all required files exist
+   - Validate metadata.json schema
+   - Verify model loads without errors
+   - Return True if valid, False otherwise
+
+6.4 UPDATE INFERENCE SERVICE
+─────────────────────────────
+File: src/forex_diffusion/inference/service.py (MODIFY line 143)
+
+Replace "Not implemented" with:
+
+```
+def load_model(self, model_id):
+    # Get model path from registry
+    model_path = self.model_registry.get_model_path(model_id)
+    
+    # Load model using ModelLoader
+    model, metadata, preprocessing = self.model_loader.load_model(model_path)
+    
+    # Cache in memory
+    self.loaded_models[model_id] = {
+        'model': model,
+        'metadata': metadata,
+        'preprocessing': preprocessing
+    }
+    
+    return model
+```
+
+Add to __init__():
+```
+self.model_registry = ModelRegistry(engine)
+self.model_loader = ModelLoader()
+self.loaded_models = {}  # Cache for loaded models
+```
+
+6.5 MODEL VERSIONING
+────────────────────
+Purpose: Support multiple versions of same model
+
+Logic:
+- When registering new model with same (symbol, timeframe, horizon):
+  * Increment version number
+  * Keep old versions in registry (is_active=False)
+  * Set new version as active (is_active=True)
+
+Methods in ModelRegistry:
+a) promote_model(model_id) -> None
+   - Deactivate all other models for same config
+   - Activate specified model_id
+
+b) rollback_model(symbol, timeframe, horizon) -> str
+   - Deactivate current active model
+   - Activate previous version
+   - Return new active model_id
+
+6.6 AUTO-CLEANUP
+────────────────
+Purpose: Remove old model artifacts to save disk space
+
+Class: ModelArtifactCleaner
+
+Logic:
+- Keep only last N versions per configuration (default N=5)
+- Delete artifacts for deactivated models older than X days (default X=90)
+- Run as scheduled task (daily)
+
+6.7 TESTING
+───────────
+File: tests/test_model_loading.py (NEW FILE)
+
+Tests:
+a) test_register_model(): Verify registration works
+b) test_load_sklearn_model(): Create mock artifact, verify loading
+c) test_load_pytorch_model(): Create mock PyTorch artifact
+d) test_invalid_artifact(): Verify validation catches errors
+e) test_model_versioning(): Register multiple versions, verify active selection
+f) test_model_caching(): Verify models cached after first load
+
+6.8 DOCUMENTATION
+─────────────────
+File: docs/MODEL_REGISTRY.md (NEW FILE)
+
+Sections:
+- Model artifact structure
+- How to register models after training
+- Model versioning strategy
+- Loading models for inference
+- Model cleanup policies
+- Troubleshooting (corrupt artifacts, version conflicts)
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 TASK 7: BACKTEST ADHERENCE METRICS
+## ════════════════════════════════════════════════════════════════════════════
+
+CURRENT STATE:
+- File: src/forex_diffusion/backtest/worker.py (lines 172-173)
+- Issue: Uses trivial placeholder data instead of real adherence calculation
+- Impact: Backtest metrics unreliable, cannot assess forecast quality
+
+WHAT TO IMPLEMENT:
+
+7.1 ADHERENCE METRICS MODULE
+─────────────────────────────
+File: src/forex_diffusion/backtest/adherence_metrics.py (NEW FILE)
+
+Purpose: Calculate probabilistic forecast quality metrics
+
+Functions:
+
+a) calculate_crps(predictions, actuals) -> float
+   Purpose: Continuous Ranked Probability Score
+   Logic:
+   - For each prediction (ensemble or quantiles), calculate integral of:
+     ∫ (F(x) - 1{x >= actual})² dx
+   - Where F(x) is cumulative distribution function
+   - Return mean CRPS across all predictions
+   - Lower is better (0 = perfect forecast)
+
+b) calculate_calibration(predicted_quantiles, actuals) -> dict
+   Purpose: Assess if predicted intervals have correct coverage
+   Logic:
+   - For each quantile level q (e.g., 0.05, 0.25, 0.50, 0.75, 0.95):
+     * Count: fraction of actuals <= predicted_quantile_q
+     * Should be approximately q if well-calibrated
+   - Return dict: {quantile_level: empirical_coverage}
+   - Also return reliability diagram data
+
+c) calculate_sharpness(predicted_intervals) -> float
+   Purpose: Measure interval width (narrower = sharper = better)
+   Logic:
+   - Calculate mean interval width (q95 - q05)
+   - Return average across all predictions
+   - Lower is better, but must balance with calibration
+
+d) calculate_interval_score(predictions, actuals, alpha=0.1) -> float
+   Purpose: Combined metric (sharpness + calibration penalty)
+   Logic:
+   - interval_width = (q_upper - q_lower)
+   - penalty_lower = 2/alpha * (q_lower - actual) if actual < q_lower else 0
+   - penalty_upper = 2/alpha * (actual - q_upper) if actual > q_upper else 0
+   - score = interval_width + penalty_lower + penalty_upper
+   - Return mean score (lower = better)
+
+7.2 BASELINE COMPARISONS
+────────────────────────
+File: src/forex_diffusion/backtest/baselines.py (NEW FILE)
+
+Purpose: Calculate adherence for baseline models (for comparison)
+
+Classes:
+
+a) RandomWalkBaseline:
+   Logic:
+   - Predict: tomorrow = today + random_noise
+   - Generate prediction intervals based on historical volatility
+   - Calculate CRPS, calibration, sharpness
+
+b) HistoricalMeanBaseline:
+   Logic:
+   - Predict: tomorrow = mean(last_N_days)
+   - Intervals based on historical std dev
+
+c) ARIMABaseline:
+   Logic:
+   - Fit ARIMA(p,d,q) model
+   - Generate forecast + prediction intervals
+   - Calculate adherence metrics
+
+Method in each:
+- get_adherence_metrics(test_data) -> dict
+  Returns: {crps, calibration, sharpness, interval_score}
+
+7.3 UPDATE BACKTEST WORKER
+───────────────────────────
+File: src/forex_diffusion/backtest/worker.py (MODIFY lines 172-173)
+
+Replace placeholder with:
+
+```
+# Align predictions and actuals by timestamp using merge_asof
+df_predictions = pd.DataFrame(predictions)
+df_actuals = pd.DataFrame(actuals)
+
+aligned = pd.merge_asof(
+    df_predictions,
+    df_actuals,
+    left_on='forecast_timestamp',
+    right_on='actual_timestamp',
+    direction='nearest',
+    tolerance=pd.Timedelta('5min')
+)
+
+# Calculate adherence metrics
+adherence_metrics = {
+    'crps': calculate_crps(aligned['predicted_quantiles'], aligned['actual_value']),
+    'calibration': calculate_calibration(aligned['predicted_quantiles'], aligned['actual_value']),
+    'sharpness': calculate_sharpness(aligned['predicted_intervals']),
+    'interval_score': calculate_interval_score(aligned['predicted_quantiles'], aligned['actual_value'])
+}
+
+# Also calculate for baseline (Random Walk)
+rw_baseline = RandomWalkBaseline()
+baseline_metrics = rw_baseline.get_adherence_metrics(aligned)
+
+# Compare to baseline
+adherence_metrics['improvement_over_baseline'] = {
+    'crps': (baseline_metrics['crps'] - adherence_metrics['crps']) / baseline_metrics['crps'],
+    'interval_score': (baseline_metrics['interval_score'] - adherence_metrics['interval_score']) / baseline_metrics['interval_score']
+}
+```
+
+7.4 RELIABILITY DIAGRAM
+───────────────────────
+Purpose: Visual tool to assess calibration
+
+File: src/forex_diffusion/backtest/visualization.py (NEW FILE)
+
+Function: plot_reliability_diagram(predicted_quantiles, actuals, save_path)
+Logic:
+- For each quantile level (0.05 to 0.95):
+  * Plot expected coverage (diagonal line)
+  * Plot empirical coverage (actual fraction)
+- Perfect calibration = points on diagonal
+- Save figure to save_path
+
+7.5 DATABASE STORAGE
+────────────────────
+Migration: alembic revision -m "add_adherence_metrics_tables"
+
+Table: backtest_adherence_metrics
+Columns:
+- id, backtest_run_id, model_id, symbol, timeframe, horizon_bars
+- crps, calibration_score, sharpness, interval_score
+- baseline_crps, improvement_over_baseline
+- num_predictions, created_at
+
+Purpose: Store adherence metrics for each backtest run
+
+7.6 TESTING
+───────────
+File: tests/test_adherence_metrics.py (NEW FILE)
+
+Tests:
+a) test_crps_calculation(): Verify CRPS formula
+b) test_calibration_perfect(): Mock perfect calibration, verify score
+c) test_calibration_poor(): Mock poor calibration, verify score reflects
+d) test_sharpness(): Verify interval width calculation
+e) test_merge_asof_alignment(): Verify timestamp alignment works
+f) test_baseline_comparison(): Verify improvement calculation
+
+7.7 DOCUMENTATION
+─────────────────
+File: docs/ADHERENCE_METRICS.md (NEW FILE)
+
+Sections:
+- What is CRPS and why it matters
+- Calibration explained (with diagrams)
+- Sharpness vs calibration tradeoff
+- Interpreting interval scores
+- Baseline comparisons methodology
+- How to improve adherence (calibration tips)
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🚦 IMPLEMENTATION PRIORITY & ORDER
+## ════════════════════════════════════════════════════════════════════════════
+
+RECOMMENDED IMPLEMENTATION ORDER:
+
+WEEK 1 (CRITICAL):
+├─ TASK 1: Conformal Prediction Calibration (2-3 days)
+│  - Blocking inference credibility
+│  - Highest business impact
+└─ TASK 6: Model Artifact Loading (1-2 days)
+   - Blocking inference functionality
+   - Required for TASK 1
+
+WEEK 2 (HIGH PRIORITY):
+├─ TASK 7: Backtest Adherence Metrics (2 days)
+│  - Needed to validate TASK 1
+│  - Required for proper model evaluation
+└─ TASK 3: Multi-Horizon Model Validation (1-2 days)
+   - Improves model selection
+   - Builds on TASK 6
+
+WEEK 3-4 (IMPORTANT):
+├─ TASK 2: Broker Integration (3-4 days)
+│  - Enables live trading
+│  - Complex but high value
+└─ TASK 4: ML-Based Pattern Detection (3-4 days)
+   - Product differentiation
+   - User-facing feature
+
+WEEK 5-6 (ENHANCEMENT):
+└─ TASK 5: Temporal UNet (4-5 days)
+   - Performance improvement
+   - Can be done in parallel with other tasks
+
+## ════════════════════════════════════════════════════════════════════════════
+## 📋 GENERAL GUIDELINES FOR ALL TASKS
+## ════════════════════════════════════════════════════════════════════════════
+
+DATABASE MIGRATIONS:
+- ALWAYS use Alembic: alembic revision -m "description"
+- NEVER modify tables directly
+- Test migrations: alembic upgrade head, then alembic downgrade -1
+- Include both upgrade() and downgrade()
+
+CODE QUALITY:
+- Add type hints to all functions
+- Write docstrings (Google style)
+- Follow PEP 8
+- Use descriptive variable names
+- Add logging at INFO level for key operations
+- Add logging at DEBUG level for detailed tracking
+
+ERROR HANDLING:
+- Use try/except with specific exception types
+- Log errors with full traceback
+- Provide user-friendly error messages
+- Implement graceful degradation where possible
+
+TESTING:
+- Aim for 80%+ code coverage
+- Use pytest fixtures for common setup
+- Mock external dependencies (databases, APIs, brokers)
+- Test edge cases (empty data, None values, invalid inputs)
+- Integration tests for critical paths
+
+DOCUMENTATION:
+- Update relevant docs/ files
+- Add inline comments for complex logic
+- Create usage examples
+- Document configuration options
+- Maintain CHANGELOG.md
+
+PERFORMANCE:
+- Profile code before optimizing
+- Use vectorized operations (NumPy/Pandas) where possible
+- Cache expensive computations
+- Use database indexes appropriately
+- Monitor memory usage
+
+LOGGING:
+- Use existing logger: from forex_diffusion.utils.logging import logger
+- Levels: DEBUG (detailed), INFO (key events), WARNING (recoverable issues), ERROR (failures)
+- Include context in log messages (symbol, timeframe, model_id)
+
+GIT COMMITS:
+- Commit frequently with descriptive messages
+- Format: "[TASK-N] Brief description"
+- Example: "[TASK-1] Implement WeightedICP calibration class"
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🔍 VERIFICATION CHECKLIST (Before Marking Task Complete)
+## ════════════════════════════════════════════════════════════════════════════
+
+For each task, verify:
+
+□ Code Implementation:
+  □ All classes/functions implemented
+  □ Type hints added
+  □ Docstrings complete
+  □ Error handling in place
+  □ Logging added
+
+□ Database Changes:
+  □ Migration created (if needed)
+  □ Migration tested (upgrade + downgrade)
+  □ Indexes created for performance
+  □ Foreign keys properly defined
+
+□ Testing:
+  □ Unit tests written
+  □ All tests pass (pytest tests/ -v)
+  □ Coverage > 80% for new code
+  □ Integration test for main functionality
+
+□ Documentation:
+  □ Docstrings complete
+  □ README updated (if needed)
+  □ New docs file created (if needed)
+  □ Usage examples provided
+
+□ Integration:
+  □ New code integrated into existing system
+  □ UI updated (if user-facing feature)
+  □ CLI updated (if applicable)
+  □ No breaking changes to existing features
+
+□ Performance:
+  □ No memory leaks
+  □ Acceptable execution time
+  □ Database queries optimized
+  □ Caching implemented where beneficial
+
+□ Review:
+  □ Code follows project conventions
+  □ No hardcoded values (use config)
+  □ No print() statements (use logger)
+  □ No TODO comments without GitHub issue
+
+## ════════════════════════════════════════════════════════════════════════════
+## 📞 SUPPORT & RESOURCES
+## ════════════════════════════════════════════════════════════════════════════
+
+PROJECT STRUCTURE:
+D:\Projects\ForexGPT\
+├─ src/forex_diffusion/ - Main source code
+├─ tests/ - All tests
+├─ migrations/versions/ - Alembic migrations
+├─ docs/ - Documentation
+├─ configs/ - Configuration files
+├─ artifacts/ - Trained models, outputs
+└─ data/ - Database files
+
+KEY FILES:
+- README.md - Project overview
+- QUICK_START.md - Setup guide
+- IMPLEMENTATION_SUMMARY_FINAL.md - What's already done
+- FAKE_IMPLEMENTATIONS.md - What needs to be done (this task list)
+- pyproject.toml - Dependencies
+
+USEFUL COMMANDS:
+- Run tests: pytest tests/ -v
+- Run specific test: pytest tests/test_conformal.py::test_name -v
+- Check coverage: pytest --cov=src/forex_diffusion tests/
+- Create migration: alembic revision -m "description"
+- Apply migrations: alembic upgrade head
+- Rollback migration: alembic downgrade -1
+- Check current migration: alembic current
+- Start app: python -m forex_diffusion.ui.main
+- CLI help: python -m forex_diffusion.cli.providers --help
+
+DEPENDENCIES:
+Already installed (see pyproject.toml):
+- SQLAlchemy, Alembic (database)
+- PyQt6 (UI)
+- pandas, numpy, scikit-learn (data/ML)
+- torch, pytorch-lightning (deep learning)
+- pytest, pytest-cov (testing)
+
+To add new dependency:
+1. Add to pyproject.toml [project.dependencies]
+2. Run: pip install -e .
+
+## ════════════════════════════════════════════════════════════════════════════
+## ✅ SUCCESS CRITERIA
+## ════════════════════════════════════════════════════════════════════════════
+
+TASK 1 SUCCESS: Conformal Prediction
+- ✓ Database table created and migrated
+- ✓ WeightedICP class calculates delta correctly
+- ✓ InferenceService uses calibrated intervals
+- ✓ Calibration improves over time (empirical coverage → target coverage)
+- ✓ Tests pass with >80% coverage
+
+TASK 2 SUCCESS: Broker Integration
+- ✓ Can connect to IB and MT5
+- ✓ Can fetch positions and account info
+- ✓ Can place orders successfully
+- ✓ Real-time PnL updates in UI
+- ✓ Error handling prevents system crashes
+
+TASK 3 SUCCESS: Multi-Horizon Validation
+- ✓ Correct validator dispatched for each model type
+- ✓ Walk-forward validation works
+- ✓ Metrics calculated correctly for each type
+- ✓ No data leakage in validation splits
+
+TASK 4 SUCCESS: ML Pattern Detection
+- ✓ CNN model trains to >80% accuracy
+- ✓ Real-time detection works in UI
+- ✓ Background processing prevents UI freeze
+- ✓ Confidence scores meaningful
+
+TASK 5 SUCCESS: Temporal UNet
+- ✓ No future information leakage (causal)
+- ✓ Better performance than generic UNet
+- ✓ Training converges successfully
+- ✓ Sampling time acceptable (<1s per prediction)
+
+TASK 6 SUCCESS: Model Loading
+- ✓ Can load sklearn and pytorch models
+- ✓ Registry tracks all models
+- ✓ Versioning works correctly
+- ✓ Cache improves performance
+
+TASK 7 SUCCESS: Adherence Metrics
+- ✓ CRPS calculated correctly
+- ✓ Calibration assessment accurate
+- ✓ Baseline comparisons work
+- ✓ Metrics stored in database
+
+## ════════════════════════════════════════════════════════════════════════════
+## 🎯 FINAL NOTES
+## ════════════════════════════════════════════════════════════════════════════
+
+ESTIMATED TOTAL TIME: 6-8 weeks for all tasks (single developer)
+
+PRIORITIES:
+1. TASK 1 + TASK 6 (Week 1) - Blocking everything else
+2. TASK 7 + TASK 3 (Week 2) - Validate and improve
+3. TASK 2 + TASK 4 (Week 3-4) - Live trading + differentiation
+4. TASK 5 (Week 5-6) - Performance enhancement
+
+PARALLEL WORK POSSIBLE:
+- TASK 2 (Broker) can be done in parallel with TASK 4 (Pattern ML)
+- TASK 5 (Temporal UNet) can be done anytime after TASK 6
+
+DEPENDENCIES:
+- TASK 1 requires TASK 6 (need to load models to calibrate)
+- TASK 7 requires TASK 1 (need calibrated predictions to assess adherence)
+- TASK 3 can use TASK 7 metrics
+
+REMEMBER:
+- Test incrementally (don't wait until the end)
+- Commit frequently
+- Document as you go
+- Ask for clarification if instructions unclear
+- Focus on correctness first, optimization second
+- Keep backwards compatibility where possible
+
+GOOD LUCK! 🚀
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF TASK SPECIFICATIONS
+═══════════════════════════════════════════════════════════════════════════════

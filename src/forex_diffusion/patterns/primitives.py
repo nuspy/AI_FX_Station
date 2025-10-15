@@ -4,14 +4,14 @@ import numpy as np
 import pandas as pd
 
 def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
-    high = df["high"].astype(float).to_numpy()
-    low = df["low"].astype(float).to_numpy()
-    close = df["close"].astype(float).to_numpy()
-    prev_close = np.roll(close, 1)
-    tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
-    tr[0] = high[0] - low[0]
-    atr_vals = pd.Series(tr).rolling(n, min_periods=1).mean().astype(float)
-    return atr_vals
+    """
+    Average True Range (ATR).
+    
+    HIGH-001: Use consolidated implementation from features.consolidated_indicators
+    """
+    # Import here to avoid circular dependencies
+    from ..features.consolidated_indicators import atr as consolidated_atr
+    return consolidated_atr(df, n=n)
 
 def zigzag_pivots(df: pd.DataFrame, atr_mult: float = 2.0, n_atr: int = 14) -> List[Tuple[int,int]]:
     """
@@ -50,3 +50,38 @@ def fit_line_indices(y: np.ndarray, i0: int, i1: int) -> Tuple[float, float]:
     A = np.vstack([x, np.ones_like(x)]).T
     slope, intercept = np.linalg.lstsq(A, yy, rcond=None)[0]
     return float(slope), float(intercept)
+
+
+def time_array(df):
+    if df is None or len(df)==0:
+        return np.array([], dtype='datetime64[ns]')
+    if 'ts_utc' in df.columns:
+        try:
+            return pd.to_datetime(df['ts_utc'], unit='ms').to_numpy()
+        except Exception:
+            return pd.to_datetime(df['ts_utc']).to_numpy()
+    if 'time' in df.columns:
+        return pd.to_datetime(df['time']).to_numpy()
+    return pd.to_datetime(df.index).to_numpy()
+
+def safe_tz_convert(ts, target_tz=None):
+    """
+    Safely convert timezone for different datetime types.
+    Handles pandas Series, DatetimeIndex, and numpy arrays.
+    """
+    try:
+        if hasattr(ts, 'dt'):
+            # Pandas Series with datetime
+            return ts.dt.tz_convert(target_tz)
+        elif hasattr(ts, 'tz_convert'):
+            # DatetimeIndex
+            return ts.tz_convert(target_tz)
+        else:
+            # Numpy array - convert to pandas and then back
+            if target_tz is None:
+                return pd.to_datetime(ts, utc=True).tz_convert(None).to_numpy()
+            else:
+                return pd.to_datetime(ts, utc=True).tz_convert(target_tz).to_numpy()
+    except Exception:
+        # If all else fails, just return the original
+        return ts

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(black:*)",
+      "Bash(autoflake:*)",
+      "Bash(python -m:*)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "outputStyle": "default"
+}

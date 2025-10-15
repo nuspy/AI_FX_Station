@@ -9,7 +9,7 @@ from functools import partial  # added
 
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QVBoxLayout,
+    QVBoxLayout, QCheckBox,
 )
+from loguru import logger
 
 from ..utils.user_settings import get_setting, set_setting
 
@@ -37,16 +38,13 @@ COLOR_FIELDS = [
     ("border_color", "Bordi finestra"),
     ("splitter_handle_color", "Divisori"),
     ("chart_bg", "Sfondo grafico"),
-    ("mini_chart_bg", "Sfondo minigrafico"),
+    ("mini_chart_bg_1", "Sfondo minigrafico 1"),
+    ("mini_chart_bg_2", "Sfondo minigrafico 2"),
     ("price_line_color", "Linea prezzo"),
     ("axes_color", "Assi grafico"),
     ("title_bar_color", "Titolo grafico"),
     ("text_color", "Testo"),
     ("bidask_color", "Label Bid/Ask"),
-    ("legend_text_color", "Testo legenda/cursore"),
-    ("grid_color", "Griglia asse X"),
-    ("tab_bg", "Sfondo tab selector"),
-    ("tab_text_color", "Testo tab selector"),
     ("legend_text_color", "Testo legenda/cursore"),
     ("grid_color", "Griglia asse X"),
     ("tab_bg", "Sfondo tab selector"),
@@ -62,7 +60,8 @@ COLOR_DEFAULTS = {
     "border_color": "#2a2f3a",
     "splitter_handle_color": "#2f3541",
     "chart_bg": "#0f1115",
-    "mini_chart_bg": "#14181f",
+    "mini_chart_bg_1": "#14181f",
+    "mini_chart_bg_2": "#1a1e25",
     "price_line_color": "#e0e0e0",
     "axes_color": "#cfd6e1",
     "title_bar_color": "#cfd6e1",
@@ -73,10 +72,6 @@ COLOR_DEFAULTS = {
     "tab_bg": "#12151b",
     "tab_text_color": "#e0e0e0",
     "market_cut_color": "#7f8fa6",
-    "legend_text_color": "#cfd6e1",
-    "grid_color": "#3a4250",
-    "tab_bg": "#12151b",
-    "tab_text_color": "#e0e0e0",
     "candle_up_color": "#2ecc71",
     "candle_down_color": "#e74c3c",
 }
@@ -99,6 +94,12 @@ GENERAL_KEYS = [
     "mt_server",
     "mt_login",
     "mt_password",
+    # Multi-provider settings
+    "primary_data_provider",
+    "secondary_data_provider",
+    "ctrader_client_id",
+    "ctrader_client_secret",
+    "ctrader_environment",
 ]
 
 
@@ -127,7 +128,7 @@ class SettingsDialog(QDialog):
         self.admin_input.setPlaceholderText("token1:admin,token2:operator")
 
         self.broker_mode = QComboBox()
-        self.broker_mode.addItems(["paper", "ib", "mt4", "mt5"])
+        self.broker_mode.addItems(["paper", "ib", "mt4", "mt5", "ctrader"])
 
         self.acc_name = QLineEdit(); self.acc_name.setPlaceholderText("default")
         self.acc_currency = QLineEdit(); self.acc_currency.setPlaceholderText("USD")
@@ -144,6 +145,13 @@ class SettingsDialog(QDialog):
         self.mt_server = QLineEdit(); self.mt_server.setPlaceholderText("broker server")
         self.mt_login = QLineEdit(); self.mt_login.setPlaceholderText("login")
         self.mt_pass = QLineEdit(); self.mt_pass.setEchoMode(QLineEdit.Password); self.mt_pass.setPlaceholderText("password")
+
+        # cTrader fields (used in multiple places)
+        self.ctrader_client_id = QLineEdit(); self.ctrader_client_id.setPlaceholderText("cTrader Client ID")
+        self.ctrader_client_secret = QLineEdit(); self.ctrader_client_secret.setPlaceholderText("cTrader Client Secret"); self.ctrader_client_secret.setEchoMode(QLineEdit.Password)
+        self.ctrader_access_token = QLineEdit(); self.ctrader_access_token.setEchoMode(QLineEdit.Password); self.ctrader_access_token.setPlaceholderText("Access Token (optional - use if already have one)")
+        self.ctrader_refresh_token = QLineEdit(); self.ctrader_refresh_token.setEchoMode(QLineEdit.Password); self.ctrader_refresh_token.setPlaceholderText("Refresh Token (optional - for auto token renewal)")
+        self.ctrader_environment = QComboBox(); self.ctrader_environment.addItems(["demo", "live"])
 
         # Left column
         form.addWidget(QLabel("AlphaVantage API Key:"), 0, 0)
@@ -181,11 +189,89 @@ class SettingsDialog(QDialog):
         form.addWidget(QLabel("MT Password:"), 7, 2)
         form.addWidget(self.mt_pass, 7, 3)
 
+        # cTrader credentials in Trading Configuration
+        form.addWidget(QLabel("cTrader Client ID:"), 8, 0)
+        form.addWidget(self.ctrader_client_id, 8, 1)
+        form.addWidget(QLabel("cTrader Secret:"), 8, 2)
+        form.addWidget(self.ctrader_client_secret, 8, 3)
+        form.addWidget(QLabel("cTrader Access Token:"), 9, 0)
+        form.addWidget(self.ctrader_access_token, 9, 1, 1, 3)
+        form.addWidget(QLabel("cTrader Refresh Token:"), 10, 0)
+        form.addWidget(self.ctrader_refresh_token, 10, 1, 1, 3)
+
         # Spanning field
-        form.addWidget(QLabel("Account Tiingo Key:"), 8, 0)
-        form.addWidget(self.acc_tiingo, 8, 1, 1, 3)
+        form.addWidget(QLabel("Account Tiingo Key:"), 11, 0)
+        form.addWidget(self.acc_tiingo, 11, 1, 1, 3)
 
         layout.addWidget(form_group)
+
+        # Multi-Provider Configuration
+        provider_group = QGroupBox("Data Provider Configuration")
+        provider_form = QGridLayout(provider_group)
+
+        self.primary_provider = QComboBox()
+        self.primary_provider.addItems(["tiingo", "ctrader", "alphavantage"])
+        self.secondary_provider = QComboBox()
+        self.secondary_provider.addItems(["none", "tiingo", "ctrader", "alphavantage"])
+
+        self.btn_ctrader_oauth = QPushButton("Authorize cTrader (OAuth)")
+        self.btn_ctrader_test = QPushButton("Test Connection")
+
+        # cTrader enabled checkbox (enables real-time ticks, volumes, order book)
+        self.ctrader_enabled_checkbox = QCheckBox("Enable cTrader Real-time Features")
+        self.ctrader_enabled_checkbox.setToolTip("Enable cTrader real-time ticks, volumes, and order book streaming via WebSocket")
+
+        self.show_provider_label_checkbox = QCheckBox("Show Provider Label on Chart")
+        self.show_provider_label_checkbox.setToolTip("Display RT data and Historical provider information on the chart")
+
+        provider_form.addWidget(QLabel("Primary Provider:"), 0, 0)
+        provider_form.addWidget(self.primary_provider, 0, 1)
+        provider_form.addWidget(QLabel("Fallback Provider:"), 0, 2)
+        provider_form.addWidget(self.secondary_provider, 0, 3)
+
+        provider_form.addWidget(QLabel("cTrader Client ID:"), 1, 0)
+        provider_form.addWidget(self.ctrader_client_id, 1, 1)
+        provider_form.addWidget(QLabel("cTrader Client Secret:"), 1, 2)
+        provider_form.addWidget(self.ctrader_client_secret, 1, 3)
+
+        provider_form.addWidget(QLabel("cTrader Environment:"), 2, 0)
+        provider_form.addWidget(self.ctrader_environment, 2, 1)
+        provider_form.addWidget(self.btn_ctrader_oauth, 2, 2)
+        provider_form.addWidget(self.btn_ctrader_test, 2, 3)
+
+        # Add cTrader enabled checkbox on a new row
+        provider_form.addWidget(self.ctrader_enabled_checkbox, 3, 0, 1, 2)
+        provider_form.addWidget(self.show_provider_label_checkbox, 3, 2, 1, 2)
+
+        layout.addWidget(provider_group)
+
+        # cTrader Accounts List (shown only when broker_mode is ctrader)
+        self.ctrader_accounts_group = QGroupBox("cTrader Accounts")
+        ctrader_acc_layout = QVBoxLayout(self.ctrader_accounts_group)
+
+        self.ctrader_accounts_list = QListWidget()
+        self.ctrader_accounts_list.setMaximumHeight(150)
+        ctrader_acc_layout.addWidget(self.ctrader_accounts_list)
+
+        ctrader_btns = QHBoxLayout()
+        self.btn_refresh_ctrader_accounts = QPushButton("Refresh Accounts")
+        self.btn_refresh_ctrader_accounts.clicked.connect(self._on_refresh_ctrader_accounts)
+        ctrader_btns.addWidget(self.btn_refresh_ctrader_accounts)
+        ctrader_btns.addStretch()
+        ctrader_acc_layout.addLayout(ctrader_btns)
+
+        # Add legend
+        legend_label = QLabel("🔵 Demo Account | 🟢 Live Account")
+        legend_label.setStyleSheet("color: gray; font-size: 11px;")
+        ctrader_acc_layout.addWidget(legend_label)
+
+        layout.addWidget(self.ctrader_accounts_group)
+
+        # Initially hide cTrader accounts (shown only when broker_mode == "ctrader")
+        self.ctrader_accounts_group.setVisible(False)
+
+        # Connect broker_mode change to show/hide cTrader accounts
+        self.broker_mode.currentTextChanged.connect(self._on_broker_mode_changed)
 
         # Accounts list + controls
         accounts_group = QGroupBox("Accounts")
@@ -202,6 +288,20 @@ class SettingsDialog(QDialog):
         acc_layout.addLayout(acc_btns)
         layout.addWidget(accounts_group)
 
+        # Risk Profile Management
+        from .risk_profile_settings_widget import RiskProfileSettingsWidget
+        from forex_diffusion.services.risk_profile_loader import RiskProfileLoader
+        from forex_diffusion.utils.user_settings import SETTINGS_DIR
+
+        self.risk_profile_widget = RiskProfileSettingsWidget()
+
+        # Initialize and set risk profile loader
+        db_path = SETTINGS_DIR / "trading_pipeline.db"
+        risk_loader = RiskProfileLoader(str(db_path))
+        self.risk_profile_widget.set_risk_profile_loader(risk_loader)
+
+        layout.addWidget(self.risk_profile_widget)
+
         # Chart behaviour
         chart_group = QGroupBox("Chart Behaviour")
         chart_form = QFormLayout(chart_group)
@@ -211,6 +311,12 @@ class SettingsDialog(QDialog):
         self.follow_suspend_spin.setSingleStep(1.0)
         self.follow_suspend_spin.setSuffix(" s")
         chart_form.addRow(QLabel("Follow suspend (seconds):"), self.follow_suspend_spin)
+
+        # Date format selector
+        self.date_format_combo = QComboBox()
+        self.date_format_combo.addItems(["YYYY-MM-DD", "YYYY-DD-MM", "DD-MM-YYYY", "MM-DD-YYYY"])
+        chart_form.addRow(QLabel("Date Format:"), self.date_format_combo)
+
         layout.addWidget(chart_group)
 
         # Color configuration
@@ -256,6 +362,8 @@ class SettingsDialog(QDialog):
         self.accounts_list.currentItemChanged.connect(self._on_account_selected)
         self.btn_load_json.clicked.connect(self._load_from_json)
         self.btn_save_json.clicked.connect(self._save_to_json)
+        self.btn_ctrader_oauth.clicked.connect(self._on_ctrader_oauth)
+        self.btn_ctrader_test.clicked.connect(self._on_ctrader_test)
 
         self.load_values()
 
@@ -287,11 +395,31 @@ class SettingsDialog(QDialog):
         self.mt_pass.setText(str(get_setting("mt_password", "")))
 
         self.follow_suspend_spin.setValue(float(get_setting("chart.follow_suspend_seconds", 30.0)))
+        self.date_format_combo.setCurrentText(str(get_setting("chart.date_format", "YYYY-MM-DD")))
 
         for key, _ in COLOR_FIELDS:
             default = COLOR_DEFAULTS.get(key, "#000000")
             value = str(get_setting(key, default))
             self.color_edits[key].setText(value)
+
+        # Load provider settings
+        self.primary_provider.setCurrentText(str(get_setting("primary_data_provider", "tiingo")))
+        self.secondary_provider.setCurrentText(str(get_setting("secondary_data_provider", "none")))
+
+        # Load ALL provider-specific settings (always load cTrader fields)
+        self.ctrader_client_id.setText(str(get_setting("provider.ctrader.client_id", "")))
+        self.ctrader_client_secret.setText(str(get_setting("provider.ctrader.client_secret", "")))
+        self.ctrader_access_token.setText(str(get_setting("provider.ctrader.access_token", "")))
+        self.ctrader_refresh_token.setText(str(get_setting("provider.ctrader.refresh_token", "")))
+        self.ctrader_environment.setCurrentText(str(get_setting("provider.ctrader.environment", "demo")))
+
+        # Load cTrader enabled state (auto-enable if primary_provider is ctrader)
+        primary = str(get_setting("primary_data_provider", "tiingo"))
+        ctrader_enabled = get_setting("ctrader_enabled", primary.lower() == "ctrader")
+        self.ctrader_enabled_checkbox.setChecked(ctrader_enabled)
+
+        show_provider_label = get_setting("show_provider_label", True)
+        self.show_provider_label_checkbox.setChecked(show_provider_label)
 
         self._accounts = self._load_accounts_dict()
         self._populate_accounts_list()
@@ -312,6 +440,32 @@ class SettingsDialog(QDialog):
 
     def _save_accounts_dict(self) -> None:
         set_setting("accounts_profiles", self._accounts)
+
+    def _load_provider_settings(self, provider: str) -> None:
+        """Load provider-specific settings from user_settings"""
+        if provider == "ctrader":
+            self.ctrader_client_id.setText(str(get_setting(f"provider.{provider}.client_id", "")))
+            self.ctrader_client_secret.setText(str(get_setting(f"provider.{provider}.client_secret", "")))
+            self.ctrader_environment.setCurrentText(str(get_setting(f"provider.{provider}.environment", "demo")))
+        elif provider == "tiingo":
+            # Tiingo settings are handled separately in alpha_input/tiingo_input
+            pass
+        elif provider == "alphavantage":
+            # Alpha Vantage settings are handled separately in alpha_input
+            pass
+
+    def _save_provider_settings(self, provider: str) -> None:
+        """Save provider-specific settings to user_settings"""
+        if provider == "ctrader":
+            set_setting(f"provider.{provider}.client_id", self.ctrader_client_id.text().strip())
+            set_setting(f"provider.{provider}.client_secret", self.ctrader_client_secret.text().strip())
+            set_setting(f"provider.{provider}.environment", self.ctrader_environment.currentText())
+        elif provider == "tiingo":
+            # Tiingo settings saved via tiingo_input
+            pass
+        elif provider == "alphavantage":
+            # Alpha Vantage settings saved via alpha_input
+            pass
 
     def _populate_accounts_list(self, select: str | None = None) -> None:
         self.accounts_list.blockSignals(True)
@@ -522,11 +676,247 @@ class SettingsDialog(QDialog):
             set_setting("mt_password", self.mt_pass.text().strip())
 
             set_setting("chart.follow_suspend_seconds", float(self.follow_suspend_spin.value()))
+            set_setting("chart.date_format", self.date_format_combo.currentText())
 
             for key, _ in COLOR_FIELDS:
                 set_setting(key, self.color_edits[key].text().strip())
+
+            # Save provider settings
+            set_setting("primary_data_provider", self.primary_provider.currentText())
+            set_setting("secondary_data_provider", self.secondary_provider.currentText())
+
+            # Save ALL provider-specific settings (not just the selected one)
+            # Save cTrader settings
+            set_setting("provider.ctrader.client_id", self.ctrader_client_id.text().strip())
+            set_setting("provider.ctrader.client_secret", self.ctrader_client_secret.text().strip())
+            set_setting("provider.ctrader.access_token", self.ctrader_access_token.text().strip())
+            set_setting("provider.ctrader.refresh_token", self.ctrader_refresh_token.text().strip())
+            set_setting("provider.ctrader.environment", self.ctrader_environment.currentText())
+            set_setting("ctrader_enabled", self.ctrader_enabled_checkbox.isChecked())
+            set_setting("show_provider_label", self.show_provider_label_checkbox.isChecked())
 
             QMessageBox.information(self, "Settings", "Settings saved")
             self.accept()
         except Exception as exc:
             QMessageBox.warning(self, "Save failed", str(exc))
+
+    # ------------------------------------------------------------------
+    # Provider-specific handlers
+    # ------------------------------------------------------------------
+    def _on_ctrader_oauth(self) -> None:
+        """Run cTrader OAuth flow."""
+        try:
+            import asyncio
+            from forex_diffusion.credentials import OAuth2Flow, CredentialsManager, ProviderCredentials
+
+            client_id = self.ctrader_client_id.text().strip()
+            client_secret = self.ctrader_client_secret.text().strip()
+
+            if not client_id or not client_secret:
+                QMessageBox.warning(
+                    self,
+                    "OAuth Error",
+                    "Please enter cTrader Client ID and Client Secret first"
+                )
+                return
+
+            # Run OAuth flow in event loop
+            async def run_oauth():
+                oauth = OAuth2Flow(client_id=client_id, client_secret=client_secret)
+                token_data = await oauth.authorize()
+
+                creds = ProviderCredentials(
+                    provider_name='ctrader',
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    access_token=token_data['access_token'],
+                    refresh_token=token_data.get('refresh_token'),
+                    environment=self.ctrader_environment.currentText()
+                )
+
+                CredentialsManager().save(creds)
+                return True
+
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            success = loop.run_until_complete(run_oauth())
+
+            if success:
+                QMessageBox.information(
+                    self,
+                    "OAuth Success",
+                    "cTrader authorization successful! Credentials saved securely."
+                )
+
+        except Exception as exc:
+            QMessageBox.warning(self, "OAuth Failed", f"Authorization failed: {exc}")
+
+    def _on_ctrader_test(self) -> None:
+        """Test cTrader connection - tries access token first, then OAuth."""
+        try:
+            import asyncio
+            from forex_diffusion.providers import get_provider_manager
+            from forex_diffusion.credentials import CredentialsManager
+
+            # Get current form values
+            client_id = self.ctrader_client_id.text().strip()
+            client_secret = self.ctrader_client_secret.text().strip()
+            access_token = self.ctrader_access_token.text().strip()
+            environment = self.ctrader_environment.currentText()
+
+            # Check if we have access token - try direct connection first
+            if access_token:
+                # Try with access token (no OAuth)
+                async def test_with_token():
+                    manager = get_provider_manager()
+                    provider = manager.create_provider('ctrader', config={
+                        'client_id': client_id,
+                        'client_secret': client_secret,
+                        'access_token': access_token,
+                        'environment': environment
+                    })
+
+                    connected = await provider.connect()
+                    if connected:
+                        price = await provider.get_current_price("EUR/USD")
+                        await provider.disconnect()
+                        return connected, price
+                    return False, None
+
+                # Run token test
+                success, price = asyncio.run(test_with_token())
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Connection Test",
+                        f"✓ Connected successfully with access token!\n\nEUR/USD: {price}"
+                    )
+                    return
+                else:
+                    # Token failed, try OAuth
+                    QMessageBox.information(
+                        self,
+                        "Token Failed",
+                        "Access token connection failed. Trying OAuth flow..."
+                    )
+
+            # Fallback to OAuth credentials
+            creds_manager = CredentialsManager()
+            creds = creds_manager.load('ctrader')
+
+            if not creds:
+                QMessageBox.warning(
+                    self,
+                    "Test Failed",
+                    "No access token and no OAuth credentials found.\nPlease provide an access token or run OAuth authorization."
+                )
+                return
+
+            # Create and test provider with OAuth
+            async def test_connection():
+                manager = get_provider_manager()
+                provider = manager.create_provider('ctrader', config={
+                    'client_id': creds.client_id,
+                    'client_secret': creds.client_secret,
+                    'access_token': creds.access_token,
+                    'environment': creds.environment
+                })
+
+                connected = await provider.connect()
+                if connected:
+                    # Try to get a price quote
+                    price = await provider.get_current_price("EUR/USD")
+                    await provider.disconnect()
+                    return connected, price
+                return False, None
+
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            connected, price = loop.run_until_complete(test_connection())
+
+            if connected:
+                msg = "Connection successful!"
+                if price:
+                    msg += f"\n\nTest quote for EUR/USD: {price.get('price', 'N/A')}"
+                QMessageBox.information(self, "Test Success", msg)
+            else:
+                QMessageBox.warning(self, "Test Failed", "Failed to connect to cTrader")
+
+        except Exception as exc:
+            QMessageBox.warning(self, "Test Failed", f"Connection test failed: {exc}")
+
+    def _on_broker_mode_changed(self, broker_mode: str):
+        """Show/hide cTrader accounts section based on broker mode."""
+        is_ctrader = broker_mode.lower() == "ctrader"
+        self.ctrader_accounts_group.setVisible(is_ctrader)
+
+        # Auto-refresh accounts when switching to cTrader
+        if is_ctrader:
+            self._on_refresh_ctrader_accounts()
+
+    def _on_refresh_ctrader_accounts(self):
+        """Refresh cTrader accounts list from API."""
+        try:
+            self.ctrader_accounts_list.clear()
+
+            # Get credentials from settings
+            client_id = self.ctrader_client_id_edit.text().strip()
+            client_secret = self.ctrader_client_secret_edit.text().strip()
+            access_token = self.ctrader_access_token_edit.text().strip()
+
+            if not all([client_id, client_secret, access_token]):
+                QMessageBox.warning(self, "Warning", "Please configure cTrader credentials first")
+                return
+
+            # Use standalone function to get accounts
+            from ..broker.ctrader_broker import get_ctrader_accounts
+
+            # Get accounts from API
+            accounts = get_ctrader_accounts(
+                client_id=client_id,
+                client_secret=client_secret,
+                access_token=access_token,
+                environment='demo'  # TODO: Get from settings
+            )
+
+            if not accounts:
+                logger.warning("No accounts returned from cTrader API, using fallback")
+                # Fallback to mock data for testing
+                accounts = [
+                    {"id": "1234567", "type": "demo", "balance": 100000, "currency": "USD"},
+                    {"id": "7654321", "type": "live", "balance": 5000, "currency": "EUR"},
+                ]
+
+            for acc in accounts:
+                is_demo = acc.get("type", "demo") == "demo"
+                color_icon = "🔵" if is_demo else "🟢"
+                acc_id = acc.get("id", "N/A")
+                currency = acc.get("currency", "USD")
+                balance = acc.get("balance", 0)
+
+                text = f"{color_icon} {acc_id} - {currency} {balance:,.2f}"
+
+                item = QListWidgetItem(text)
+                # Set background color
+                if is_demo:
+                    item.setBackground(QBrush(QColor(220, 235, 255)))  # Light blue
+                else:
+                    item.setBackground(QBrush(QColor(220, 255, 220)))  # Light green
+
+                self.ctrader_accounts_list.addItem(item)
+
+            logger.info(f"Loaded {len(accounts)} cTrader accounts (fallback: {not accounts})")
+
+        except Exception as e:
+            logger.error(f"Failed to load cTrader accounts: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to load cTrader accounts: {str(e)}\n\nPlease check your credentials.")

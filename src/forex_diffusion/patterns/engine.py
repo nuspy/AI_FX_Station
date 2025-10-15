@@ -20,6 +20,7 @@ class PatternEvent:
     touches: int = 0
     bars_span: int = 0
     target_price: Optional[float] = None
+    failure_price: Optional[float] = None
     horizon_bars: Optional[int] = None
     overlay: Dict[str, Any] = field(default_factory=dict)
 

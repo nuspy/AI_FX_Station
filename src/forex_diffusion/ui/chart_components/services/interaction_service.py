@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 import time
 
-import matplotlib.dates as mdates
+# matplotlib removed - using finplot for all charting
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -20,7 +20,28 @@ class InteractionService(ChartServiceBase):
 
     def _set_drawing_mode(self, mode: Optional[str]):
         self._drawing_mode = mode
-        self._pending_points.clear()
+        # Update drawing_manager tool if available
+        if hasattr(self.view, 'drawing_manager') and self.view.drawing_manager:
+            self.view.drawing_manager.set_tool(mode)
+            logger.debug(f"Drawing mode set to: {mode}")
+
+        # Disable/enable pan based on drawing mode
+        try:
+            if hasattr(self.view, 'main_plot') and self.view.main_plot:
+                viewbox = self.view.main_plot.getViewBox()
+                if mode is None:
+                    # Re-enable pan and zoom when no drawing tool is active
+                    viewbox.setMouseEnabled(x=True, y=True)
+                    logger.debug("Pan/zoom enabled (no drawing tool active)")
+                else:
+                    # Disable pan when drawing tool is active (keep zoom enabled)
+                    viewbox.setMouseEnabled(x=False, y=False)
+                    logger.debug(f"Pan/zoom disabled (drawing tool '{mode}' active)")
+        except Exception as e:
+            logger.debug(f"Failed to toggle pan/zoom: {e}")
+
+        if hasattr(self, '_pending_points'):
+            self._pending_points.clear()
 
     def _on_canvas_click(self, event):
         """
@@ -34,56 +55,26 @@ class InteractionService(ChartServiceBase):
 
             # If drawing mode is active handle first
             if self._drawing_mode and event.xdata is not None and event.ydata is not None:
-                import matplotlib.patches as patches
-                if self._drawing_mode == "hline":
-                    ln = self.ax.axhline(event.ydata, color=self._get_color("hline_color", "#9bdcff"), linestyle="--", alpha=0.8)
-                    self.canvas.draw()
-                    return
-                if self._drawing_mode == "trend":
-                    if not hasattr(self, "_trend_points"):
-                        self._trend_points = []
-                    self._trend_points.append((event.xdata, event.ydata))
-                    if len(self._trend_points) == 2:
-                        (x1, y1), (x2, y2) = self._trend_points
-                        self.ax.plot([mdates.num2date(x1), mdates.num2date(x2)], [y1, y2], color=self._get_color("trend_color", "#ff9bdc"), linewidth=1.5)
-                        self.canvas.draw()
-                        self._trend_points = []
-                    return
-                if self._drawing_mode == "rect":
-                    if not hasattr(self, "_rect_points"):
-                        self._rect_points = []
-                    self._rect_points.append((event.xdata, event.ydata))
-                    if len(self._rect_points) == 2:
-                        (x1, y1), (x2, y2) = self._rect_points
-                        xmin, xmax = sorted([x1, x2]); ymin, ymax = sorted([y1, y2])
-                        rect = patches.Rectangle((mdates.num2date(xmin), ymin), mdates.num2num(mdates.num2date(xmax)) - mdates.num2num(mdates.num2date(xmin)), ymax - ymin, fill=False, edgecolor=self._get_color("rect_color", "#f0c674"), linewidth=1.2)
-                        self.ax.add_patch(rect); self.canvas.draw(); self._rect_points = []
-                    return
-                if self._drawing_mode == "fib":
-                    if not hasattr(self, "_fib_points"):
-                        self._fib_points = []
-                    self._fib_points.append((event.xdata, event.ydata))
-                    if len(self._fib_points) == 2:
-                        (x1, y1), (x2, y2) = self._fib_points
-                        levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
-                        a, b = (y1, y2) if y2 > y1 else (y2, y1)
-                        for lv in levels:
-                            y = a + lv * (b - a)
-                            self.ax.axhline(y, color=self._get_color("fib_color", "#9fe6a0"), alpha=0.6, linestyle=":")
-                        self.canvas.draw(); self._fib_points = []
-                    return
-                if self._drawing_mode == "label":
-                    txt = self.ax.text(mdates.num2date(event.xdata), event.ydata, "Label", color=self._get_color("label_color", "#ffd479"))
-                    try:
-                        txt.set_draggable(True)
-                    except Exception:
-                        pass
-                    # non bloccare il main loop: draw_idle
-                    try:
-                        self.canvas.draw_idle()
-                    except Exception:
-                        self.canvas.draw()
-                    return
+                # Drawing tools temporarily disabled - will be reimplemented with finplot
+                logger.debug(f"Drawing mode {self._drawing_mode} not yet implemented in finplot")
+                return
+                # TODO: Implement drawing tools with finplot API
+                # if self._drawing_mode == "hline":
+                #     fplt.add_line(y=event.ydata, color='#9bdcff', style='--')
+                # if self._drawing_mode == "trend":
+                #     if not hasattr(self, "_trend_points"):
+                #         self._trend_points = []
+                #     self._trend_points.append((event.xdata, event.ydata))
+                #     if len(self._trend_points) == 2:
+                #         (x1, y1), (x2, y2) = self._trend_points
+                #         fplt.add_line([(x1, y1), (x2, y2)], color='#ff9bdc', width=1.5)
+                #         self._trend_points = []
+
+            # TODO: Re-implement all drawing tools with finplot
+            # All drawing modes temporarily disabled until finplot implementation
+            # if self._drawing_mode == "rect":
+            # if self._drawing_mode == "fib":
+            # if self._drawing_mode == "label":
 
             # TestingPoint logic (requires Alt)
             # GUI event gives access to modifiers
@@ -109,17 +100,20 @@ class InteractionService(ChartServiceBase):
             if not alt_pressed:
                 return  # only interested in Alt+click combos
 
-            # convert xdata (matplotlib float date) to utc ms
+            # convert xdata to utc ms
             try:
-                # use global mdates imported at module level
                 from datetime import timezone
-                dt = mdates.num2date(event.xdata)
-                # ensure timezone-aware UTC
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                # event.xdata is already a Unix timestamp in finplot
+                if isinstance(event.xdata, (int, float)):
+                    clicked_ms = int(event.xdata * 1000)
                 else:
-                    dt = dt.astimezone(timezone.utc)
-                clicked_ms = int(dt.timestamp() * 1000)
+                    # Fallback: try to convert as pandas Timestamp
+                    dt = pd.Timestamp(event.xdata)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = dt.astimezone(timezone.utc)
+                    clicked_ms = int(dt.timestamp() * 1000)
             except Exception:
                 logger.exception("Failed to convert click xdata to datetime")
                 return
@@ -144,7 +138,7 @@ class InteractionService(ChartServiceBase):
 
             # load number of history bars from settings
             from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
-            settings = PredictionSettingsDialog.get_settings() or {}
+            settings = PredictionSettingsDialog.get_settings_from_file() or {}
             n_bars = int(settings.get("test_history_bars", 128))
 
             # build candles_override: take last n_bars ending at testing_ts (inclusive)
@@ -166,27 +160,32 @@ class InteractionService(ChartServiceBase):
                 QMessageBox.information(self.view, "Testing point", "Not enough historical bars available for testing.")
                 return
 
-            # Build payload: include candles_override so worker can run local inference on this slice
+            # Build payload: DON'T include candles_override - let worker fetch from DB
+            # This ensures enough data for multi-timeframe indicators
             payload = {
                 "symbol": getattr(self, "symbol", ""),
                 "timeframe": getattr(self, "timeframe", ""),
                 "testing_point_ts": int(testing_ts),
                 "test_history_bars": int(n_bars),
-                "candles_override": df_slice.to_dict(orient="records"),
+                "anchor_price": float(event.ydata) if event.ydata is not None else None,
             }
             if shift_pressed:
                 payload["advanced"] = True
             else:
                 payload["advanced"] = False
 
-            # also include model_path and other settings to allow worker to run (use saved settings)
-            saved = PredictionSettingsDialog.get_settings() or {}
+            # also include model_paths and other settings to allow worker to run (use saved settings)
+            saved = PredictionSettingsDialog.get_settings_from_file() or {}
             payload.update({
-                "model_path": saved.get("model_path"),
+                "model_paths": saved.get("model_paths", []),  # Use model_paths for parallel inference
                 "horizons": saved.get("horizons", ["1m", "5m", "15m"]),
                 "N_samples": saved.get("N_samples", 200),
                 "apply_conformal": saved.get("apply_conformal", True),
                 "forecast_step": (self.pred_step_combo.currentText() if hasattr(self, "pred_step_combo") and self.pred_step_combo is not None else saved.get("forecast_step", "auto")),
+                "parallel_inference": True,  # Enable parallel inference for multi-model support
+                "warmup_bars": saved.get("warmup_bars", 16),
+                "rv_window": saved.get("rv_window", 60),
+                "min_feature_coverage": saved.get("min_feature_coverage", 0.05),
             })
 
             # emit forecast request (will not remove existing forecasts on chart)
@@ -322,6 +321,17 @@ class InteractionService(ChartServiceBase):
                 # reload dati dopo zoom
                 self._schedule_view_reload()
             if btn == 1:
+                # Check for Alt+Click forecast trigger before clearing pan state
+                try:
+                    gui = getattr(event, "guiEvent", None)
+                    if gui is not None:
+                        modifiers = gui.modifiers()
+                        if modifiers & Qt.AltModifier:
+                            # Trigger forecast on Alt+Click
+                            self._on_canvas_click(event)
+                except Exception as e:
+                    logger.debug(f"Alt+Click forecast check failed: {e}")
+
                 self._lbtn_pan = False
                 self._pan_last_xy = None
                 # reload dati dopo pan

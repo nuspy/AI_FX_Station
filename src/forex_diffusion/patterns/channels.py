@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
+from .primitives import time_array
 from .primitives import fit_line_indices, atr
 
 class ChannelDetector(DetectorBase):
@@ -14,15 +15,27 @@ class ChannelDetector(DetectorBase):
     def detect(self, df: pd.DataFrame) -> List[PatternEvent]:
         hi = df["high"].astype(float).to_numpy()
         lo = df["low"].astype(float).to_numpy()
-        ts = pd.to_datetime(df["time"] if "time" in df.columns else df.index).to_numpy()
+        ts = time_array(df)
         a = atr(df, 14).to_numpy()
         events: List[PatternEvent]=[]
         n=len(df)
-        for end in range(self.min_span, n):
-            for span in range(self.min_span, min(self.max_span, end)+1, 10):
+
+        # PERFORMANCE FIX: Use much larger step sizes to reduce O(n^3) complexity
+        end_step = max(20, self.min_span // 3)  # Skip many end points
+        span_step = max(25, (self.max_span - self.min_span) // 5)  # Only check few span sizes
+
+        for end in range(self.min_span, n, end_step):
+            # Limit number of spans to check per end point
+            spans_to_check = 3  # Only check 3 different span sizes
+            for i in range(spans_to_check):
+                span = self.min_span + i * span_step
+                if span > min(self.max_span, end):
+                    break
+
                 start = end - span
                 s_hi, b_hi = fit_line_indices(hi, start, end)
                 s_lo, b_lo = fit_line_indices(lo, start, end)
+
                 # slopes roughly equal (parallel)
                 if abs(s_hi - s_lo) < abs(s_hi)*0.25 + 1e-6:
                     slope = (s_hi + s_lo)/2.0

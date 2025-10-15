@@ -51,7 +51,8 @@ class SignalsTab(QWidget):
         self.timer.timeout.connect(self.refresh)
         self.timer.start(60000) # Refresh every 60 seconds
 
-        self.refresh()
+        # Don't auto-refresh on init to avoid blocking app startup
+        # self.refresh()
 
     def refresh(self):
         """Refreshes the signals table with the latest data from the database."""

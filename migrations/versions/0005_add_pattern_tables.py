@@ -3,8 +3,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '0005_add_pattern_tables'
-down_revision = '0004_add_backtesting_tables'
+revision = '0005'
+down_revision = '0004'
 branch_labels = None
 depends_on = None
 

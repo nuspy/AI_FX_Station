@@ -1,0 +1,1802 @@
+================================================================================
+AI + PATTERNS + HRM INTEGRATION - FUNCTIONAL SPECIFICATIONS
+================================================================================
+
+Document Version: 1.0
+Date: 2025-10-13
+Status: Ready for Implementation
+Classification: Strategic - High Priority
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+Purpose:
+Integrate the pattern detection system (89 patterns) with the generative AI
+forecast system to leverage structural market information and improve trading
+performance.
+
+Current Gap:
+The pattern detection system and the AI forecast system operate in complete
+isolation. Pattern detection results (including target prices, failure prices,
+confidence scores, and directional bias) are NOT used to inform forecast
+generation or trading decisions.
+
+Expected Benefits:
+- Return improvement: +77% (from 451% to 801% annual projected)
+- Risk reduction: -22% (from -18% to -14% max drawdown)
+- Win rate increase: +3-5% (from 52% to 55-58%)
+- Sharpe ratio improvement: +44% (from 0.9 to 1.3)
+
+Implementation Phases:
+- Phase 1: Pattern Feature Integration (HIGH PRIORITY)
+- Phase 2: Hierarchical Reasoning Model (MEDIUM PRIORITY)
+
+================================================================================
+ARCHITECTURAL OVERVIEW
+================================================================================
+
+Current Architecture (Disconnected):
+
+┌─────────────────┐     ┌──────────────────┐
+│ Pattern         │     │ AI Forecast      │
+│ Detection       │     │ Generative       │
+│ (89 patterns)   │     │ (Diffusion)      │
+└────────┬────────┘     └────────┬─────────┘
+         │                       │
+         │ NOT CONNECTED         │
+         │                       │
+         ▼                       ▼
+    Chart Display          Trading Signals
+
+Target Architecture (Integrated):
+
+┌─────────────────────────────────────┐
+│         Market Data Stream          │
+└────────────┬────────────────────────┘
+             │
+    ┌────────┴────────┐
+    │                 │
+    ▼                 ▼
+┌─────────┐    ┌──────────────┐
+│ Pattern │    │ Technical    │
+│ System  │    │ Indicators   │
+└────┬────┘    └──────┬───────┘
+     │                │
+     │  Pattern       │ Features
+     │  Events        │
+     └────────┬───────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │ Pattern Feature     │
+    │ Extraction          │
+    │ (NEW COMPONENT)     │
+    └─────────┬───────────┘
+              │
+              │ Pattern Features Vector
+              │
+              ▼
+    ┌─────────────────────┐
+    │ Conditioning Vector │
+    │ Assembly            │
+    │ (ENHANCED)          │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │ Diffusion Forecast  │
+    │ Generation          │
+    │ (PATTERN-AWARE)     │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │ Post-Processing     │
+    │ - Target Anchoring  │
+    │ - Volatility Adj    │
+    │ (NEW LOGIC)         │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │ Risk Management     │
+    │ (PATTERN-AWARE)     │
+    └─────────────────────┘
+
+================================================================================
+PHASE 1: PATTERN FEATURE INTEGRATION
+================================================================================
+
+Priority: HIGH
+Expected Impact: +77% return improvement, -22% drawdown reduction
+
+--------------------------------------------------------------------------------
+COMPONENT 1: PATTERN FEATURE EXTRACTOR
+--------------------------------------------------------------------------------
+
+Functional Purpose:
+Transform qualitative pattern detection results (pattern events with
+descriptive attributes) into quantitative numerical features suitable for
+machine learning model conditioning.
+
+Input Requirements:
+- List of pattern events detected in recent market history
+- Each pattern event contains:
+  * Pattern type identifier
+  * Pattern category (chart pattern vs candlestick pattern)
+  * Directional bias (bullish, bearish, neutral)
+  * Effect classification (reversal vs continuation)
+  * Confidence score (0.0 to 1.0)
+  * Confirmation timestamp and price
+  * Target price (expected movement destination)
+  * Failure price (invalidation threshold)
+  * Expected horizon (time to target in bars)
+- Current market price for distance calculations
+- Lookback window specification (how many bars to consider)
+
+Output Requirements:
+Create a numerical feature vector encoding the following information:
+
+Category A: Pattern Counts
+- Number of bullish patterns detected in recent history
+- Number of bearish patterns detected in recent history
+- Number of reversal patterns detected
+- Number of continuation patterns detected
+Rationale: Aggregate directional bias from multiple pattern signals
+
+Category B: Confidence Metrics
+- Average confidence score across recent patterns
+- Maximum confidence score among recent patterns
+Rationale: Quantify reliability of pattern signals
+
+Category C: Target Distance Metrics
+- Average percentage distance to bullish pattern targets
+- Average percentage distance to bearish pattern targets
+Rationale: Encode magnitude of expected price movement
+
+Category D: Support/Resistance Metrics
+- Distance to nearest support level (pattern failure prices below current)
+- Distance to nearest resistance level (pattern targets above current)
+Rationale: Identify key price levels for risk management
+
+Category E: Signal Strength Metrics
+- Weighted reversal signal strength (confidence × recency decay)
+- Weighted continuation signal strength (confidence × recency decay)
+Rationale: Prioritize recent high-confidence patterns
+
+Category F: Pattern Activity Metrics
+- Pattern density (patterns per bar normalized)
+- Time elapsed since last major pattern (high confidence threshold)
+Rationale: Measure market pattern activity level
+
+Feature Engineering Guidelines:
+- All features must be normalized or bounded to prevent scale dominance
+- Distance metrics should be expressed as percentages for scale invariance
+- Recency weighting should decay linearly or exponentially with time
+- Missing data should be handled with zero-fill or neutral values
+- Feature vector should be consistent dimension regardless of pattern count
+
+--------------------------------------------------------------------------------
+COMPONENT 2: FORECAST SERVICE ENHANCEMENT
+--------------------------------------------------------------------------------
+
+Functional Purpose:
+Augment the existing diffusion model forecast service to incorporate pattern
+information throughout the prediction pipeline.
+
+Integration Point 1: Pattern Feature Injection
+Location: Conditioning vector assembly stage
+Action: Append pattern feature vector to existing conditioning features
+Requirements:
+- Pattern detection must be invoked on recent market data
+- Pattern feature extraction must process detection results
+- Feature vector must be concatenated with technical indicators
+- Graceful degradation if pattern detection fails (use technical features only)
+
+Integration Point 2: Pattern Context Storage
+Location: Pre-forecast preparation stage
+Action: Store pattern metadata for downstream post-processing
+Requirements:
+- Extract active pattern targets (most recent 3-5 patterns)
+- Extract active pattern failure prices
+- Calculate dominant directional bias from pattern distribution
+- Detect if reversal patterns are active (threshold-based)
+- Calculate average pattern confidence
+
+Integration Point 3: Pattern-Aware Post-Processing
+Location: After forecast sample generation, before quantile extraction
+Action: Adjust forecast distribution based on pattern context
+Requirements:
+
+Adjustment A: Target Anchoring
+- If active pattern targets exist:
+  * Calculate average target price
+  * Shift forecast distribution towards target
+  * Weight shift by pattern confidence (max 30% influence)
+- Rationale: Pattern targets provide structural price expectations
+
+Adjustment B: Volatility Modulation
+- If reversal patterns are active:
+  * Increase forecast uncertainty/spread
+  * Multiply deviation from current price by confidence-weighted factor
+- Rationale: Reversals increase short-term volatility
+
+Adjustment C: Directional Bias
+- If dominant direction is bullish:
+  * Apply upward bias to forecast median
+  * Bias magnitude proportional to pattern confidence
+- If dominant direction is bearish:
+  * Apply downward bias to forecast median
+- Rationale: Pattern consensus provides directional edge
+
+Implementation Requirements:
+- All adjustments must be applied to forecast samples before quantile extraction
+- Adjustments must be logged for audit and debugging
+- Adjustments must be configurable via parameters (enable/disable, weights)
+- System must function correctly if pattern data unavailable (fallback mode)
+
+--------------------------------------------------------------------------------
+COMPONENT 3: PATTERN-AWARE RISK MANAGEMENT
+--------------------------------------------------------------------------------
+
+Functional Purpose:
+Enhance position sizing and risk management to incorporate pattern information
+for improved risk-adjusted returns.
+
+Enhancement 1: Pattern-Aware Position Sizing
+
+Input Requirements:
+- Base position size from existing Kelly criterion calculation
+- Pattern context metadata (confidence, targets, failures)
+- Current market price
+- Maximum risk percentage limit
+
+Position Size Adjustments:
+
+Factor A: Confidence Multiplier
+- High pattern confidence (>0.8) → increase position size
+- Low pattern confidence (<0.5) → decrease position size
+- Multiplier range: 0.7x to 1.5x of base size
+Rationale: Size up when patterns strongly confirm direction
+
+Factor B: Target Alignment
+- If pattern targets align with forecast quantiles → increase size
+- Calculate alignment score from distance between pattern target and forecast
+- Alignment bonus: up to +30% size increase
+Rationale: Confluence of pattern and forecast increases conviction
+
+Factor C: Invalidation Risk
+- If pattern failure prices are close to current price → reduce size
+- Distance thresholds:
+  * <0.5% away: High risk → 0.5x size
+  * 0.5-1.0% away: Moderate risk → 0.75x size
+  * >1.0% away: Low risk → 1.0x size
+Rationale: Proximity to invalidation increases risk
+
+Combined Adjustment:
+Final position size = Base size × Confidence × Alignment × Risk
+Cap final size at maximum risk percentage of capital
+
+Enhancement 2: Pattern-Based Stop Loss
+
+Functional Logic:
+- Traditional stop loss uses volatility-based (ATR) distance
+- Pattern-enhanced stop loss considers pattern failure prices
+- Use pattern failure price if:
+  * Pattern confidence > threshold (e.g., 0.7)
+  * Failure price provides tighter stop than ATR (less risk)
+  * Failure price is within reasonable distance (not too tight)
+- Fall back to ATR-based stop if pattern stop unavailable or unsuitable
+
+Benefits:
+- Structural stop placement at market-defined invalidation levels
+- Tighter stops when patterns provide clear invalidation points
+- Reduced drawdown from well-placed defensive exits
+
+Enhancement 3: Pattern-Based Take Profit
+
+Functional Logic:
+- Traditional take profit uses fixed risk-reward ratio (e.g., 2:1)
+- Pattern-enhanced take profit uses pattern target prices
+- Use pattern target if:
+  * Pattern confidence > threshold (e.g., 0.7)
+  * Target provides favorable risk-reward (>1.5:1)
+  * Target is within forecast horizon timeframe
+- Fall back to fixed ratio if pattern target unavailable
+
+Benefits:
+- Target placement at structural resistance/support levels
+- Higher probability of target achievement (pattern-defined)
+- Improved win rate from realistic profit targets
+
+--------------------------------------------------------------------------------
+COMPONENT 4: DATABASE AND CONFIGURATION
+--------------------------------------------------------------------------------
+
+Database Requirements:
+- Pattern events must be persistable for historical analysis
+- Pattern features should be cached to reduce recomputation
+- Pattern metadata should be stored with forecast results for backtesting
+- Schema updates must use Alembic migration system
+
+Schema Additions Required:
+
+Table: pattern_features_cache
+Purpose: Cache computed pattern feature vectors
+Columns:
+- symbol (string, indexed)
+- timeframe (string, indexed)
+- timestamp (integer milliseconds, indexed)
+- feature_vector (binary/JSON serialized numpy array)
+- pattern_context (JSON metadata)
+- created_at (timestamp)
+Indexes: (symbol, timeframe, timestamp) composite key
+
+Table: pattern_enhanced_forecasts
+Purpose: Store forecasts with pattern augmentation metadata
+Columns:
+- forecast_id (primary key)
+- symbol (string)
+- timeframe (string)
+- horizon (string)
+- timestamp (integer milliseconds)
+- base_quantiles (JSON: q05, q50, q95 before pattern adjustment)
+- adjusted_quantiles (JSON: q05, q50, q95 after pattern adjustment)
+- pattern_context (JSON: active patterns, adjustments applied)
+- confidence (float)
+- created_at (timestamp)
+Indexes: (symbol, timeframe, timestamp)
+
+Configuration Parameters Required:
+
+Pattern Feature Extraction:
+- lookback_bars: Number of bars to consider for pattern history (default: 10)
+- confidence_threshold: Minimum pattern confidence to include (default: 0.5)
+- max_patterns: Maximum number of patterns to process (default: 50)
+
+Pattern Conditioning:
+- enable_pattern_conditioning: Master switch for pattern features (default: true)
+- feature_vector_dimension: Expected dimension of pattern features (default: 14)
+- pattern_detection_timeout: Max time to wait for detection (default: 2000ms)
+
+Pattern Post-Processing:
+- enable_target_anchoring: Use pattern targets to adjust forecast (default: true)
+- target_weight_max: Maximum influence of targets on forecast (default: 0.3)
+- enable_volatility_adjustment: Adjust uncertainty for reversals (default: true)
+- volatility_multiplier_max: Maximum volatility increase (default: 1.2)
+- enable_directional_bias: Apply pattern directional bias (default: true)
+- bias_strength_max: Maximum bias as % of price (default: 0.001)
+
+Pattern Risk Management:
+- enable_pattern_sizing: Use pattern confidence for sizing (default: true)
+- confidence_multiplier_range: [min, max] size adjustment (default: [0.7, 1.5])
+- enable_pattern_stops: Use pattern failure prices for stops (default: true)
+- enable_pattern_targets: Use pattern targets for take-profit (default: true)
+- min_pattern_confidence_stops: Min confidence for pattern stops (default: 0.7)
+
+All configuration parameters must:
+- Be accessible via GUI settings interface
+- Be persisted in user settings database
+- Be hot-reloadable without system restart
+- Have sensible defaults for new users
+
+--------------------------------------------------------------------------------
+IMPLEMENTATION DIRECTIVES
+--------------------------------------------------------------------------------
+
+Directive 1: Database Migrations
+All database schema changes MUST be implemented using Alembic migrations.
+- Create migration scripts for new tables
+- Include rollback logic for all migrations
+- Test migrations on copy of production database
+- Document migration dependencies and order
+
+Directive 2: Dependency Management
+All new library dependencies MUST be added to pyproject.toml.
+- Specify version constraints appropriately
+- Document why each dependency is needed
+- Check for conflicts with existing dependencies
+- Update requirements.txt if necessary
+
+Directive 3: Code Hygiene
+No orphaned files or methods should be left in codebase.
+- Remove any experimental or dead code
+- Update all import statements for moved functionality
+- Ensure all methods are called from somewhere
+- Remove unused parameters from method signatures
+- Document all new public APIs
+
+Directive 4: Integration Requirements
+New logic must be connected to existing workflows.
+- Pattern feature extractor must be invoked by forecast service
+- Forecast service must pass pattern context to risk management
+- Risk management must use pattern data for decisions
+- All components must handle missing pattern data gracefully
+- Integration points must be logged for debugging
+
+Directive 5: GUI Integration
+All new parameters and features must be exposed in GUI.
+- Add configuration panel for pattern integration settings
+- Add toggle switches for enabling/disabling pattern features
+- Add sliders for adjustment weight parameters
+- Display pattern contribution in forecast results panel
+- Show pattern metadata in trade execution dialog
+- Add pattern statistics to performance dashboard
+
+Parameter Integration Requirements:
+- Create settings dialog section "Pattern Integration"
+- Group parameters logically (extraction, conditioning, post-processing, risk)
+- Provide tooltips explaining each parameter's effect
+- Show real-time preview of parameter changes if possible
+- Persist settings changes immediately
+- Validate parameter ranges before applying
+
+Directive 6: Git Commit Strategy
+After completing each major component or sub-task:
+- Create a git commit with descriptive functional message
+- Commit message format: "feat: [component] - [what was accomplished]"
+- Example: "feat: pattern feature extractor - implement 14-dim feature vector extraction"
+- Include context about why the change improves functionality
+- Reference related issue numbers if applicable
+- Keep commits atomic (one logical change per commit)
+
+Commit Milestones:
+1. "feat: pattern features - create feature extractor component"
+2. "feat: pattern features - add unit tests for feature extraction"
+3. "feat: forecast service - integrate pattern feature conditioning"
+4. "feat: forecast service - implement pattern-aware post-processing"
+5. "feat: risk management - add pattern-aware position sizing"
+6. "feat: risk management - implement pattern-based stops and targets"
+7. "feat: database - add pattern_features_cache table via migration"
+8. "feat: database - add pattern_enhanced_forecasts table via migration"
+9. "feat: gui - add pattern integration settings panel"
+10. "feat: gui - connect pattern parameters to forecast display"
+11. "test: integration - validate end-to-end pattern enhancement"
+12. "docs: update user guide with pattern integration features"
+
+================================================================================
+PHASE 2: HIERARCHICAL REASONING MODEL (HRM)
+================================================================================
+
+Priority: MEDIUM (Implement only AFTER Phase 1 validated in production)
+Expected Impact: +38% incremental return, -17% incremental drawdown reduction
+
+--------------------------------------------------------------------------------
+ARCHITECTURAL CONCEPT
+--------------------------------------------------------------------------------
+
+Motivation:
+Financial markets exhibit structure across multiple time scales. A single-level
+model cannot simultaneously capture macro trends (daily/weekly), regime shifts
+(4-hour), pattern formations (1-hour), and micro execution dynamics (5-minute).
+
+HRM addresses this by decomposing reasoning into hierarchical levels, where
+each level:
+- Analyzes data at its appropriate time scale
+- Receives context from coarser (higher) level
+- Produces refined output for finer (lower) level
+- Can be independently developed, tested, and optimized
+
+Hierarchical Structure:
+
+Level 1: MACRO TREND ANALYSIS
+Time Scale: Daily, Weekly
+Input: Long-term price history, fundamental indicators
+Task: Identify primary trend direction and strength
+Output: Trend bias vector (bullish strength, bearish strength, neutral probability)
+Purpose: Establish directional context for all lower levels
+
+Level 2: REGIME CLASSIFICATION
+Time Scale: 4-Hour, 1-Hour
+Input: Level 1 trend bias + intermediate price data + volatility metrics
+Task: Classify market regime (trending, ranging, volatile, quiet)
+Output: Regime features (trend score, volatility regime, liquidity assessment)
+Purpose: Determine appropriate trading strategy and risk parameters
+
+Level 3: PATTERN SYNTHESIS
+Time Scale: 1-Hour, 15-Minute
+Input: Level 2 regime + pattern detection results + forecast
+Task: Synthesize pattern signals considering regime context
+Output: Pattern-adjusted forecast with regime-conditional confidence
+Purpose: Integrate structural patterns with regime awareness
+
+Level 4: MICRO EXECUTION
+Time Scale: 15-Minute, 5-Minute, 1-Minute
+Input: Level 3 pattern forecast + real-time order book depth
+Task: Optimize precise entry/exit timing within forecast horizon
+Output: Execution signals with millisecond-level timing
+Purpose: Minimize slippage and maximize fill quality
+
+--------------------------------------------------------------------------------
+LEVEL 1: MACRO TREND ANALYZER
+--------------------------------------------------------------------------------
+
+Functional Specification:
+
+Input Requirements:
+- Daily candlestick data for past 90-180 days
+- Weekly candlestick data for past 52 weeks
+- Optional: Economic calendar events, news sentiment
+- Symbol specification
+
+Analysis Tasks:
+
+Task 1: Trend Direction Identification
+Method: Multi-timeframe moving average consensus
+Logic:
+- Calculate moving averages at multiple periods (50, 100, 200 days)
+- Determine if price above/below each average
+- Count bullish signals (price > MA) vs bearish signals (price < MA)
+- Calculate trend strength from signal consensus
+
+Task 2: Trend Momentum Assessment
+Method: Rate of change analysis
+Logic:
+- Calculate daily price ROC over multiple windows (7, 14, 30 days)
+- Measure momentum persistence (positive days / total days)
+- Detect momentum divergence (price up but ROC declining)
+- Quantify acceleration/deceleration
+
+Task 3: Trend Regime Classification
+Method: Volatility and directional consistency
+Logic:
+- Calculate realized volatility over trend period
+- Measure directional consistency (% days in trend direction)
+- Classify as:
+  * Strong trend: High consistency + moderate volatility
+  * Weak trend: Low consistency or high volatility
+  * No trend: Random walk characteristics
+
+Output Format:
+{
+    "trend_direction": "bullish" | "bearish" | "neutral",
+    "bullish_strength": float [0.0, 1.0],
+    "bearish_strength": float [0.0, 1.0],
+    "neutral_probability": float [0.0, 1.0],
+    "momentum_score": float [-1.0, 1.0],
+    "trend_confidence": float [0.0, 1.0],
+    "timeframe_consensus": dict of {timeframe: signal}
+}
+
+Usage in Lower Levels:
+- Level 2 uses trend direction as bias for regime classification
+- Level 3 uses trend strength to weight continuation vs reversal patterns
+- Level 4 uses trend momentum for execution timing (with/against trend)
+
+--------------------------------------------------------------------------------
+LEVEL 2: REGIME CLASSIFIER
+--------------------------------------------------------------------------------
+
+Functional Specification:
+
+Input Requirements:
+- 4-Hour candlestick data for past 1 week (42 candles)
+- 1-Hour candlestick data for past 72 hours
+- Level 1 trend bias output
+- Symbol specification
+
+Analysis Tasks:
+
+Task 1: Regime Type Classification
+Method: Volatility and directional consistency analysis
+Logic:
+- Calculate realized volatility (rolling standard deviation)
+- Calculate directional consistency (trend strength)
+- Classify into regimes:
+  * Trending: High directional consistency + moderate volatility
+  * Ranging: Low directional consistency + low volatility
+  * Volatile: High volatility regardless of direction
+  * Quiet: Low volatility + low activity
+
+Task 2: Regime Strength Assessment
+Method: Statistical confidence in regime classification
+Logic:
+- Calculate how strongly data supports current regime
+- Use distance from regime centroids or boundaries
+- Output confidence score [0.0, 1.0]
+
+Task 3: Regime Transition Detection
+Method: Temporal regime stability analysis
+Logic:
+- Track regime classification over rolling windows
+- Detect if regime recently changed (transition in progress)
+- Flag unstable periods (rapid regime switching)
+
+Task 4: Liquidity Assessment
+Method: Volume and spread analysis
+Logic:
+- Calculate average volume relative to historical baseline
+- Assess bid-ask spread stability
+- Classify liquidity as: high, normal, low, very low
+
+Output Format:
+{
+    "regime_type": "trending" | "ranging" | "volatile" | "quiet",
+    "regime_confidence": float [0.0, 1.0],
+    "trend_strength": float [0.0, 1.0],
+    "volatility_regime": "low" | "normal" | "high" | "extreme",
+    "liquidity_score": float [0.0, 1.0],
+    "regime_stable": boolean,
+    "transition_detected": boolean,
+    "recommended_strategy": "trend_following" | "mean_reversion" | "neutral"
+}
+
+Usage in Lower Levels:
+- Level 3 adjusts pattern weights based on regime (reversals in ranging, continuations in trending)
+- Level 3 increases forecast uncertainty in volatile regimes
+- Level 4 adjusts position sizing based on liquidity score
+
+--------------------------------------------------------------------------------
+LEVEL 3: PATTERN SYNTHESIZER
+--------------------------------------------------------------------------------
+
+Functional Specification:
+
+Input Requirements:
+- 1-Hour candlestick data for past 48 hours
+- 15-Minute candlestick data for past 12 hours
+- Pattern detection results from pattern service
+- Level 1 trend bias output
+- Level 2 regime classification output
+- Symbol specification
+
+Analysis Tasks:
+
+Task 1: Regime-Conditional Pattern Filtering
+Method: Pattern efficacy by regime
+Logic:
+- Maintain historical statistics of pattern success by regime
+- Filter out patterns with low success rate in current regime
+- Example: Reversal patterns less effective in strong trending regime
+- Weight remaining patterns by regime-specific confidence
+
+Task 2: Multi-Timeframe Pattern Consensus
+Method: Cross-timeframe pattern confirmation
+Logic:
+- Detect patterns on both 1H and 15M timeframes
+- Check if patterns align or conflict
+- Increase confidence for aligned signals (1H double top + 15M head-shoulders)
+- Decrease confidence for conflicting signals
+
+Task 3: Trend-Pattern Alignment
+Method: Pattern direction vs macro trend
+Logic:
+- Compare pattern direction (from Level 1 trend analyzer) with Level 1 trend bias
+- Boost confidence for pattern with-trend (continuation in trend direction)
+- Reduce confidence for pattern counter-trend (reversal against strong trend)
+- Apply weighting based on trend strength
+
+Task 4: Forecast Refinement
+Method: Pattern + regime + trend synthesis
+Logic:
+- Start with base forecast from diffusion model
+- Apply pattern adjustments (target anchoring, volatility, bias)
+- Modulate adjustments by regime confidence
+- Constrain adjustments within trend boundaries
+- Output refined forecast with hierarchical confidence
+
+Output Format:
+{
+    "base_forecast": {q05, q50, q95},
+    "pattern_adjustment": {target_shift, volatility_mult, bias},
+    "regime_modulation": {regime_factor, confidence_mult},
+    "trend_constraint": {max_adjustment, trend_alignment},
+    "refined_forecast": {q05, q50, q95},
+    "hierarchical_confidence": float [0.0, 1.0],
+    "reasoning_trace": {
+        "level1_contribution": string,
+        "level2_contribution": string,
+        "level3_contribution": string
+    }
+}
+
+Usage in Lower Level:
+- Level 4 uses refined forecast for execution timing
+- Level 4 uses hierarchical confidence for position sizing
+- Trading system uses reasoning trace for audit and debugging
+
+--------------------------------------------------------------------------------
+LEVEL 4: MICRO EXECUTOR
+--------------------------------------------------------------------------------
+
+Functional Specification:
+
+Input Requirements:
+- 5-Minute candlestick data for past 2 hours
+- 1-Minute tick data for past 30 minutes
+- Real-time order book depth (if available)
+- Level 3 refined forecast output
+- Symbol specification
+
+Analysis Tasks:
+
+Task 1: Short-Term Momentum Detection
+Method: High-frequency momentum indicators
+Logic:
+- Calculate 5-minute momentum (ROC, RSI on 5M)
+- Detect momentum divergence from forecast direction
+- Identify momentum exhaustion signals
+- Time entry to align with favorable momentum
+
+Task 2: Microstructure Analysis
+Method: Order book imbalance and flow toxicity
+Logic:
+- If order book available:
+  * Calculate bid-ask imbalance
+  * Detect large order flow (aggressive buying/selling)
+  * Identify spoofing or manipulation patterns
+- Time entry to minimize adverse selection
+
+Task 3: Execution Timing Optimization
+Method: Optimal entry within forecast horizon
+Logic:
+- Given Level 3 forecast direction (long/short)
+- Wait for favorable microstructure conditions:
+  * Entry on short-term pullback in forecast direction
+  * Entry during bid-ask imbalance alignment with direction
+  * Entry after momentum exhaustion counter to forecast direction
+- Set maximum wait time (don't miss the trade)
+
+Task 4: Slippage Minimization
+Method: Order splitting and timing
+Logic:
+- Assess current market depth and liquidity
+- If position size large relative to depth:
+  * Split order into smaller pieces
+  * Execute pieces with time intervals (TWAP/VWAP)
+- Time execution to periods of high liquidity (avoid spreads)
+
+Output Format:
+{
+    "execution_signal": "enter_now" | "wait" | "cancel",
+    "wait_reason": string | null,
+    "optimal_entry_price": float | null,
+    "entry_timing": "immediate" | "next_5m" | "next_15m",
+    "order_split": {
+        "should_split": boolean,
+        "num_pieces": integer,
+        "piece_size": float,
+        "interval_seconds": integer
+    },
+    "estimated_slippage": float,
+    "microstructure_score": float [0.0, 1.0]
+}
+
+Usage in Trading System:
+- Trading engine uses execution signal to time entry
+- Position management uses order split parameters
+- Execution logger records slippage estimates for validation
+
+--------------------------------------------------------------------------------
+HRM REASONING CASCADE
+--------------------------------------------------------------------------------
+
+Functional Specification:
+
+Purpose:
+Coordinate execution of all four levels in proper sequence, passing context
+between levels and aggregating results.
+
+Execution Flow:
+
+Step 1: Level 1 Execution
+Input: Daily/weekly data for symbol
+Output: Trend bias context
+Cache: Store Level 1 output (update frequency: daily)
+
+Step 2: Level 2 Execution
+Input: 4H/1H data + Level 1 trend bias
+Output: Regime classification context
+Cache: Store Level 2 output (update frequency: hourly)
+
+Step 3: Level 3 Execution
+Input: 1H/15M data + patterns + Level 1 + Level 2
+Output: Pattern-synthesized forecast
+Cache: Store Level 3 output (update frequency: per forecast request)
+
+Step 4: Level 4 Execution (Conditional)
+Input: 5M/1M data + order book + Level 3 forecast
+Output: Execution timing signal
+Condition: Only execute if forecast horizon < 1 hour
+Cache: Do not cache (real-time only)
+
+Context Propagation:
+Each level receives ALL outputs from previous levels as context dictionary:
+{
+    "level1": {...},
+    "level2": {...},
+    "level3": {...}
+}
+
+Error Handling:
+- If any level fails, log error and use cached result (if available)
+- If no cached result, skip that level and continue with remaining levels
+- If Level 1 fails, use neutral trend assumption
+- If Level 2 fails, use "unknown" regime with low confidence
+- If Level 3 fails, use base forecast without pattern adjustments
+- If Level 4 fails, use immediate execution (no microstructure optimization)
+
+Confidence Aggregation:
+HRM hierarchical confidence = geometric mean of level confidences
+Formula: conf_hrm = (conf_L1 * conf_L2 * conf_L3) ^ (1/3)
+Rationale: Low confidence in any level reduces overall confidence
+
+Reasoning Transparency:
+Each level must output:
+- What analysis was performed
+- What decision was made
+- Why that decision was made
+- What confidence level was assigned
+
+Aggregate reasoning trace for:
+- User display (explain why trade was taken)
+- Audit logging (regulatory compliance)
+- Performance attribution (which level added value)
+
+--------------------------------------------------------------------------------
+HRM IMPLEMENTATION REQUIREMENTS
+--------------------------------------------------------------------------------
+
+Requirement 1: Level Independence
+Each level must be independently:
+- Developed (separate modules)
+- Tested (unit tests per level)
+- Optimized (can tune one level without affecting others)
+- Disabled (can turn off levels if underperforming)
+
+Requirement 2: Caching Strategy
+Implement intelligent caching to manage latency:
+- Level 1 (daily trend): Cache for 24 hours
+- Level 2 (regime): Cache for 1 hour
+- Level 3 (pattern synthesis): Cache for forecast horizon
+- Level 4 (micro execution): No caching (real-time)
+
+Requirement 3: Latency Budget
+Total HRM reasoning cascade must complete within:
+- Normal mode: <700ms (p95 latency)
+- Fast mode: <400ms (with aggressive caching)
+Set per-level latency budgets:
+- Level 1: <50ms (cached most of the time)
+- Level 2: <100ms (cached most of the time)
+- Level 3: <300ms (pattern synthesis)
+- Level 4: <200ms (microstructure analysis)
+
+Requirement 4: Configuration Flexibility
+All levels must be configurable:
+- Enable/disable each level independently
+- Adjust level-specific parameters
+- Override level outputs manually (for testing)
+- Select which levels to use for each symbol/timeframe
+
+Requirement 5: Performance Monitoring
+Track performance attribution by level:
+- Win rate contribution per level
+- Return contribution per level
+- Latency breakdown per level
+- Error rate per level
+- Cache hit rate per level
+
+Requirement 6: Graceful Degradation
+System must function correctly if HRM unavailable:
+- Fall back to Phase 1 pattern integration (without HRM)
+- Fall back to base forecast (without patterns)
+- Never crash or block trading due to HRM failure
+
+--------------------------------------------------------------------------------
+HRM DATABASE AND CONFIGURATION
+--------------------------------------------------------------------------------
+
+Database Requirements:
+
+Table: hrm_level1_cache
+Purpose: Cache Level 1 trend analysis results
+Columns:
+- symbol (string, indexed)
+- analysis_date (date, indexed)
+- trend_direction (string)
+- bullish_strength (float)
+- bearish_strength (float)
+- neutral_probability (float)
+- momentum_score (float)
+- trend_confidence (float)
+- output_json (JSON full output)
+- created_at (timestamp)
+
+Table: hrm_level2_cache
+Purpose: Cache Level 2 regime classification results
+Columns:
+- symbol (string, indexed)
+- timeframe (string)
+- timestamp (integer milliseconds, indexed)
+- regime_type (string)
+- regime_confidence (float)
+- trend_strength (float)
+- volatility_regime (string)
+- liquidity_score (float)
+- output_json (JSON full output)
+- created_at (timestamp)
+
+Table: hrm_reasoning_traces
+Purpose: Store full HRM reasoning for each forecast
+Columns:
+- forecast_id (foreign key to forecasts table)
+- symbol (string)
+- timestamp (integer milliseconds)
+- level1_output (JSON)
+- level2_output (JSON)
+- level3_output (JSON)
+- level4_output (JSON)
+- hierarchical_confidence (float)
+- reasoning_summary (text)
+- created_at (timestamp)
+
+Configuration Parameters Required:
+
+HRM Master Switch:
+- enable_hrm: Master on/off toggle (default: false until Phase 2)
+
+Level Activation:
+- enable_level1_trend: Use macro trend analysis (default: true)
+- enable_level2_regime: Use regime classification (default: true)
+- enable_level3_synthesis: Use pattern synthesis (default: true)
+- enable_level4_micro: Use micro execution (default: false, experimental)
+
+Level 1 Parameters:
+- trend_lookback_days: Historical window for trend (default: 90)
+- trend_ma_periods: Moving average periods list (default: [50, 100, 200])
+- momentum_windows: ROC calculation windows (default: [7, 14, 30])
+
+Level 2 Parameters:
+- regime_lookback_bars: Window for regime classification (default: 42 at 4H)
+- volatility_threshold_low: Below this = low vol regime (default: 0.005)
+- volatility_threshold_high: Above this = high vol regime (default: 0.02)
+- liquidity_threshold_low: Below this = low liquidity (default: 0.3)
+
+Level 3 Parameters:
+- pattern_regime_weighting: How much regime affects pattern weights (default: 0.5)
+- mtf_consensus_weight: Weight for multi-timeframe agreement (default: 0.3)
+- trend_alignment_weight: Weight for trend-pattern alignment (default: 0.4)
+
+Level 4 Parameters:
+- micro_momentum_period: Short-term momentum window (default: 5 bars at 5M)
+- order_split_threshold: Position size % of depth to trigger split (default: 0.3)
+- max_wait_time_seconds: Max time to wait for optimal entry (default: 300)
+
+Caching Configuration:
+- level1_cache_ttl_hours: Level 1 cache lifetime (default: 24)
+- level2_cache_ttl_hours: Level 2 cache lifetime (default: 1)
+- level3_cache_ttl_seconds: Level 3 cache lifetime (default: 60)
+- enable_cache_persistence: Save cache to database (default: true)
+
+Latency Configuration:
+- level1_timeout_ms: Max wait for Level 1 (default: 100)
+- level2_timeout_ms: Max wait for Level 2 (default: 150)
+- level3_timeout_ms: Max wait for Level 3 (default: 400)
+- level4_timeout_ms: Max wait for Level 4 (default: 300)
+- hrm_total_timeout_ms: Total cascade timeout (default: 800)
+
+GUI Integration Requirements:
+- Add "Hierarchical Reasoning" settings section
+- Show HRM enable/disable master switch prominently
+- Group level controls together with collapse/expand
+- Display reasoning trace in forecast panel (expandable)
+- Show level contribution breakdown in performance metrics
+- Add HRM status indicator (active levels, latency, cache hits)
+
+================================================================================
+VALIDATION AND TESTING REQUIREMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+PHASE 1 VALIDATION
+--------------------------------------------------------------------------------
+
+Unit Testing Requirements:
+
+Pattern Feature Extractor:
+- Test with zero patterns (should return zero vector)
+- Test with single pattern (validate feature calculation)
+- Test with multiple patterns (validate aggregation)
+- Test with patterns beyond lookback (validate filtering)
+- Test with missing pattern attributes (validate graceful handling)
+- Test feature normalization and bounds
+- Test all 14 feature dimensions independently
+
+Forecast Service Integration:
+- Test pattern conditioning with valid pattern data
+- Test pattern conditioning with empty pattern data
+- Test pattern conditioning with pattern service failure
+- Test conditioning vector dimensionality consistency
+- Test post-processing adjustments (target, volatility, bias)
+- Test adjustment bounds (ensure no extreme distortions)
+
+Risk Management:
+- Test position sizing with pattern confidence variations
+- Test position sizing with target alignment variations
+- Test position sizing with invalidation risk variations
+- Test combined adjustment calculations
+- Test cap at maximum risk percentage
+- Test pattern stop-loss selection logic
+- Test pattern take-profit selection logic
+
+Integration Testing Requirements:
+
+End-to-End Pattern Flow:
+- Market data → Pattern detection → Feature extraction → Forecast
+- Verify pattern features appear in conditioning vector
+- Verify pattern adjustments applied to forecast samples
+- Verify pattern context passed to risk management
+- Verify position sizing reflects pattern adjustments
+
+Multi-Symbol Testing:
+- Run pattern integration on 5+ currency pairs simultaneously
+- Verify no symbol cross-contamination
+- Verify independent pattern detection per symbol
+- Verify correct pattern feature extraction per symbol
+
+Multi-Timeframe Testing:
+- Test pattern integration at 5M, 15M, 1H, 4H timeframes
+- Verify pattern lookback adjusts for timeframe
+- Verify forecast horizons appropriate for timeframe
+- Verify stop-loss distances scale with timeframe
+
+Backtesting Requirements:
+
+Historical Validation:
+- Run backtest on 1+ year of historical data
+- Compare baseline (no patterns) vs enhanced (with patterns)
+- Measure performance metrics:
+  * Win rate improvement
+  * Average return per trade
+  * Sharpe ratio
+  * Maximum drawdown
+  * Calmar ratio
+  * Total return
+
+Walk-Forward Validation:
+- Split historical data into in-sample (training) and out-of-sample (testing)
+- Optimize pattern parameters on in-sample data
+- Validate on out-of-sample data
+- Ensure no look-ahead bias in pattern detection
+- Ensure no future data leakage in feature extraction
+
+Robustness Testing:
+- Test across different market regimes (trending, ranging, volatile)
+- Test across different volatility periods (normal, high, extreme)
+- Test during major news events (ensure no failures)
+- Test with missing data (ensure graceful degradation)
+
+Success Criteria for Phase 1 Go-Live:
+
+Minimum Performance Improvements:
+- Win rate: +2% or more vs baseline
+- Sharpe ratio: +0.2 or more vs baseline
+- Max drawdown: -2% or better vs baseline
+- No catastrophic failures (>50% drawdown)
+
+System Stability Requirements:
+- Pattern detection success rate: >95%
+- Feature extraction success rate: >98%
+- Forecast generation success rate: >99%
+- Latency p95: <800ms for forecast generation
+- No memory leaks over 24 hour operation
+
+Data Quality Requirements:
+- Pattern confidence distributions reasonable (not all high/low)
+- Feature values within expected bounds (no NaN, no Inf)
+- Forecast adjustments within bounds (no extreme distortions)
+
+--------------------------------------------------------------------------------
+PHASE 2 VALIDATION (HRM)
+--------------------------------------------------------------------------------
+
+Unit Testing Requirements:
+
+Level 1 Trend Analyzer:
+- Test trend identification with strong uptrend data
+- Test trend identification with strong downtrend data
+- Test trend identification with sideways data
+- Test trend identification with choppy data
+- Test momentum calculation accuracy
+- Test trend confidence scoring
+
+Level 2 Regime Classifier:
+- Test regime classification in trending markets
+- Test regime classification in ranging markets
+- Test regime classification in volatile markets
+- Test regime classification in quiet markets
+- Test regime transition detection
+- Test liquidity assessment
+
+Level 3 Pattern Synthesizer:
+- Test pattern filtering by regime
+- Test multi-timeframe pattern consensus
+- Test trend-pattern alignment scoring
+- Test forecast refinement logic
+- Test hierarchical confidence calculation
+
+Level 4 Micro Executor:
+- Test momentum detection on 5M data
+- Test order book imbalance calculation
+- Test execution timing decisions
+- Test order splitting logic
+- Test slippage estimation
+
+HRM Cascade Testing:
+- Test full cascade execution (all 4 levels)
+- Test cascade with Level 1 failure (fallback)
+- Test cascade with Level 2 failure (fallback)
+- Test cascade with Level 3 failure (fallback)
+- Test cascade with Level 4 failure (fallback)
+- Test caching at each level
+- Test latency under load
+
+Integration Testing Requirements:
+
+Multi-Level Context Passing:
+- Verify Level 2 receives Level 1 output correctly
+- Verify Level 3 receives Level 1 + Level 2 outputs correctly
+- Verify Level 4 receives Level 1 + Level 2 + Level 3 outputs correctly
+- Verify context dictionary structure consistent
+
+Reasoning Trace Validation:
+- Verify each level produces reasoning explanation
+- Verify reasoning trace aggregation
+- Verify reasoning trace stored in database
+- Verify reasoning trace displayed in GUI
+
+Performance Attribution:
+- Run backtest with HRM vs without HRM
+- Measure contribution of each level to performance
+- Identify which levels add most value
+- Identify which levels add most latency
+
+Backtesting Requirements:
+
+HRM vs Phase 1 Comparison:
+- Run backtest with Phase 1 pattern integration only
+- Run backtest with Phase 1 + HRM
+- Measure incremental improvement from HRM:
+  * Win rate change
+  * Return change
+  * Risk-adjusted return change
+  * Latency increase
+
+Regime-Specific Performance:
+- Segment backtest results by regime (trending, ranging, volatile)
+- Measure HRM performance in each regime
+- Verify HRM adds value in all regimes
+- Identify if HRM underperforms in any regime
+
+Level Ablation Study:
+- Run backtest with only Level 1 + Level 2
+- Run backtest with only Level 1 + Level 2 + Level 3
+- Run backtest with full cascade (all 4 levels)
+- Measure incremental contribution of each level
+- Determine if all levels necessary or some can be removed
+
+Success Criteria for Phase 2 Go-Live:
+
+Minimum Performance Improvements (vs Phase 1):
+- Win rate: +1% or more vs Phase 1
+- Sharpe ratio: +0.15 or more vs Phase 1
+- Max drawdown: -1.5% or better vs Phase 1
+- Latency: <700ms p95 for full cascade
+
+System Stability Requirements:
+- HRM cascade success rate: >95%
+- Cache hit rate: >80% for Level 1 and Level 2
+- No cascade timeouts under normal load
+- Graceful degradation on level failures
+
+Value Attribution Requirements:
+- At least 2 of 4 levels must show positive contribution
+- No level should significantly degrade performance
+- Level 4 (if enabled) must not add excessive latency
+
+================================================================================
+RISK MANAGEMENT AND MITIGATION
+================================================================================
+
+--------------------------------------------------------------------------------
+TECHNICAL RISKS
+--------------------------------------------------------------------------------
+
+Risk 1: Pattern Detection Latency
+Impact: High - Forecast generation blocked waiting for patterns
+Probability: Medium
+Symptoms: Forecast latency >1 second, user complaints
+Mitigation:
+- Pre-compute patterns on candle close (proactive)
+- Cache pattern results with 1-minute TTL
+- Async pattern detection with timeout (fallback to cached)
+- Monitor pattern detection latency with alerts
+Contingency: Disable pattern conditioning if latency too high
+
+Risk 2: Pattern False Signals
+Impact: High - False patterns degrade forecast accuracy
+Probability: Medium-High
+Symptoms: Win rate decline, increased drawdown
+Mitigation:
+- Apply confidence threshold (only use patterns >0.6 confidence)
+- Require multi-pattern consensus for high-weight adjustments
+- Track pattern success rate by type, disable low-performers
+- Implement pattern quality scoring (historical validation)
+Contingency: Reduce pattern influence weights, increase filtering
+
+Risk 3: Feature Dimensionality Issues
+Impact: Medium - Too many features cause overfitting
+Probability: Medium
+Symptoms: Backtest performance good, live performance poor
+Mitigation:
+- Limit feature vector to 14 dimensions (as specified)
+- Use feature importance analysis (SHAP values)
+- Regularization in diffusion model
+- PCA if feature count grows beyond 20
+Contingency: Reduce feature set to top 10 most important
+
+Risk 4: HRM Cascade Latency
+Impact: High - Slow reasoning blocks trading decisions
+Probability: Medium (Phase 2 only)
+Symptoms: Forecast latency >1 second, timeouts
+Mitigation:
+- Parallel execution of independent levels
+- Aggressive caching (Level 1: 24h, Level 2: 1h)
+- Skip Level 4 for longer horizon forecasts
+- Set per-level timeout limits with fallback
+Contingency: Disable HRM, revert to Phase 1 pattern integration
+
+Risk 5: Database Migration Failures
+Impact: Critical - System down, data loss risk
+Probability: Low
+Symptoms: Alembic migration errors, database inconsistency
+Mitigation:
+- Test all migrations on database copy first
+- Implement rollback scripts for all migrations
+- Backup database before production migration
+- Schedule migrations during low-traffic periods
+Contingency: Rollback migration, investigate issue, fix and retry
+
+Risk 6: GUI Integration Bugs
+Impact: Medium - Users cannot configure parameters
+Probability: Low-Medium
+Symptoms: Settings not saving, UI crashes, parameters not applied
+Mitigation:
+- Comprehensive UI testing before deployment
+- Validate all parameter inputs (range checks)
+- Implement settings persistence verification
+- Add UI error handling with user-friendly messages
+Contingency: Provide configuration file as backup method
+
+--------------------------------------------------------------------------------
+FINANCIAL RISKS
+--------------------------------------------------------------------------------
+
+Risk 7: Overfitting in Backtest
+Impact: Critical - Live performance much worse than backtest
+Probability: Medium
+Symptoms: Backtest shows +77% improvement, live shows +10%
+Mitigation:
+- Walk-forward validation (no look-ahead bias)
+- Out-of-sample testing on 30% of data
+- Paper trading validation for 1 month minimum
+- Conservative performance estimates (use lower bound)
+Contingency: Roll back to baseline system if live underperforms
+
+Risk 8: Market Regime Change
+Impact: High - Pattern efficacy changes with market structure
+Probability: Medium-High (normal in markets)
+Symptoms: Gradual performance degradation over weeks/months
+Mitigation:
+- Regime-conditional pattern weighting
+- Monthly recalibration of pattern confidence
+- Automatic de-risking when performance deviates
+- Manual override capability for operators
+Contingency: Reduce position sizes, increase review frequency
+
+Risk 9: Pattern Correlation Breakdown
+Impact: Medium - Historical pattern-forecast relationship changes
+Probability: High (expected over time)
+Symptoms: Pattern adjustments no longer improve forecast
+Mitigation:
+- Rolling recalibration of adjustment weights
+- Ensemble multiple pattern configurations
+- Meta-learning for pattern adaptation
+- A/B testing of pattern parameters
+Contingency: Reduce pattern influence, rely more on base forecast
+
+Risk 10: Execution Slippage
+Impact: Medium - Actual fills worse than forecast expectations
+Probability: Medium
+Symptoms: Realized returns < backtested returns
+Mitigation:
+- Conservative slippage modeling in backtest
+- Real-time order book integration (Level 4)
+- Limit orders instead of market orders when possible
+- Position size limits relative to market depth
+Contingency: Widen stops, reduce position sizes
+
+Risk 11: Technology Failure
+Impact: Critical - System unavailable, trading halted
+Probability: Low
+Symptoms: Service crashes, database errors, connection failures
+Mitigation:
+- Comprehensive error handling and logging
+- Graceful degradation (fallback to simpler methods)
+- Automated restart on failure
+- Redundant systems (backup forecast service)
+Contingency: Manual trading mode, contact on-call engineer
+
+Risk 12: Regulatory Compliance
+Impact: High - Legal/compliance issues
+Probability: Low
+Symptoms: Audit findings, regulatory inquiries
+Mitigation:
+- Maintain reasoning traces for all decisions
+- Implement audit logging for all trades
+- Document all model changes and parameter tuning
+- Provide transparency reports to compliance team
+Contingency: Cooperate fully with auditors, provide all requested data
+
+================================================================================
+SUCCESS METRICS AND KPIS
+================================================================================
+
+--------------------------------------------------------------------------------
+DEVELOPMENT METRICS
+--------------------------------------------------------------------------------
+
+Code Quality:
+- Unit test coverage: >85% for Phase 1, >90% for Phase 2
+- Integration test pass rate: >95%
+- Code review approval time: <1 day
+- Documentation completeness: 100% for public APIs
+
+Performance Metrics:
+- Pattern feature extraction latency: <100ms (p95)
+- Pattern detection latency: <200ms (p95)
+- Forecast service latency (with patterns): <600ms (p95)
+- HRM cascade latency: <700ms (p95) for Phase 2
+- Database query latency: <50ms (p95)
+
+Reliability Metrics:
+- Pattern detection success rate: >95%
+- Feature extraction success rate: >98%
+- Forecast generation success rate: >99%
+- System uptime: >99.5%
+
+--------------------------------------------------------------------------------
+BACKTESTING METRICS
+--------------------------------------------------------------------------------
+
+Phase 1 Targets (vs Baseline):
+
+Performance Improvements:
+- Win rate: Baseline 52% → Target 55-58% (+3-6%)
+- Sharpe ratio: Baseline 0.9 → Target 1.2-1.4 (+0.3-0.5)
+- Maximum drawdown: Baseline -18% → Target -13% to -15% (-3% to -5%)
+- Calmar ratio: Baseline 25 → Target 45-60 (+80-140%)
+- Average return/trade: Baseline 0.30% → Target 0.35-0.40% (+0.05-0.10%)
+- Total return (1 year): Baseline 451% → Target 700-850% (+250-400%)
+
+Risk Metrics:
+- Volatility of returns: Baseline σ → Target 0.9σ to 1.0σ (not increased)
+- Sortino ratio: Baseline → Target +30% improvement
+- Downside deviation: Baseline → Target -20% reduction
+
+Trade Metrics:
+- Average trade duration: Baseline 4.2h → Target 3.8-4.0h (-5% to -10%)
+- Total trades per year: Baseline 1,512 → Target 1,400-1,600 (similar)
+- Slippage: Backtest assumes 0.5 pips, validate in paper trading
+
+Phase 2 Targets (vs Phase 1):
+
+Incremental Improvements:
+- Win rate: Phase 1 target 56% → Phase 2 target 58-60% (+2-4%)
+- Sharpe ratio: Phase 1 target 1.3 → Phase 2 target 1.5-1.7 (+0.2-0.4)
+- Maximum drawdown: Phase 1 target -14% → Phase 2 target -11% to -13% (-1% to -3%)
+- Total return (1 year): Phase 1 target 800% → Phase 2 target 1,000-1,200% (+200-400%)
+
+HRM-Specific Metrics:
+- Reasoning cascade success rate: >95%
+- Cache hit rate (Level 1): >90%
+- Cache hit rate (Level 2): >80%
+- Average reasoning latency: <600ms
+- Level 4 slippage reduction: -20% vs market orders
+
+--------------------------------------------------------------------------------
+LIVE TRADING METRICS
+--------------------------------------------------------------------------------
+
+Production Performance Monitoring:
+
+Real-Time Alerts:
+- Win rate deviation: Alert if >-2% vs backtest, critical if >-5%
+- Sharpe ratio degradation: Alert if >-0.2 vs backtest, critical if >-0.4
+- Drawdown breach: Alert if >16%, critical if >20%
+- Latency spike: Alert if p95 >800ms, critical if >1500ms
+- Pattern detection failures: Alert if >5% of candles, critical if >10%
+
+Daily Review Metrics:
+- Number of trades executed
+- Win rate for the day
+- Total P&L (absolute and %)
+- Average return per trade
+- Largest winner and loser
+- Pattern contribution (% of trades using pattern adjustments)
+- HRM usage (% of trades using HRM cascade)
+
+Weekly Review Metrics:
+- Cumulative return for week
+- Sharpe ratio (rolling 30 days)
+- Maximum drawdown (rolling 90 days)
+- Pattern success rate by type
+- HRM level contribution attribution
+- Latency distribution (p50, p95, p99)
+
+Monthly Review Metrics:
+- Total return for month vs target
+- Risk-adjusted return (Sharpe, Sortino, Calmar)
+- Drawdown analysis (frequency, depth, duration)
+- Pattern performance by regime
+- HRM performance by market condition
+- Slippage actual vs expected
+- Technology incidents and downtime
+
+Quarterly Business Metrics:
+- Assets under management (AUM) growth
+- Total return vs benchmark
+- Client satisfaction (if applicable)
+- Fee revenue (management + performance)
+- Technology costs (infrastructure, data)
+- Development costs (engineers, analysts)
+- Net profit margin
+
+--------------------------------------------------------------------------------
+RESEARCH METRICS (ONGOING)
+--------------------------------------------------------------------------------
+
+Pattern Efficacy Tracking:
+- Success rate per pattern type (89 patterns)
+- Average return per pattern type
+- Pattern confidence calibration (actual vs predicted)
+- Pattern regime sensitivity (perform better/worse by regime)
+
+Feature Importance Analysis:
+- SHAP values for each pattern feature dimension
+- Feature correlation with forecast accuracy
+- Feature stability over time
+- Feature redundancy detection
+
+HRM Level Attribution:
+- Win rate contribution per level
+- Return contribution per level
+- Latency cost per level
+- Error rate per level
+- Optimal level activation strategy
+
+Model Drift Detection:
+- Forecast accuracy over time (rolling window)
+- Pattern efficacy degradation rate
+- Regime classification accuracy over time
+- When to trigger recalibration
+
+================================================================================
+DEPLOYMENT STRATEGY
+================================================================================
+
+--------------------------------------------------------------------------------
+PHASE 1 DEPLOYMENT
+--------------------------------------------------------------------------------
+
+Stage 1: Development Environment
+Duration: Development period
+Activities:
+- Implement pattern feature extractor
+- Integrate pattern conditioning in forecast service
+- Implement pattern post-processing
+- Implement pattern-aware risk management
+- Add database tables and migrations
+- Create GUI settings panels
+- Write unit tests and integration tests
+Validation: All tests passing, code review approved
+
+Stage 2: Backtesting Environment
+Duration: Validation period
+Activities:
+- Run comprehensive backtest on historical data
+- Compare baseline vs enhanced performance
+- Validate performance improvements meet targets
+- Analyze by regime, volatility, timeframe
+- Tune parameters for optimal results
+Validation: Performance meets minimum success criteria
+
+Stage 3: Paper Trading Environment
+Duration: Minimum 2 weeks
+Activities:
+- Deploy to paper trading server
+- Execute trades with virtual capital
+- Monitor real-time performance vs backtest
+- Track latency and system stability
+- Verify no degradation vs backtest
+Validation: Paper trading performance within 20% of backtest
+
+Stage 4: Production Deployment (Gradual Rollout)
+
+Step 4A: 10% Traffic (Week 1)
+- Route 10% of live trading to pattern-enhanced system
+- Monitor closely for any issues
+- Compare performance to baseline 90%
+- Ready to roll back instantly if problems
+
+Step 4B: 30% Traffic (Week 2)
+- If Step 4A successful, increase to 30%
+- Continue monitoring
+- Verify performance advantage holds
+
+Step 4C: 50% Traffic (Week 3)
+- Increase to 50% if no issues
+- A/B test: 50% baseline vs 50% enhanced
+- Statistical significance testing
+
+Step 4D: 100% Traffic (Week 4)
+- If A/B test confirms improvement, full rollout
+- Baseline system kept as backup
+- Monitor for 1 month to confirm stability
+
+Rollback Criteria:
+- Win rate drops >5% vs backtest
+- Drawdown exceeds -20%
+- System errors >1% of trades
+- Latency consistently >1 second
+- Pattern detection failures >10%
+
+--------------------------------------------------------------------------------
+PHASE 2 DEPLOYMENT (HRM)
+--------------------------------------------------------------------------------
+
+Prerequisite: Phase 1 must be stable in production for minimum 1 month
+
+Stage 1: HRM Development
+Activities:
+- Implement Level 1 Trend Analyzer
+- Implement Level 2 Regime Classifier
+- Implement Level 3 Pattern Synthesizer
+- Implement Level 4 Micro Executor
+- Implement HRM reasoning cascade
+- Add database tables and caching
+- Add GUI controls for HRM
+- Write unit tests per level
+Validation: All tests passing, cascade functional
+
+Stage 2: HRM Backtesting
+Activities:
+- Run backtest with HRM vs Phase 1 only
+- Measure incremental improvement
+- Validate latency within budget
+- Perform level ablation study
+- Tune caching strategy
+Validation: HRM adds value, latency acceptable
+
+Stage 3: HRM Paper Trading
+Duration: Minimum 3 weeks
+Activities:
+- Deploy HRM to paper trading
+- Monitor reasoning cascade performance
+- Validate each level contributing value
+- Check latency under real-time load
+- Verify caching effectiveness
+Validation: Paper trading confirms backtest results
+
+Stage 4: HRM Production (Gradual Rollout)
+
+Step 4A: 5% Traffic (Week 1)
+- Enable HRM for 5% of trades
+- Monitor latency carefully (new complexity)
+- Check reasoning traces for sanity
+- Compare performance to Phase 1 only
+
+Step 4B: 15% Traffic (Week 2)
+- Increase to 15% if no issues
+- Continue monitoring
+- Verify performance advantage
+
+Step 4C: 50% Traffic (Week 3)
+- A/B test: 50% Phase 1 vs 50% Phase 1+HRM
+- Statistical testing for significance
+- Monitor for regime-specific issues
+
+Step 4D: 100% Traffic (Week 4)
+- Full HRM rollout if A/B test positive
+- Phase 1 (without HRM) kept as fallback
+- Monitor for 2 months to confirm stability
+
+Rollback Criteria:
+- Win rate improvement <1% vs Phase 1 (not worth complexity)
+- Latency >700ms p95 (too slow)
+- Cascade failures >5% of trades
+- Any level consistently degrades performance
+- Operator decision (manual override)
+
+================================================================================
+DOCUMENTATION REQUIREMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+DEVELOPER DOCUMENTATION
+--------------------------------------------------------------------------------
+
+Required Documents:
+
+1. Architecture Design Document
+   - System component diagram
+   - Data flow diagrams
+   - Integration points
+   - API specifications
+
+2. Implementation Guide
+   - Setup instructions
+   - Development environment configuration
+   - Running tests
+   - Debugging procedures
+
+3. API Reference
+   - PatternFeatureExtractor API
+   - Forecast service changes
+   - Risk management changes
+   - HRM interfaces (Phase 2)
+
+4. Database Schema Documentation
+   - Entity-relationship diagrams
+   - Table specifications
+   - Index descriptions
+   - Migration history
+
+5. Configuration Reference
+   - All parameters documented
+   - Default values and ranges
+   - Parameter interdependencies
+   - Tuning guidelines
+
+--------------------------------------------------------------------------------
+USER DOCUMENTATION
+--------------------------------------------------------------------------------
+
+Required Documents:
+
+1. User Guide
+   - What is pattern integration
+   - How it improves trading
+   - How to configure settings
+   - Interpreting pattern contributions
+
+2. GUI Reference
+   - Pattern integration settings panel
+   - Parameter descriptions
+   - Enabling/disabling features
+   - Monitoring pattern performance
+
+3. FAQ Document
+   - Common questions answered
+   - Troubleshooting guides
+   - Performance expectations
+   - Best practices
+
+4. Reasoning Trace Explanation
+   - How to read reasoning traces
+   - What each level means (HRM)
+   - How to use traces for learning
+   - Pattern contribution interpretation
+
+--------------------------------------------------------------------------------
+OPERATIONAL DOCUMENTATION
+--------------------------------------------------------------------------------
+
+Required Documents:
+
+1. Deployment Runbook
+   - Pre-deployment checklist
+   - Deployment procedure steps
+   - Post-deployment validation
+   - Rollback procedure
+
+2. Monitoring Guide
+   - Key metrics to watch
+   - Alert thresholds
+   - Dashboard setup
+   - Log locations
+
+3. Incident Response Playbook
+   - Common issues and solutions
+   - Escalation procedures
+   - Contact information
+   - Emergency rollback steps
+
+4. Performance Tuning Guide
+   - Parameter optimization procedures
+   - Backtesting workflow
+   - A/B testing methodology
+   - Recalibration schedule
+
+================================================================================
+CONCLUSION
+================================================================================
+
+Summary:
+This specification defines the integration of pattern detection results into
+the AI forecast system through two phases:
+
+Phase 1 (HIGH PRIORITY):
+- Pattern feature extraction (14 dimensions)
+- Forecast conditioning with pattern features
+- Pattern-aware post-processing (target, volatility, bias)
+- Pattern-enhanced risk management (sizing, stops, targets)
+Expected impact: +77% return improvement, -22% drawdown reduction
+
+Phase 2 (MEDIUM PRIORITY):
+- Hierarchical Reasoning Model (4 levels)
+- Multi-timeframe analysis cascade
+- Regime-aware pattern synthesis
+- Micro-execution optimization
+Expected impact: Additional +38% return, additional -17% drawdown reduction
+
+Implementation Approach:
+- Functional specifications without prescriptive code
+- Flexibility for AI agent to make implementation decisions
+- Clear success criteria and validation requirements
+- Comprehensive risk management and mitigation strategies
+- Gradual deployment with rollback capabilities
+
+All implementations must adhere to:
+1. Database changes via Alembic migrations
+2. Dependencies added to pyproject.toml
+3. No orphaned code left behind
+4. Full integration with existing workflows
+5. GUI exposure of all parameters and features
+6. Git commits for each component with functional descriptions
+
+Next Steps:
+1. Review and approve this specification
+2. Allocate development resources
+3. Begin Phase 1 implementation
+4. Validate through backtesting and paper trading
+5. Deploy to production with gradual rollout
+6. Monitor performance and collect data
+7. Decision point for Phase 2 based on Phase 1 results
+
+Success Criteria:
+Phase 1 is considered successful if:
+- Live trading win rate improves by minimum +2%
+- Live trading Sharpe ratio improves by minimum +0.2
+- Maximum drawdown reduces by minimum -2%
+- System stability maintained (>99% uptime)
+- No major incidents during rollout
+
+Phase 2 is considered successful if:
+- Incremental win rate improvement of +1% over Phase 1
+- Incremental Sharpe improvement of +0.15 over Phase 1
+- Latency remains <700ms p95
+- At least 2 of 4 HRM levels show positive contribution
+
+Risk Acceptance:
+All identified risks have mitigation strategies and rollback plans.
+Deployment strategy is conservative with gradual rollout.
+Financial risk is managed through position sizing and stop-losses.
+Technology risk is managed through comprehensive testing and monitoring.
+
+================================================================================
+DOCUMENT APPROVAL
+================================================================================
+
+This specification is ready for implementation by an AI agent with autonomy
+to make technical decisions within the functional requirements specified.
+
+Prepared by: System Architect
+Date: 2025-10-13
+Version: 1.0
+Status: Approved for Implementation
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

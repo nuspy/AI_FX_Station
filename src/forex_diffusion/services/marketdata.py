@@ -140,7 +140,7 @@ class TiingoClient:
                 cols.append("volume")
             return df[cols].copy()
         except Exception as e:
-            logger.exception("Failed to parse Tiingo response: %s", e)
+            logger.exception("Failed to parse Tiingo response: {}", e)
             return pd.DataFrame()
 
     def get_ticks(self, symbol: str, start_date: str, end_date: str, fmt: str = "json") -> pd.DataFrame:
@@ -154,6 +154,7 @@ class TiingoClient:
 class MarketDataService:
     """
     High-level service to orchestrate data acquisition and DB ingest following new strategy.
+    Now respects primary_data_provider setting with automatic fallback.
     """
     def __init__(self, database_url: Optional[str] = None):
         self.cfg = get_config()
@@ -161,12 +162,182 @@ class MarketDataService:
         if not db_url:
             raise ValueError("Database URL not configured")
         self.engine = create_engine(db_url, future=True)
-        self.provider = TiingoClient()  # Default provider: Tiingo
-        # Default timeframes to fetch after ticks: 1m up to 1d (24h)
+
+        # Initialize provider based on settings (with fallback to Tiingo)
+        self._init_provider()
+
+        # Default timeframes to fetch after ticks: 1m up to 1w (week)
         # Note: "60m" is an alias of "1h" -> keep only "1h" to avoid duplicates
-        self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"]
-            # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
+        self.timeframes_priority = ["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+        # REST backfill guard: disabled by default (only enabled explicitly by UI backfill)
         self.rest_enabled: bool = True
+
+        # Read REST batch days from config (default: 7 days = one week)
+        try:
+            self.rest_batch_days = int(getattr(getattr(self.cfg.data, "backfill", None), "rest_batch_days", 7))
+            if self.rest_batch_days <= 0:
+                logger.warning("Invalid rest_batch_days ({}), using default 7", self.rest_batch_days)
+                self.rest_batch_days = 7
+        except Exception as e:
+            logger.warning("Could not read rest_batch_days from config: {}, using default 7", e)
+            self.rest_batch_days = 7
+
+        # Read gap detection settings from config
+        try:
+            gap_cfg = getattr(getattr(self.cfg.data, "backfill", None), "gap_detection", None)
+            self.min_gap_size = int(getattr(gap_cfg, "min_gap_size", 10)) if gap_cfg else 10
+            self.timestamp_tolerance_ms = int(getattr(gap_cfg, "timestamp_tolerance_seconds", 2)) * 1000 if gap_cfg else 2000
+            self.enable_day_aggregation = bool(getattr(gap_cfg, "enable_day_aggregation", True)) if gap_cfg else True
+            self.day_aggregation_threshold = float(getattr(gap_cfg, "day_aggregation_threshold", 0.3)) if gap_cfg else 0.3
+        except Exception as e:
+            logger.warning("Could not read gap_detection settings from config: {}, using defaults", e)
+            self.min_gap_size = 10
+            self.timestamp_tolerance_ms = 2000
+            self.enable_day_aggregation = True
+            self.day_aggregation_threshold = 0.3
+
+        logger.info("REST batch size: {} days per request", self.rest_batch_days)
+        logger.info("Gap detection: min_size={}, tolerance={}ms, day_agg={} (threshold={})",
+                    self.min_gap_size, self.timestamp_tolerance_ms, self.enable_day_aggregation, self.day_aggregation_threshold)
+
+    def _show_provider_config_dialog(self, error_message: str):
+        """Show provider configuration dialog."""
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            from ..ui.provider_config_dialog import ProviderConfigDialog
+
+            # Check if QApplication exists
+            app = QApplication.instance()
+            if not app:
+                logger.warning("No QApplication instance - cannot show config dialog")
+                return
+
+            # Show error message first
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Provider Configuration Error")
+            msg.setText("Failed to initialize data provider")
+            msg.setInformativeText(
+                f"Error: {error_message}\n\n"
+                "Would you like to configure provider credentials now?"
+            )
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+            if msg.exec() == QMessageBox.StandardButton.Yes:
+                # Show configuration dialog
+                dialog = ProviderConfigDialog()
+                dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Failed to show provider config dialog: {e}")
+
+    def _init_provider(self):
+        """Initialize provider based on primary_data_provider setting with fallback."""
+        self.fallback_occurred = False
+        self.fallback_reason = None
+        self.requested_provider = None
+
+        try:
+            from ..utils.user_settings import get_setting
+            primary_provider = get_setting("primary_data_provider", "tiingo").lower()
+            self.requested_provider = primary_provider
+        except Exception as e:
+            logger.warning(f"Could not load provider settings: {e}, using Tiingo")
+            primary_provider = "tiingo"
+            self.requested_provider = "tiingo"
+
+        # Try to create the primary provider
+        try:
+            if primary_provider == "tiingo":
+                self.provider = TiingoClient()
+                self.provider_name = "Tiingo"
+                logger.info("MarketDataService using Tiingo provider")
+
+            elif primary_provider == "ctrader":
+                # Initialize cTrader client
+                from .ctrader_client import CTraderClient
+                from ..providers.ctrader_provider import CTraderAuthorizationError
+                logger.info("Initializing cTrader client...")
+                try:
+                    client = CTraderClient()
+                    # Force initialization to catch errors immediately (lazy init)
+                    client._ensure_initialized()
+                    self.provider = client
+                    self.provider_name = "cTrader"
+                    logger.info("MarketDataService using cTrader provider")
+                except CTraderAuthorizationError as e:
+                    logger.error(f"cTrader authorization error: {e}")
+                    # Show configuration dialog for authorization errors
+                    self._show_provider_config_dialog(
+                        "Trading account is not authorized.\n\n"
+                        "This may require:\n"
+                        "1. OAuth2 access token (complete authorization flow)\n"
+                        "2. Additional broker-side account authorization\n"
+                        "3. Using alternative provider (Tiingo/AlphaVantage)\n\n"
+                        f"Technical details: {str(e)}"
+                    )
+                    raise  # Re-raise to prevent app from continuing without provider
+                except Exception as e:
+                    logger.error(f"Failed to initialize cTrader: {e}")
+                    # Show configuration dialog for other errors
+                    self._show_provider_config_dialog(str(e))
+                    raise  # Re-raise to prevent app from continuing without provider
+
+            elif primary_provider == "alphavantage":
+                # AlphaVantage support (future implementation)
+                raise ValueError(
+                    "AlphaVantage provider not yet implemented. "
+                    "Use 'tiingo' or 'ctrader' as primary provider."
+                )
+
+            else:
+                raise ValueError(
+                    f"Unknown provider '{primary_provider}'. "
+                    f"Supported providers: 'tiingo', 'ctrader', 'alphavantage'"
+                )
+
+        except Exception as e:
+            # Try fallback provider if configured
+            logger.error(f"Failed to initialize primary provider '{primary_provider}': {e}")
+
+            # Get fallback provider
+            try:
+                from ..utils.user_settings import get_setting
+                fallback_provider = get_setting("fallback_data_provider", "").lower()
+            except:
+                fallback_provider = ""
+
+            if fallback_provider and fallback_provider != primary_provider:
+                logger.info(f"Attempting to use fallback provider: {fallback_provider}")
+                try:
+                    if fallback_provider == "tiingo":
+                        self.provider = TiingoClient()
+                        self.provider_name = "Tiingo"
+                        self.fallback_occurred = True
+                        self.fallback_reason = f"Primary provider '{primary_provider}' failed: {str(e)}"
+                        logger.info(f"Successfully initialized fallback provider: Tiingo")
+                    elif fallback_provider == "ctrader":
+                        from .ctrader_client import CTraderClient
+                        client = CTraderClient()
+                        client._ensure_initialized()
+                        self.provider = client
+                        self.provider_name = "cTrader"
+                        self.fallback_occurred = True
+                        self.fallback_reason = f"Primary provider '{primary_provider}' failed: {str(e)}"
+                        logger.info(f"Successfully initialized fallback provider: cTrader")
+                    else:
+                        raise ValueError(f"Unsupported fallback provider: {fallback_provider}")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback provider '{fallback_provider}' also failed: {fallback_error}")
+                    self.fallback_occurred = True
+                    self.fallback_reason = f"Both primary and fallback providers failed"
+                    raise
+            else:
+                # No fallback configured or same as primary
+                self.fallback_occurred = True
+                self.fallback_reason = f"Provider initialization error: {str(e)}. No fallback configured."
+                raise
 
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
@@ -187,6 +358,12 @@ class MarketDataService:
             return
         # overall period
         last_ts, now_ms = self._get_last_candle_ts(symbol, timeframe)
+
+        # BOOTSTRAP: If timeframe is completely empty (last_ts is None), download first month automatically
+        if last_ts is None and start_ms_override is None and not force_full:
+            logger.info("Timeframe {} {} is empty - bootstrapping with 1 month of historical data", symbol, timeframe)
+            start_ms_override = int((datetime.now(tz=timezone.utc) - timedelta(days=30)).timestamp() * 1000)
+
         try:
             if start_ms_override is not None:
                 start_iso = time_utils.ms_to_utc_dt(int(start_ms_override)).isoformat()
@@ -208,41 +385,37 @@ class MarketDataService:
                 except Exception: pass
             return
 
-        # Normalize alias (e.g., "60m" -> "1h") and determine timeframes to process (skip 'tick')
+        # Normalize alias (e.g., "60m" -> "1h")
         tf_req = (timeframe or "").strip().lower()
         alias_map = {"60m": "1h"}
         tf_norm = alias_map.get(tf_req, tf_req)
-        if tf_norm in self.timeframes_priority:
-            idx = self.timeframes_priority.index(tf_norm)
-            tfs_to_process = self.timeframes_priority[1: idx + 1]
-        else:
-            # fallback default chain (no "60m" to avoid duplicate of "1h")
-            tfs_to_process = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
-        # ensure uniqueness while preserving order
-        _seen = set()
-        tfs_to_process = [t for t in tfs_to_process if not (t in _seen or _seen.add(t))]
+
+        # NEW LOGIC: Only process the requested timeframe (no cascading)
+        # Each timeframe is independent and fetched directly from API
+        tfs_to_process = [tf_norm]
+
         # if request was an alias, log normalization
         if tf_req != tf_norm:
             logger.info("Normalized timeframe alias: '{}' -> '{}'", tf_req, tf_norm)
 
-        # Pre-compute total subranges for determinate progress (guard against huge ranges)
+        # Pre-compute total subranges for determinate progress (using configurable batch size)
         total_subranges = 0
         try:
             range_days = (now_ms - start_ms) / (24 * 3600 * 1000)
+            # Use batch split if range exceeds configured batch size (default: 7 days)
+            use_batch_split = range_days > self.rest_batch_days
+
             if range_days <= 370:  # avoid huge O(N) precompute for multi-year 1m ranges
-                # 1m ranges (ticks fallback)
-                r_1m = self._find_missing_intervals(symbol, "1m", start_ms, now_ms)
-                for (s_ms, e_ms) in r_1m:
-                    total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
-                # other TFs
+                # Only process the requested timeframe (no cascading)
                 for tf in tfs_to_process:
-                    if tf == "1m":
-                        continue
                     r_tf = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
                     for (s_ms, e_ms) in r_tf:
-                        total_subranges += max(1, len(time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))))
+                        if use_batch_split:
+                            total_subranges += len(time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), self.rest_batch_days))
+                        else:
+                            total_subranges += 1
             else:
-                logger.warning("Backfill range is large (%.0f days); skipping progress precompute for speed.", range_days)
+                logger.warning("Backfill range is large ({:.0f} days); skipping progress precompute for speed.", range_days)
         except Exception:
             total_subranges = 0
         processed = 0
@@ -254,47 +427,62 @@ class MarketDataService:
                 except Exception:
                     pass
 
-        # 1) Ensure ticks/1m
-        try:
-            tf = "1m"
-            missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
-            for (s_ms, e_ms) in missing_ranges:
-                subranges = time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
-                for (sub_s, sub_e) in subranges:
-                    start_date = sub_s.date().isoformat()
-                    end_date = sub_e.date().isoformat()
-                    # logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
-                    df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
-                    if df is not None and not df.empty:
-                        try:
-                            # drop NaN and duplicates on ts_utc before upsert
-                            df = df.dropna(subset=["ts_utc"]).copy()
-                            before = len(df)
-                            df = df.drop_duplicates(subset=["ts_utc"], keep="last")
-                            if len(df) != before:
-                                logger.info("Dedup 1m: {} -> {} rows for {} {}-{}", before, len(df), symbol, start_date, end_date)
-                        except Exception:
-                            pass
-                        report = data_io.upsert_candles(self.engine, df, symbol, "1m")
-                        # logger.info("Upsert 1m report: %s", report)
+        # Determine if we need batch splits based on configured rest_batch_days
+        range_days = (now_ms - start_ms) / (24 * 3600 * 1000)
+        use_batch_split = range_days > self.rest_batch_days
+
+        # Process ONLY the requested timeframe (no cascading to other TFs)
+        for tf in tfs_to_process:
+            try:
+                # NOTE: Use get_candles() for ALL historical data (including 1m)
+                # get_ticks() is ONLY for WebSocket realtime data
+                if tf == "1m":
+                    missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
+                    for (s_ms, e_ms) in missing_ranges:
+                        if use_batch_split:
+                            subranges = time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), self.rest_batch_days)
+                        else:
+                            subranges = [(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))]
+
+                        for (sub_s, sub_e) in subranges:
+                            start_date = sub_s.date().isoformat()
+                            end_date = sub_e.date().isoformat()
+                            logger.info("Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
+                            # Use get_candles() with 1min resample for historical data
+                            df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq="1min")
+                            if df is not None and not df.empty:
+                                try:
+                                    df = df.dropna(subset=["ts_utc"]).copy()
+                                    before = len(df)
+                                    df = df.drop_duplicates(subset=["ts_utc"], keep="last")
+                                    if len(df) != before:
+                                        logger.info("Dedup 1m: {} -> {} rows for {} {}-{}", before, len(df), symbol, start_date, end_date)
+                                except Exception:
+                                    pass
+                                report = data_io.upsert_candles(self.engine, df, symbol, "1m", provider_source=self.provider_name.lower())
+                            processed += 1
+                            _emit_progress()
+                    continue
+                # Special handling for 1w: Tiingo doesn't support "week", download 1d and resample locally
+                if tf == "1w":
+                    self._backfill_weekly(symbol, start_ms, now_ms, self.rest_batch_days)
                     processed += 1
                     _emit_progress()
-        except Exception as e:
-            logger.exception("Tick fetch/aggregation failed: %s", e)
+                    continue
 
-        # 2) Process other TFs autonomously
-        for tf in tfs_to_process:
-            if tf == "1m":
-                continue
-            try:
                 missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, now_ms)
                 for (s_ms, e_ms) in missing_ranges:
-                    subranges = time_utils.split_range_avoid_weekend(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))
+                    # Split by configured batch size for large backfills, otherwise single request
+                    if use_batch_split:
+                        subranges = time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), self.rest_batch_days)
+                    else:
+                        subranges = [(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))]
+
                     for (sub_s, sub_e) in subranges:
                         start_date = sub_s.date().isoformat()
                         end_date = sub_e.date().isoformat()
                         resample = self._tf_to_tiingo_resample(tf)
-                        logger.info("Requesting %s candles %s - %s for %s", tf, start_date, end_date, symbol)
+                        logger.info("Requesting {} candles {} - {} for {}", tf, start_date, end_date, symbol)
                         df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq=resample)
                         if df is not None and not df.empty:
                             try:
@@ -305,12 +493,11 @@ class MarketDataService:
                                     logger.info("Dedup {}: {} -> {} rows for {} {}-{}", tf, before, len(df), symbol, start_date, end_date)
                             except Exception:
                                 pass
-                            report = data_io.upsert_candles(self.engine, df, symbol, tf)
-                            # logger.info("Upsert report for %s %s: %s", symbol, tf, report)
+                            report = data_io.upsert_candles(self.engine, df, symbol, tf, provider_source=self.provider_name.lower())
                         processed += 1
                         _emit_progress()
             except Exception as e:
-                logger.exception("Backfill failed for %s %s: %s", symbol, tf, e)
+                logger.exception("Backfill failed for {} {}: {}", symbol, tf, e)
 
         if progress_cb:
             try: progress_cb(100)
@@ -318,31 +505,42 @@ class MarketDataService:
 
     def _ensure_ticks_then_aggregate(self, symbol: str, start_ms: int, end_ms: int):
         """
-        Download ticks (fallback to 1min) for date ranges missing and upsert them as 1m candles.
-        The aggregator (existing elsewhere) may produce other TFs from ticks in realtime, but for historic backfill
-        we upsert the 1m candles directly so higher TFs can be resampled or fetched separately.
+        Download 1m candles for date ranges missing and upsert them as 1m candles.
+        Note: get_ticks() is ONLY for WebSocket realtime data.
+        For historical data, always use get_candles() with resample_freq="1min".
         """
         # Determine missing 1m candle ranges
         tf = "1m"
         missing_ranges = self._find_missing_intervals(symbol, tf, start_ms, end_ms)
         if not missing_ranges:
-            logger.info("No missing 1m ranges detected for %s", symbol)
+            logger.info("No missing 1m ranges detected for {}", symbol)
             return
+
+        # Determine if we need batch splits based on configured rest_batch_days
+        range_days = (end_ms - start_ms) / (24 * 3600 * 1000)
+        use_batch_split = range_days > self.rest_batch_days
+
         for (s_ms, e_ms) in missing_ranges:
-            # split avoiding weekend
             s_dt = time_utils.ms_to_utc_dt(s_ms)
             e_dt = time_utils.ms_to_utc_dt(e_ms)
-            subranges = time_utils.split_range_avoid_weekend(s_dt, e_dt)
+
+            # Split by configured batch size for large backfills, otherwise single request
+            if use_batch_split:
+                subranges = time_utils.split_range_by_days(s_dt, e_dt, self.rest_batch_days)
+            else:
+                subranges = [(s_dt, e_dt)]
+
             for (sub_s, sub_e) in subranges:
                 start_date = sub_s.date().isoformat()
                 end_date = sub_e.date().isoformat()
-                # logger.info("Requesting ticks(1m) %s - %s for %s", start_date, end_date, symbol)
-                df = self.provider.get_ticks(symbol, start_date=start_date, end_date=end_date)
+                logger.info("MarketData:_ensure_ticks_then_aggregate Requesting 1m candles {} - {} for {}", start_date, end_date, symbol)
+                # Use get_candles() with 1min resample for historical data
+                df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq="1min")
                 if df is None or df.empty:
-                    logger.info("No tick/1m data returned for %s %s-%s", symbol, start_date, end_date)
+                    logger.info("No 1m data returned for {} {}-{}", symbol, start_date, end_date)
                     continue
                 # Upsert as 1m timeframe
-                report = data_io.upsert_candles(self.engine, df, symbol, "1m")
+                report = data_io.upsert_candles(self.engine, df, symbol, "1m", provider_source=self.provider_name.lower())
                 # logger.info("Upsert 1m report: %s", report)
 
     def _backfill_timeframe_autonomous(self, symbol: str, timeframe: str, global_start_ms: int, global_end_ms: int):
@@ -350,11 +548,11 @@ class MarketDataService:
         For a given timeframe compute missing expected period ends between global_start_ms and global_end_ms,
         split into ranges avoiding weekend and request only those ranges from Tiingo.
         """
-        logger.info("Backfilling autonomous timeframe %s for %s", timeframe, symbol)
+        logger.info("Backfilling autonomous timeframe {} for {}", timeframe, symbol)
         # find missing intervals (list of (s_ms,e_ms)) where series lacks bars
         missing_ranges = self._find_missing_intervals(symbol, timeframe, global_start_ms, global_end_ms)
         if not missing_ranges:
-            logger.info("No missing ranges for %s %s", symbol, timeframe)
+            logger.info("No missing ranges for {} {}", symbol, timeframe)
             return
         # For each missing range, split by weekend and request Tiingo candles per subrange
         for (s_ms, e_ms) in missing_ranges:
@@ -366,18 +564,105 @@ class MarketDataService:
                 end_date = sub_e.date().isoformat()
                 # map timeframe to tiingo resample string
                 resample = self._tf_to_tiingo_resample(timeframe)
-                logger.info("Requesting %s candles %s - %s for %s", timeframe, start_date, end_date, symbol)
+                logger.info("Requesting {} candles {} - {} for {}", timeframe, start_date, end_date, symbol)
                 df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq=resample)
                 if df is None or df.empty:
-                    logger.info("Tiingo returned no data for %s %s %s", symbol, timeframe, (start_date, end_date))
+                    logger.info("Tiingo returned no data for {} {} {}-{}", symbol, timeframe, start_date, end_date)
                     continue
                 # Upsert into DB
-                report = data_io.upsert_candles(self.engine, df, symbol, timeframe)
+                report = data_io.upsert_candles(self.engine, df, symbol, timeframe, provider_source=self.provider_name.lower())
                 # logger.info("Upsert report for %s %s: %s", symbol, timeframe, report)
+
+    def _backfill_weekly(self, symbol: str, start_ms: int, end_ms: int, batch_days: int):
+        """
+        Backfill 1w timeframe by downloading 1d data and resampling to weekly.
+        Tiingo API doesn't support 'week' resampleFreq, so we must resample locally.
+
+        Args:
+            symbol: Trading symbol
+            start_ms: Start timestamp in milliseconds
+            end_ms: End timestamp in milliseconds
+            batch_days: Number of days per batch request (from config)
+        """
+        import pandas as pd
+
+        # Find missing 1w intervals
+        missing_ranges = self._find_missing_intervals(symbol, "1w", start_ms, end_ms)
+        if not missing_ranges:
+            logger.info("No missing ranges for {} 1w", symbol)
+            return
+
+        # Determine if we need batch splits
+        range_days = (end_ms - start_ms) / (24 * 3600 * 1000)
+        use_batch_split = range_days > batch_days
+
+        for (s_ms, e_ms) in missing_ranges:
+            # Download 1d data for the range
+            if use_batch_split:
+                subranges = time_utils.split_range_by_days(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms), batch_days)
+            else:
+                subranges = [(time_utils.ms_to_utc_dt(s_ms), time_utils.ms_to_utc_dt(e_ms))]
+
+            all_daily_data = []
+            for (sub_s, sub_e) in subranges:
+                start_date = sub_s.date().isoformat()
+                end_date = sub_e.date().isoformat()
+                logger.info("Requesting 1d candles {} - {} for {} (to resample to 1w)", start_date, end_date, symbol)
+                df = self.provider.get_candles(symbol, start_date=start_date, end_date=end_date, resample_freq="1day")
+                if df is not None and not df.empty:
+                    all_daily_data.append(df)
+
+            if not all_daily_data:
+                logger.info("No 1d data available for 1w resample for {} {}-{}", symbol, s_ms, e_ms)
+                continue
+
+            # Concatenate all daily data
+            df_daily = pd.concat(all_daily_data, ignore_index=True)
+            df_daily = df_daily.dropna(subset=["ts_utc"]).copy()
+            df_daily = df_daily.drop_duplicates(subset=["ts_utc"], keep="last")
+
+            # Resample to weekly
+            df_daily["ts_dt"] = pd.to_datetime(df_daily["ts_utc"], unit="ms", utc=True)
+            df_daily = df_daily.set_index("ts_dt").sort_index()
+
+            # Resample OHLC to weekly (W = week ending Sunday)
+            resampler = df_daily.resample("W", label="right", closed="right")
+
+            weekly_ohlc = pd.DataFrame({
+                "open": resampler["open"].first(),
+                "high": resampler["high"].max(),
+                "low": resampler["low"].min(),
+                "close": resampler["close"].last()
+            })
+
+            if "volume" in df_daily.columns:
+                weekly_ohlc["volume"] = resampler["volume"].sum()
+
+            weekly_ohlc = weekly_ohlc.dropna(subset=["close"])
+            if weekly_ohlc.empty:
+                continue
+
+            # Convert back to format expected by upsert_candles
+            weekly_candles = []
+            for idx, row in weekly_ohlc.iterrows():
+                weekly_candles.append({
+                    "ts_utc": int(idx.timestamp() * 1000),
+                    "open": row["open"],
+                    "high": row["high"],
+                    "low": row["low"],
+                    "close": row["close"],
+                    "volume": row.get("volume", None) if "volume" in weekly_ohlc.columns else None
+                })
+
+            if weekly_candles:
+                df_weekly = pd.DataFrame(weekly_candles)
+                report = data_io.upsert_candles(self.engine, df_weekly, symbol, "1w", provider_source=self.provider_name.lower())
+                logger.info("Upserted {} weekly candles for {}", len(df_weekly), symbol)
 
     def _tf_to_tiingo_resample(self, tf: str) -> str:
         """
         Convert timeframe like '1m','5m','1h','1d' into Tiingo resampleFreq string: '1min','5min','1hour','1day'
+        Note: 1w is NOT supported by Tiingo API, handled separately via _backfill_weekly()
         """
         tf = tf.strip().lower()
         if tf == "tick":
@@ -395,6 +680,11 @@ class MarketDataService:
         """
         Determine contiguous ranges [s_ms,e_ms] where expected period-end timestamps for timeframe are missing in DB.
         Returns list of start_ms,end_ms pairs in milliseconds (UTC). Each pair should be inclusive bounds for requesting.
+        
+        Implements smart gap detection with:
+        - Timestamp fuzzy matching (tolerance window)
+        - Minimum gap size threshold
+        - Configurable day-level aggregation
         """
         if timeframe == "tick":
             # ticks handled via 1m fallback aggregator; return a single range
@@ -411,15 +701,31 @@ class MarketDataService:
                 rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "s": start_ms, "e": end_ms}).fetchall()
                 existing = set(int(r[0]) for r in rows if r and r[0] is not None)
         except Exception as e:
-            logger.exception("Failed to query existing candles for gap detection: %s", e)
+            logger.exception("Failed to query existing candles for gap detection: {}", e)
             existing = set()
 
-        # compute missing expected points (ints)
+        # FUZZY MATCHING: For each expected timestamp, check if there's an existing timestamp within tolerance
+        tolerance_ms = getattr(self, "timestamp_tolerance_ms", 2000)
         expected_set = set(expected)
-        missing_points = sorted(list(expected_set - existing))
+        missing_points = []
+        
+        for exp_ts in expected:
+            # Check if any existing timestamp is within tolerance window
+            found_match = False
+            for exist_ts in existing:
+                if abs(exp_ts - exist_ts) <= tolerance_ms:
+                    found_match = True
+                    break
+            if not found_match:
+                missing_points.append(exp_ts)
+        
+        missing_points = sorted(missing_points)
         if not missing_points:
             return []
 
+        # MINIMUM GAP SIZE THRESHOLD: Filter out runs smaller than min_gap_size
+        min_gap_size = getattr(self, "min_gap_size", 10)
+        
         # group consecutive expected timestamps into contiguous runs
         runs: List[List[int]] = []
         run = [missing_points[0]]
@@ -440,10 +746,17 @@ class MarketDataService:
             if delta <= expected_delta + pd.Timedelta(seconds=1):
                 run.append(t)
             else:
-                runs.append(run)
+                # Only save run if it meets minimum size threshold
+                if len(run) >= min_gap_size:
+                    runs.append(run)
                 run = [t]
-        if run:
+        if run and len(run) >= min_gap_size:
             runs.append(run)
+        
+        # Log filtered gaps
+        if not runs:
+            logger.debug("No significant gaps found for {} {} (all gaps < {} candles)", symbol, timeframe, min_gap_size)
+            return []
 
         # convert runs to [start_ms,end_ms] inclusive for requesting (add a small margin)
         out_ranges: List[Tuple[int, int]] = []
@@ -464,6 +777,84 @@ class MarketDataService:
                 # fallback robusto
                 e_ms = int(pd.to_datetime(e_dt_plus).value // 1_000_000)
             out_ranges.append((int(s), e_ms))
+
+        # SMART DAY-LEVEL AGGREGATION: Only aggregate to full day if significant portion is missing
+        enable_day_agg = getattr(self, "enable_day_aggregation", True)
+        day_agg_threshold = getattr(self, "day_aggregation_threshold", 0.3)
+        
+        if out_ranges and enable_day_agg:
+            from datetime import datetime
+            
+            # Calculate expected candles per day for this timeframe
+            try:
+                freq = time_utils.tf_to_pandas_freq(timeframe)
+                delta = pd.Timedelta(freq)
+                candles_per_day = int(pd.Timedelta(days=1) / delta)
+            except Exception:
+                # Fallback: assume 1440 minutes per day
+                if timeframe.endswith("m"):
+                    minutes = int(timeframe[:-1])
+                    candles_per_day = 1440 // minutes
+                elif timeframe.endswith("h"):
+                    hours = int(timeframe[:-1])
+                    candles_per_day = 24 // hours
+                else:
+                    candles_per_day = 1
+            
+            # Group ranges by day and count missing candles per day
+            day_ranges: Dict[str, Tuple[int, int, int]] = {}  # day_key -> (min_start, max_end, missing_count)
+
+            for start_ms, end_ms in out_ranges:
+                start_dt = datetime.utcfromtimestamp(start_ms / 1000.0)
+                end_dt = datetime.utcfromtimestamp(end_ms / 1000.0)
+                
+                # Count how many candles are missing in this range
+                missing_count = len([t for t in expected if start_ms <= t <= end_ms])
+
+                # Generate day keys for all days covered by this range
+                current_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                while current_dt <= end_day:
+                    day_key = current_dt.strftime("%Y-%m-%d")
+                    day_start_ms = int(current_dt.timestamp() * 1000)
+                    day_end_ms = int((current_dt.timestamp() + 86400) * 1000)  # +24 hours
+
+                    if day_key in day_ranges:
+                        # Extend the day range and add to missing count
+                        existing_start, existing_end, existing_count = day_ranges[day_key]
+                        day_ranges[day_key] = (
+                            min(existing_start, day_start_ms),
+                            max(existing_end, day_end_ms),
+                            existing_count + missing_count
+                        )
+                    else:
+                        day_ranges[day_key] = (day_start_ms, day_end_ms, missing_count)
+
+                    current_dt += pd.Timedelta(days=1)
+
+            # Only expand to full day if missing percentage exceeds threshold
+            final_ranges = []
+            for day_key, (day_start, day_end, missing_count) in day_ranges.items():
+                missing_pct = missing_count / candles_per_day if candles_per_day > 0 else 1.0
+                
+                if missing_pct >= day_agg_threshold:
+                    # Significant gap - download full day
+                    final_ranges.append((day_start, day_end))
+                    logger.debug("Day {} has {:.1%} missing ({}/{}) - downloading full day",
+                                day_key, missing_pct, missing_count, candles_per_day)
+                else:
+                    # Small gap - only download exact missing range(s)
+                    for start_ms, end_ms in out_ranges:
+                        start_dt = datetime.utcfromtimestamp(start_ms / 1000.0)
+                        if start_dt.strftime("%Y-%m-%d") == day_key:
+                            final_ranges.append((start_ms, end_ms))
+                            logger.debug("Day {} has {:.1%} missing ({}/{}) - downloading exact range only",
+                                        day_key, missing_pct, missing_count, candles_per_day)
+            
+            out_ranges = sorted(final_ranges, key=lambda x: x[0])
+            logger.debug("Smart aggregation: {} ranges for {} {}", len(out_ranges), symbol, timeframe)
+
         return out_ranges
 
     def _get_last_candle_ts(self, symbol: str, timeframe: str) -> Tuple[Optional[int], int]:
@@ -475,7 +866,7 @@ class MarketDataService:
                 last_ts = conn.execute(query, {"symbol": symbol, "timeframe": timeframe}).scalar_one_or_none()
                 return (int(last_ts) if last_ts else None, now_ms)
         except Exception as e:
-            logger.exception("Failed to get last candle timestamp: %s", e)
+            logger.exception("Failed to get last candle timestamp: {}", e)
             return (None, now_ms)
 
     def _get_first_candle_ts(self, symbol: str) -> Optional[int]:
@@ -489,5 +880,5 @@ class MarketDataService:
                 first_ts = conn.execute(query, {"symbol": symbol}).scalar_one_or_none()
                 return int(first_ts) if first_ts is not None else None
         except Exception as e:
-            logger.exception("Failed to get first candle timestamp: %s", e)
+            logger.exception("Failed to get first candle timestamp: {}", e)
             return None

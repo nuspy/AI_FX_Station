@@ -7,7 +7,7 @@ from weakref import WeakKeyDictionary
 
 from PySide6.QtCore import QObject
 
-from .patterns_service import PatternsService
+from .patterns_service import  PatternsService as PatternsService
 
 log = logging.getLogger(__name__)
 
