@@ -29,14 +29,13 @@ class EventHandlersMixin:
         self._orders_timer = QTimer(self)
         self._orders_timer.setInterval(1500)
         self._orders_timer.timeout.connect(self.chart_controller.refresh_orders)
-        # DISABLED: Orders refresh causes continuous updates
-        # self._orders_timer.start()
+        self._orders_timer.start()
 
         self._rt_dirty = False
         self._rt_timer = QTimer(self)
-        self._rt_timer.setInterval(1000)  # Reduced from 200ms to 1s
-        self._rt_timer.timeout.connect(self.chart_controller.rt_flush)
-        self._rt_timer.start()  # Keep this for real-time data but slower
+        self._rt_timer.setInterval(200)
+        self._rt_timer.timeout.connect(self._rt_flush)
+        self._rt_timer.start()
 
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)

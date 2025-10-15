@@ -65,6 +65,10 @@ class OrderFlowPanel(QWidget):
         # Imbalance Indicators
         imbalance_group = self._create_imbalance_section()
         layout.addWidget(imbalance_group)
+        
+        # Order Books Section
+        order_books_group = self._create_order_books_section()
+        layout.addWidget(order_books_group)
 
         # Order Flow Signals Table
         signals_group = self._create_signals_section()
@@ -172,6 +176,43 @@ class OrderFlowPanel(QWidget):
         group.setLayout(layout)
         return group
 
+    def _create_order_books_section(self) -> QGroupBox:
+        """Create order books display (bids and asks)"""
+        group = QGroupBox("Order Books (Level 2)")
+        layout = QHBoxLayout()
+        
+        # Bids (Buy orders) - Left side
+        bids_layout = QVBoxLayout()
+        bids_label = QLabel("Bids (Buy)")
+        bids_label.setStyleSheet("font-weight: bold; color: green;")
+        bids_layout.addWidget(bids_label)
+        
+        self.bids_table = QTableWidget()
+        self.bids_table.setColumnCount(2)
+        self.bids_table.setHorizontalHeaderLabels(['Price', 'Size'])
+        self.bids_table.setAlternatingRowColors(True)
+        self.bids_table.setMaximumHeight(200)
+        bids_layout.addWidget(self.bids_table)
+        
+        # Asks (Sell orders) - Right side
+        asks_layout = QVBoxLayout()
+        asks_label = QLabel("Asks (Sell)")
+        asks_label.setStyleSheet("font-weight: bold; color: red;")
+        asks_layout.addWidget(asks_label)
+        
+        self.asks_table = QTableWidget()
+        self.asks_table.setColumnCount(2)
+        self.asks_table.setHorizontalHeaderLabels(['Price', 'Size'])
+        self.asks_table.setAlternatingRowColors(True)
+        self.asks_table.setMaximumHeight(200)
+        asks_layout.addWidget(self.asks_table)
+        
+        layout.addLayout(bids_layout)
+        layout.addLayout(asks_layout)
+        
+        group.setLayout(layout)
+        return group
+
     def _create_signals_section(self) -> QGroupBox:
         """Create order flow signals table"""
         group = QGroupBox("Order Flow Signals")
@@ -231,10 +272,12 @@ class OrderFlowPanel(QWidget):
         Args:
             metrics: Dictionary with order flow metrics
         """
+        logger.debug(f"📊 update_metrics called with: spread={metrics.get('spread')}, bid_depth={metrics.get('bid_depth')}, ask_depth={metrics.get('ask_depth')}")
         self.current_metrics = metrics
 
         # Spread
         spread = metrics.get('spread', 0.0)
+        logger.debug(f"Setting spread label to: {spread:.5f}")
         spread_pips = spread * 10000  # Convert to pips for forex
         self.spread_label.setText(f"{spread_pips:.1f} pips")
 
@@ -381,17 +424,24 @@ class OrderFlowPanel(QWidget):
 
     def refresh_display(self):
         """Refresh display (called by timer) - fetches real-time DOM data"""
+        logger.debug(f"🔄 OrderFlowPanel refresh_display called for {self.current_symbol}")
         if not self.dom_service:
+            logger.warning("No DOM service available")
             return
 
         try:
             # Get latest DOM snapshot from database
             snapshot = self.dom_service.get_latest_dom_snapshot(self.current_symbol)
+            logger.debug(f"📊 OrderFlowPanel snapshot for {self.current_symbol}: {snapshot is not None}, keys: {list(snapshot.keys()) if snapshot else 'None'}")
             if not snapshot:
                 logger.debug(f"No DOM data available for {self.current_symbol}")
                 return
+            
+            # Log snapshot content for debugging
+            logger.debug(f"Snapshot content: bids={len(snapshot.get('bids', []))}, asks={len(snapshot.get('asks', []))}, best_bid={snapshot.get('best_bid')}, best_ask={snapshot.get('best_ask')}")
 
             # Compute order flow metrics using analyzer
+            logger.debug(f"Order flow analyzer available: {self.order_flow_analyzer is not None}")
             if self.order_flow_analyzer:
                 # Estimate volume (would normally come from tick data)
                 # For now, use depth as proxy
@@ -401,8 +451,10 @@ class OrderFlowPanel(QWidget):
                     max(0, snapshot['ask_depth'] - self.last_snapshot.get('ask_depth', 0))
 
                 # Compute detailed metrics
+                # snapshot['timestamp'] is already in milliseconds from provider
+                timestamp_ms = snapshot['timestamp'] if isinstance(snapshot['timestamp'], int) else int(snapshot['timestamp'].timestamp() * 1000)
                 metrics = self.order_flow_analyzer.compute_metrics(
-                    timestamp=int(snapshot['timestamp'].timestamp() * 1000) if hasattr(snapshot['timestamp'], 'timestamp') else int(snapshot['timestamp']),
+                    timestamp=timestamp_ms,
                     symbol=self.current_symbol,
                     timeframe='1m',
                     bid_price=snapshot['best_bid'],
@@ -430,7 +482,11 @@ class OrderFlowPanel(QWidget):
                     'exhaustion_detected': metrics.exhaustion_detected,
                 }
 
+                logger.debug(f"Updating metrics: {list(metrics_dict.keys())}")
                 self.update_metrics(metrics_dict)
+                
+                # Update order books display
+                self._update_order_books(snapshot.get('bids', []), snapshot.get('asks', []))
 
                 # Generate and display signals
                 if snapshot['mid_price'] > 0:
@@ -492,6 +548,37 @@ class OrderFlowPanel(QWidget):
         self.refresh_display()
 
         logger.info(f"Order Flow Panel switched to {symbol}")
+    
+    def _update_order_books(self, bids: list, asks: list):
+        """Update order book tables with bids and asks.
+        
+        Args:
+            bids: List of bid orders [{'price': float, 'size': float}, ...]
+            asks: List of ask orders [{'price': float, 'size': float}, ...]
+        """
+        try:
+            logger.debug(f"Updating order books: {len(bids)} bids, {len(asks)} asks")
+            
+            # Update bids table (buy orders)
+            self.bids_table.setRowCount(len(bids))
+            for i, bid in enumerate(bids):
+                price_item = QTableWidgetItem(f"{bid['price']:.5f}")
+                size_item = QTableWidgetItem(f"{bid['size']:.0f}")
+                price_item.setForeground(QColor('green'))
+                self.bids_table.setItem(i, 0, price_item)
+                self.bids_table.setItem(i, 1, size_item)
+            
+            # Update asks table (sell orders)
+            self.asks_table.setRowCount(len(asks))
+            for i, ask in enumerate(asks):
+                price_item = QTableWidgetItem(f"{ask['price']:.5f}")
+                size_item = QTableWidgetItem(f"{ask['size']:.0f}")
+                price_item.setForeground(QColor('red'))
+                self.asks_table.setItem(i, 0, price_item)
+                self.asks_table.setItem(i, 1, size_item)
+                
+        except Exception as e:
+            logger.error(f"Error updating order books: {e}", exc_info=True)
 
     def clear_data(self):
         """Clear all data"""

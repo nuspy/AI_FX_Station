@@ -91,11 +91,6 @@ class ChartTabUI(
         self._main_window = parent
         self.dom_service = dom_service
         self.order_flow_analyzer = order_flow_analyzer
-        
-        # Plotting ENABLED with dynamic loading optimization (viewport + 2x buffer)
-        # This loads only ~500-2000 candles instead of 50k, dramatically improving performance
-        self._disable_plotting = False
-        logger.info("✓ Chart plotting ENABLED with dynamic loading (viewport + 2x buffer optimization)")
 
         # Core controller setup
         self.controller = getattr(parent, "controller", None)
@@ -154,6 +149,9 @@ class ChartTabUI(
 
     def _setup_chart_components(self):
         """Setup chart components after UI is built."""
+        # Connect tick signal to handler
+        self.tickArrived.connect(self._on_tick_main)
+        
         # Finplot-only initialization
         # Axes will be created dynamically when plotting
         self.ax = None  # Will be set when first plot is created

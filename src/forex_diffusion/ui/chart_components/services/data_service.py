@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 import pandas as pd
 import numpy as np
+import time
 from loguru import logger
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem, QListWidgetItem
@@ -16,6 +17,7 @@ class DataService(ChartServiceBase):
     def _handle_tick(self, payload: dict):
         """Thread-safe entrypoint: enqueue tick to GUI thread."""
         try:
+            logger.debug(f"📊 TICK RECEIVED: symbol={payload.get('symbol')}, price={payload.get('price', payload.get('bid'))}")
             self.tickArrived.emit(payload)
         except Exception as e:
             logger.exception("Failed to emit tick: {}", e)
@@ -23,29 +25,43 @@ class DataService(ChartServiceBase):
     def _on_tick_main(self, payload: dict):
         """GUI-thread handler: aggiorna Market Watch e buffer, delega il redraw al throttler."""
         try:
+            logger.debug(f"🔄 Processing tick in main thread: {payload.get('symbol')}")
             if not isinstance(payload, dict):
                 return
             sym = payload.get("symbol") or getattr(self, "symbol", None)
 
             # Update active provider label (get from settings)
-            self._update_provider_label()
+            # DISABLED: causes widget deletion errors
+            # self._update_provider_label()
 
             # Market watch update
             try:
                 if sym:
                     bid_val = payload.get('bid')
                     ask_val = payload.get('ask', payload.get('offer'))
+                    logger.debug(f"📊 Updating market watch: {sym} bid={bid_val} ask={ask_val}")
                     self._update_market_quote(sym, bid_val, ask_val, payload.get('ts_utc'))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to update market watch: {e}")
 
             # Update chart buffer only for current symbol (O(1) append)
-            if sym and sym == getattr(self, "symbol", None):
+            current_symbol = getattr(self, "symbol", None)
+            logger.debug(f"Chart update check: sym={sym}, current_symbol={current_symbol}, match={sym == current_symbol}")
+            if sym and sym == current_symbol:
                 try:
-                    ts = int(payload.get("ts_utc"))
-                    y = payload.get("close", payload.get("price"))
+                    # Get timestamp (try ts_utc, then timestamp, then now)
+                    ts = payload.get("ts_utc") or payload.get("timestamp") or int(time.time() * 1000)
+                    if not isinstance(ts, int):
+                        ts = int(ts)
+                    
+                    # Get price (try close, price, or mid of bid/ask)
+                    y = payload.get("close") or payload.get("price")
                     bid_val = payload.get('bid')
                     ask_val = payload.get('ask', payload.get('offer'))
+                    
+                    # Calculate mid price if y not available
+                    if y is None and bid_val is not None and ask_val is not None:
+                        y = (bid_val + ask_val) / 2
                     # se buffer vuoto: crea
                     if self._last_df is None or self._last_df.empty:
                         row = {"ts_utc": ts, "price": y, "bid": bid_val, "ask": ask_val}
@@ -67,8 +83,13 @@ class DataService(ChartServiceBase):
                             if ask_val is not None:
                                 self._last_df.at[len(self._last_df)-1, 'ask'] = ask_val
                         # se ts < last_ts, ignora (fuori ordine)
-                except Exception:
-                    pass
+                    
+                    # mark dirty for throttled redraw
+                    self._rt_dirty = True
+                    logger.debug(f"✓ Chart marked dirty for {sym}: price={y}, will redraw on next rt_flush")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to update chart buffer: {e}")
 
                 # update bid/ask label
                 try:
@@ -79,10 +100,7 @@ class DataService(ChartServiceBase):
                         self.bidask_label.setText(f"Bid: {payload.get('bid')}    Ask: {payload.get('ask')}")
                     except Exception:
                         pass
-
-                # mark dirty for throttled redraw
-                self._rt_dirty = True
-                # PlutoTouch logger.debug(f"Tick received for {sym}: price={y}, ts={ts}, marked dirty")
+                        
         except Exception as e:
             logger.exception("Failed to handle tick on GUI: {}", e)
 
@@ -92,7 +110,7 @@ class DataService(ChartServiceBase):
             if not getattr(self, "_rt_dirty", False):
                 return
             self._rt_dirty = False
-            # PlutoTouch logger.debug("RT flush triggered, updating chart")
+            logger.debug("🔄 RT flush triggered, updating chart...")
             # preserve current view
             try:
                 # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
@@ -497,10 +515,8 @@ class DataService(ChartServiceBase):
         except Exception:
             start_ms_view = None
         try:
-            # OPTIMIZED: Always limit to reasonable amount (2000 candles = ~33h for 1m, ~3 months for 1h)
-            # This prevents loading 500k candles which causes severe UI lag
-            # User can pan/zoom to load more with dynamic buffering
-            limit_candles = 2000  # Reasonable default for all cases
+            # Load reasonable amount of candles on startup
+            limit_candles = 3000
 
             df = self._load_candles_from_db(self.symbol, self.timeframe, limit=limit_candles, start_ms=start_ms_view)
             if df is not None and not df.empty:
@@ -1218,16 +1234,23 @@ class DataService(ChartServiceBase):
                 # Build label text with RT and Historical on separate lines
                 label_text = f"RT data: {rt_provider} ({rt_connection})\nHistorical: {historical_provider} (REST)"
 
-                # Update text
-                self.provider_label.setText(label_text)
-
-                # Update position to top-right corner
-                if hasattr(self, 'main_plot') and self.main_plot is not None:
-                    view_range = self.main_plot.viewRange()
-                    if view_range and len(view_range) == 2:
-                        x_range, y_range = view_range
-                        # Position at top-right: max_x, max_y
-                        self.provider_label.setPos(x_range[1], y_range[1])
+                # Update text (check if widget still valid)
+                if hasattr(self, 'provider_label') and self.provider_label is not None:
+                    try:
+                        # Test if C++ object still exists
+                        _ = self.provider_label.toPlainText()
+                        self.provider_label.setText(label_text)
+                        
+                        # Update position to top-right corner
+                        if hasattr(self, 'main_plot') and self.main_plot is not None:
+                            view_range = self.main_plot.viewRange()
+                            if view_range and len(view_range) == 2:
+                                x_range, y_range = view_range
+                                # Position at top-right: max_x, max_y
+                                self.provider_label.setPos(x_range[1], y_range[1])
+                    except (RuntimeError, AttributeError):
+                        # Widget deleted, clear reference
+                        self.provider_label = None
 
         except Exception as e:
             logger.debug(f"Failed to update provider label: {e}")

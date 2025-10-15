@@ -101,6 +101,9 @@ class CTraderProvider(BaseProvider):
         self._message_queue: Optional[asyncio.Queue] = None
         self._running = False
         self._asyncio_loop: Optional[asyncio.AbstractEventLoop] = None  # Store main event loop
+        
+        # Callback for real-time tick updates (spot events)
+        self.on_tick_callback: Optional[callable] = None
 
         # Message tracking for request/response matching
         self._pending_requests: Dict[str, asyncio.Future] = {}
@@ -112,6 +115,9 @@ class CTraderProvider(BaseProvider):
         # DOM (market depth) data buffers
         self._dom_buffer: Dict[str, Dict] = {}  # symbol -> latest DOM snapshot
         self._depth_quotes: Dict[str, Dict[int, Dict]] = {}  # symbol -> {quote_id -> quote_data}
+        
+        # Last valid spot prices (cTrader sends 0 when value doesn't change)
+        self._last_spot_prices: Dict[str, Dict[str, float]] = {}  # symbol -> {bid, ask}
 
         # Endpoint configuration
         if self.environment == "live":
@@ -226,6 +232,7 @@ class CTraderProvider(BaseProvider):
                 await self._subscribe_spots(default_symbols)
                 await self._subscribe_depth_quotes(default_symbols)
                 logger.info(f"[{self.name}] ✓ Auto-subscription completed")
+                logger.info(f"[{self.name}] 📊 Listening for: Spot quotes + DOM/Level2 data")
             except Exception as e:
                 logger.warning(f"[{self.name}] Auto-subscription failed (will retry on stream): {e}")
             
@@ -556,13 +563,39 @@ class CTraderProvider(BaseProvider):
                         if payload_type == 2155:
                             decoded_message = Messages.ProtoOADepthEvent()
                             decoded_message.ParseFromString(message.payload)
-                            #PLUTOTOUCH logger.debug(f"[{self.name}] Decoded ProtoOADepthEvent (type 2155)")
+                            logger.debug(f"[{self.name}] ✓ Decoded ProtoOADepthEvent (type 2155)")
                         
-                        # Type 2116 = ProtoOASpotEvent (spot quotes)
-                        elif payload_type == 2116:
+                        # Type 2131 = ProtoOASpotEvent (spot quotes - real-time prices)
+                        elif payload_type == 2131:
                             decoded_message = Messages.ProtoOASpotEvent()
                             decoded_message.ParseFromString(message.payload)
-                            logger.debug(f"[{self.name}] Decoded ProtoOASpotEvent (type 2116)")
+                            logger.debug(f"[{self.name}] ✓ Decoded ProtoOASpotEvent (type 2131)")
+                        
+                        # Type 2128 = ProtoOATrailingSLChangedEvent (trailing stop loss changed)
+                        elif payload_type == 2128:
+                            logger.debug(f"[{self.name}] ⊘ Skipping ProtoOATrailingSLChangedEvent (type 2128)")
+                            return  # Skip processing
+                        
+                        # Type 2157 = ProtoOAOrderErrorEvent (order error notification)
+                        elif payload_type == 2157:
+                            logger.debug(f"[{self.name}] ⊘ Skipping ProtoOAOrderErrorEvent (type 2157)")
+                            return  # Skip processing
+                        
+                        # Type 2127 = ProtoOAExecutionEvent (order execution/cancellation/fill)
+                        elif payload_type == 2127:
+                            logger.debug(f"[{self.name}] ⊘ Skipping ProtoOAExecutionEvent (type 2127) - order event")
+                            return  # Skip processing
+                        
+                        else:
+                            # Unknown payload type - log it with message details
+                            msg_type = type(message).__name__
+                            logger.warning(f"[{self.name}] ⚠️ Unknown payloadType={payload_type}, msgType={msg_type}, attempting spot decode...")
+                            try:
+                                decoded_message = Messages.ProtoOASpotEvent()
+                                decoded_message.ParseFromString(message.payload)
+                                logger.info(f"[{self.name}] ✓ Successfully decoded unknown type {payload_type} (msgType={msg_type}) as ProtoOASpotEvent")
+                            except Exception as decode_err:
+                                logger.warning(f"[{self.name}] ⚠️ Failed spot decode for type {payload_type} (msgType={msg_type}): {decode_err}")
                     
                     # Convert Protobuf message to dict for streaming data
                     msg_dict = self._protobuf_to_dict(decoded_message)
@@ -599,9 +632,10 @@ class CTraderProvider(BaseProvider):
         Args:
             client: The cTrader client instance (passed by library)
         """
-        logger.info(f"[{self.name}] Connected to cTrader server")
+        logger.info(f"[{self.name}] 🔌 Connected to cTrader server")
         self.health.is_connected = True
         self.health.last_message_ts = datetime.now()
+        logger.info(f"[{self.name}] 📡 WebSocket connection active, waiting for authentication...")
 
     def _on_disconnected(self, client, reason) -> None:
         """Handle disconnection from cTrader.
@@ -631,16 +665,51 @@ class CTraderProvider(BaseProvider):
                         if sid == symbol_id:
                             symbol_name = name
                             break
+                
+                # Log if symbol not found
+                if not symbol_name:
+                    logger.warning(f"[{self.name}] ⚠️ Symbol ID {symbol_id} not found in cache. Cache has {len(self._symbol_cache) if hasattr(self, '_symbol_cache') else 0} symbols. First few: {list(self._symbol_cache.items())[:5] if hasattr(self, '_symbol_cache') else []}")
+                    # Skip this spot event if we can't resolve symbol
+                    return {"type": "error", "error": f"Unknown symbol_id {symbol_id}"}
 
                 # cTrader uses 100000 multiplier for prices
-                return {
+                # NOTE: cTrader sends 0 for bid/ask when value hasn't changed
+                raw_bid = message.bid / 100000 if hasattr(message, 'bid') and message.bid else 0
+                raw_ask = message.ask / 100000 if hasattr(message, 'ask') and message.ask else 0
+                
+                # Get last valid prices for this symbol
+                if symbol_name not in self._last_spot_prices:
+                    self._last_spot_prices[symbol_name] = {"bid": raw_bid, "ask": raw_ask}
+                
+                # Use raw value if non-zero, otherwise use last valid value
+                final_bid = raw_bid if raw_bid > 0 else self._last_spot_prices[symbol_name].get("bid", 0)
+                final_ask = raw_ask if raw_ask > 0 else self._last_spot_prices[symbol_name].get("ask", 0)
+                
+                # Update last valid prices
+                if raw_bid > 0:
+                    self._last_spot_prices[symbol_name]["bid"] = raw_bid
+                if raw_ask > 0:
+                    self._last_spot_prices[symbol_name]["ask"] = raw_ask
+                
+                spot_data = {
                     "type": "spot",
                     "symbol": symbol_name or f"ID:{symbol_id}",
                     "symbol_id": symbol_id,
-                    "bid": message.bid / 100000 if hasattr(message, 'bid') else None,
-                    "ask": message.ask / 100000 if hasattr(message, 'ask') else None,
+                    "bid": final_bid,
+                    "ask": final_ask,
                     "timestamp": message.timestamp if hasattr(message, 'timestamp') else int(time.time() * 1000),
                 }
+                logger.debug(f"[{self.name}] 💹 SPOT: {symbol_name} bid={final_bid:.5f} ask={final_ask:.5f} (raw: {raw_bid:.5f}/{raw_ask:.5f})")
+                
+                # Send to chart via callback if registered
+                # NOTE: Called from Twisted thread, callback must handle thread safety
+                if self.on_tick_callback:
+                    try:
+                        self.on_tick_callback(spot_data)
+                    except Exception as e:
+                        logger.error(f"[{self.name}] Error in tick callback: {e}")
+                
+                return spot_data
             except Exception as e:
                 logger.error(f"[{self.name}] Error converting ProtoOASpotEvent: {e}")
                 return {"type": "error", "error": str(e)}
@@ -720,20 +789,35 @@ class CTraderProvider(BaseProvider):
                 if bids and asks:
                     spread = asks[0]['price'] - bids[0]['price']
 
-                # Update DOM buffer
+                # Calculate mid price and imbalance
+                mid_price = None
+                imbalance = None
+                if bids and asks:
+                    mid_price = (bids[0]['price'] + asks[0]['price']) / 2
+                    if total_bid_volume + total_ask_volume > 0:
+                        imbalance = (total_bid_volume - total_ask_volume) / (total_bid_volume + total_ask_volume)
+                
+                # Update DOM buffer (compatible with database schema for OrderFlowPanel)
                 dom_data = {
                     "type": "depth",
                     "symbol": symbol_name,
                     "symbol_id": symbol_id,
                     "bids": bids[:10],  # Top 10 levels
                     "asks": asks[:10],  # Top 10 levels
+                    "best_bid": bids[0]['price'] if bids else None,
+                    "best_ask": asks[0]['price'] if asks else None,
                     "total_bid_volume": total_bid_volume,
                     "total_ask_volume": total_ask_volume,
+                    "bid_depth": total_bid_volume,  # Alias for OrderFlowPanel compatibility
+                    "ask_depth": total_ask_volume,  # Alias for OrderFlowPanel compatibility
+                    "mid_price": mid_price,
                     "spread": spread,
+                    "imbalance": imbalance,
                     "timestamp": int(time.time() * 1000),
                 }
 
                 self._dom_buffer[symbol_name] = dom_data
+                logger.info(f"[{self.name}] 📈 DOM updated for {symbol_name}: {len(bids)} bids, {len(asks)} asks, buffer keys now: {list(self._dom_buffer.keys())}")
                 
                 # DOM stored in RAM buffer only (not database)
                 # All consumers (OrderFlowPanel, AutomatedTradingEngine, etc.) 

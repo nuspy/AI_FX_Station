@@ -47,6 +47,7 @@ class DOMAggregatorService(ThreadedBackgroundService):
             enable_circuit_breaker=True
         )
         self.provider = provider  # Store provider reference for RAM buffer access
+        self._symbol_format_cache: Dict[str, str] = {}  # Cache: requested_symbol -> buffer_symbol
     
     @property
     def service_name(self) -> str:
@@ -200,25 +201,32 @@ class DOMAggregatorService(ThreadedBackgroundService):
         try:
             # TRY RAM BUFFER FIRST (faster, real-time)
             if self.provider and hasattr(self.provider, '_dom_buffer'):
+                # Check cache first
+                if symbol in self._symbol_format_cache:
+                    cached_format = self._symbol_format_cache[symbol]
+                    if cached_format in self.provider._dom_buffer:
+                        return self.provider._dom_buffer[cached_format]
+                
+                # Cache miss - try variants
                 buffer_keys = list(self.provider._dom_buffer.keys())
-                logger.debug(f"DOM buffer keys: {buffer_keys}")
                 
                 # Try multiple symbol formats (EURUSD, EUR/USD, EUR-USD)
                 symbol_variants = [
-                    symbol,
-                    symbol.replace('/', ''),
-                    symbol.replace('-', ''),
-                    symbol.replace('/', '-'),
+                    symbol,  # Original (e.g., EURUSD)
+                    symbol[:3] + '/' + symbol[3:] if len(symbol) == 6 and '/' not in symbol else symbol,  # Add slash (EURUSD → EUR/USD)
+                    symbol[:3] + '-' + symbol[3:] if len(symbol) == 6 and '-' not in symbol else symbol,  # Add dash (EURUSD → EUR-USD)
+                    symbol.replace('/', ''),  # Remove slash (EUR/USD → EURUSD)
+                    symbol.replace('-', ''),  # Remove dash (EUR-USD → EURUSD)
                 ]
-                logger.debug(f"Looking for {symbol} as variants: {symbol_variants}")
                 
                 for sym_variant in symbol_variants:
                     if sym_variant in self.provider._dom_buffer:
-                        dom_data = self.provider._dom_buffer[sym_variant]
-                        logger.info(f"✓ DOM snapshot for {symbol} (found as '{sym_variant}') retrieved from RAM buffer")
-                        return dom_data
+                        # Cache the successful format
+                        self._symbol_format_cache[symbol] = sym_variant
+                        logger.info(f"✓ DOM snapshot for {symbol} (found as '{sym_variant}', cached) retrieved from RAM buffer")
+                        return self.provider._dom_buffer[sym_variant]
                 
-                logger.warning(f"DOM for {symbol} not found in buffer. Buffer has: {buffer_keys}")
+                logger.warning(f"⚠️ DOM for {symbol} not found in buffer. Buffer has: {buffer_keys}")
             
             # FALLBACK TO DATABASE (for historical or if provider not available)
             with self.engine.connect() as conn:

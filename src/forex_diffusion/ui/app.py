@@ -139,7 +139,19 @@ def setup_ui(
     from ..services.dom_aggregator import DOMAggregatorService
     dom_symbols = ["EURUSD", "GBPUSD", "USDJPY"]  # DOM monitoring symbols
     # Pass provider reference to enable RAM buffer reading (faster than database)
-    provider = getattr(market_service, 'provider', None)
+    # IMPORTANT: Get the actual CTraderProvider (not CTraderClient wrapper)
+    provider = None
+    if hasattr(market_service, 'provider'):
+        # Check if it's CTraderClient (which wraps CTraderProvider)
+        from ..services.ctrader_client import CTraderClient
+        if isinstance(market_service.provider, CTraderClient):
+            # Get the underlying CTraderProvider from CTraderClient
+            provider = getattr(market_service.provider, '_provider', None)
+            if provider is None:
+                logger.warning("CTraderClient detected but no underlying CTraderProvider found")
+        else:
+            provider = market_service.provider
+    
     dom_aggregator = DOMAggregatorService(
         engine=db_service.engine, 
         symbols=dom_symbols, 
@@ -148,7 +160,8 @@ def setup_ui(
     )
     dom_aggregator.start()
     result["dom_aggregator"] = dom_aggregator
-    logger.info(f"DOM Aggregator Service started for {dom_symbols} (RAM buffer: {provider is not None})")
+    provider_info = f"{type(provider).__name__}" if provider else "None"
+    logger.info(f"DOM Aggregator Service started for {dom_symbols} (provider: {provider_info})")
 
     # --- Order Flow Analyzer ---
     from ..analysis.order_flow_analyzer import OrderFlowAnalyzer
@@ -207,6 +220,12 @@ def setup_ui(
     )
     _log_timing("After creating ChartTab")
     logger.info("✓ ChartTab created")
+    
+    # Connect cTrader spot events to chart (for real-time price updates)
+    # Get the actual CTraderProvider (same as dom_aggregator)
+    if provider and hasattr(provider, 'on_tick_callback'):
+        provider.on_tick_callback = chart_tab._handle_tick
+        logger.info(f"✓ {type(provider).__name__} spot events connected to chart")
 
     # Live Trading will be a separate window, stored as attribute
     # Initialize SmartExecutionOptimizer for pre-trade validation
