@@ -483,8 +483,8 @@ class PlotService(ChartServiceBase):
             # Manage subplots in PyQtGraph GraphicsLayoutWidget
             graphics_layout = self.view.graphics_layout
             current_rows = len(self.view.finplot_axes) if hasattr(self.view, 'finplot_axes') else 1
-            # Count needed rows: 1 (price) + normalized + custom
-            needed_rows = 1 + (1 if has_normalized else 0) + (1 if has_custom else 0)
+            # Count needed rows: price + volume + optional normalized/custom subplots
+            needed_rows = 2 + (1 if has_normalized else 0) + (1 if has_custom else 0)
 
             # Recreate plots if row count changed
             if current_rows != needed_rows:
