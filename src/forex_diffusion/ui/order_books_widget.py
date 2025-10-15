@@ -130,11 +130,6 @@ class OrderBooksWidget(QWidget):
 
             self._update_display()
 
-            # Update status indicator
-            self.status_label.setText("●")
-            self.status_label.setStyleSheet("color: #00ff00; font-size: 14px;")
-            self.status_label.setToolTip("Connected")
-
         except Exception as e:
             logger.error(f"Error updating order book display: {e}")
 
