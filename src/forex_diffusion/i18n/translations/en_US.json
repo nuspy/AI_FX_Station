@@ -484,5 +484,175 @@
         }
       }
     }
+  },
+  
+  "backtesting": {
+    "tab_name": "Backtesting",
+    
+    "initial_balance": {
+      "label": "Initial Balance:",
+      "tooltip": "Starting capital for backtest. DEFAULT: 10000. Higher = more realistic position sizing."
+    },
+    
+    "risk_per_trade": {
+      "label": "Risk Per Trade (%):",
+      "tooltip": "Percentage of balance risked per trade. DEFAULT: 1-2%. Conservative: 0.5%. Aggressive: 5%."
+    },
+    
+    "max_positions": {
+      "label": "Max Concurrent Positions:",
+      "tooltip": "Maximum open positions simultaneously. DEFAULT: 1. Portfolio: 3-5. Prevents overexposure."
+    },
+    
+    "commission": {
+      "label": "Commission per Trade:",
+      "tooltip": "Trading cost per transaction. Forex: 0-10 USD. Stocks: 1-5 USD. Include in backtest for realism."
+    },
+    
+    "slippage_pips": {
+      "label": "Slippage (pips):",
+      "tooltip": "Expected slippage per trade. Liquid pairs: 0.5-1 pip. Volatile: 2-5 pips. Realistic: 1 pip."
+    },
+    
+    "stop_loss_atr": {
+      "label": "Stop Loss (ATR multiplier):",
+      "tooltip": "Stop loss as multiple of ATR. DEFAULT: 2-3×. Tight: 1.5×. Wide: 5×. Volatility-adjusted stops."
+    },
+    
+    "take_profit_atr": {
+      "label": "Take Profit (ATR multiplier):",
+      "tooltip": "Take profit as multiple of ATR. DEFAULT: 3-5×. Risk/Reward: TP should be > SL. Example: 3× TP, 2× SL = 1.5:1 RR."
+    },
+    
+    "trailing_stop": {
+      "label": "Use Trailing Stop:",
+      "tooltip": "Enable trailing stop loss. Locks in profits as trade moves favorably. DEFAULT: Enabled for trends."
+    },
+    
+    "walk_forward": {
+      "label": "Walk-Forward Analysis:",
+      "tooltip": "Retrain model periodically during backtest. More realistic than static model. DEFAULT: Enabled. Retrain every 30-90 days."
+    },
+    
+    "optimization_metric": {
+      "label": "Optimization Metric:",
+      "tooltip": "Metric to optimize. Options: sharpe_ratio, total_return, max_drawdown, win_rate. DEFAULT: sharpe_ratio (best overall)."
+    }
+  },
+  
+  "pattern_training": {
+    "tab_name": "Pattern Training",
+    
+    "pattern_type": {
+      "label": "Pattern Type:",
+      "tooltip": "Type of pattern to train. Options: candlestick, chart_patterns, harmonic. DEFAULT: candlestick (most reliable)."
+    },
+    
+    "min_pattern_bars": {
+      "label": "Min Pattern Bars:",
+      "tooltip": "Minimum bars required for pattern. DEFAULT: 3. Complex patterns: 5-10. Simple: 2-3."
+    },
+    
+    "pattern_tolerance": {
+      "label": "Pattern Tolerance (%):",
+      "tooltip": "Tolerance for pattern matching. DEFAULT: 5%. Strict: 2%. Loose: 10%. Lower = fewer but cleaner patterns."
+    },
+    
+    "min_pattern_samples": {
+      "label": "Min Samples:",
+      "tooltip": "Minimum pattern occurrences to train. DEFAULT: 50. Rare patterns need lower threshold. Common: 100+."
+    },
+    
+    "pattern_features": {
+      "label": "Pattern Features:",
+      "tooltip": "Features extracted from pattern. Options: shape, volume, context, preceding_trend. Enable all for best results."
+    }
+  },
+  
+  "live_trading": {
+    "tab_name": "Live Trading",
+    
+    "broker": {
+      "label": "Broker:",
+      "tooltip": "Trading broker. Options: oanda, fxcm, interactive_brokers, alpaca. Requires API credentials."
+    },
+    
+    "account_type": {
+      "label": "Account Type:",
+      "tooltip": "Account type. Options: demo, paper, live. ALWAYS test on demo/paper first. Live = real money."
+    },
+    
+    "max_daily_loss": {
+      "label": "Max Daily Loss (%):",
+      "tooltip": "Stop trading if daily loss exceeds this. DEFAULT: 5%. Risk management essential. Prevents blowups."
+    },
+    
+    "max_drawdown": {
+      "label": "Max Drawdown (%):",
+      "tooltip": "Stop trading if equity drawdown exceeds this. DEFAULT: 20%. Protection against extended losing streaks."
+    },
+    
+    "auto_restart": {
+      "label": "Auto Restart:",
+      "tooltip": "Restart trading bot if crashes. DEFAULT: Enabled. Ensures continuous operation. Monitor logs."
+    },
+    
+    "notification_webhook": {
+      "label": "Notification Webhook:",
+      "tooltip": "Webhook URL for trade notifications. Telegram/Slack/Discord. Get alerts on trades, errors, stops."
+    }
+  },
+  
+  "portfolio": {
+    "tab_name": "Portfolio",
+    
+    "symbols": {
+      "label": "Symbols:",
+      "tooltip": "Symbols to include in portfolio. Select multiple. Diversification reduces risk. Avoid highly correlated pairs."
+    },
+    
+    "allocation_method": {
+      "label": "Allocation Method:",
+      "tooltip": "Portfolio allocation. Options: equal_weight, risk_parity, kelly_criterion, optimal_f. DEFAULT: risk_parity."
+    },
+    
+    "rebalance_frequency": {
+      "label": "Rebalance Frequency:",
+      "tooltip": "How often to rebalance. Options: daily, weekly, monthly. DEFAULT: weekly. More frequent = higher costs."
+    },
+    
+    "correlation_threshold": {
+      "label": "Max Correlation:",
+      "tooltip": "Maximum allowed correlation between pairs. DEFAULT: 0.7. Higher = more diversified. Avoid >0.8 (too correlated)."
+    }
+  },
+  
+  "settings": {
+    "tab_name": "Settings",
+    
+    "log_level": {
+      "label": "Log Level:",
+      "tooltip": "Logging verbosity. Options: DEBUG, INFO, WARNING, ERROR. DEFAULT: INFO. DEBUG for troubleshooting."
+    },
+    
+    "save_artifacts": {
+      "label": "Save Artifacts:",
+      "tooltip": "Save models, plots, metrics to disk. DEFAULT: Enabled. Artifacts folder grows large over time."
+    },
+    
+    "cache_data": {
+      "label": "Cache Data:",
+      "tooltip": "Cache downloaded data to speed up retraining. DEFAULT: Enabled. Saves API calls. Clear cache if stale data."
+    },
+    
+    "parallel_workers": {
+      "label": "Parallel Workers:",
+      "tooltip": "CPU cores for parallel processing. DEFAULT: Auto (all cores). Higher = faster but more memory."
+    },
+    
+    "random_seed": {
+      "label": "Random Seed:",
+      "tooltip": "Seed for reproducibility. Set to fixed value (42) for consistent results. None = random each run."
+    }
   }
 }
