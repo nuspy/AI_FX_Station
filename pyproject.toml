@@ -122,6 +122,7 @@ dependencies = [
   
   # Reinforcement Learning
   "gymnasium>=0.29.0,<1.0",        # Maintained replacement for gym (NumPy 2.0 compatible)
+  # Note: Uninstall old gym first: pip uninstall gym gym-notices
 
   # Experiment Tracking (Optional for SSSD)
   "wandb>=0.15.0,<1.0",            # Weights & Biases experiment tracking
