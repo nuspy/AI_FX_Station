@@ -625,7 +625,7 @@ class TrainingTab(QWidget):
             tooltip_text = tr(f"{tooltip_key}.tooltip", default=None)
             if tooltip_text:
                 for tf, cb in self.indicator_checks.get(indicator, {}).items():
-                    cb.setToolTip(tooltip_text)
+
 
     def _build_top_controls(self):
         """Build top control row: model name, load/save config buttons, symbol, timeframe, days, horizon, model, encoder, optimization"""
@@ -634,8 +634,8 @@ class TrainingTab(QWidget):
         row0 = QHBoxLayout()
 
         lbl_name = QLabel("Model Name:")
-        lbl_name.setToolTip(
-            "Nome del modello salvato.\n"
+
+
             "Se impostato: il modello sarà salvato con questo nome.\n"
             "Se vuoto: il nome sarà generato automaticamente dall'elenco delle features.\n"
             "Esempio: 'EUR_USD_1h_ridge_multiTF' o 'my_custom_model_v2'"
@@ -644,8 +644,8 @@ class TrainingTab(QWidget):
 
         self.model_name_edit = QLineEdit()
         self.model_name_edit.setPlaceholderText("Auto-generate from features")
-        self.model_name_edit.setToolTip(
-            "Nome personalizzato per il modello.\n"
+
+
             "Lascia vuoto per auto-generazione basata su: symbol_timeframe_model_features.\n"
             "Caratteri permessi: lettere, numeri, underscore, trattino."
         )
@@ -654,8 +654,8 @@ class TrainingTab(QWidget):
         row0.addStretch()
 
         self.load_config_btn = QPushButton("📂 Load Config")
-        self.load_config_btn.setToolTip(
-            "Carica una configurazione di training salvata da file JSON.\n"
+
+
             "Include tutti i parametri: features, indicatori, hyperparameters.\n"
             "Utile per: riproducibilità, condivisione config, A/B testing."
         )
@@ -663,8 +663,8 @@ class TrainingTab(QWidget):
         row0.addWidget(self.load_config_btn)
 
         self.save_config_btn = QPushButton("💾 Save Config")
-        self.save_config_btn.setToolTip(
-            "Salva la configurazione attuale in un file JSON.\n"
+
+
             "Include: tutte le feature selezionate, parametri, indicatori.\n"
             "Non include: dati o modello addestrato (solo configurazione)."
         )
@@ -678,8 +678,8 @@ class TrainingTab(QWidget):
 
         # Symbol
         lbl_sym = QLabel("Symbol:")
-        lbl_sym.setToolTip(
-            "Coppia valutaria da usare per il training.\n"
+
+
             "Cosa è: asset finanziario su cui addestrare il modello predittivo.\n"
             "Perché è importante: ogni coppia ha caratteristiche uniche (volatilità, correlazioni).\n"
             "Best practice: addestra modelli separati per ciascuna coppia (no mixing)."
@@ -687,8 +687,8 @@ class TrainingTab(QWidget):
         top.addWidget(lbl_sym)
         self.symbol_combo = QComboBox()
         self.symbol_combo.addItems(["EUR/USD", "GBP/USD", "AUX/USD", "GBP/NZD", "AUD/JPY", "GBP/EUR", "GBP/AUD"])
-        self.symbol_combo.setToolTip(
-            "Seleziona il simbolo per cui addestrare il modello.\n"
+
+
             "EUR/USD: coppia più liquida, spread bassi, volatilità media.\n"
             "GBP/USD: alta volatilità, buona per swing trading.\n"
             "Exotic pairs (AUD/JPY, etc.): spread alti, pattern diversi."
@@ -697,8 +697,8 @@ class TrainingTab(QWidget):
 
         # Base timeframe
         lbl_tf = QLabel("Base TF:")
-        lbl_tf.setToolTip(
-            "Timeframe base della serie su cui costruire le feature.\n"
+
+
             "Cosa è: risoluzione temporale delle candele usate come input.\n"
             "Perché è importante: determina il tipo di trading (scalping vs swing).\n"
             "Valori bassi (1m, 5m): day trading, scalping, necessita molti dati (anni).\n"
@@ -709,8 +709,8 @@ class TrainingTab(QWidget):
         self.tf_combo = QComboBox()
         self.tf_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h", "1d"])
         self.tf_combo.setCurrentText("1m")
-        self.tf_combo.setToolTip(
-            "Timeframe delle candele base.\n"
+
+
             "1m: ~1400 candele/giorno, ottimo per scalping, richiede 30+ giorni dati.\n"
             "5m: ~280 candele/giorno, day trading, richiede 15+ giorni dati.\n"
             "1h: ~24 candele/giorno, swing trading, richiede 60+ giorni dati.\n"
@@ -720,8 +720,8 @@ class TrainingTab(QWidget):
 
         # Days history
         lbl_days = QLabel("Days:")
-        lbl_days.setToolTip(
-            "Numero di giorni storici da usare per l'addestramento.\n"
+
+
             "Cosa è: quanti giorni passati includere nel dataset di training.\n"
             "Perché è importante: più dati = migliore generalizzazione, ma training più lento.\n"
             "Valori bassi (1-7): training veloce, rischio overfitting, buono per test rapidi.\n"
@@ -733,8 +733,8 @@ class TrainingTab(QWidget):
         self.days_spin = QSpinBox()
         self.days_spin.setRange(1, 3650)
         self.days_spin.setValue(7)
-        self.days_spin.setToolTip(
-            "Giorni di dati storici per training.\n"
+
+
             "1-7: test rapido, pochi dati, rischio overfitting.\n"
             "30-90: standard, bilanciamento qualità/velocità.\n"
             "365+: massima qualità, cattura stagionalità, training lungo (ore).\n"
@@ -744,8 +744,8 @@ class TrainingTab(QWidget):
 
         # Horizon
         lbl_h = QLabel("Horizon:")
-        lbl_h.setToolTip(
-            "Orizzonte di predizione: quante candele future prevedere.\n"
+
+
             "Cosa è: numero di step temporali futuri da predire (target).\n"
             "Perché è importante: determina il range temporale della strategia trading.\n"
             "Valori bassi (1-5): predizioni a breve termine, più accurate, scalping.\n"
@@ -757,8 +757,8 @@ class TrainingTab(QWidget):
         self.horizon_spin = QSpinBox()
         self.horizon_spin.setRange(1, 500)
         self.horizon_spin.setValue(5)
-        self.horizon_spin.setToolTip(
-            "Numero di candele future da prevedere.\n"
+
+
             "1-5: ottimo per scalping/day trading, alta precisione.\n"
             "10-20: swing intraday, accuratezza media.\n"
             "50-100: swing multi-day, serve modello complesso (RF/diffusion).\n"
@@ -769,8 +769,8 @@ class TrainingTab(QWidget):
 
         # Model
         lbl_m = QLabel("Model:")
-        lbl_m.setToolTip(
-            "Tipo di modello supervisionato da addestrare.\n"
+
+
             "Cosa è: algoritmo di machine learning per apprendere pattern dai dati.\n"
             "Perché è importante: determina capacità di catturare relazioni complesse.\n"
             "Vedi docs/MODELS_COMPARISON.md per confronto dettagliato supervised vs diffusion."
@@ -778,8 +778,8 @@ class TrainingTab(QWidget):
         top.addWidget(lbl_m)
         self.model_combo = QComboBox()
         self.model_combo.addItems(["ridge", "lasso", "elasticnet", "rf", "lightning", "diffusion-ddpm", "diffusion-ddim", "sssd"])
-        self.model_combo.setToolTip(
-            "Algoritmi disponibili:\n\n"
+
+
             "SUPERVISED (veloce, interpretabile, short-term):\n"
             "• ridge: regressione lineare L2, velocissimo, baseline ottimo.\n"
             "• lasso: regressione lineare L1, feature selection automatica.\n"
@@ -801,8 +801,8 @@ class TrainingTab(QWidget):
 
         # Encoder
         lbl_e = QLabel("Encoder:")
-        lbl_e.setToolTip(
-            "Preprocessore per ridurre dimensionalità features (opzionale).\n"
+
+
             "Cosa è: trasformazione che comprime features mantenendo info utile.\n"
             "Perché è importante: riduce overfitting, accelera training, denoise data.\n"
             "Quando usarlo: se hai >100 features, prova pca/autoencoder.\n"
@@ -811,8 +811,8 @@ class TrainingTab(QWidget):
         top.addWidget(lbl_e)
         self.encoder_combo = QComboBox()
         self.encoder_combo.addItems(["none", "pca", "autoencoder", "vae", "latents"])
-        self.encoder_combo.setToolTip(
-            "Encoder disponibili:\n\n"
+
+
             "• none: nessuna trasformazione, usa features raw.\n"
             "  Pro: semplicità, interpretabilità.\n"
             "  Contro: curse of dimensionality con molte features.\n\n"
@@ -846,8 +846,8 @@ class TrainingTab(QWidget):
 
             if cuda_available:
                 gpu_name = torch.cuda.get_device_name(0)
-                self.use_gpu_training_check.setToolTip(
-                    f"Usa GPU per training encoder (Autoencoder/VAE).\n\n"
+
+
                     f"GPU rilevata: {gpu_name}\n\n"
                     f"Speedup atteso:\n"
                     f"• Autoencoder: 10-15x più veloce\n"
@@ -856,22 +856,22 @@ class TrainingTab(QWidget):
                     f"Ridge/Lasso/ElasticNet/RF rimangono su CPU."
                 )
             else:
-                self.use_gpu_training_check.setToolTip(
-                    "GPU non disponibile.\n\n"
+
+
                     "Per usare GPU:\n"
                     "1. Installa CUDA-enabled PyTorch\n"
                     "2. Riavvia l'applicazione"
                 )
         except Exception:
             self.use_gpu_training_check.setEnabled(False)
-            self.use_gpu_training_check.setToolTip("PyTorch non disponibile")
+
 
         top.addWidget(self.use_gpu_training_check)
 
         # Optimization
         lbl_opt = QLabel("Opt:")
-        lbl_opt.setToolTip(
-            "Ricerca automatica iperparametri (AutoML).\n"
+
+
             "Cosa è: algoritmo evolutivo che trova best hyperparameters.\n"
             "Perché è importante: ottimizza performance senza tuning manuale.\n"
             "Quando usarlo: quando non sai quali parametri scegliere.\n"
@@ -880,8 +880,8 @@ class TrainingTab(QWidget):
         top.addWidget(lbl_opt)
         self.opt_combo = QComboBox()
         self.opt_combo.addItems(["none", "genetic-basic", "nsga2"])
-        self.opt_combo.setToolTip(
-            "Metodi di ottimizzazione automatica:\n\n"
+
+
             "• none: usa parametri di default, training veloce (1x).\n"
             "  Quando: test rapido, parametri già noti.\n\n"
             "• genetic-basic: algoritmo genetico single-objective.\n"
@@ -902,8 +902,8 @@ class TrainingTab(QWidget):
 
         # Gen
         lbl_gen = QLabel("Gen:")
-        lbl_gen.setToolTip(
-            "Numero di generazioni dell'algoritmo genetico.\n"
+
+
             "Cosa è: iterazioni evolutive per convergere a soluzione ottima.\n"
             "Perché è importante: più generazioni = migliore ottimizzazione, ma più lento.\n"
             "Valori bassi (1-5): esplorazione limitata, veloce, può non convergere.\n"
@@ -915,8 +915,8 @@ class TrainingTab(QWidget):
         self.gen_spin = QSpinBox()
         self.gen_spin.setRange(1, 50)
         self.gen_spin.setValue(5)
-        self.gen_spin.setToolTip(
-            "Iterazioni evolutive.\n"
+
+
             "1-5: test rapido, convergenza parziale.\n"
             "10-20: standard, buon bilanciamento.\n"
             "30-50: massima qualità, molto lento (giorni).\n\n"
@@ -928,8 +928,8 @@ class TrainingTab(QWidget):
 
         # Pop
         lbl_pop = QLabel("Pop:")
-        lbl_pop.setToolTip(
-            "Dimensione popolazione algoritmo genetico.\n"
+
+
             "Cosa è: numero di candidati valutati per ogni generazione.\n"
             "Perché è importante: più popolazione = esplorazione spazio più ampia.\n"
             "Valori bassi (2-8): poca diversità, convergenza prematura, veloce.\n"
@@ -941,8 +941,8 @@ class TrainingTab(QWidget):
         self.pop_spin = QSpinBox()
         self.pop_spin.setRange(2, 64)
         self.pop_spin.setValue(8)
-        self.pop_spin.setToolTip(
-            "Candidati per generazione.\n"
+
+
             "2-8: veloce, poca esplorazione.\n"
             "16-32: raccomandato, buona diversità.\n"
             "48-64: massima esplorazione, lentissimo.\n\n"
@@ -958,13 +958,13 @@ class TrainingTab(QWidget):
     def _build_indicator_grid(self):
         """Build 4-column indicator grid with master checkbox"""
         grid_box = QGroupBox("Indicatori Tecnici")
-        grid_box.setToolTip("Seleziona gli indicatori da calcolare per ciascun timeframe durante il training.")
+
         grid_layout = QVBoxLayout(grid_box)
 
         # Master checkbox at top
         self.use_indicators_check = QCheckBox("Usa indicatori selezionati nel training")
         self.use_indicators_check.setChecked(True)
-        self.use_indicators_check.setToolTip("Se disabilitato, il training userà solo feature di base (OHLCV).")
+
         grid_layout.addWidget(self.use_indicators_check)
 
         # 4-column grid for indicators
@@ -995,7 +995,7 @@ class TrainingTab(QWidget):
 
             # Indicator label with tooltip
             lbl = QLabel(ind)
-            lbl.setToolTip(INDICATOR_TOOLTIPS.get(ind, ""))
+
             grid.addWidget(lbl, row_offset, col_offset)
 
             # Timeframe checkboxes
@@ -1004,7 +1004,7 @@ class TrainingTab(QWidget):
             for j, tf in enumerate(TIMEFRAMES, start=1):
                 cb = QCheckBox()
                 cb.setChecked(tf in selected)
-                cb.setToolTip(f"{ind} on {tf}")
+
                 self.indicator_checks[ind][tf] = cb
                 grid.addWidget(cb, row_offset, col_offset + j)
 
@@ -1014,100 +1014,100 @@ class TrainingTab(QWidget):
     def _build_additional_features(self):
         """Build additional features section"""
         feat_box = QGroupBox("Feature Aggiuntive")
-        feat_box.setToolTip("Feature avanzate oltre agli indicatori tecnici.")
+
         feat_layout = QGridLayout(feat_box)
 
         # Returns & Volatility
         self.returns_check = QCheckBox("Returns & Volatility")
         self.returns_check.setChecked(True)
-        self.returns_check.setToolTip(FEATURE_TOOLTIPS["Returns & Volatility"])
+
         feat_layout.addWidget(self.returns_check, 0, 0)
 
         lbl_ret_win = QLabel("Window:")
-        lbl_ret_win.setToolTip(PARAMETER_TOOLTIPS["returns_window"])
+
         feat_layout.addWidget(lbl_ret_win, 0, 1)
         self.returns_window = QSpinBox()
         self.returns_window.setRange(1, 100)
         self.returns_window.setValue(5)
-        self.returns_window.setToolTip(PARAMETER_TOOLTIPS["returns_window"])
+
         feat_layout.addWidget(self.returns_window, 0, 2)
 
         # Trading Sessions
         self.sessions_check = QCheckBox("Trading Sessions")
         self.sessions_check.setChecked(True)
-        self.sessions_check.setToolTip(FEATURE_TOOLTIPS["Trading Sessions"])
+
         feat_layout.addWidget(self.sessions_check, 1, 0)
 
         lbl_sess_overlap = QLabel("Overlap (min):")
-        lbl_sess_overlap.setToolTip(PARAMETER_TOOLTIPS["session_overlap"])
+
         feat_layout.addWidget(lbl_sess_overlap, 1, 1)
         self.session_overlap = QSpinBox()
         self.session_overlap.setRange(0, 120)
         self.session_overlap.setValue(30)
-        self.session_overlap.setToolTip(PARAMETER_TOOLTIPS["session_overlap"])
+
         feat_layout.addWidget(self.session_overlap, 1, 2)
 
         # Candlestick Patterns
         self.candlestick_check = QCheckBox("Candlestick Patterns")
         self.candlestick_check.setChecked(False)
-        self.candlestick_check.setToolTip(FEATURE_TOOLTIPS["Candlestick Patterns"])
+
         feat_layout.addWidget(self.candlestick_check, 2, 0)
 
         lbl_higher_tf = QLabel("Higher TF:")
-        lbl_higher_tf.setToolTip(PARAMETER_TOOLTIPS["higher_tf"])
+
         feat_layout.addWidget(lbl_higher_tf, 2, 1)
         self.higher_tf_combo = QComboBox()
         self.higher_tf_combo.addItems(["5m", "15m", "30m", "1h", "4h", "1d"])
         self.higher_tf_combo.setCurrentText("15m")
-        self.higher_tf_combo.setToolTip(PARAMETER_TOOLTIPS["higher_tf"])
+
         feat_layout.addWidget(self.higher_tf_combo, 2, 2)
 
         # Volume Profile
         self.volume_profile_check = QCheckBox("Volume Profile")
         self.volume_profile_check.setChecked(False)
-        self.volume_profile_check.setToolTip(FEATURE_TOOLTIPS["Volume Profile"])
+
         feat_layout.addWidget(self.volume_profile_check, 3, 0)
 
         lbl_vp_bins = QLabel("Bins:")
-        lbl_vp_bins.setToolTip("Numero di livelli di prezzo per il volume profile.")
+
         feat_layout.addWidget(lbl_vp_bins, 3, 1)
         self.vp_bins = QSpinBox()
         self.vp_bins.setRange(10, 200)
         self.vp_bins.setValue(50)
-        self.vp_bins.setToolTip("Quanti livelli di prezzo considerare per il volume profile.")
+
         feat_layout.addWidget(self.vp_bins, 3, 2)
 
         lbl_vp_window = QLabel("Window:")
-        lbl_vp_window.setToolTip("Dimensione della finestra per calcolo volume profile (numero di candele).")
+
         feat_layout.addWidget(lbl_vp_window, 3, 3)
         self.vp_window = QSpinBox()
         self.vp_window.setRange(20, 500)
         self.vp_window.setValue(100)
-        self.vp_window.setToolTip("Quante candele considerare per il volume profile (default: 100).")
+
         feat_layout.addWidget(self.vp_window, 3, 4)
 
         # VSA (Volume Spread Analysis)
         self.vsa_check = QCheckBox("VSA (Volume Spread Analysis)")
         self.vsa_check.setChecked(False)
-        self.vsa_check.setToolTip("Analizza relazione volume/spread per identificare accumulo/distribuzione")
+
         feat_layout.addWidget(self.vsa_check, 4, 0)
 
         lbl_vsa_vol_ma = QLabel("Vol MA:")
-        lbl_vsa_vol_ma.setToolTip("Periodo moving average per volume VSA")
+
         feat_layout.addWidget(lbl_vsa_vol_ma, 4, 1)
         self.vsa_volume_ma = QSpinBox()
         self.vsa_volume_ma.setRange(5, 100)
         self.vsa_volume_ma.setValue(20)
-        self.vsa_volume_ma.setToolTip("Periodo MA per volume (default: 20)")
+
         feat_layout.addWidget(self.vsa_volume_ma, 4, 2)
 
         lbl_vsa_spread_ma = QLabel("Spread MA:")
-        lbl_vsa_spread_ma.setToolTip("Periodo moving average per spread VSA")
+
         feat_layout.addWidget(lbl_vsa_spread_ma, 4, 3)
         self.vsa_spread_ma = QSpinBox()
         self.vsa_spread_ma.setRange(5, 100)
         self.vsa_spread_ma.setValue(20)
-        self.vsa_spread_ma.setToolTip("Periodo MA per spread (default: 20)")
+
         feat_layout.addWidget(self.vsa_spread_ma, 4, 4)
 
         self.layout.addWidget(feat_box)
@@ -1115,151 +1115,151 @@ class TrainingTab(QWidget):
     def _build_advanced_params(self):
         """Build advanced parameters section"""
         adv_box = QGroupBox("Parametri Avanzati")
-        adv_box.setToolTip("Parametri tecnici per feature engineering e preprocessing.")
+
         adv = QGridLayout(adv_box)
 
         row = 0
 
         # Warmup bars
         lbl_wu = QLabel("Warmup bars:")
-        lbl_wu.setToolTip(PARAMETER_TOOLTIPS["warmup"])
+
         adv.addWidget(lbl_wu, row, 0)
         self.warmup = QSpinBox()
         self.warmup.setRange(0, 5000)
         self.warmup.setValue(16)
-        self.warmup.setToolTip(PARAMETER_TOOLTIPS["warmup"])
+
         adv.addWidget(self.warmup, row, 1)
 
         # RV window
         lbl_rv = QLabel("RV window:")
-        lbl_rv.setToolTip(PARAMETER_TOOLTIPS["rv_window"])
+
         adv.addWidget(lbl_rv, row, 2)
         self.rv_w = QSpinBox()
         self.rv_w.setRange(1, 10000)
         self.rv_w.setValue(60)
-        self.rv_w.setToolTip(PARAMETER_TOOLTIPS["rv_window"])
+
         adv.addWidget(self.rv_w, row, 3)
 
         # Min coverage
         lbl_cov = QLabel("Min coverage:")
-        lbl_cov.setToolTip(PARAMETER_TOOLTIPS["min_coverage"])
+
         adv.addWidget(lbl_cov, row, 4)
         self.min_coverage = QDoubleSpinBox()
         self.min_coverage.setRange(0.0, 1.0)
         self.min_coverage.setSingleStep(0.05)
         self.min_coverage.setDecimals(2)
         self.min_coverage.setValue(0.15)
-        self.min_coverage.setToolTip(PARAMETER_TOOLTIPS["min_coverage"])
+
         adv.addWidget(self.min_coverage, row, 5)
 
         row += 1
 
         # ATR period
         lbl_atr = QLabel("ATR period:")
-        lbl_atr.setToolTip("Numero di periodi per calcolare l'ATR.")
+
         adv.addWidget(lbl_atr, row, 0)
         self.atr_n = QSpinBox()
         self.atr_n.setRange(1, 500)
         self.atr_n.setValue(14)
-        self.atr_n.setToolTip("Finestra dell'ATR (volatilità).")
+
         adv.addWidget(self.atr_n, row, 1)
 
         # RSI period
         lbl_rsi = QLabel("RSI period:")
-        lbl_rsi.setToolTip("Numero di periodi per calcolare l'RSI.")
+
         adv.addWidget(lbl_rsi, row, 2)
         self.rsi_n = QSpinBox()
         self.rsi_n.setRange(2, 500)
         self.rsi_n.setValue(14)
-        self.rsi_n.setToolTip("Finestra RSI (momento).")
+
         adv.addWidget(self.rsi_n, row, 3)
 
         # Bollinger period
         lbl_bb = QLabel("Bollinger period:")
-        lbl_bb.setToolTip("Numero di barre per calcolare le bande di Bollinger.")
+
         adv.addWidget(lbl_bb, row, 4)
         self.bb_n = QSpinBox()
         self.bb_n.setRange(2, 500)
         self.bb_n.setValue(20)
-        self.bb_n.setToolTip("Finestra per Bande di Bollinger.")
+
         adv.addWidget(self.bb_n, row, 5)
 
         row += 1
 
         # Hurst window
         lbl_hu = QLabel("Hurst window:")
-        lbl_hu.setToolTip("Lunghezza finestra per stimare l'esponente di Hurst.")
+
         adv.addWidget(lbl_hu, row, 0)
         self.hurst_w = QSpinBox()
         self.hurst_w.setRange(8, 4096)
         self.hurst_w.setValue(64)
-        self.hurst_w.setToolTip("Window per l'esponente di Hurst.")
+
         adv.addWidget(self.hurst_w, row, 1)
 
         # Lightning epochs (only for lightning model)
         lbl_epochs = QLabel("Lightning epochs:")
-        lbl_epochs.setToolTip("Numero di epoche per il trainer Lightning.")
+
         adv.addWidget(lbl_epochs, row, 2)
         self.light_epochs = QSpinBox()
         self.light_epochs.setRange(1, 1000)
         self.light_epochs.setValue(30)
-        self.light_epochs.setToolTip("Epoche per il trainer Lightning.")
+
         adv.addWidget(self.light_epochs, row, 3)
 
         # Lightning batch
         lbl_batch = QLabel("Lightning batch:")
-        lbl_batch.setToolTip("Batch size per il trainer Lightning.")
+
         adv.addWidget(lbl_batch, row, 4)
         self.light_batch = QSpinBox()
         self.light_batch.setRange(4, 512)
         self.light_batch.setValue(64)
-        self.light_batch.setToolTip("Batch size per il trainer Lightning.")
+
         adv.addWidget(self.light_batch, row, 5)
 
         row += 1
 
         # Lightning val_frac
         lbl_val = QLabel("Lightning val_frac:")
-        lbl_val.setToolTip("Frazione dei dati riservata alla validation per Lightning.")
+
         adv.addWidget(lbl_val, row, 0)
         self.light_val_frac = QDoubleSpinBox()
         self.light_val_frac.setRange(0.05, 0.5)
         self.light_val_frac.setSingleStep(0.05)
         self.light_val_frac.setDecimals(2)
         self.light_val_frac.setValue(0.2)
-        self.light_val_frac.setToolTip("Quota di dati usata per la validation (0.05-0.5).")
+
         adv.addWidget(self.light_val_frac, row, 1)
 
         # Lightning patch_len
         lbl_patch = QLabel("Lightning patch:")
-        lbl_patch.setToolTip("Lunghezza della finestra (patch) per Lightning.")
+
         adv.addWidget(lbl_patch, row, 2)
         self.patch_len = QSpinBox()
         self.patch_len.setRange(16, 1024)
         self.patch_len.setValue(64)
-        self.patch_len.setToolTip("Numero di barre nel patch passato al modello Lightning.")
+
         adv.addWidget(self.patch_len, row, 3)
 
         row += 1
 
         # Encoder latent dimension
         lbl_latent = QLabel("Encoder latent dim:")
-        lbl_latent.setToolTip("Dimensione dello spazio latente per autoencoder/VAE.")
+
         adv.addWidget(lbl_latent, row, 0)
         self.latent_dim = QSpinBox()
         self.latent_dim.setRange(2, 256)
         self.latent_dim.setValue(16)
-        self.latent_dim.setToolTip("Numero di dimensioni nello spazio latente compresso (per encoder neurali).")
+
         adv.addWidget(self.latent_dim, row, 1)
 
         # Encoder training epochs
         lbl_enc_epochs = QLabel("Encoder epochs:")
-        lbl_enc_epochs.setToolTip("Numero di epoche di training per autoencoder/VAE.")
+
         adv.addWidget(lbl_enc_epochs, row, 2)
         self.encoder_epochs = QSpinBox()
         self.encoder_epochs.setRange(10, 500)
         self.encoder_epochs.setValue(50)
-        self.encoder_epochs.setToolTip("Quante epoche addestrare l'encoder neurale.")
+
         adv.addWidget(self.encoder_epochs, row, 3)
 
         row += 1
@@ -1272,8 +1272,8 @@ class TrainingTab(QWidget):
 
         # Diffusion timesteps
         lbl_timesteps = QLabel("Diffusion timesteps:")
-        lbl_timesteps.setToolTip(
-            "Numero di timesteps del processo di diffusione.\n"
+
+
             "Cosa è: quanti step di denoising usare (T nella formula DDPM).\n"
             "Perché è importante: più steps = migliore qualità, ma inference più lenta.\n"
             "Valori bassi (10-50): veloce, qualità media, buono per test rapidi.\n"
@@ -1286,8 +1286,8 @@ class TrainingTab(QWidget):
         self.diffusion_timesteps = QSpinBox()
         self.diffusion_timesteps.setRange(10, 5000)
         self.diffusion_timesteps.setValue(200)
-        self.diffusion_timesteps.setToolTip(
-            "T timesteps per denoising.\n"
+
+
             "10-50: test rapido, bassa qualità.\n"
             "100-500: raccomandato, bilanciato.\n"
             "1000-5000: ricerca, massima qualità.\n"
@@ -1297,8 +1297,8 @@ class TrainingTab(QWidget):
 
         # Learning rate
         lbl_lr = QLabel("Learning rate:")
-        lbl_lr.setToolTip(
-            "Step size per gradient descent durante training.\n"
+
+
             "Cosa è: quanto velocemente il modello aggiorna i pesi.\n"
             "Perché è importante: LR troppo alto → divergenza, troppo basso → non converge.\n"
             "Valori bassi (1e-6 - 1e-5): training stabile ma lentissimo, usa per fine-tuning.\n"
@@ -1313,8 +1313,8 @@ class TrainingTab(QWidget):
         self.learning_rate.setSingleStep(1e-5)
         self.learning_rate.setDecimals(6)
         self.learning_rate.setValue(1e-4)
-        self.learning_rate.setToolTip(
-            "Step size ottimizzatore.\n"
+
+
             "1e-6 - 1e-5: ultra safe, lentissimo.\n"
             "1e-4 - 5e-4: raccomandato (diffusion/lightning).\n"
             "1e-3 - 1e-2: veloce ma rischioso (divergenza).\n"
@@ -1324,8 +1324,8 @@ class TrainingTab(QWidget):
 
         # Batch size (diffusion/lightning)
         lbl_batch_diff = QLabel("Batch size (DL):")
-        lbl_batch_diff.setToolTip(
-            "Numero di samples per batch durante training deep learning.\n"
+
+
             "Cosa è: quanti esempi elaborare in parallelo prima di aggiornare pesi.\n"
             "Perché è importante: batch grande = gradiente stabile, batch piccolo = più noise.\n"
             "Valori bassi (4-16): gradient noisy, generalizza meglio, usa meno RAM.\n"
@@ -1338,8 +1338,8 @@ class TrainingTab(QWidget):
         self.batch_size_dl = QSpinBox()
         self.batch_size_dl.setRange(4, 512)
         self.batch_size_dl.setValue(64)
-        self.batch_size_dl.setToolTip(
-            "Samples per batch (deep learning).\n"
+
+
             "4-16: bassa RAM, gradient noisy, generalizza.\n"
             "32-128: raccomandato, bilanciato.\n"
             "256-512: serve GPU potente (8+ GB VRAM).\n"
@@ -1351,8 +1351,8 @@ class TrainingTab(QWidget):
 
         # Model channels (UNet capacity)
         lbl_channels = QLabel("Model channels:")
-        lbl_channels.setToolTip(
-            "Numero di canali base per architettura UNet/Transformer.\n"
+
+
             "Cosa è: capacità del modello (simile a 'width' di una neural network).\n"
             "Perché è importante: più canali = più parametri = più capacity, ma overfitting.\n"
             "Valori bassi (32-64): modello piccolo, veloce, rischio underfitting.\n"
@@ -1365,8 +1365,8 @@ class TrainingTab(QWidget):
         self.model_channels = QSpinBox()
         self.model_channels.setRange(32, 512)
         self.model_channels.setValue(128)
-        self.model_channels.setToolTip(
-            "Canali base UNet.\n"
+
+
             "32-64: modello piccolo, <1M params, veloce.\n"
             "128-192: raccomandato, ~5-20M params.\n"
             "256-512: modello enorme, >50M params, serve GPU potente.\n"
@@ -1376,8 +1376,8 @@ class TrainingTab(QWidget):
 
         # Dropout
         lbl_dropout = QLabel("Dropout:")
-        lbl_dropout.setToolTip(
-            "Frazione di neuroni disattivati random durante training (regolarizzazione).\n"
+
+
             "Cosa è: tecnica per prevenire overfitting disattivando random connections.\n"
             "Perché è importante: riduce overfitting, forza il modello a essere robusto.\n"
             "Valori bassi (0.0-0.1): nessuna/poca regolarizzazione, rischio overfitting.\n"
@@ -1392,8 +1392,8 @@ class TrainingTab(QWidget):
         self.dropout.setSingleStep(0.05)
         self.dropout.setDecimals(2)
         self.dropout.setValue(0.1)
-        self.dropout.setToolTip(
-            "Dropout probability.\n"
+
+
             "0.0: nessuna regolarizzazione (overfitting risk).\n"
             "0.1-0.3: raccomandato, bilanciato.\n"
             "0.4-0.6: forte regolarizzazione (underfitting risk).\n"
@@ -1403,8 +1403,8 @@ class TrainingTab(QWidget):
 
         # Num heads (Transformer)
         lbl_heads = QLabel("Attention heads:")
-        lbl_heads.setToolTip(
-            "Numero di teste di attenzione per architettura Transformer.\n"
+
+
             "Cosa è: parallelizzazione del meccanismo di attention (multi-head attention).\n"
             "Perché è importante: più heads = cattura pattern diversi in parallelo.\n"
             "Valori bassi (1-2): attenzione semplice, veloce, capacity limitata.\n"
@@ -1417,8 +1417,8 @@ class TrainingTab(QWidget):
         self.num_heads = QSpinBox()
         self.num_heads.setRange(1, 16)
         self.num_heads.setValue(8)
-        self.num_heads.setToolTip(
-            "Teste attention (Transformer).\n"
+
+
             "1-2: semplice, veloce.\n"
             "4-8: raccomandato (standard).\n"
             "12-16: massima capacity (GPT-like).\n"
@@ -1434,8 +1434,8 @@ class TrainingTab(QWidget):
     def _build_nvidia_optimizations(self):
         """Build NVIDIA GPU Optimization Stack section"""
         nvidia_box = QGroupBox("🚀 NVIDIA Optimization Stack (GPU Acceleration)")
-        nvidia_box.setToolTip(
-            "Ottimizzazioni NVIDIA per accelerare il training su GPU.\n"
+
+
             "Richiede GPU NVIDIA con CUDA. Speedup fino a 30x!\n"
             "Automatic Mixed Precision (AMP), torch.compile, fused optimizers, Flash Attention."
         )
@@ -1445,8 +1445,8 @@ class TrainingTab(QWidget):
 
         # Master enable checkbox
         self.nvidia_enable = QCheckBox("Abilita NVIDIA Optimization Stack")
-        self.nvidia_enable.setToolTip(
-            "Abilita tutte le ottimizzazioni NVIDIA disponibili:\n"
+
+
             "- Automatic Mixed Precision (AMP)\n"
             "- torch.compile per model optimization\n"
             "- Fused optimizers (APEX)\n"
@@ -1459,15 +1459,15 @@ class TrainingTab(QWidget):
 
         # AMP checkbox
         lbl_amp = QLabel("Mixed Precision (AMP):")
-        lbl_amp.setToolTip(
-            "Automatic Mixed Precision - usa FP16/BF16 invece di FP32.\n"
+
+
             "Speedup: 2-3x più veloce, 50% meno memoria."
         )
         nvidia_layout.addWidget(lbl_amp, row, 0)
 
         self.use_amp = QCheckBox("Enable")
         self.use_amp.setChecked(True)
-        self.use_amp.setToolTip("Abilita AMP (raccomandato)")
+
         nvidia_layout.addWidget(self.use_amp, row, 1)
 
         # Precision combo
@@ -1477,8 +1477,8 @@ class TrainingTab(QWidget):
         self.precision_combo = QComboBox()
         self.precision_combo.addItems(["fp16", "bf16", "fp32"])
         self.precision_combo.setCurrentText("fp16")
-        self.precision_combo.setToolTip(
-            "Tipo di precisione:\n"
+
+
             "fp16: FP16 (raccomandato, GPU >= GTX 10xx)\n"
             "bf16: BrainFloat16 (GPU Ampere+: RTX 30xx/40xx)\n"
             "fp32: Full precision (no speedup)"
@@ -1488,8 +1488,8 @@ class TrainingTab(QWidget):
 
         # torch.compile checkbox
         lbl_compile = QLabel("torch.compile:")
-        lbl_compile.setToolTip(
-            "Compila il modello con PyTorch 2.0+ compiler.\n"
+
+
             "Speedup: 1.5-2x più veloce.\n"
             "Richiede PyTorch >= 2.0"
         )
@@ -1497,14 +1497,14 @@ class TrainingTab(QWidget):
 
         self.compile_model = QCheckBox("Enable")
         self.compile_model.setChecked(True)
-        self.compile_model.setToolTip("Abilita torch.compile (PyTorch 2.0+)")
+
         nvidia_layout.addWidget(self.compile_model, row, 1)
         row += 1
 
         # Fused optimizer checkbox
         lbl_fused = QLabel("Fused Optimizer:")
-        lbl_fused.setToolTip(
-            "Usa NVIDIA APEX fused optimizer.\n"
+
+
             "Speedup: 1.2-1.5x più veloce.\n"
             "Richiede: pip install apex (vedi NVIDIA_INSTALLATION.md)"
         )
@@ -1512,14 +1512,14 @@ class TrainingTab(QWidget):
 
         self.use_fused_optimizer = QCheckBox("Enable (requires APEX)")
         self.use_fused_optimizer.setChecked(False)  # Default off (requires APEX)
-        self.use_fused_optimizer.setToolTip("Richiede NVIDIA APEX installato")
+
         nvidia_layout.addWidget(self.use_fused_optimizer, row, 1)
         row += 1
 
         # Flash Attention checkbox
         lbl_flash = QLabel("Flash Attention 2:")
-        lbl_flash.setToolTip(
-            "Flash Attention 2 - attenzione ultra-veloce.\n"
+
+
             "Speedup: 2-4x più veloce per transformer.\n"
             "Richiede: GPU Ampere+ (RTX 30xx/40xx, A100)"
         )
@@ -1527,14 +1527,14 @@ class TrainingTab(QWidget):
 
         self.use_flash_attention = QCheckBox("Enable (requires Ampere+ GPU)")
         self.use_flash_attention.setChecked(False)  # Default off (requires Ampere+)
-        self.use_flash_attention.setToolTip("Solo GPU Ampere+: RTX 30xx/40xx")
+
         nvidia_layout.addWidget(self.use_flash_attention, row, 1)
         row += 1
 
         # Gradient accumulation
         lbl_grad_accum = QLabel("Gradient Accumulation:")
-        lbl_grad_accum.setToolTip(
-            "Accumula gradienti su N steps prima di update.\n"
+
+
             "Simula batch size più grandi senza usare più memoria."
         )
         nvidia_layout.addWidget(lbl_grad_accum, row, 0)
@@ -1542,7 +1542,7 @@ class TrainingTab(QWidget):
         self.grad_accumulation_steps = QSpinBox()
         self.grad_accumulation_steps.setRange(1, 32)
         self.grad_accumulation_steps.setValue(1)
-        self.grad_accumulation_steps.setToolTip("1 = no accumulation, >1 = accumulate gradients")
+
         nvidia_layout.addWidget(self.grad_accumulation_steps, row, 1)
         row += 1
 
@@ -1614,15 +1614,15 @@ class TrainingTab(QWidget):
 
         self.validate_btn = QPushButton("Multi-Horizon Validation")
         self.validate_btn.clicked.connect(self._start_multi_horizon_validation)
-        self.validate_btn.setToolTip(
-            "Validate trained model across multiple forecast horizons\n"
+
+
             "to identify optimal prediction window and assess performance degradation"
         )
 
         self.grid_training_btn = QPushButton("Grid Training Manager")
         self.grid_training_btn.clicked.connect(self._open_grid_training)
-        self.grid_training_btn.setToolTip(
-            "Open Grid Training Manager to train multiple model configurations\n"
+
+
             "with regime-based selection and automatic performance optimization"
         )
         self.grid_training_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")

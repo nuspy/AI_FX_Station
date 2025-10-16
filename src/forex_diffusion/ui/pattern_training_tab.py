@@ -145,13 +145,11 @@ class PatternTrainingTab(QWidget):
         self.training_start_date = QDateEdit()
         self.training_start_date.setDate(QDate(2020, 1, 1))
         self.training_start_date.setCalendarPopup(True)
-        self.training_start_date.setToolTip("Inizio periodo di addestramento")
         period_layout.addRow("Training Start Date:", self.training_start_date)
 
         self.training_end_date = QDateEdit()
         self.training_end_date.setDate(QDate(2024, 12, 31))
         self.training_end_date.setCalendarPopup(True)
-        self.training_end_date.setToolTip("Fine periodo di addestramento")
         period_layout.addRow("Training End Date:", self.training_end_date)
 
         group_layout.addWidget(QLabel("Training Data Period:"))
@@ -161,7 +159,6 @@ class PatternTrainingTab(QWidget):
         self.assets_edit = QTextEdit()
         self.assets_edit.setMaximumHeight(60)
         self.assets_edit.setPlainText("EUR/USD, GBP/USD, USD/JPY")
-        self.assets_edit.setToolTip("Assets to train (comma separated)")
         group_layout.addWidget(QLabel("Assets (comma separated):"))
         group_layout.addWidget(self.assets_edit)
 
@@ -169,7 +166,6 @@ class PatternTrainingTab(QWidget):
         self.timeframes_edit = QTextEdit()
         self.timeframes_edit.setMaximumHeight(60)
         self.timeframes_edit.setPlainText("1h, 4h, 1d")
-        self.timeframes_edit.setToolTip("Timeframes to optimize")
         group_layout.addWidget(QLabel("Timeframes (comma separated):"))
         group_layout.addWidget(self.timeframes_edit)
 
@@ -239,7 +235,6 @@ class PatternTrainingTab(QWidget):
         self.train_vae_btn = QPushButton("🧠 Train Pattern VAE")
         self.train_vae_btn.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 10px; }")
         self.train_vae_btn.clicked.connect(self._train_pattern_vae)
-        self.train_vae_btn.setToolTip("Train ML-based pattern detection (Variational Autoencoder)")
         control_buttons_layout.addWidget(self.train_vae_btn)
 
         self.pause_training_btn = QPushButton("⏸️ Pause")

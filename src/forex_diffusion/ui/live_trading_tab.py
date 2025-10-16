@@ -77,7 +77,6 @@ class LiveTradingTab(QWidget):
         # Connection mode
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Simulated", "Live (cTrader)"])
-        self.mode_combo.setToolTip("Select simulation mode for testing or live mode for real trading")
         group_layout.addRow("Mode:", self.mode_combo)
 
         # API credentials (only for live mode)

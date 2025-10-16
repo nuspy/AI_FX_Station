@@ -62,16 +62,13 @@ class LogsTab(QWidget):
 
         self.auto_refresh_logs = QCheckBox("Auto Refresh")
         self.auto_refresh_logs.setChecked(True)
-        self.auto_refresh_logs.setToolTip("Automatically refresh logs every 30 seconds")
         header_layout.addWidget(self.auto_refresh_logs)
 
         clear_logs_btn = QPushButton("🗑️ Clear All")
-        clear_logs_btn.setToolTip("Clear all log entries")
         clear_logs_btn.clicked.connect(self._clear_all_logs)
         header_layout.addWidget(clear_logs_btn)
 
         export_logs_btn = QPushButton("📁 Export")
-        export_logs_btn.setToolTip("Export logs to file")
         export_logs_btn.clicked.connect(self._export_logs)
         header_layout.addWidget(export_logs_btn)
 

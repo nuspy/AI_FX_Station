@@ -99,7 +99,6 @@ class BacktestingTab(QWidget):
 
         # Indicator selection grid with per-indicator params
         ind_group = QGroupBox("Indicatori tecnici per TimeFrame")
-        ind_group.setToolTip("Indicatori tecnici: parametri (da/a/passo) e attivazione per timeframe.")
         ind_grid = QGridLayout(ind_group)
         # headers
         ind_grid.addWidget(QLabel("Indicatore"), 0, 0)

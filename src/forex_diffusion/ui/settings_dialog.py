@@ -219,10 +219,8 @@ class SettingsDialog(QDialog):
 
         # cTrader enabled checkbox (enables real-time ticks, volumes, order book)
         self.ctrader_enabled_checkbox = QCheckBox("Enable cTrader Real-time Features")
-        self.ctrader_enabled_checkbox.setToolTip("Enable cTrader real-time ticks, volumes, and order book streaming via WebSocket")
 
         self.show_provider_label_checkbox = QCheckBox("Show Provider Label on Chart")
-        self.show_provider_label_checkbox.setToolTip("Display RT data and Historical provider information on the chart")
 
         provider_form.addWidget(QLabel("Primary Provider:"), 0, 0)
         provider_form.addWidget(self.primary_provider, 0, 1)
