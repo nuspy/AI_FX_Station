@@ -215,7 +215,7 @@ class UIBuilderMixin:
                 left_splitter.restoreState(bytes.fromhex(saved_state))
             except Exception:
                 pass
-        left_splitter.splitterMoved.connect(lambda: set_setting('chart.left_splitter_state', left_splitter.saveState().hex()))
+        left_splitter.splitterMoved.connect(lambda: set_setting('chart.left_splitter_state', bytes(left_splitter.saveState()).hex()))
 
         main_splitter.addWidget(left_splitter)
 
@@ -349,7 +349,7 @@ class UIBuilderMixin:
             except Exception:
                 pass
         analysis_splitter.splitterMoved.connect(
-            lambda: set_setting('chart.analysis_splitter_state', analysis_splitter.saveState().hex())
+            lambda: set_setting('chart.analysis_splitter_state', bytes(analysis_splitter.saveState()).hex())
         )
         
         # Add analysis panel to center splitter (right side)
@@ -370,7 +370,7 @@ class UIBuilderMixin:
             except Exception:
                 pass
         center_splitter.splitterMoved.connect(
-            lambda: set_setting('chart.center_splitter_state', center_splitter.saveState().hex())
+            lambda: set_setting('chart.center_splitter_state', bytes(center_splitter.saveState()).hex())
         )
 
         # Add center splitter to main splitter
@@ -383,7 +383,7 @@ class UIBuilderMixin:
                 main_splitter.restoreState(bytes.fromhex(saved_main_state))
             except Exception:
                 pass
-        main_splitter.splitterMoved.connect(lambda: set_setting('chart.main_splitter_state', main_splitter.saveState().hex()))
+        main_splitter.splitterMoved.connect(lambda: set_setting('chart.main_splitter_state', bytes(main_splitter.saveState()).hex()))
 
         # Set up chart tab layout
         chart_layout = QVBoxLayout(chart_tab)
