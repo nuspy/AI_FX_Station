@@ -13,6 +13,7 @@ from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from .rewards import RewardFunction, MultiObjectiveReward, RewardConfig
 from .environments import PortfolioEnvironment
 from .networks import ActorNetwork, CriticNetwork
+from .actor_critic import BaseAgent, PPOAgent
 
 __all__ = [
     'ReplayBuffer',
@@ -23,4 +24,6 @@ __all__ = [
     'PortfolioEnvironment',
     'ActorNetwork',
     'CriticNetwork',
+    'BaseAgent',
+    'PPOAgent',
 ]
