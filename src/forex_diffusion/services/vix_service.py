@@ -49,9 +49,8 @@ class VIXService(ThreadedBackgroundService):
         self._latest_classification: Optional[str] = None
         self._latest_timestamp: Optional[int] = None
         
-        # Create VIX provider
-        from ..providers.sentiment_provider import VIXProvider
-        self.vix_provider = VIXProvider()
+        # Yahoo Finance VIX endpoint
+        self.base_url = "https://query1.finance.yahoo.com/v7/finance/quote"
     
     @property
     def service_name(self) -> str:
@@ -66,36 +65,53 @@ class VIXService(ThreadedBackgroundService):
         and stores in database.
         """
         try:
-            # Fetch VIX asynchronously
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Fetch VIX synchronously using requests
+            import requests
             
-            vix_data = loop.run_until_complete(
-                self.vix_provider._fetch_sentiment_impl("VIX", None, None)
-            )
+            params = {
+                'symbols': '^VIX',
+                'fields': 'regularMarketPrice,regularMarketTime'
+            }
             
-            loop.close()
+            response = requests.get(self.base_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
             
-            if vix_data and len(vix_data) > 0:
-                data = vix_data[0]
-                
-                vix_value = data.get('value')
-                classification = data.get('classification')
-                timestamp = data.get('timestamp')
-                
-                # Update cache
-                self._latest_vix = vix_value
-                self._latest_classification = classification
-                self._latest_timestamp = timestamp
-                
-                # Store in database
-                self._store_vix(vix_value, classification, timestamp)
-                
-                logger.info(
-                    f"VIX updated: {vix_value:.2f} ({classification})"
-                )
+            if 'quoteResponse' not in data or 'result' not in data['quoteResponse']:
+                logger.warning("No VIX data returned from Yahoo Finance")
+                return
+            
+            result = data['quoteResponse']['result'][0]
+            
+            vix_value = result.get('regularMarketPrice')
+            timestamp = result.get('regularMarketTime', int(datetime.now(timezone.utc).timestamp()))
+            
+            if vix_value is None:
+                logger.warning("VIX value is None")
+                return
+            
+            # Classify VIX level
+            if vix_value < 12:
+                classification = "Complacency"
+            elif vix_value < 20:
+                classification = "Normal"
+            elif vix_value < 30:
+                classification = "Concern"
             else:
-                logger.warning("No VIX data received")
+                classification = "Fear"
+            
+            # Convert timestamp to milliseconds
+            timestamp_ms = timestamp * 1000
+            
+            # Update cache
+            self._latest_vix = vix_value
+            self._latest_classification = classification
+            self._latest_timestamp = timestamp_ms
+            
+            # Store in database
+            self._store_vix(vix_value, classification, timestamp_ms)
+            
+            logger.info(f"VIX updated: {vix_value:.2f} ({classification})")
                 
         except Exception as e:
             logger.error(f"Failed to fetch VIX: {e}")
