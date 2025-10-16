@@ -167,7 +167,9 @@ def tr(key: str, default: Optional[str] = None, **kwargs) -> str:
         if translation is None:
             if default is not None:
                 return default
-            logger.debug(f"Translation not found for key: {key}")
+            # Only log missing translations for non-tooltip keys to reduce noise
+            if not key.endswith('.tooltip'):
+                logger.debug(f"Translation not found for key: {key}")
             return key
     
     # Apply string formatting if kwargs provided
