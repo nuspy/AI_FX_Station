@@ -2,35 +2,39 @@
 
 ## 🎯 Dove Trovare il Pannello
 
-Il **SentimentPanel** si trova nel **ChartTab**, sul **lato destro** della finestra, nella sezione inferiore dello splitter verticale:
+Il **SentimentPanel** si trova nel **ChartTab**, in un **pannello mobile a destra del grafico**, nella sezione inferiore (sotto Order Flow Panel):
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  ForexGPT - Chart Tab                               │
-├────────────┬────────────────────────────────────────┤
-│            │  Area Grafico (Chart)                  │
-│ Market     │                                         │
-│ Watch      │                                         │
-│            ├────────────────────────────────────────┤
-│            │  Orders Table                           │
-├────────────┼────────────────────────────────────────┤
-│            │  📊 Order Flow Panel                   │
-│ Order      │                                         │
-│ Books      ├────────────────────────────────────────┤
-│            │  💭 SENTIMENT PANEL ← QUI!             │
-│            │  - Market Sentiment Analysis            │
-│            │  - Long/Short Positioning               │
-│            │  - Contrarian Signals                   │
-│            │  - Trading Alerts                       │
-└────────────┴────────────────────────────────────────┘
+┌─────────────┬──────────────────────┬─────────────────┐
+│             │                      │ ╔═════════════╗ │
+│ Market      │                      │ ║ 📊 ORDER    ║ │
+│ Watch       │      GRAFICO         │ ║ FLOW PANEL  ║ │
+│             │                      │ ║             ║ │
+│             │                      │ ╠═════════════╣ │ ← Handle Movibile (BLU)
+├─────────────┤                      │ ║ 💭 SENTIMEN ║ │
+│             │                      │ ║ T PANEL     ║ │
+│ Order       │                      │ ║             ║ │
+│ Books       │  Orders Table (sotto)│ ║   ← QUI!    ║ │
+│             │                      │ ╚═════════════╝ │
+└─────────────┴──────────────────────┴─────────────────┘
+                                       ↑
+                                Panel Analisi Mobile
 ```
+
+### Caratteristiche del Pannello
+
+- **Frame visibile** grigio (#3a3a3a) attorno al pannello
+- **Handle blu** (4px) tra Order Flow e Sentiment - **trascina per ridimensionare**
+- **Larghezza minima**: 350px
+- **Split iniziale**: 50% Order Flow, 50% Sentiment
+- **Completamente ridimensionabile** trascinando i separatori
 
 ## 🔍 Il Pannello Non è Visibile?
 
 Se non vedi il SentimentPanel, segui questi passi:
 
-### 1. **Controlla il Bordo Blu**
-Il pannello ha un **bordo blu (#0078d7)** per facilitare l'identificazione. Scorri verso il basso nello splitter di destra.
+### 1. **Cerca il Frame Grigio a Destra del Grafico**
+Il pannello analisi ha un **frame grigio (#3a3a3a)** ben visibile sul lato destro del grafico. Il SentimentPanel ha anche un **bordo blu (#0078d7)** interno.
 
 ### 2. **Trascina i Separatori dello Splitter**
 Gli splitter possono essere collassati. Cerca le **linee sottili** tra i pannelli e trascinale per espandere lo spazio.
