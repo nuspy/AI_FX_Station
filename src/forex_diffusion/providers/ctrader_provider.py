@@ -701,8 +701,7 @@ class CTraderProvider(BaseProvider):
                     "ask": final_ask,
                     "timestamp": message.timestamp if hasattr(message, 'timestamp') else int(time.time() * 1000),
                 }
-                logger.debug(f"[{self.name}] 💹 SPOT: {symbol_name} bid={final_bid:.5f} ask={final_ask:.5f} (raw: {raw_bid:.5f}/{raw_ask:.5f})")
-                
+
                 # Send to chart via callback if registered
                 # NOTE: Called from Twisted thread, callback must handle thread safety
                 if self.on_tick_callback:

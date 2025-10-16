@@ -61,7 +61,6 @@ class DataService(ChartServiceBase):
     def _on_tick_main(self, payload: dict):
         """GUI-thread handler: aggiorna Market Watch e buffer, delega il redraw al throttler."""
         try:
-            logger.debug(f"🔄 Processing tick in main thread: {payload.get('symbol')}")
             if not isinstance(payload, dict):
                 return
             sym = payload.get("symbol") or getattr(self, "symbol", None)
@@ -80,20 +79,17 @@ class DataService(ChartServiceBase):
                 if sym:
                     bid_val = payload.get('bid')
                     ask_val = payload.get('ask', payload.get('offer'))
-                    logger.debug(f"📊 Updating market watch: {sym} bid={bid_val} ask={ask_val}")
                     self._update_market_quote(sym, bid_val, ask_val, payload.get('ts_utc'))
                     
                     # Update order books widget if available (from parent ChartTab)
                     if hasattr(self.view, 'order_books_widget') and self.view.order_books_widget:
                         # Get actual DOM data from dom_service (passed to ChartTab)
                         dom_service = getattr(self.view, 'dom_service', None)
-                        logger.debug(f"Order books update: has_widget={True}, has_dom_service={dom_service is not None}")
                         if dom_service:
                             dom_snapshot = dom_service.get_latest_dom_snapshot(sym)
                             if dom_snapshot:
                                 bids = dom_snapshot.get('bids', [])
                                 asks = dom_snapshot.get('asks', [])
-                                logger.debug(f"Updating order books widget: {len(bids)} bids, {len(asks)} asks")
                                 self.view.order_books_widget.update_dom(bids, asks)
                                 
                                 # Update order flow bar
@@ -109,7 +105,6 @@ class DataService(ChartServiceBase):
 
             # Update chart buffer only for current symbol (O(1) append)
             current_symbol = getattr(self, "symbol", None)
-            logger.debug(f"Chart update check: sym={sym}, current_symbol={current_symbol}, match={sym == current_symbol}")
             if sym and sym == current_symbol:
                 try:
                     # Get timestamp (try ts_utc, then timestamp, then now)
@@ -171,8 +166,7 @@ class DataService(ChartServiceBase):
                     
                     # mark dirty for throttled redraw
                     self._rt_dirty = True
-                    logger.debug(f"✓ Chart marked dirty for {sym}: price={y}, will redraw on next rt_flush")
-                    
+
                 except Exception as e:
                     logger.error(f"Failed to update chart buffer: {e}")
 
@@ -195,8 +189,7 @@ class DataService(ChartServiceBase):
             if not getattr(self, "_rt_dirty", False):
                 return
             self._rt_dirty = False
-            logger.debug("🔄 RT flush triggered, updating chart...")
-            
+
             # preserve current view
             try:
                 # PyQtGraph uses viewRange() instead of get_xlim/get_ylim
@@ -1073,7 +1066,6 @@ class DataService(ChartServiceBase):
         - Black: Stable (no significant change in 10+ ticks)
         """
         try:
-            logger.debug(f"_update_market_quote called: {symbol}, bid={bid}, ask={ask}, has_widget={hasattr(self, 'market_watch')}")
             if not hasattr(self, 'market_watch') or self.market_watch is None:
                 logger.warning(f"⚠️ Market watch widget not available")
                 return
