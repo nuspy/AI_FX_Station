@@ -18,22 +18,166 @@ TAB_CONFIGS = {
             ("data_storage_edit", "data_storage"),
         ]
     },
-    "logs_tab.py": {
-        "category": "logs",
+    "pattern_training_tab.py": {
+        "category": "pattern_training",
         "widgets": [
-            ("log_filter_combo", "log_filter"),
-            ("auto_scroll_check", "auto_scroll"),
-            ("save_logs_check", "save_logs"),
-            ("max_log_lines_spin", "max_log_lines"),
+            ("pattern_type_combo", "pattern_type"),
+            ("min_pattern_bars_spin", "min_pattern_bars"),
+            ("pattern_tolerance_spin", "pattern_tolerance"),
+            ("min_pattern_samples_spin", "min_pattern_samples"),
+            ("pattern_features_edit", "pattern_features"),
         ]
     },
-    "sentiment_panel.py": {
-        "category": "trading_intelligence.sentiment",
+    "news_calendar_tab.py": {
+        "category": "news_calendar",
         "widgets": [
-            ("enable_sentiment_check", "enable_sentiment"),
-            ("sentiment_sources_combo", "sentiment_sources"),
-            ("sentiment_weight_spin", "sentiment_weight"),
-            ("sentiment_lookback_spin", "sentiment_lookback"),
+            ("impact_filter_combo", "impact_filter"),
+            ("currency_filter_edit", "currency_filter"),
+            ("auto_disable_trading_check", "auto_disable_trading"),
+            ("news_lookback_hours_spin", "news_lookback_hours"),
+            ("news_lookahead_hours_spin", "news_lookahead_hours"),
+        ]
+    },
+    "regime_analysis_tab.py": {
+        "category": "regime_analysis",
+        "widgets": [
+            ("regime_window_spin", "regime_window"),
+            ("trend_threshold_spin", "trend_threshold"),
+            ("volatility_threshold_spin", "volatility_threshold"),
+            ("regime_stability_spin", "regime_stability"),
+            ("adaptive_strategy_check", "adaptive_strategy"),
+        ]
+    },
+    "correlation_matrix_widget.py": {
+        "category": "correlation_matrix",
+        "widgets": [
+            ("correlation_window_spin", "correlation_window"),
+            ("correlation_method_combo", "correlation_method"),
+            ("highlight_threshold_spin", "highlight_threshold"),
+            ("auto_diversify_check", "auto_diversify"),
+        ]
+    },
+    "training_queue_tab.py": {
+        "category": "training_queue",
+        "widgets": [
+            ("max_concurrent_jobs_spin", "max_concurrent_jobs"),
+            ("auto_retry_failed_check", "auto_retry_failed"),
+            ("priority_queue_check", "priority_queue"),
+            ("save_failed_configs_check", "save_failed_configs"),
+        ]
+    },
+    "training_history_tab.py": {
+        "category": "training_history",
+        "widgets": [
+            ("history_retention_days_spin", "history_retention_days"),
+            ("compare_runs_btn", "compare_runs"),
+            ("export_tensorboard_btn", "export_tensorboard"),
+        ]
+    },
+    "signal_quality_tab.py": {
+        "category": "signal_quality",
+        "widgets": [
+            ("min_win_rate_spin", "min_win_rate"),
+            ("min_profit_factor_spin", "min_profit_factor"),
+            ("min_sharpe_ratio_spin", "min_sharpe_ratio"),
+            ("track_signal_performance_check", "track_signal_performance"),
+            ("auto_disable_poor_signals_check", "auto_disable_poor_signals"),
+        ]
+    },
+    "reports_3d_tab.py": {
+        "category": "reports_3d",
+        "widgets": [
+            ("plot_type_combo", "plot_type"),
+            ("x_parameter_combo", "x_parameter"),
+            ("y_parameter_combo", "y_parameter"),
+            ("z_metric_combo", "z_metric"),
+            ("interpolation_check", "interpolation"),
+        ]
+    },
+    "parameter_adaptation_tab.py": {
+        "category": "parameter_adaptation",
+        "widgets": [
+            ("enable_adaptation_check", "enable_adaptation"),
+            ("adaptation_frequency_combo", "adaptation_frequency"),
+            ("adaptation_metric_combo", "adaptation_metric"),
+            ("adaptation_method_combo", "adaptation_method"),
+        ]
+    },
+    "settings_dialog.py": {
+        "category": "settings",
+        "widgets": [
+            ("log_level_combo", "log_level"),
+            ("save_artifacts_check", "save_artifacts"),
+            ("cache_data_check", "cache_data"),
+            ("parallel_workers_spin", "parallel_workers"),
+            ("random_seed_spin", "random_seed"),
+        ]
+    },
+    "admin_login_dialog.py": {
+        "category": "admin",
+        "widgets": [
+            ("reset_database_btn", "reset_database"),
+            ("export_config_btn", "export_config"),
+            ("import_config_btn", "import_config"),
+            ("system_diagnostics_btn", "system_diagnostics"),
+            ("clear_cache_btn", "clear_cache"),
+        ]
+    },
+    "pretrade_calc_dialog.py": {
+        "category": "pretrade_validation",
+        "widgets": [
+            ("enable_validation_check", "enable_validation"),
+            ("max_trade_size_spin", "max_trade_size"),
+            ("require_confirmation_check", "require_confirmation"),
+            ("check_spread_check", "check_spread"),
+            ("check_margin_check", "check_margin"),
+        ]
+    },
+    "trade_dialog.py": {
+        "category": "trade_execution",
+        "widgets": [
+            ("execution_speed_combo", "execution_speed"),
+            ("slippage_tolerance_spin", "slippage_tolerance"),
+            ("partial_fills_check", "partial_fills"),
+            ("smart_routing_check", "smart_routing"),
+            ("iceberg_orders_check", "iceberg_orders"),
+        ]
+    },
+    "indicators_dialog.py": {
+        "category": "indicators_config",
+        "widgets": [
+            ("save_preset_btn", "save_indicator_preset"),
+            ("load_preset_btn", "load_indicator_preset"),
+            ("multi_timeframe_check", "multi_timeframe_indicators"),
+            ("indicator_alerts_check", "indicator_alerts"),
+        ]
+    },
+    "color_settings_dialog.py": {
+        "category": "color_themes",
+        "widgets": [
+            ("theme_combo", "theme_selection"),
+            ("bullish_color_btn", "bullish_color"),
+            ("bearish_color_btn", "bearish_color"),
+            ("grid_opacity_spin", "grid_opacity"),
+            ("custom_theme_import_btn", "custom_theme_import"),
+        ]
+    },
+    "checkpoint_selector_dialog.py": {
+        "category": "checkpoint_management",
+        "widgets": [
+            ("auto_checkpoint_check", "auto_checkpoint"),
+            ("checkpoint_frequency_spin", "checkpoint_frequency"),
+            ("keep_best_only_check", "keep_best_only"),
+            ("checkpoint_compression_check", "checkpoint_compression"),
+        ]
+    },
+    "fxpro_credentials_dialog.py": {
+        "category": "fxpro_integration",
+        "widgets": [
+            ("fxpro_account_edit", "fxpro_account"),
+            ("fxpro_server_combo", "fxpro_server"),
+            ("auto_sync_check", "auto_sync"),
+            ("webhook_url_edit", "webhook_url"),
         ]
     },
 }

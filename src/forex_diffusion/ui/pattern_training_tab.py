@@ -39,6 +39,25 @@ class PatternTrainingTab(QWidget):
         self._init_ui()
         self._setup_timers()
         self._init_state()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'pattern_type_combo'):
+            apply_tooltip(self.pattern_type_combo, "pattern_type", "pattern_training")
+        if hasattr(self, 'min_pattern_bars_spin'):
+            apply_tooltip(self.min_pattern_bars_spin, "min_pattern_bars", "pattern_training")
+        if hasattr(self, 'pattern_tolerance_spin'):
+            apply_tooltip(self.pattern_tolerance_spin, "pattern_tolerance", "pattern_training")
+        if hasattr(self, 'min_pattern_samples_spin'):
+            apply_tooltip(self.min_pattern_samples_spin, "min_pattern_samples", "pattern_training")
+        if hasattr(self, 'pattern_features_edit'):
+            apply_tooltip(self.pattern_features_edit, "pattern_features", "pattern_training")
+    
 
     def _init_ui(self):
         """Initialize the user interface"""

@@ -33,6 +33,21 @@ class TrainingHistoryTab(QWidget):
         self.current_results: List[Dict[str, Any]] = []
         self.init_ui()
         self.load_history()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'history_retention_days_spin'):
+            apply_tooltip(self.history_retention_days_spin, "history_retention_days", "training_history")
+        if hasattr(self, 'compare_runs_btn'):
+            apply_tooltip(self.compare_runs_btn, "compare_runs", "training_history")
+        if hasattr(self, 'export_tensorboard_btn'):
+            apply_tooltip(self.export_tensorboard_btn, "export_tensorboard", "training_history")
+    
 
     def init_ui(self):
         """Initialize the user interface."""

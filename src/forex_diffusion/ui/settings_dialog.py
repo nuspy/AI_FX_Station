@@ -366,10 +366,29 @@ class SettingsDialog(QDialog):
         self.btn_ctrader_test.clicked.connect(self._on_ctrader_test)
 
         self.load_values()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
 
     # ------------------------------------------------------------------
     # Data loading helpers
     # ------------------------------------------------------------------
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'log_level_combo'):
+            apply_tooltip(self.log_level_combo, "log_level", "settings")
+        if hasattr(self, 'save_artifacts_check'):
+            apply_tooltip(self.save_artifacts_check, "save_artifacts", "settings")
+        if hasattr(self, 'cache_data_check'):
+            apply_tooltip(self.cache_data_check, "cache_data", "settings")
+        if hasattr(self, 'parallel_workers_spin'):
+            apply_tooltip(self.parallel_workers_spin, "parallel_workers", "settings")
+        if hasattr(self, 'random_seed_spin'):
+            apply_tooltip(self.random_seed_spin, "random_seed", "settings")
+    
+
     def load_values(self) -> None:
         alpha = get_setting("alpha_vantage_api_key", os.environ.get("ALPHAVANTAGE_KEY", "") or "")
         tiingo = get_setting("tiingo_api_key", os.environ.get("TIINGO_APIKEY", "") or "")

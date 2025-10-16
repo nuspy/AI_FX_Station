@@ -97,6 +97,25 @@ class TradeDialog(QDialog):
 
         self._order: Optional[Dict[str, Any]] = None
         self._sync_qty_mode(self.qty_mode.currentText())
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'execution_speed_combo'):
+            apply_tooltip(self.execution_speed_combo, "execution_speed", "trade_execution")
+        if hasattr(self, 'slippage_tolerance_spin'):
+            apply_tooltip(self.slippage_tolerance_spin, "slippage_tolerance", "trade_execution")
+        if hasattr(self, 'partial_fills_check'):
+            apply_tooltip(self.partial_fills_check, "partial_fills", "trade_execution")
+        if hasattr(self, 'smart_routing_check'):
+            apply_tooltip(self.smart_routing_check, "smart_routing", "trade_execution")
+        if hasattr(self, 'iceberg_orders_check'):
+            apply_tooltip(self.iceberg_orders_check, "iceberg_orders", "trade_execution")
+    
 
     def _sync_qty_mode(self, mode: str):
         if mode == "Lots":

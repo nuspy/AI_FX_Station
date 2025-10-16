@@ -119,6 +119,25 @@ class NewsCalendarTab(QWidget):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._auto_refresh)
         self.refresh_timer.start(60000)  # Refresh every minute
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'impact_filter_combo'):
+            apply_tooltip(self.impact_filter_combo, "impact_filter", "news_calendar")
+        if hasattr(self, 'currency_filter_edit'):
+            apply_tooltip(self.currency_filter_edit, "currency_filter", "news_calendar")
+        if hasattr(self, 'auto_disable_trading_check'):
+            apply_tooltip(self.auto_disable_trading_check, "auto_disable_trading", "news_calendar")
+        if hasattr(self, 'news_lookback_hours_spin'):
+            apply_tooltip(self.news_lookback_hours_spin, "news_lookback_hours", "news_calendar")
+        if hasattr(self, 'news_lookahead_hours_spin'):
+            apply_tooltip(self.news_lookahead_hours_spin, "news_lookahead_hours", "news_calendar")
+    
 
     def set_engine(self, engine):
         """Set database engine."""

@@ -57,6 +57,23 @@ class TrainingQueueTab(QWidget):
         # Check for crashed queues on first init
         if check_crash_recovery:
             self.check_crash_recovery()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'max_concurrent_jobs_spin'):
+            apply_tooltip(self.max_concurrent_jobs_spin, "max_concurrent_jobs", "training_queue")
+        if hasattr(self, 'auto_retry_failed_check'):
+            apply_tooltip(self.auto_retry_failed_check, "auto_retry_failed", "training_queue")
+        if hasattr(self, 'priority_queue_check'):
+            apply_tooltip(self.priority_queue_check, "priority_queue", "training_queue")
+        if hasattr(self, 'save_failed_configs_check'):
+            apply_tooltip(self.save_failed_configs_check, "save_failed_configs", "training_queue")
+    
 
     def init_ui(self):
         """Initialize the user interface."""

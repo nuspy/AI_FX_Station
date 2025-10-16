@@ -34,6 +34,23 @@ class ParameterAdaptationTab(QWidget):
         self.current_parameters: Dict[str, float] = {}
         self.performance_metrics: Optional[Dict[str, Any]] = None
         self.init_ui()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'enable_adaptation_check'):
+            apply_tooltip(self.enable_adaptation_check, "enable_adaptation", "parameter_adaptation")
+        if hasattr(self, 'adaptation_frequency_combo'):
+            apply_tooltip(self.adaptation_frequency_combo, "adaptation_frequency", "parameter_adaptation")
+        if hasattr(self, 'adaptation_metric_combo'):
+            apply_tooltip(self.adaptation_metric_combo, "adaptation_metric", "parameter_adaptation")
+        if hasattr(self, 'adaptation_method_combo'):
+            apply_tooltip(self.adaptation_method_combo, "adaptation_method", "parameter_adaptation")
+    
 
     def init_ui(self):
         """Initialize user interface"""

@@ -46,6 +46,23 @@ class CheckpointSelectorDialog(QDialog):
 
         self.init_ui()
         self.load_checkpoints()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'auto_checkpoint_check'):
+            apply_tooltip(self.auto_checkpoint_check, "auto_checkpoint", "checkpoint_management")
+        if hasattr(self, 'checkpoint_frequency_spin'):
+            apply_tooltip(self.checkpoint_frequency_spin, "checkpoint_frequency", "checkpoint_management")
+        if hasattr(self, 'keep_best_only_check'):
+            apply_tooltip(self.keep_best_only_check, "keep_best_only", "checkpoint_management")
+        if hasattr(self, 'checkpoint_compression_check'):
+            apply_tooltip(self.checkpoint_compression_check, "checkpoint_compression", "checkpoint_management")
+    
 
     def init_ui(self):
         """Initialize the user interface."""

@@ -73,6 +73,23 @@ class CorrelationMatrixWidget(QWidget):
         self._init_expected_correlations()
 
         self.init_ui()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'correlation_window_spin'):
+            apply_tooltip(self.correlation_window_spin, "correlation_window", "correlation_matrix")
+        if hasattr(self, 'correlation_method_combo'):
+            apply_tooltip(self.correlation_method_combo, "correlation_method", "correlation_matrix")
+        if hasattr(self, 'highlight_threshold_spin'):
+            apply_tooltip(self.highlight_threshold_spin, "highlight_threshold", "correlation_matrix")
+        if hasattr(self, 'auto_diversify_check'):
+            apply_tooltip(self.auto_diversify_check, "auto_diversify", "correlation_matrix")
+    
 
     def _init_expected_correlations(self):
         """Initialize expected correlation patterns"""

@@ -271,8 +271,25 @@ class IndicatorsDialog(QDialog):
         # ---- Init ----
         self._load_sessions_into_combo()
         self._apply_initial_or_default()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
 
     # --------------------------- colori --------------------------- #
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'save_preset_btn'):
+            apply_tooltip(self.save_preset_btn, "save_indicator_preset", "indicators_config")
+        if hasattr(self, 'load_preset_btn'):
+            apply_tooltip(self.load_preset_btn, "load_indicator_preset", "indicators_config")
+        if hasattr(self, 'multi_timeframe_check'):
+            apply_tooltip(self.multi_timeframe_check, "multi_timeframe_indicators", "indicators_config")
+        if hasattr(self, 'indicator_alerts_check'):
+            apply_tooltip(self.indicator_alerts_check, "indicator_alerts", "indicators_config")
+    
+
     def _apply_button_color(self, btn: QPushButton, hex_color: str):
         btn.setProperty("hex", hex_color)
         btn.setStyleSheet(f"QPushButton {{ background-color: {hex_color}; color: black; }}")

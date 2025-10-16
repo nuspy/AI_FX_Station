@@ -31,6 +31,25 @@ class AdminLoginDialog(QDialog):
         # load saved default if present
         saved = get_setting("session_admin_token", "")
         self.token_input.setText(saved)
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'reset_database_btn'):
+            apply_tooltip(self.reset_database_btn, "reset_database", "admin")
+        if hasattr(self, 'export_config_btn'):
+            apply_tooltip(self.export_config_btn, "export_config", "admin")
+        if hasattr(self, 'import_config_btn'):
+            apply_tooltip(self.import_config_btn, "import_config", "admin")
+        if hasattr(self, 'system_diagnostics_btn'):
+            apply_tooltip(self.system_diagnostics_btn, "system_diagnostics", "admin")
+        if hasattr(self, 'clear_cache_btn'):
+            apply_tooltip(self.clear_cache_btn, "clear_cache", "admin")
+    
 
     def on_ok(self):
         tok = self.token_input.text().strip()

@@ -51,6 +51,23 @@ class FxProCredentialsDialog(QDialog):
 
         self._build_ui()
         self._load_existing_credentials()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'fxpro_account_edit'):
+            apply_tooltip(self.fxpro_account_edit, "fxpro_account", "fxpro_integration")
+        if hasattr(self, 'fxpro_server_combo'):
+            apply_tooltip(self.fxpro_server_combo, "fxpro_server", "fxpro_integration")
+        if hasattr(self, 'auto_sync_check'):
+            apply_tooltip(self.auto_sync_check, "auto_sync", "fxpro_integration")
+        if hasattr(self, 'webhook_url_edit'):
+            apply_tooltip(self.webhook_url_edit, "webhook_url", "fxpro_integration")
+    
 
     def _build_ui(self):
         """Build the dialog UI"""

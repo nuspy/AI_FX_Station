@@ -54,6 +54,25 @@ class ReportGeneratorThread(QThread):
             self.visualizer = Advanced3DVisualizer(data_provider=data_provider)
         else:
             self.visualizer = None
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'plot_type_combo'):
+            apply_tooltip(self.plot_type_combo, "plot_type", "reports_3d")
+        if hasattr(self, 'x_parameter_combo'):
+            apply_tooltip(self.x_parameter_combo, "x_parameter", "reports_3d")
+        if hasattr(self, 'y_parameter_combo'):
+            apply_tooltip(self.y_parameter_combo, "y_parameter", "reports_3d")
+        if hasattr(self, 'z_metric_combo'):
+            apply_tooltip(self.z_metric_combo, "z_metric", "reports_3d")
+        if hasattr(self, 'interpolation_check'):
+            apply_tooltip(self.interpolation_check, "interpolation", "reports_3d")
+    
 
     def run(self):
         """Generate the report in background"""

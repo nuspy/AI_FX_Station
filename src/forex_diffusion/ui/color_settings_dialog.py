@@ -51,6 +51,25 @@ class ColorSettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'theme_combo'):
+            apply_tooltip(self.theme_combo, "theme_selection", "color_themes")
+        if hasattr(self, 'bullish_color_btn'):
+            apply_tooltip(self.bullish_color_btn, "bullish_color", "color_themes")
+        if hasattr(self, 'bearish_color_btn'):
+            apply_tooltip(self.bearish_color_btn, "bearish_color", "color_themes")
+        if hasattr(self, 'grid_opacity_spin'):
+            apply_tooltip(self.grid_opacity_spin, "grid_opacity", "color_themes")
+        if hasattr(self, 'custom_theme_import_btn'):
+            apply_tooltip(self.custom_theme_import_btn, "custom_theme_import", "color_themes")
+    
 
     def _pick(self, key: str) -> None:
         current = self.edits[key].text().strip() or COLOR_DEFAULTS.get(key, "#000000")

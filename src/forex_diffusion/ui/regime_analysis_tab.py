@@ -33,6 +33,25 @@ class RegimeAnalysisTab(QWidget):
         self.regime_data: Dict[str, Any] = {}
         self.init_ui()
         self.load_regime_summary()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'regime_window_spin'):
+            apply_tooltip(self.regime_window_spin, "regime_window", "regime_analysis")
+        if hasattr(self, 'trend_threshold_spin'):
+            apply_tooltip(self.trend_threshold_spin, "trend_threshold", "regime_analysis")
+        if hasattr(self, 'volatility_threshold_spin'):
+            apply_tooltip(self.volatility_threshold_spin, "volatility_threshold", "regime_analysis")
+        if hasattr(self, 'regime_stability_spin'):
+            apply_tooltip(self.regime_stability_spin, "regime_stability", "regime_analysis")
+        if hasattr(self, 'adaptive_strategy_check'):
+            apply_tooltip(self.adaptive_strategy_check, "adaptive_strategy", "regime_analysis")
+    
 
     def init_ui(self):
         """Initialize the user interface."""

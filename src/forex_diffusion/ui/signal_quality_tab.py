@@ -28,6 +28,25 @@ class SignalQualityTab(QWidget):
         super().__init__(parent)
         self.signals_data: List[Dict[str, Any]] = []
         self.init_ui()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'min_win_rate_spin'):
+            apply_tooltip(self.min_win_rate_spin, "min_win_rate", "signal_quality")
+        if hasattr(self, 'min_profit_factor_spin'):
+            apply_tooltip(self.min_profit_factor_spin, "min_profit_factor", "signal_quality")
+        if hasattr(self, 'min_sharpe_ratio_spin'):
+            apply_tooltip(self.min_sharpe_ratio_spin, "min_sharpe_ratio", "signal_quality")
+        if hasattr(self, 'track_signal_performance_check'):
+            apply_tooltip(self.track_signal_performance_check, "track_signal_performance", "signal_quality")
+        if hasattr(self, 'auto_disable_poor_signals_check'):
+            apply_tooltip(self.auto_disable_poor_signals_check, "auto_disable_poor_signals", "signal_quality")
+    
 
     def init_ui(self):
         """Initialize user interface"""

@@ -46,6 +46,25 @@ class PreTradeCalcDialog(QDialog):
         self._connect_signals()
 
         logger.info("PreTradeCalcDialog initialized")
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'enable_validation_check'):
+            apply_tooltip(self.enable_validation_check, "enable_validation", "pretrade_validation")
+        if hasattr(self, 'max_trade_size_spin'):
+            apply_tooltip(self.max_trade_size_spin, "max_trade_size", "pretrade_validation")
+        if hasattr(self, 'require_confirmation_check'):
+            apply_tooltip(self.require_confirmation_check, "require_confirmation", "pretrade_validation")
+        if hasattr(self, 'check_spread_check'):
+            apply_tooltip(self.check_spread_check, "check_spread", "pretrade_validation")
+        if hasattr(self, 'check_margin_check'):
+            apply_tooltip(self.check_margin_check, "check_margin", "pretrade_validation")
+    
 
     def _setup_ui(self):
         """Setup the UI components."""
