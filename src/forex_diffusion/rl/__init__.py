@@ -9,13 +9,18 @@ Provides Actor-Critic deep RL agents (PPO, SAC, A3C, TD3) for:
 Integration with Riskfolio-Lib optimizer and Trading Engine.
 """
 
-from .rl_portfolio_manager import RLPortfolioManager
-from .rewards import RewardFunction, MultiObjectiveReward
-from .replay_buffer import ReplayBuffer
+from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
+from .rewards import RewardFunction, MultiObjectiveReward, RewardConfig
+from .environments import PortfolioEnvironment
+from .networks import ActorNetwork, CriticNetwork
 
 __all__ = [
-    'RLPortfolioManager',
+    'ReplayBuffer',
+    'PrioritizedReplayBuffer',
     'RewardFunction',
     'MultiObjectiveReward',
-    'ReplayBuffer',
+    'RewardConfig',
+    'PortfolioEnvironment',
+    'ActorNetwork',
+    'CriticNetwork',
 ]
