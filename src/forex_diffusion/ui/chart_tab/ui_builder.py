@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QSlider, QFrame, QButtonGroup, QRadioButton, QDateEdit
 )
 from PySide6.QtCore import QTimer, Qt, QDate
+from loguru import logger
+
 from ...utils.user_settings import get_setting, set_setting
 
 # Import finplot (required)
