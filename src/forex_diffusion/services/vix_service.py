@@ -147,7 +147,7 @@ class VIXService(ThreadedBackgroundService):
                 
                 logger.warning(
                     f"VIX fetch rate limited (429). Backing off for {backoff_minutes:.0f} minutes. "
-                    f"Yahoo Finance allows ~2000 requests/hour. Current interval: {self.interval_seconds}s"
+                    f"Yahoo Finance allows ~2000 requests/hour. Current interval: {self._interval}s"
                 )
             else:
                 logger.error(f"Failed to fetch VIX: HTTP {e.response.status_code} - {e}")
