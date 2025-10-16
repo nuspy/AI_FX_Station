@@ -117,26 +117,14 @@ class VIXService(ThreadedBackgroundService):
             logger.error(f"Failed to fetch VIX: {e}")
     
     def _store_vix(self, value: float, classification: str, timestamp: int):
-        """Store VIX data in database."""
+        """
+        Store VIX data in database.
+        
+        Note: Requires vix_data table created by Alembic migration 0016.
+        """
         try:
             with self.engine.begin() as conn:
-                # Create table if not exists
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS vix_data (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        ts_utc BIGINT NOT NULL,
-                        value REAL NOT NULL,
-                        classification TEXT NOT NULL,
-                        ts_created_ms BIGINT NOT NULL
-                    )
-                """))
-                
-                # Create index if not exists
-                conn.execute(text("""
-                    CREATE INDEX IF NOT EXISTS idx_vix_ts ON vix_data(ts_utc)
-                """))
-                
-                # Insert VIX data
+                # Insert VIX data (table created by Alembic migration 0016)
                 conn.execute(text("""
                     INSERT INTO vix_data (ts_utc, value, classification, ts_created_ms)
                     VALUES (:ts_utc, :value, :classification, :ts_created_ms)
@@ -150,7 +138,7 @@ class VIXService(ThreadedBackgroundService):
                 logger.debug(f"Stored VIX: {value:.2f} at {timestamp}")
                 
         except Exception as e:
-            logger.error(f"Failed to store VIX data: {e}")
+            logger.error(f"Failed to store VIX data: {e} (Did you run 'alembic upgrade head'?)")
     
     def get_latest_vix(self) -> Optional[float]:
         """
