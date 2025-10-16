@@ -163,6 +163,18 @@ def setup_ui(
     provider_info = f"{type(provider).__name__}" if provider else "None"
     logger.info(f"DOM Aggregator Service started for {dom_symbols} (provider: {provider_info})")
 
+    # --- Sentiment Aggregator Service ---
+    from ..services.sentiment_aggregator import SentimentAggregatorService
+    sentiment_symbols = ["EURUSD", "GBPUSD", "USDJPY"]
+    sentiment_aggregator = SentimentAggregatorService(
+        engine=db_service.engine,
+        symbols=sentiment_symbols,
+        interval_seconds=30  # Process sentiment every 30 seconds
+    )
+    sentiment_aggregator.start()
+    result["sentiment_aggregator"] = sentiment_aggregator
+    logger.info(f"Sentiment Aggregator Service started for {sentiment_symbols}")
+
     # --- Order Flow Analyzer ---
     from ..analysis.order_flow_analyzer import OrderFlowAnalyzer
     order_flow_analyzer = OrderFlowAnalyzer(
@@ -216,7 +228,8 @@ def setup_ui(
     chart_tab = ChartTabUI(
         main_window,
         dom_service=dom_aggregator,
-        order_flow_analyzer=order_flow_analyzer
+        order_flow_analyzer=order_flow_analyzer,
+        sentiment_service=sentiment_aggregator
     )
     _log_timing("After creating ChartTab")
     logger.info("✓ ChartTab created")
@@ -544,6 +557,7 @@ def setup_ui(
                 logger.error(f"Error stopping cTrader WebSocket: {e}")
         if aggregator: aggregator.stop()
         if dom_aggregator: dom_aggregator.stop()
+        if sentiment_aggregator: sentiment_aggregator.stop()
         if db_writer: db_writer.stop()
     if app: app.aboutToQuit.connect(_graceful_shutdown)
     

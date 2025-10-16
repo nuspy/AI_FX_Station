@@ -131,10 +131,87 @@ class SentimentAggregatorService(ThreadedBackgroundService):
 
 
     def get_latest_sentiment_metrics(self, symbol: str) -> Optional[Dict]:
-        """Get latest sentiment metrics for a symbol."""
+        """
+        Get latest sentiment metrics for a symbol in UI-compatible format.
+        
+        Returns:
+            Dictionary with sentiment metrics for SentimentPanel:
+            - sentiment: "bullish", "bearish", or "neutral"
+            - confidence: 0.0-1.0
+            - ratio: -1.0 to +1.0 sentiment ratio
+            - total_traders: Total volume count
+            - long_pct: Percentage long (0-100)
+            - short_pct: Percentage short (0-100)
+            - contrarian_signal: -1.0 to +1.0 contrarian indicator
+        """
+        # Try memory cache first
         if symbol in self._sentiment_history and self._sentiment_history[symbol]:
-            return self._sentiment_history[symbol][-1]
+            cached = self._sentiment_history[symbol][-1]
+            # Add contrarian signal calculation
+            long_pct = cached.get("long_pct", 50.0)
+            if long_pct > 70:
+                contrarian = -(long_pct - 50) / 50  # Negative when crowd is long
+            elif long_pct < 30:
+                contrarian = (50 - long_pct) / 50  # Positive when crowd is short
+            else:
+                contrarian = 0.0
+            
+            return {
+                "sentiment": self._classify_sentiment(cached.get("long_pct", 50.0)),
+                "confidence": abs(cached.get("long_pct", 50.0) - 50.0) / 50.0,  # 0-1 based on distance from 50%
+                "ratio": (cached.get("long_pct", 50.0) - 50.0) / 50.0,  # -1 to +1
+                "total_traders": int(cached.get("total_traders", 0)),
+                "long_pct": cached.get("long_pct", 50.0),
+                "short_pct": cached.get("short_pct", 50.0),
+                "contrarian_signal": contrarian,
+            }
+        
+        # Fallback to database
+        try:
+            with self.engine.connect() as conn:
+                query = text(
+                    "SELECT sentiment, ratio, buy_volume, sell_volume, confidence, "
+                    "long_pct, short_pct "
+                    "FROM sentiment_data "
+                    "WHERE symbol = :symbol "
+                    "ORDER BY ts_utc DESC LIMIT 1"
+                )
+                row = conn.execute(query, {"symbol": symbol}).fetchone()
+                
+                if row:
+                    long_pct = row[5] if row[5] is not None else 50.0
+                    short_pct = row[6] if row[6] is not None else 50.0
+                    
+                    # Calculate contrarian signal
+                    if long_pct > 70:
+                        contrarian = -(long_pct - 50) / 50
+                    elif long_pct < 30:
+                        contrarian = (50 - long_pct) / 50
+                    else:
+                        contrarian = 0.0
+                    
+                    return {
+                        "sentiment": row[0] or "neutral",
+                        "confidence": row[4] if row[4] is not None else 0.0,
+                        "ratio": row[1] if row[1] is not None else 0.0,
+                        "total_traders": int((row[2] or 0) + (row[3] or 0)),
+                        "long_pct": long_pct,
+                        "short_pct": short_pct,
+                        "contrarian_signal": contrarian,
+                    }
+        except Exception as e:
+            logger.error(f"Failed to fetch sentiment from database for {symbol}: {e}")
+        
         return None
+    
+    def _classify_sentiment(self, long_pct: float) -> str:
+        """Classify sentiment based on long percentage."""
+        if long_pct > 60:
+            return "bullish"
+        elif long_pct < 40:
+            return "bearish"
+        else:
+            return "neutral"
 
     def get_sentiment_signal(self, symbol: str) -> Optional[str]:
         """
