@@ -86,7 +86,8 @@ class TradingConfig:
     kelly_fraction: float = 0.25  # Kelly fraction (0.25 = quarter Kelly)
     use_dom_data: bool = True  # Use real-time DOM data for spread and liquidity
     use_sentiment_data: bool = True  # Use sentiment for signal filtering and position sizing
-    db_engine: Optional[Any] = None  # Database engine for DOM and sentiment services
+    use_vix_filter: bool = True  # Use VIX for volatility-based position sizing
+    db_engine: Optional[Any] = None  # Database engine for DOM, sentiment, and VIX services
 
 
 class AutomatedTradingEngine:
@@ -230,6 +231,20 @@ class AutomatedTradingEngine:
             except Exception as e:
                 logger.warning(f"Could not initialize Sentiment Service: {e}. Trading without sentiment.")
 
+        # VIX Service
+        self.vix_service: Optional[Any] = None
+        if config.use_vix_filter and config.db_engine:
+            try:
+                from ..services.vix_service import VIXService
+                self.vix_service = VIXService(
+                    engine=config.db_engine,
+                    interval_seconds=300  # Fetch every 5 minutes
+                )
+                self.vix_service.start()
+                logger.info("✅ VIX Service initialized and started")
+            except Exception as e:
+                logger.warning(f"Could not initialize VIX Service: {e}. Trading without VIX filter.")
+
         # Threading
         self.trading_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
@@ -299,6 +314,14 @@ class AutomatedTradingEngine:
                 logger.info("✅ Sentiment service stopped")
             except Exception as e:
                 logger.warning(f"Error stopping sentiment service: {e}")
+
+        # Stop VIX service
+        if self.vix_service:
+            try:
+                self.vix_service.stop()
+                logger.info("✅ VIX service stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping VIX service: {e}")
 
         # Close all positions
         self._close_all_positions("Engine stopped")
@@ -836,6 +859,13 @@ class AutomatedTradingEngine:
 
             except Exception as e:
                 logger.debug(f"Could not apply sentiment-based position sizing for {symbol}: {e}")
+
+        # 5. VIX VOLATILITY FILTER
+        if self.vix_service:
+            try:
+                final_size = self.vix_service.get_volatility_adjustment(final_size)
+            except Exception as e:
+                logger.debug(f"Could not apply VIX filter for {symbol}: {e}")
 
         # Ensure final size is positive and reasonable
         if final_size < 0:

@@ -42,6 +42,12 @@ class EventHandlersMixin:
         self._reload_timer.setInterval(250)
         self._reload_timer.timeout.connect(self.chart_controller.reload_view_window)
 
+        # VIX update timer (every 10 seconds)
+        self._vix_timer = QTimer(self)
+        self._vix_timer.setInterval(10000)
+        self._vix_timer.timeout.connect(self._update_vix_widget)
+        self._vix_timer.start()
+
     def _init_control_defaults(self) -> None:
         """Initialize default values for all controls."""
         # Pattern toggles default states
@@ -865,6 +871,14 @@ class EventHandlersMixin:
             # No dialog needed - automatically scans current visible chart range
             patterns_service.start_historical_scan_with_range()
             logger.info("Historical pattern scan started for visible chart range + 33% buffer")
+            
+            # Show confirmation to user
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Historical Scan",
+                "Pattern scan started for visible chart range.\nResults will appear on the chart shortly."
+            )
 
         except Exception as e:
             logger.exception(f"Historical scan failed: {e}")
@@ -1099,3 +1113,55 @@ class EventHandlersMixin:
 
         except Exception as e:
             logger.debug(f"Failed to update PyQtGraph hover info: {e}")
+
+    def _update_vix_widget(self):
+        """Update VIX widget with latest data from VIX service."""
+        if not hasattr(self, 'vix_service') or self.vix_service is None:
+            return
+        
+        try:
+            metrics = self.vix_service.get_vix_metrics()
+            
+            if metrics:
+                vix_value = metrics['value']
+                classification = metrics['classification']
+                
+                # Update bar value
+                self.vix_bar.setValue(int(vix_value))
+                
+                # Update classification label and colors
+                if classification == "Fear":
+                    color = "#FF5252"  # Red
+                    bar_color = "#FF5252"
+                elif classification == "Concern":
+                    color = "#FFA726"  # Orange
+                    bar_color = "#FFA726"
+                elif classification == "Complacency":
+                    color = "#FFEB3B"  # Yellow
+                    bar_color = "#FFEB3B"
+                else:  # Normal
+                    color = "#4CAF50"  # Green
+                    bar_color = "#4CAF50"
+                
+                self.vix_classification.setText(classification)
+                self.vix_classification.setStyleSheet(
+                    f"font-size: 8px; color: {color}; font-weight: bold;"
+                )
+                
+                # Update bar color
+                self.vix_bar.setStyleSheet(f"""
+                    QProgressBar {{
+                        border: 1px solid #3a3a3a;
+                        border-radius: 3px;
+                        text-align: center;
+                        background-color: #2b2b2b;
+                        font-size: 9px;
+                    }}
+                    QProgressBar::chunk {{
+                        background-color: {bar_color};
+                        border-radius: 2px;
+                    }}
+                """)
+                
+        except Exception as e:
+            logger.debug(f"Could not update VIX widget: {e}")

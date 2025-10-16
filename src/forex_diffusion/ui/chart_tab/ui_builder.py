@@ -112,7 +112,50 @@ class UIBuilderMixin:
         
         left_splitter.addWidget(market_watch_widget)
 
-        # Order Books section (middle) - widget has internal title
+        # VIX Volatility Indicator (between Market Watch and Order Books)
+        vix_widget = QWidget()
+        vix_layout = QVBoxLayout(vix_widget)
+        vix_layout.setContentsMargins(3, 3, 3, 3)
+        vix_layout.setSpacing(2)
+        
+        # No title, just label
+        self.vix_label = QLabel("Volatility")
+        self.vix_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.vix_label.setStyleSheet("font-weight: bold; font-size: 10px; color: #c0c0c0;")
+        vix_layout.addWidget(self.vix_label)
+        
+        # VIX bar
+        self.vix_bar = QProgressBar()
+        self.vix_bar.setRange(0, 50)  # VIX range 0-50 (normally < 40)
+        self.vix_bar.setValue(15)  # Default normal value
+        self.vix_bar.setTextVisible(True)
+        self.vix_bar.setFormat("VIX: %v")
+        self.vix_bar.setMaximumHeight(18)
+        self.vix_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                text-align: center;
+                background-color: #2b2b2b;
+                font-size: 9px;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 2px;
+            }
+        """)
+        vix_layout.addWidget(self.vix_bar)
+        
+        # VIX classification label
+        self.vix_classification = QLabel("Normal")
+        self.vix_classification.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.vix_classification.setStyleSheet("font-size: 8px; color: #4CAF50; font-weight: bold;")
+        vix_layout.addWidget(self.vix_classification)
+        
+        vix_widget.setMaximumHeight(60)  # Compact widget
+        left_splitter.addWidget(vix_widget)
+
+        # Order Books section - widget has internal title
         from ..order_books_widget import OrderBooksWidget
         self.order_books_widget = OrderBooksWidget(parent=self)
         left_splitter.addWidget(self.order_books_widget)
@@ -157,10 +200,12 @@ class UIBuilderMixin:
         
         left_splitter.addWidget(order_flow_widget)
         
-        # Set proportions (Market Watch 40%, Order Books 40%, Order Flow 20%)
-        left_splitter.setStretchFactor(0, 4)
-        left_splitter.setStretchFactor(1, 4)
-        left_splitter.setStretchFactor(2, 2)
+        # Set proportions: Market Watch, VIX, Order Books, Order Flow
+        # Widgets: 0=market_watch, 1=vix, 2=order_books, 3=order_flow
+        left_splitter.setStretchFactor(0, 4)  # Market Watch 40%
+        left_splitter.setStretchFactor(1, 1)  # VIX 10% (compact)
+        left_splitter.setStretchFactor(2, 4)  # Order Books 40%
+        left_splitter.setStretchFactor(3, 1)  # Order Flow 10%
         
         # Save/restore splitter state
         self.left_splitter = left_splitter

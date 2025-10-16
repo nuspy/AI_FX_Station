@@ -85,13 +85,14 @@ class ChartTabUI(
     forecastRequested = Signal(dict)
     tickArrived = Signal(dict)
 
-    def __init__(self, parent=None, viewer=None, dom_service=None, order_flow_analyzer=None, sentiment_service=None):
+    def __init__(self, parent=None, viewer=None, dom_service=None, order_flow_analyzer=None, sentiment_service=None, vix_service=None):
         super().__init__(parent)
         self.setObjectName("chartTabUI")
         self._main_window = parent
         self.dom_service = dom_service
         self.order_flow_analyzer = order_flow_analyzer
         self.sentiment_service = sentiment_service
+        self.vix_service = vix_service
 
         # Core controller setup
         self.controller = getattr(parent, "controller", None)

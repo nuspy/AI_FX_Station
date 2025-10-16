@@ -175,6 +175,16 @@ def setup_ui(
     result["sentiment_aggregator"] = sentiment_aggregator
     logger.info(f"Sentiment Aggregator Service started for {sentiment_symbols}")
 
+    # --- VIX Service ---
+    from ..services.vix_service import VIXService
+    vix_service = VIXService(
+        engine=db_service.engine,
+        interval_seconds=300  # Fetch VIX every 5 minutes
+    )
+    vix_service.start()
+    result["vix_service"] = vix_service
+    logger.info("VIX Service started (fetch every 5min)")
+
     # --- Order Flow Analyzer ---
     from ..analysis.order_flow_analyzer import OrderFlowAnalyzer
     order_flow_analyzer = OrderFlowAnalyzer(
@@ -229,7 +239,8 @@ def setup_ui(
         main_window,
         dom_service=dom_aggregator,
         order_flow_analyzer=order_flow_analyzer,
-        sentiment_service=sentiment_aggregator
+        sentiment_service=sentiment_aggregator,
+        vix_service=vix_service
     )
     _log_timing("After creating ChartTab")
     logger.info("✓ ChartTab created")
@@ -558,6 +569,8 @@ def setup_ui(
         if aggregator: aggregator.stop()
         if dom_aggregator: dom_aggregator.stop()
         if sentiment_aggregator: sentiment_aggregator.stop()
+        vix_srv = result.get("vix_service")
+        if vix_srv: vix_srv.stop()
         if db_writer: db_writer.stop()
     if app: app.aboutToQuit.connect(_graceful_shutdown)
     
