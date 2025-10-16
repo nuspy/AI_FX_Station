@@ -117,7 +117,7 @@ class SentimentAggregatorService(ThreadedBackgroundService):
 
             # Update cache
             if symbol not in self._sentiment_history:
-                self._sentiment_history[symbol] = deque(maxlen=120)  # Keep last 1 hour at 30s intervals
+                self._sentiment_history[symbol] = deque(maxlen=12)  # Keep last 1 hour at 5min intervals (12 * 5min = 60min)
             self._sentiment_history[symbol].append(metrics)
 
             # Format sentiment change safely

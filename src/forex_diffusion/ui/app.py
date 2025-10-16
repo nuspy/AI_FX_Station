@@ -171,7 +171,7 @@ def setup_ui(
     sentiment_aggregator = SentimentAggregatorService(
         engine=db_service.engine,
         symbols=sentiment_symbols,
-        interval_seconds=30  # Process sentiment every 30 seconds
+        interval_seconds=300  # Process sentiment every 5 minutes
     )
     sentiment_aggregator.start()
     result["sentiment_aggregator"] = sentiment_aggregator
