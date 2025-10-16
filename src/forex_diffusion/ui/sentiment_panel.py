@@ -44,6 +44,23 @@ class SentimentPanel(QWidget):
         }
 
         self.init_ui()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'enable_sentiment_check'):
+            apply_tooltip(self.enable_sentiment_check, "enable_sentiment", "trading_intelligence.sentiment")
+        if hasattr(self, 'sentiment_sources_combo'):
+            apply_tooltip(self.sentiment_sources_combo, "sentiment_sources", "trading_intelligence.sentiment")
+        if hasattr(self, 'sentiment_weight_spin'):
+            apply_tooltip(self.sentiment_weight_spin, "sentiment_weight", "trading_intelligence.sentiment")
+        if hasattr(self, 'sentiment_lookback_spin'):
+            apply_tooltip(self.sentiment_lookback_spin, "sentiment_lookback", "trading_intelligence.sentiment")
+    
 
     def init_ui(self):
         """Initialize user interface"""

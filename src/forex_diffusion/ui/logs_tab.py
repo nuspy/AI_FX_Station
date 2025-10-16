@@ -20,6 +20,23 @@ class LogsTab(QWidget):
         super().__init__(parent)
         self._main_window = None
         self._init_ui()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'log_filter_combo'):
+            apply_tooltip(self.log_filter_combo, "log_filter", "logs")
+        if hasattr(self, 'auto_scroll_check'):
+            apply_tooltip(self.auto_scroll_check, "auto_scroll", "logs")
+        if hasattr(self, 'save_logs_check'):
+            apply_tooltip(self.save_logs_check, "save_logs", "logs")
+        if hasattr(self, 'max_log_lines_spin'):
+            apply_tooltip(self.max_log_lines_spin, "max_log_lines", "logs")
+    
 
     def set_main_window(self, main_window):
         """Set reference to main window for data sources tab."""

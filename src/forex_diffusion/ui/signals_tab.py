@@ -53,7 +53,28 @@ class SignalsTab(QWidget):
 
         # Don't auto-refresh on init to avoid blocking app startup
         # self.refresh()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
 
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        # Signals (6 tooltips)
+        if hasattr(self, 'signal_strength_threshold_spin'):
+            apply_tooltip(self.signal_strength_threshold_spin, "signal_strength_threshold", "signals")
+        if hasattr(self, 'signal_timeframe_combo'):
+            apply_tooltip(self.signal_timeframe_combo, "signal_timeframe", "signals")
+        if hasattr(self, 'combine_signals_check'):
+            apply_tooltip(self.combine_signals_check, "combine_signals", "signals")
+        if hasattr(self, 'filter_news_events_check'):
+            apply_tooltip(self.filter_news_events_check, "filter_news_events", "signals")
+        if hasattr(self, 'signal_expiry_bars_spin'):
+            apply_tooltip(self.signal_expiry_bars_spin, "signal_expiry_bars", "signals")
+        if hasattr(self, 'send_notifications_check'):
+            apply_tooltip(self.send_notifications_check, "send_notifications", "signals")
+    
     def refresh(self):
         """Refreshes the signals table with the latest data from the database."""
         if not self.db_service:

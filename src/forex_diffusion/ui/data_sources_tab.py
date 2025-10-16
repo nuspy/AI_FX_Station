@@ -31,6 +31,27 @@ class DataSourcesTab(QWidget):
         self._main_window = None
         self._last_update_times: Dict[str, datetime] = {}
         self._init_ui()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        if hasattr(self, 'primary_source_combo'):
+            apply_tooltip(self.primary_source_combo, "primary_source", "data_sources")
+        if hasattr(self, 'backup_source_combo'):
+            apply_tooltip(self.backup_source_combo, "backup_source", "data_sources")
+        if hasattr(self, 'api_credentials_edit'):
+            apply_tooltip(self.api_credentials_edit, "api_credentials", "data_sources")
+        if hasattr(self, 'rate_limit_spin'):
+            apply_tooltip(self.rate_limit_spin, "rate_limit", "data_sources")
+        if hasattr(self, 'download_on_startup_check'):
+            apply_tooltip(self.download_on_startup_check, "download_on_startup", "data_sources")
+        if hasattr(self, 'data_storage_edit'):
+            apply_tooltip(self.data_storage_edit, "data_storage", "data_sources")
+    
 
     def set_main_window(self, main_window):
         """Set reference to main window for accessing data services."""
