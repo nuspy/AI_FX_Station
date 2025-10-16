@@ -1,0 +1,103 @@
+{
+  "_meta": {
+    "language": "en_US",
+    "language_name": "English (United States)",
+    "version": "1.0.0",
+    "last_updated": "2025-01-08",
+    "translators": ["ForexGPT Team"]
+  },
+  
+  "_comment_structure": "Keys follow dot notation: tab.widget.element.type (label|tooltip|placeholder|error)",
+  
+  "app": {
+    "title": "ForexGPT - AI-Powered Forex Trading Platform",
+    "version": "v2.0.0"
+  },
+  
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "close": "Close",
+    "save": "Save",
+    "load": "Load",
+    "delete": "Delete",
+    "edit": "Edit",
+    "add": "Add",
+    "remove": "Remove",
+    "browse": "Browse...",
+    "reset": "Reset",
+    "default": "Default",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "on": "ON",
+    "off": "OFF",
+    "yes": "Yes",
+    "no": "No",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Information",
+    "success": "Success"
+  },
+  
+  "chart": {
+    "tab_name": "Chart",
+    
+    "market_watch": {
+      "title": "Market Watch",
+      "spread_label": "Spread:",
+      "pips_label": "pips",
+      "change_label": "Change:"
+    },
+    
+    "vix": {
+      "title": "Volatility",
+      "label": "VIX:",
+      "classification": {
+        "complacency": "Complacency",
+        "normal": "Normal",
+        "concern": "Concern",
+        "fear": "Fear"
+      }
+    },
+    
+    "order_books": {
+      "title": "Order Books",
+      "bid_label": "Bid",
+      "ask_label": "Ask",
+      "spread_label": "Spread:",
+      "imbalance_label": "Imbalance:"
+    },
+    
+    "order_flow": {
+      "title": "Order Flow Imbalance",
+      "bid_volume": "Bid:",
+      "ask_volume": "Ask:"
+    },
+    
+    "timeframe": {
+      "label": "Timeframe:",
+      "tooltip": "Chart Timeframe Selector\n\n1) WHAT IT IS:\nSelect the time period represented by each candlestick on the chart.\n1m = 1-minute candles, 1d = daily candles, etc.\n\nEach timeframe represents a different granularity of price action:\n- Higher timeframes (4h, 1d) = bigger picture, less noise\n- Lower timeframes (1m, 5m) = detailed view, more noise\n\n2) HOW AND WHEN TO USE:\n\nWhen to use different timeframes:\n- Scalping: 1m, 5m (trades lasting 5-60 minutes)\n- Day trading: 15m, 30m, 1h (trades within the same day)\n- Swing trading: 4h, 1d (trades lasting days to weeks)\n- Position trading: 1d, 1w (trades lasting weeks to months)\n\nHow to use (Multi-timeframe analysis):\n1. Start with higher timeframe (1d) to identify major trend\n2. Drop to medium timeframe (1h) to find entry zones\n3. Use lower timeframe (15m) for precise entry timing\n\nRelevance by strategy:\n- Scalping: CRITICAL - must use 1m/5m for entries\n- Day trading: IMPORTANT - 15m/1h is your decision timeframe\n- Swing trading: MODERATE - 4h/1d for entries, lower TF for precision\n- Position trading: LOW - 1d/1w sufficient, lower TF unnecessary\n\n3) WHY TO USE IT:\n- See the same market at different time scales\n- Align your strategy with appropriate granularity\n- Avoid trading against the higher timeframe trend (e.g., don't short on 15m if 1d is strong uptrend)\n- Multi-timeframe confluence increases probability of success\n- Match timeframe to your trading style and available time\n\n4) EFFECTS:\n\n4.1) LOW TIMEFRAMES (1m, 5m):\n\nBehavior:\n- Each candle forms very quickly (1-5 minutes)\n- Extremely detailed price action visible\n- Every small move captured\n- High frequency of signals\n\nAdvantages:\n- Maximum precision for scalping entries\n- Catch micro-patterns and quick reversals\n- Perfect for intraday momentum trading\n- See exact price levels where orders execute\n\nDisadvantages:\n- Very HIGH NOISE - many false signals\n- Requires constant monitoring (can't step away)\n- Spread costs significant on small moves\n- Whipsaws and stop hunts common\n- Stressful and time-consuming\n\nWhen to use:\n- Scalping strategies (5-15 minute holds)\n- Precise entry timing within larger setup\n- Day trading during high volatility sessions\n- When you can actively monitor for hours\n\n4.2) MEDIUM TIMEFRAMES (15m, 30m, 1h):\n\nBehavior:\n- Balanced view of price action\n- Filters out most micro-noise\n- Patterns form over hours\n- Moderate frequency of signals\n\nAdvantages:\n- OPTIMAL balance noise vs signal\n- Reliable patterns (3+ candles = hours of confirmation)\n- Good for part-time traders (check every hour)\n- Widely followed by institutions (support/resistance respected)\n- Lifestyle-friendly (not glued to screen)\n\nDisadvantages:\n- Slower reaction to news events (compared to 1m/5m)\n- Larger stop losses needed (more pips)\n- Fewer opportunities (1-2 setups per day vs 10+ on 1m)\n- May miss very fast intraday moves\n\nWhen to use:\n- Day trading (trades lasting 1-8 hours)\n- Short-term swing trading (overnight to 3 days)\n- PRIMARY timeframe for most retail traders\n- When checking chart 1-3 times per hour is feasible\n\n4.3) HIGH TIMEFRAMES (4h, 1d, 1w):\n\nBehavior:\n- Big picture view of market\n- Very smooth trends, minimal noise\n- Patterns develop over days/weeks\n- Low frequency of signals\n\nAdvantages:\n- MAXIMUM RELIABILITY - patterns proven over days\n- Major levels highly respected by institutions\n- Check ONCE per day (or even weekly)\n- Perfect for busy people with day jobs\n- Low stress, no need for constant monitoring\n\nDisadvantages:\n- VERY SLOW to react (4 hours per candle on 4h chart!)\n- Wide stop losses required (50-200 pips)\n- Very few opportunities (1-2 setups per month)\n- Requires large account (wide stops = more capital)\n- Boring for active traders\n\nWhen to use:\n- Swing trading (holds lasting 3-30 days)\n- Position trading (weeks to months)\n- Trend identification for lower timeframe entries\n- When you can only check markets once per day\n- When you want lifestyle freedom\n\n5) TYPICAL RANGE / DEFAULT VALUES:\n\n- Minimum: 1m (highest granularity available)\n- BEGINNER DEFAULT: 1h (best balance for learning)\n- SCALPER DEFAULT: 5m (detailed but not too noisy)\n- DAY TRADER DEFAULT: 15m or 1h\n- SWING TRADER DEFAULT: 4h or 1d\n- POSITION TRADER DEFAULT: 1d or 1w\n- Maximum: 1M (monthly, rarely used)\n\nUsage distribution:\n- Beginners: 80% should start with 1h timeframe\n- Intermediate: 40% use 15m-1h, 40% use 4h-1d, 20% use 1m-5m\n- Advanced: Spread across all timeframes based on strategy\n\nRecommendation by experience:\n- Beginner: Start with 1h ONLY for first 6 months (master one timeframe)\n- Intermediate: Add 4h (trend filter) and 15m (entry timing)\n- Advanced: Full multi-timeframe analysis (1d → 4h → 1h → 15m)\n\n6) ADDITIONAL NOTES / BEST PRACTICES:\n\nMulti-timeframe workflow (THE RIGHT WAY):\n1. Start on Daily (1d): What's the major trend? Up, down, or range?\n2. Drop to 4H: Confirm trend, identify swing structure\n3. Drop to 1H: Find entry setups aligned with 4H/Daily trend\n4. Drop to 15m: Precise entry point (breakout, pullback, etc.)\n\nCommon mistakes to AVOID:\n- Trading lower TF against higher TF trend (fighting the trend = lose)\n- Using only 1 timeframe (missing big picture)\n- Too many timeframes (analysis paralysis, conflicting signals)\n- Switching timeframes randomly (lack of consistency)\n\nOptimal timeframe combinations:\n- Scalping: 5m (primary) + 15m (trend filter)\n- Day trading: 15m (primary) + 1h (trend) + 5m (entry)\n- Swing trading: 4h (primary) + 1d (trend) + 1h (entry)\n- Position: 1d (primary) + 1w (trend) + 4h (entry)\n\nHow ForexGPT uses timeframes:\n- Indicators calculated on ALL timeframes simultaneously\n- Multi-timeframe ensemble model combines predictions from 6 timeframes\n- Regime detection uses 4h and 1d for macro trend\n- Signals generated on 1h, refined on 15m for entry\n\nKeyboard shortcuts:\n- Ctrl+Up: Next higher timeframe\n- Ctrl+Down: Next lower timeframe\n- Ctrl+1 through Ctrl+9: Jump to specific timeframes"
+    },
+    
+    "symbol": {
+      "label": "Symbol:",
+      "tooltip": "Symbol Selector\n\n1) WHAT IT IS:\nChoose which currency pair (or financial instrument) to display and analyze.\nSymbols formatted as BASE/QUOTE (e.g., EUR/USD = Euro vs US Dollar).\n\nExample: EUR/USD = 1.0850 means 1 Euro = 1.0850 US Dollars\n\n2) HOW AND WHEN TO USE:\n\nWhen to trade different symbols:\n- EUR/USD: Best during London/NY sessions (13:00-22:00 GMT)\n- USD/JPY: Best during Tokyo/NY sessions (00:00-09:00, 13:00-22:00 GMT)\n- GBP/USD: Best during London session (07:00-16:00 GMT)\n- AUD/USD: Best during Sydney/Asian session (22:00-08:00 GMT)\n\nHow to use:\n- Click dropdown to see all available symbols\n- Type first letters to quick-search (e.g., \"EU\" finds EUR/USD)\n- Select symbol to load chart and data\n- Right-click for advanced options (add to watchlist, etc.)\n\nRelevance by experience:\n- Beginner: Trade ONLY EUR/USD for first 6-12 months (master ONE pair)\n- Intermediate: Add 1-2 more majors (GBP/USD, USD/JPY)\n- Advanced: 5-8 pairs including crosses, correlation-aware\n\n3) WHY TO USE IT:\n- Access different markets and opportunities\n- Diversification (don't put all trades in one pair)\n- Correlation analysis (EUR/USD and GBP/USD move together)\n- Find the pair that's moving (opportunity scanning)\n- Each pair has unique characteristics (volatility, spread, behavior)\n\n4) EFFECTS:\n\n4.1) MAJOR PAIRS (Tight spreads, high liquidity):\n\nEUR/USD (Euro vs US Dollar):\n- Most traded pair globally (~30% of FX volume)\n- Spread: 0.0-1.0 pips (tightest available)\n- Volatility: MEDIUM (50-100 pips/day)\n- Best for: Beginners, scalping, technical analysis\n\nAdvantages:\n- Tightest spreads (lowest cost)\n- Highest liquidity (instant fills, no slippage)\n- Smooth trends, respects technical levels\n- Most educational resources available\n\nDisadvantages:\n- Can be slow during Asian session\n- News-driven (ECB and Fed announcements cause spikes)\n\nWhen to trade:\n- London/NY overlap (13:00-17:00 GMT) - BEST\n- European session (07:00-16:00 GMT) - Good\n- Asian session (22:00-08:00 GMT) - Slow\n\nGBP/USD (British Pound vs US Dollar - \"The Cable\"):\n- 2nd most popular major\n- Spread: 1-3 pips\n- Volatility: HIGH (100-200 pips/day)\n- Best for: Experienced traders (wild swings)\n\nAdvantages:\n- High volatility = big profit potential\n- Strong trends when it moves\n- Active during London session\n\nDisadvantages:\n- Sharp reversals (can whipsaw stops)\n- Brexit news causes extreme volatility\n- Higher spread than EUR/USD\n- Requires wider stops (50-100 pips)\n\nWhen to trade:\n- London session (07:00-16:00 GMT) - BEST\n- Avoid during major UK news (can spike 50+ pips instantly)\n\n4.2) MINOR PAIRS (Moderate spreads, good liquidity):\n\nEUR/GBP (Euro vs British Pound):\n- European cross (no USD)\n- Spread: 1.5-3 pips\n- Volatility: LOW (30-60 pips/day)\n- Best for: Range trading\n\nAdvantages:\n- Mean-reverting (tends to stay in range)\n- Predictable behavior\n- Less affected by USD news\n\nDisadvantages:\n- Rarely trends (boring for trend traders)\n- Lower volatility = smaller profit potential\n\nWhen to use:\n- When both EUR and GBP have clear directional bias\n- Range trading strategies (buy support, sell resistance)\n\n4.3) EXOTIC PAIRS (Wide spreads, low liquidity - CAUTION):\n\nEUR/TRY, USD/MXN, USD/ZAR:\n- Emerging market currencies\n- Spread: 10-100+ pips (!)\n- Volatility: EXTREME\n- Best for: Advanced traders ONLY\n\nAdvantages:\n- NONE for most traders (avoid these)\n\nDisadvantages:\n- Extremely wide spreads (cost prohibitive)\n- Low liquidity (slippage, gaps, poor fills)\n- High risk of flash crashes\n- Broker manipulation more common\n- Overnight gaps of 100-500 pips possible\n\nWhen to use:\n- Almost NEVER (unless you're expert in emerging markets)\n- Requires massive stop losses (500-1000 pips)\n\n5) TYPICAL RANGE / DEFAULT VALUES:\n\n- DEFAULT for beginners: EUR/USD (start here, master it)\n- DEFAULT for scalpers: EUR/USD or GBP/USD (tight spreads or high volatility)\n- DEFAULT for day traders: EUR/USD, GBP/USD, USD/JPY (choose 2-3)\n- DEFAULT for swing traders: Any major pair based on setup\n\nNumber of pairs to trade:\n- Beginner: 1 pair only (EUR/USD recommended)\n- Intermediate: 2-4 major pairs\n- Advanced: 5-8 pairs including crosses\n\nUsage distribution:\n- 60% of traders primarily trade EUR/USD\n- 20% primarily GBP/USD\n- 10% USD/JPY\n- 10% other pairs\n\n6) ADDITIONAL NOTES / BEST PRACTICES:\n\nPair correlations (IMPORTANT for risk management):\n- EUR/USD and USD/CHF: -95% correlation (nearly perfect inverse)\n- EUR/USD and GBP/USD: +80% correlation (move together)\n- AUD/USD and NZD/USD: +85% correlation (both commodity currencies)\n\nDON'T trade correlated pairs simultaneously:\n- EUR/USD long + USD/CHF long = positions cancel out (waste spread)\n- EUR/USD long + GBP/USD long = DOUBLE exposure (2× risk if wrong)\n\nDO trade for diversification:\n- EUR/USD long + USD/JPY short = uncorrelated (true diversification)\n\nSession optimization:\n- Asian (22:00-08:00 GMT): USD/JPY, AUD/USD, NZD/USD\n- European (07:00-16:00 GMT): EUR/USD, GBP/USD, EUR/GBP\n- NY (13:00-22:00 GMT): All USD pairs\n- OVERLAP (13:00-17:00 GMT): BEST time, all majors active\n\nHow ForexGPT handles symbols:\n- Each symbol has independent trained models\n- Correlation matrix updated real-time\n- Portfolio risk calculated across all positions\n- Alert when opening correlated positions (>80% correlation)\n\nKeyboard shortcuts:\n- Ctrl+S: Open symbol selector\n- Type letters: Quick search (\"GBP\" finds GBP/USD)\n- Ctrl+→/←: Cycle through watchlist"
+    }
+  },
+  
+  "training": {
+    "tab_name": "Training",
+    
+    "model_name": {
+      "label": "Model Name:",
+      "placeholder": "Auto-generate from features",
+      "tooltip": "Model Name (Optional Custom Name)\n\n1) WHAT IT IS:\nCustom name for the trained model file that will be saved.\nIf left empty, name is auto-generated from features (e.g., \"EUR_USD_1h_ridge_ATR_RSI_MACD_20250108\").\n\nExample: \"my_eurusd_scalping_model_v2\" or \"production_swing_gbpusd\"\n\n2) HOW AND WHEN TO USE:\n\nWhen to set custom name:\n- Production models you'll use for real trading\n- A/B testing (e.g., \"model_A_conservative\" vs \"model_B_aggressive\")\n- Versioning (\"v1\", \"v2\", \"v3\" as you iterate)\n- Organizing multiple strategies\n\nWhen to leave empty (auto-generate):\n- Quick experiments and testing\n- Don't care about the name\n- Want descriptive name based on features\n\nHow to use:\n- Type any name (letters, numbers, underscore, dash allowed)\n- Avoid special characters (/, \\, *, ?, <, >, |)\n- Keep under 50 characters for readability\n\n3) WHY TO USE IT:\n- Easy identification of models later\n- Organize models by strategy/version\n- Professional workflow (\"production_v3\" vs random auto-name)\n- A/B testing and comparison\n- Team collaboration (everyone knows which model is which)\n\n4) EFFECTS:\n\n4.1) EMPTY (Auto-generate name):\n\nBehavior:\n- System generates name from: symbol_timeframe_algorithm_features_date\n- Example: \"EURUSD_1h_ridge_ATR_RSI_MACD_Bollinger_20250108_143022\"\n- Very long but descriptive name\n\nAdvantages:\n- FULLY descriptive (you know exactly what's in the model)\n- No thinking required\n- Never conflicts (timestamp unique)\n- Good for experiments\n\nDisadvantages:\n- Long and ugly names\n- Hard to remember\n- Not professional for production\n\nWhen to use:\n- Quick tests and experiments\n- Throwaway models\n- Learning phase\n\n4.2) CUSTOM NAME SET:\n\nBehavior:\n- Model saved with your custom name\n- Example: \"production_eurusd_v3\"\n- Metadata still contains all features info\n\nAdvantages:\n- Clean, professional names\n- Easy to remember and reference\n- Good for production deployment\n- Version control\n- Team-friendly\n\nDisadvantages:\n- Need to track what features are in each version\n- Risk of name conflicts (if not careful with versioning)\n- Requires discipline (good naming convention)\n\nWhen to use:\n- Production models\n- Models you'll keep and use long-term\n- A/B testing\n- Professional workflow\n\n5) TYPICAL RANGE / DEFAULT VALUES:\n\n- DEFAULT: Empty (auto-generate)\n- Most users: 70% leave empty, 30% use custom names\n- Production use: 90% use custom names\n\nRecommended naming convention:\n- Format: \"[environment]_[symbol]_[strategy]_v[version]\"\n- Examples:\n  * \"prod_eurusd_scalp_v3\"\n  * \"test_gbpusd_swing_v1\"\n  * \"paper_usdjpy_trend_v2\"\n\n6) ADDITIONAL NOTES / BEST PRACTICES:\n\nNaming conventions for teams:\n- Include environment: prod, test, dev, paper\n- Include symbol: eurusd, gbpusd (no slash)\n- Include strategy type: scalp, swing, trend\n- Include version: v1, v2, v3\n- Optional: Include date: 20250108\n\nExamples:\n- \"prod_eurusd_scalp_v3_20250108\" (production scalping model v3)\n- \"test_gbpusd_swing_v1\" (test swing trading model)\n- \"research_multi_symbol_ensemble_v2\" (research multi-pair model)\n\nDO NOT use:\n- Spaces (use underscore instead)\n- Special characters (/, \\, *, ?, etc.)\n- Very long names (>50 chars hard to read)\n\nVersion control:\n- Always increment version when retraining\n- Keep old versions for rollback\n- Document what changed in each version\n\nHow ForexGPT uses model names:\n- Saved to database (model_metadata table)\n- File saved as: artifacts/{model_name}.pkl\n- Searchable in model selection dropdowns\n- Displayed in backtest results"
+    },
+    
+    "symbol": {
+      "label": "Symbol:",
+      "tooltip": "[SAME DETAILED TOOLTIP AS CHART.SYMBOL - SEE ABOVE FOR FULL 6-SECTION STRUCTURE]"
+    }
+  }
+}

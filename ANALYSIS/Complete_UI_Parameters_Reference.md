@@ -161,26 +161,37 @@ ForexGPT Main Window
   ```
 
 ##### Spread Display
-- **What it is**: Difference between bid and ask price in pips
-- **What it serves**: Trading cost awareness - tighter spreads mean lower transaction costs
-- **Typical values**:
-  - **Very low (0.0-0.5 pips)**: Excellent liquidity, major pairs during London/NY overlap, institutional pricing
-  - **Low (0.5-1.5 pips)**: Good liquidity, major pairs during normal trading hours, retail broker standard
-  - **Medium (1.5-3.0 pips)**: Moderate liquidity, minor pairs or off-peak hours
-  - **High (3.0-10.0 pips)**: Low liquidity, exotic pairs or news events
-  - **Very high (>10 pips)**: Illiquid market, extreme volatility, or broker issue - avoid trading
+
+**Parametro**: Spread (Bid-Ask Difference) - Visualizzazione in tempo reale
 - **Tooltip**:
   ```
   Spread (Bid-Ask Difference)
   
-  What it is:
-  The difference between the bid price (what you can sell at) and the ask price 
-  (what you can buy at), measured in pips. This is your immediate trading cost.
+  1) COSA È:
+  Lo spread è la differenza tra il prezzo bid (prezzo al quale puoi VENDERE) 
+  e il prezzo ask (prezzo al quale puoi COMPRARE), misurato in pips. 
+  Rappresenta il costo immediato di ogni transazione.
   
-  What it serves:
-  - Transaction cost awareness
-  - Liquidity indicator
-  - Optimal entry timing
+  Esempio: EUR/USD Bid 1.0850 / Ask 1.0851 = Spread di 1.0 pip
+  
+  2) COME E QUANDO SI USA:
+  - Monitoralo SEMPRE prima di aprire un trade
+  - Usalo per scegliere il timing ottimale di ingresso
+  - Confronta spread tra diversi broker
+  - Evita trading quando spread >3× normale (eventi news, bassa liquidità)
+  
+  Quando è rilevante:
+  - Scalping: CRITICO (spread mangia profitti su piccoli movimenti)
+  - Day trading: IMPORTANTE (impatta breakeven e target)
+  - Swing trading: MODERATO (meno rilevante su hold multi-day)
+  
+  3) PERCHÉ SI USA:
+  - Calcolare il costo reale di ogni trade
+  - Identificare condizioni di mercato (spread basso = alta liquidità)
+  - Ottimizzare timing (evitare spread alti)
+  - Valutare se un trade è conveniente (target deve superare spread)
+  
+  4) EFFETTI:
   
   Spread levels and interpretation:
   
