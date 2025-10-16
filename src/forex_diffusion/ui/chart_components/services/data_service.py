@@ -969,7 +969,9 @@ class DataService(ChartServiceBase):
                         .where(cond).order_by(tkt.c.ts_utc.desc()).limit(limit)
                     rows = conn.execute(stmt).fetchall()
                     if not rows:
-                        return pd.DataFrame()
+                        # No tick data found, fallback to 1m candles
+                        logger.info(f"No tick data found for {symbol}, falling back to 1m candles")
+                        return self._load_candles_from_db(symbol, "1m", limit=limit, start_ms=start_ms, end_ms=end_ms)
                     # rows may be tuples with (ts_utc, price, bid, ask) depending on schema
                     # Build price column: prefer 'price', else (bid+ask)/2
                     try:
@@ -1006,6 +1008,13 @@ class DataService(ChartServiceBase):
                         df = df.drop_duplicates(subset=["ts_utc"], keep="last").reset_index(drop=True)
                     except Exception:
                         pass
+                    
+                    # If tick data is empty, fallback to 1m candles
+                    if df.empty:
+                        logger.info(f"No tick data found for {symbol}, falling back to 1m candles")
+                        # Recursively load 1m candles instead
+                        return self._load_candles_from_db(symbol, "1m", limit=limit, start_ms=start_ms, end_ms=end_ms)
+                    
                     return df[["ts_utc", "price"] + ([c for c in ["bid","ask"] if c in df.columns])]
             else:
                 # --- load candles ---
