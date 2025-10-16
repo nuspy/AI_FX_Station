@@ -29,14 +29,14 @@ class SentimentAggregatorService(ThreadedBackgroundService):
     Inherits from ThreadedBackgroundService for lifecycle management and error recovery.
     """
 
-    def __init__(self, engine: Engine, symbols: List[str] | None = None, interval_seconds: int = 30):
+    def __init__(self, engine: Engine, symbols: List[str] | None = None, interval_seconds: int = 60):
         """
         Initialize sentiment aggregator service.
         
         Args:
             engine: SQLAlchemy engine for database access
             symbols: List of symbols to process (None = load from config)
-            interval_seconds: Interval between sentiment processing runs (default: 30s)
+            interval_seconds: Interval between sentiment processing runs (default: 60s = 1 min)
         """
         # Initialize base class with circuit breaker enabled
         super().__init__(
