@@ -574,7 +574,7 @@
     
     "broker": {
       "label": "Broker:",
-      "tooltip": "Trading broker. Options: oanda, fxcm, interactive_brokers, alpaca. Requires API credentials."
+      "tooltip": "Trading broker. Options: oanda, fxcm, interactive_brokers, alpaca. Requires authentication setup."
     },
     
     "account_type": {
@@ -653,6 +653,243 @@
     "random_seed": {
       "label": "Random Seed:",
       "tooltip": "Seed for reproducibility. Set to fixed value (42) for consistent results. None = random each run."
+    }
+  },
+  
+  "signals": {
+    "tab_name": "Signals",
+    
+    "signal_strength_threshold": {
+      "label": "Min Signal Strength:",
+      "tooltip": "Minimum prediction confidence to generate signal. DEFAULT: 0.6. Conservative: 0.7. Aggressive: 0.5. Higher = fewer but stronger signals."
+    },
+    
+    "signal_timeframe": {
+      "label": "Signal Timeframe:",
+      "tooltip": "Timeframe for signal generation. Should match trading style. Scalping: 1m-5m. Day: 15m-1h. Swing: 4h-1d."
+    },
+    
+    "combine_signals": {
+      "label": "Combine Multi-TF Signals:",
+      "tooltip": "Combine signals from multiple timeframes. Increases reliability. DEFAULT: Enabled. Requires alignment across 2-3 timeframes."
+    },
+    
+    "filter_news_events": {
+      "label": "Filter During News:",
+      "tooltip": "Disable signals during major news events. DEFAULT: Enabled. Prevents trading high-impact news (NFP, FOMC, CPI)."
+    },
+    
+    "signal_expiry_bars": {
+      "label": "Signal Expiry (bars):",
+      "tooltip": "Bars before signal expires. DEFAULT: 5. Short-term: 3. Longer: 10. Prevents stale signals."
+    },
+    
+    "send_notifications": {
+      "label": "Send Notifications:",
+      "tooltip": "Send signal alerts via webhook/email. Real-time notifications for manual trading. Configure webhook URL in settings."
+    }
+  },
+  
+  "trading_intelligence": {
+    "tab_name": "Trading Intelligence",
+    
+    "sentiment": {
+      "enable_sentiment": {
+        "label": "Enable Sentiment Analysis:",
+        "tooltip": "Use market sentiment from news, social media, analyst ratings. DEFAULT: Enabled. Adds 5-10 sentiment features."
+      },
+      
+      "sentiment_sources": {
+        "label": "Sentiment Sources:",
+        "tooltip": "Sources for sentiment data. Options: news, twitter, reddit, analyst_ratings. Enable multiple for consensus."
+      },
+      
+      "sentiment_weight": {
+        "label": "Sentiment Weight:",
+        "tooltip": "Weight given to sentiment vs technical. DEFAULT: 0.3 (30% sentiment, 70% technical). Range: 0.1-0.5."
+      },
+      
+      "sentiment_lookback": {
+        "label": "Sentiment Lookback (hours):",
+        "tooltip": "Hours of sentiment history to analyze. DEFAULT: 24. Short-term: 6. Long-term: 72. More = smoother but lagging."
+      }
+    },
+    
+    "vix": {
+      "enable_vix": {
+        "label": "Enable VIX Features:",
+        "tooltip": "Use VIX (Volatility Index) as fear gauge. DEFAULT: Enabled. High VIX = market fear. Good risk filter."
+      },
+      
+      "vix_threshold_fear": {
+        "label": "VIX Fear Threshold:",
+        "tooltip": "VIX level indicating fear. DEFAULT: 25. Above 30 = extreme fear. Use as contrarian signal or avoid trading."
+      },
+      
+      "vix_threshold_complacency": {
+        "label": "VIX Complacency Threshold:",
+        "tooltip": "VIX level indicating complacency. DEFAULT: 12. Below 10 = extreme complacency. Warning sign (low vol before spike)."
+      }
+    },
+    
+    "orderbook": {
+      "enable_orderbook": {
+        "label": "Enable Order Book Analysis:",
+        "tooltip": "Analyze Level 2 order book depth. Shows institutional support/resistance. Requires broker with Level 2 data."
+      },
+      
+      "orderbook_depth_levels": {
+        "label": "Depth Levels:",
+        "tooltip": "Price levels to analyze in order book. DEFAULT: 10. More = complete picture but slower. Range: 5-20."
+      },
+      
+      "orderbook_imbalance_threshold": {
+        "label": "Imbalance Threshold:",
+        "tooltip": "Bid/ask imbalance to trigger signal. DEFAULT: 0.3 (30% imbalance). Higher = stronger institutional bias."
+      }
+    },
+    
+    "market_internals": {
+      "enable_internals": {
+        "label": "Enable Market Internals:",
+        "tooltip": "Use market breadth, advance/decline, new highs/lows. Stock market only. Shows overall market health."
+      },
+      
+      "internal_symbols": {
+        "label": "Internal Symbols:",
+        "tooltip": "Symbols for market internals. Stocks: SPY, QQQ, DIA. Forex: DXY (dollar index). Track major indices."
+      }
+    }
+  },
+  
+  "data_sources": {
+    "tab_name": "Data Sources",
+    
+    "primary_source": {
+      "label": "Primary Data Source:",
+      "tooltip": "Main data provider. Options: alpha_vantage, polygon, yahoo, oanda, fxcm. Choose based on markets traded."
+    },
+    
+    "backup_source": {
+      "label": "Backup Source:",
+      "tooltip": "Fallback if primary fails. Ensures continuous data. Different provider recommended for redundancy."
+    },
+    
+    "api_credentials": {
+      "label": "API Credentials:",
+      "tooltip": "Authentication token for data provider. Get from provider website. Keep secret. Store in environment file."
+    },
+    
+    "rate_limit": {
+      "label": "Rate Limit (req/min):",
+      "tooltip": "API requests per minute limit. DEFAULT: Provider limit. Lower to avoid hitting limits. Alpha Vantage: 5/min free tier."
+    },
+    
+    "download_on_startup": {
+      "label": "Download Latest Data on Startup:",
+      "tooltip": "Fetch latest bars when app starts. DEFAULT: Enabled. Ensures fresh data. Disable if using cached data only."
+    },
+    
+    "data_storage": {
+      "label": "Data Storage:",
+      "tooltip": "Where to store historical data. Options: sqlite, postgresql, csv. DEFAULT: sqlite (simple). PostgreSQL for production."
+    }
+  },
+  
+  "risk_management": {
+    "tab_name": "Risk Management",
+    
+    "max_portfolio_risk": {
+      "label": "Max Portfolio Risk (%):",
+      "tooltip": "Maximum total portfolio risk. DEFAULT: 10%. Sum of all position risks. Conservative: 5%. Aggressive: 20%."
+    },
+    
+    "max_single_position": {
+      "label": "Max Single Position (%):",
+      "tooltip": "Maximum size for single position. DEFAULT: 20% of portfolio. Prevents concentration. Conservative: 10%."
+    },
+    
+    "correlation_limit": {
+      "label": "Max Correlated Exposure:",
+      "tooltip": "Limit positions with high correlation. DEFAULT: 50%. Prevents hidden concentration. Example: EUR/USD + GBP/USD both long = 2× EUR risk."
+    },
+    
+    "kelly_fraction": {
+      "label": "Kelly Fraction:",
+      "tooltip": "Fraction of Kelly Criterion to use. DEFAULT: 0.25 (25% Kelly). Full Kelly risky. Range: 0.1-0.5. Lower = safer."
+    },
+    
+    "use_var": {
+      "label": "Use VaR (Value at Risk):",
+      "tooltip": "Calculate VaR for risk limits. 95% VaR = max loss expected 95% of time. Advanced risk measure. Requires historical data."
+    },
+    
+    "var_confidence": {
+      "label": "VaR Confidence (%):",
+      "tooltip": "VaR confidence level. DEFAULT: 95%. Conservative: 99%. Range: 90-99%. Higher = more conservative risk estimate."
+    },
+    
+    "stop_on_correlation_breach": {
+      "label": "Stop on Correlation Breach:",
+      "tooltip": "Close positions if correlation exceeds limit. DEFAULT: Enabled. Automatic risk management. Prevents portfolio blowup."
+    }
+  },
+  
+  "performance_analytics": {
+    "tab_name": "Performance Analytics",
+    
+    "track_slippage": {
+      "label": "Track Slippage:",
+      "tooltip": "Monitor actual vs expected fill prices. Shows real trading costs. Essential for live trading optimization."
+    },
+    
+    "track_drawdown": {
+      "label": "Track Drawdown:",
+      "tooltip": "Monitor equity drawdown in real-time. Alert when exceeds threshold. Critical risk metric."
+    },
+    
+    "benchmark_symbol": {
+      "label": "Benchmark Symbol:",
+      "tooltip": "Symbol to compare performance against. Stocks: SPY. Forex: DXY. Shows if strategy beats market."
+    },
+    
+    "generate_reports": {
+      "label": "Auto-Generate Reports:",
+      "tooltip": "Automatically create performance reports. Options: daily, weekly, monthly. Includes metrics, charts, trade log."
+    },
+    
+    "report_metrics": {
+      "label": "Report Metrics:",
+      "tooltip": "Metrics to include in reports. Options: sharpe, sortino, max_dd, win_rate, profit_factor, expectancy. Enable all for complete picture."
+    }
+  },
+  
+  "database": {
+    "tab_name": "Database",
+    
+    "db_type": {
+      "label": "Database Type:",
+      "tooltip": "Database engine. Options: sqlite, postgresql, mysql. DEFAULT: sqlite (simple). PostgreSQL for production/multi-user."
+    },
+    
+    "connection_string": {
+      "label": "Connection String:",
+      "tooltip": "Database connection URL. SQLite: path to .db file. PostgreSQL: postgresql://user:pass@host:port/db. Store in .env."
+    },
+    
+    "auto_backup": {
+      "label": "Auto Backup:",
+      "tooltip": "Automatically backup database. DEFAULT: Enabled. Options: daily, weekly. Critical for data protection."
+    },
+    
+    "backup_retention_days": {
+      "label": "Backup Retention (days):",
+      "tooltip": "Days to keep old backups. DEFAULT: 30. Longer = more storage. Delete old backups to save space."
+    },
+    
+    "vacuum_on_startup": {
+      "label": "Vacuum on Startup:",
+      "tooltip": "Optimize database on startup. Reclaims space, improves performance. SQLite only. Disable if database very large (slow)."
     }
   }
 }
