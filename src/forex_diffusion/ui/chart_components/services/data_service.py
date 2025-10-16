@@ -620,7 +620,9 @@ class DataService(ChartServiceBase):
     def _on_timeframe_changed(self, new_timeframe: str):
         """Handle timeframe change: reload candles from DB with new timeframe."""
         try:
+            logger.info(f"DataService: Handling timeframe change to {new_timeframe}")
             if not new_timeframe:
+                logger.warning("Empty timeframe provided")
                 return
             self.timeframe = new_timeframe
             # reset cache so next reload uses the new context
@@ -635,13 +637,21 @@ class DataService(ChartServiceBase):
                 start_ms_view = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
             except Exception:
                 start_ms_view = None
-            df = self._load_candles_from_db(getattr(self, "symbol", "EURUSD"), new_timeframe, limit=50000, start_ms=start_ms_view)
+            
+            symbol = getattr(self, "symbol", "EURUSD")
+            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, start_ms={start_ms_view}")
+            df = self._load_candles_from_db(symbol, new_timeframe, limit=50000, start_ms=start_ms_view)
+            
             if df is not None and not df.empty:
+                logger.info(f"Loaded {len(df)} candles, updating plot...")
                 self.update_plot(df)
+                logger.info(f"Plot updated successfully for {symbol} {new_timeframe}")
                 try:
                     self._backfill_on_open(df)
                 except Exception:
                     pass
+            else:
+                logger.warning(f"No data found for {symbol} {new_timeframe}")
         except Exception as e:
             logger.exception("Failed to switch timeframe: {}", e)
 

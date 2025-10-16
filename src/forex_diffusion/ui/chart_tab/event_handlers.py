@@ -253,7 +253,12 @@ class EventHandlersMixin:
         
         # Delegate to data_service for proper timeframe change handling
         if hasattr(self, 'data_service'):
-            self.data_service._on_timeframe_changed(value)
+            logger.info(f"Delegating timeframe change to data_service: {value}")
+            try:
+                self.data_service._on_timeframe_changed(value)
+                logger.info(f"Timeframe change delegated successfully")
+            except Exception as e:
+                logger.error(f"Error in data_service timeframe change: {e}", exc_info=True)
         else:
             logger.warning("No data_service available for timeframe change")
     
