@@ -107,6 +107,7 @@ class SentimentAggregatorService(ThreadedBackgroundService):
                 "timestamp": int(latest.name.timestamp() * 1000),
                 "long_pct": latest["long_pct"],
                 "short_pct": latest["short_pct"],
+                "total_traders": int(latest["total_traders"]) if pd.notna(latest["total_traders"]) else 0,
                 "long_pct_ma_5m": latest["long_pct_ma_5m"] if pd.notna(latest["long_pct_ma_5m"]) else None,
                 "long_pct_ma_15m": latest["long_pct_ma_15m"] if pd.notna(latest["long_pct_ma_15m"]) else None,
                 "long_pct_ma_1h": latest["long_pct_ma_1h"] if pd.notna(latest["long_pct_ma_1h"]) else None,
@@ -119,9 +120,13 @@ class SentimentAggregatorService(ThreadedBackgroundService):
                 self._sentiment_history[symbol] = deque(maxlen=120)  # Keep last 1 hour at 30s intervals
             self._sentiment_history[symbol].append(metrics)
 
+            # Format sentiment change safely
+            sentiment_change = metrics.get('sentiment_change')
+            change_str = f"{sentiment_change:.1f}%" if sentiment_change is not None else "N/A"
+            
             logger.debug(
                 f"Sentiment metrics for {symbol}: long={metrics['long_pct']:.1f}%, "
-                f"change={metrics.get('sentiment_change', 'N/A'):.1f}%, "
+                f"change={change_str}, "
                 f"contrarian={metrics['contrarian_signal']}"
             )
 
