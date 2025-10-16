@@ -51,6 +51,10 @@ class VIXService(ThreadedBackgroundService):
         
         # Yahoo Finance VIX endpoint
         self.base_url = "https://query1.finance.yahoo.com/v7/finance/quote"
+        
+        # Rate limiting tracking
+        self._last_429_time: Optional[float] = None
+        self._backoff_until: Optional[float] = None
     
     @property
     def service_name(self) -> str:
@@ -65,8 +69,16 @@ class VIXService(ThreadedBackgroundService):
         and stores in database.
         """
         try:
+            # Check if we're in backoff period
+            import time
+            if self._backoff_until and time.time() < self._backoff_until:
+                remaining = int(self._backoff_until - time.time())
+                logger.debug(f"VIX fetch in backoff period, {remaining}s remaining")
+                return
+            
             # Fetch VIX synchronously using requests
             import requests
+            from requests.exceptions import HTTPError
             
             params = {
                 'symbols': '^VIX',
@@ -112,7 +124,34 @@ class VIXService(ThreadedBackgroundService):
             self._store_vix(vix_value, classification, timestamp_ms)
             
             logger.info(f"VIX updated: {vix_value:.2f} ({classification})")
+            
+            # Clear backoff on successful fetch
+            self._backoff_until = None
                 
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                # Rate limited - implement exponential backoff
+                import time
+                now = time.time()
+                
+                # Calculate backoff duration (5 min, 10 min, 30 min, 1 hour)
+                if self._last_429_time and (now - self._last_429_time) < 3600:
+                    # Recent 429, increase backoff
+                    backoff_minutes = min(60, (now - self._last_429_time) / 60 * 2)
+                else:
+                    # First 429 or long time since last, start with 5 min
+                    backoff_minutes = 5
+                
+                self._last_429_time = now
+                self._backoff_until = now + (backoff_minutes * 60)
+                
+                logger.warning(
+                    f"VIX fetch rate limited (429). Backing off for {backoff_minutes:.0f} minutes. "
+                    f"Yahoo Finance allows ~2000 requests/hour. Current interval: {self.interval_seconds}s"
+                )
+            else:
+                logger.error(f"Failed to fetch VIX: HTTP {e.response.status_code} - {e}")
+        
         except Exception as e:
             logger.error(f"Failed to fetch VIX: {e}")
     
