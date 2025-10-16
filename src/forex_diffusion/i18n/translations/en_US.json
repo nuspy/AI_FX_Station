@@ -1132,5 +1132,246 @@
       "label": "Adaptation Method:",
       "tooltip": "Method: gradient_based, bayesian, evolutionary. DEFAULT: bayesian. Meta-optimization."
     }
+  },
+  
+  "logs": {
+    "tab_name": "Logs",
+    
+    "log_filter": {
+      "label": "Log Filter:",
+      "tooltip": "Filter logs by level. DEBUG/INFO/WARNING/ERROR. Focus on relevant messages. DEFAULT: INFO and above."
+    },
+    
+    "auto_scroll": {
+      "label": "Auto Scroll:",
+      "tooltip": "Auto-scroll to latest log. DEFAULT: Enabled. See newest messages. Disable to review older logs."
+    },
+    
+    "save_logs": {
+      "label": "Save Logs to File:",
+      "tooltip": "Save logs to file. DEFAULT: Enabled. Logs saved to logs/ directory. Rotated daily. DEBUG: 7 days retention."
+    },
+    
+    "max_log_lines": {
+      "label": "Max Display Lines:",
+      "tooltip": "Maximum log lines in UI. DEFAULT: 1000. Older lines auto-removed. Performance optimization."
+    }
+  },
+  
+  "admin": {
+    "tab_name": "Admin",
+    
+    "reset_database": {
+      "label": "Reset Database:",
+      "tooltip": "DANGER: Delete all data. Models, history, settings. Unrecoverable. Requires admin password. Use for fresh start only."
+    },
+    
+    "export_config": {
+      "label": "Export Configuration:",
+      "tooltip": "Export all settings to JSON. Backup configuration. Share with team. Import on new installation."
+    },
+    
+    "import_config": {
+      "label": "Import Configuration:",
+      "tooltip": "Import settings from JSON. Restore backup. Clone setup to new machine. Overwrites current settings."
+    },
+    
+    "system_diagnostics": {
+      "label": "System Diagnostics:",
+      "tooltip": "Run system checks. GPU, database, data sources, API connections. Generate diagnostic report."
+    },
+    
+    "clear_cache": {
+      "label": "Clear Cache:",
+      "tooltip": "Clear all cached data. Indicators, models, downloaded data. Forces fresh recalculation. Use if stale data suspected."
+    }
+  },
+  
+  "pretrade_validation": {
+    "tab_name": "Pre-Trade Validation",
+    
+    "enable_validation": {
+      "label": "Enable Pre-Trade Checks:",
+      "tooltip": "Validate trades before execution. Check risk limits, correlation, position size. DEFAULT: Enabled. Critical protection."
+    },
+    
+    "max_trade_size": {
+      "label": "Max Trade Size (lots):",
+      "tooltip": "Maximum position size per trade. DEFAULT: 1.0 lot. Prevent fat-finger errors. Conservative: 0.1 lots."
+    },
+    
+    "require_confirmation": {
+      "label": "Require Manual Confirmation:",
+      "tooltip": "Manual approval before trade execution. DEFAULT: Disabled (auto-trading). Enable for semi-auto mode."
+    },
+    
+    "check_spread": {
+      "label": "Check Spread:",
+      "tooltip": "Block trades if spread too wide. DEFAULT: 3 pips max. High spread = poor execution. Protect against market conditions."
+    },
+    
+    "check_margin": {
+      "label": "Check Margin:",
+      "tooltip": "Verify sufficient margin before trade. DEFAULT: Enabled. Prevent margin calls. 20% minimum free margin required."
+    }
+  },
+  
+  "trade_execution": {
+    "tab_name": "Trade Execution",
+    
+    "execution_speed": {
+      "label": "Execution Speed:",
+      "tooltip": "Order execution mode. Market (instant), Limit (wait for price), Stop. DEFAULT: Market. Fastest execution."
+    },
+    
+    "slippage_tolerance": {
+      "label": "Slippage Tolerance (pips):",
+      "tooltip": "Maximum acceptable slippage. DEFAULT: 2 pips. Reject if worse. Volatile markets: 5 pips. Tight control: 0.5 pips."
+    },
+    
+    "partial_fills": {
+      "label": "Allow Partial Fills:",
+      "tooltip": "Accept partial order fills. DEFAULT: Disabled (all-or-nothing). Enable for large orders, illiquid pairs."
+    },
+    
+    "smart_routing": {
+      "label": "Smart Order Routing:",
+      "tooltip": "Route orders to best execution venue. Multi-broker setup. Gets best price across venues. Advanced feature."
+    },
+    
+    "iceberg_orders": {
+      "label": "Iceberg Orders:",
+      "tooltip": "Hide full order size. Show small chunks. Prevents market impact. Large institutional orders. Avoid showing cards."
+    }
+  },
+  
+  "position_management": {
+    "tab_name": "Position Management",
+    
+    "scale_in": {
+      "label": "Scale In:",
+      "tooltip": "Add to winning positions. Pyramid strategy. DEFAULT: Disabled. Enable: add 50% of original size if +20 pips profit."
+    },
+    
+    "scale_out": {
+      "label": "Scale Out:",
+      "tooltip": "Partial profit taking. Close portions at targets. Example: 50% at +30 pips, 50% at +60 pips. Lock profits, let winners run."
+    },
+    
+    "breakeven_stop": {
+      "label": "Move to Breakeven:",
+      "tooltip": "Move stop to entry when profitable. DEFAULT: At +20 pips, move stop to entry. Risk-free trade. Lock in guaranteed no-loss."
+    },
+    
+    "time_based_exit": {
+      "label": "Time-Based Exit:",
+      "tooltip": "Close positions after time. Example: close all at end of day. Avoid overnight risk. Scalping: close after 1 hour."
+    },
+    
+    "correlation_hedging": {
+      "label": "Correlation Hedging:",
+      "tooltip": "Hedge with correlated pairs. EUR/USD long → GBP/USD short (80% corr). Reduce directional risk. Advanced strategy."
+    }
+  },
+  
+  "indicators_config": {
+    "tab_name": "Indicators Configuration",
+    
+    "save_indicator_preset": {
+      "label": "Save Preset:",
+      "tooltip": "Save current indicator settings as preset. Quick load later. Create presets: Scalping, Day Trading, Swing."
+    },
+    
+    "load_indicator_preset": {
+      "label": "Load Preset:",
+      "tooltip": "Load saved indicator preset. Instant setup. Switch between strategies. Presets stored per user."
+    },
+    
+    "multi_timeframe_indicators": {
+      "label": "Multi-Timeframe Sync:",
+      "tooltip": "Calculate indicators on multiple timeframes. 15m chart shows 1h RSI. See bigger picture while trading lower TF."
+    },
+    
+    "indicator_alerts": {
+      "label": "Indicator Alerts:",
+      "tooltip": "Alert on indicator conditions. RSI <30, MACD cross, Bollinger touch. Visual + audio + webhook. Custom conditions."
+    }
+  },
+  
+  "color_themes": {
+    "tab_name": "Color Themes",
+    
+    "theme_selection": {
+      "label": "Theme:",
+      "tooltip": "Visual theme. Dark (default), Light, High Contrast. Eye comfort. Professional appearance. Accessibility."
+    },
+    
+    "bullish_color": {
+      "label": "Bullish Color:",
+      "tooltip": "Color for up candles/signals. DEFAULT: Green. Customizable for color-blind users. Standard: Green=#00FF00."
+    },
+    
+    "bearish_color": {
+      "label": "Bearish Color:",
+      "tooltip": "Color for down candles/signals. DEFAULT: Red. Customizable. Alternative: Blue for color-blind friendly."
+    },
+    
+    "grid_opacity": {
+      "label": "Grid Opacity:",
+      "tooltip": "Chart grid transparency. DEFAULT: 20%. Higher = more visible grid. Lower = cleaner chart. Range: 0-100%."
+    },
+    
+    "custom_theme_import": {
+      "label": "Import Custom Theme:",
+      "tooltip": "Load custom color scheme. JSON format. Share themes. Download from community. Apply instantly."
+    }
+  },
+  
+  "checkpoint_management": {
+    "tab_name": "Checkpoint Management",
+    
+    "auto_checkpoint": {
+      "label": "Auto Save Checkpoints:",
+      "tooltip": "Save model checkpoints during training. DEFAULT: Every 10 epochs. Resume if crash. Best model preservation."
+    },
+    
+    "checkpoint_frequency": {
+      "label": "Checkpoint Frequency:",
+      "tooltip": "How often to save. DEFAULT: 10 epochs. More frequent = more disk space. Less frequent = less backup."
+    },
+    
+    "keep_best_only": {
+      "label": "Keep Best Only:",
+      "tooltip": "Save only best-performing checkpoint. DEFAULT: Enabled. Saves disk space. Keep top 3 models alternative."
+    },
+    
+    "checkpoint_compression": {
+      "label": "Compress Checkpoints:",
+      "tooltip": "Compress saved models. DEFAULT: Enabled. 50-70% size reduction. Slightly slower save/load. Worth it for space."
+    }
+  },
+  
+  "fxpro_integration": {
+    "tab_name": "FXPro Integration",
+    
+    "fxpro_account": {
+      "label": "FXPro Account ID:",
+      "tooltip": "FXPro trading account number. From FXPro dashboard. Required for live trading integration."
+    },
+    
+    "fxpro_server": {
+      "label": "Server:",
+      "tooltip": "FXPro server. Options: Demo, Live. DEFAULT: Demo for testing. Switch to Live only after proven results."
+    },
+    
+    "auto_sync": {
+      "label": "Auto Sync Positions:",
+      "tooltip": "Sync ForexGPT with FXPro positions. Keep in sync. See FXPro trades in ForexGPT. DEFAULT: Enabled."
+    },
+    
+    "webhook_url": {
+      "label": "Webhook URL:",
+      "tooltip": "Webhook for trade notifications. Telegram/Slack/Discord. Get instant alerts. Optional but recommended."
+    }
   }
 }
