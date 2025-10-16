@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 from loguru import logger
 
 from ..rewards import MultiObjectiveReward, RewardConfig

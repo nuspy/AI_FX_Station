@@ -119,6 +119,9 @@ dependencies = [
   # alibi-detect - REMOVED (conflicts with dill version)
   "river>=0.18.0,<1.0",            # Online learning utilities
   # evidently - REMOVED (conflicts with cryptography version)
+  
+  # Reinforcement Learning
+  "gymnasium>=0.29.0,<1.0",        # Maintained replacement for gym (NumPy 2.0 compatible)
 
   # Experiment Tracking (Optional for SSSD)
   "wandb>=0.15.0,<1.0",            # Weights & Biases experiment tracking
