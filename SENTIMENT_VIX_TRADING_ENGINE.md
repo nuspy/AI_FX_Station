@@ -346,9 +346,11 @@ def _apply_vix_filter(self, signal, confidence):
 
 ---
 
-## ✅ STATO ATTUALE
+## ✅ STATO ATTUALE - AGGIORNATO
 
-### Funziona Oggi
+### ✅ FUNZIONA COMPLETAMENTE
+
+#### Sentiment Order Flow
 - ✅ Sentiment da cTrader order flow
 - ✅ Contrarian signal calculation
 - ✅ Signal filtering basato su sentiment
@@ -356,18 +358,64 @@ def _apply_vix_filter(self, signal, confidence):
 - ✅ Quality scoring con sentiment alignment
 - ✅ UI panel mostra sentiment real-time
 
-### Non Funziona (VIX)
-- ❌ VIX provider mai chiamato
-- ❌ Dati VIX non in database
-- ❌ VIX non usato per trading decisions
-- ❌ VIX non visibile in UI
+#### VIX Volatility Filter (IMPLEMENTATO)
+- ✅ VIXService background (fetch ogni 5min)
+- ✅ Dati VIX in vix_data table
+- ✅ VIX usato in trading engine (step 5 position sizing)
+- ✅ VIX widget visibile in UI (left panel)
+- ✅ Classification real-time: Complacency/Normal/Concern/Fear
+- ✅ Adjustment automatico: 0.7x-1.0x based on volatility
 
-### Per Attivare VIX
-1. Creare `VIXService` o integrare in `SentimentAggregatorService`
-2. Fetch VIX da Yahoo Finance ogni 5-15 minuti
-3. Salvare in database (nuova table o sentiment_data)
-4. Usare in trading engine come volatility filter
-5. Opzionale: Mostrare in UI
+### 🎯 IMPLEMENTAZIONE VIX COMPLETATA
+
+**VIX Service** (`src/forex_diffusion/services/vix_service.py`):
+- Background service con ThreadedBackgroundService
+- Fetch da Yahoo Finance API ogni 5 minuti
+- Storage in `vix_data` table (ts_utc, value, classification)
+- Cache in-memory (latest_vix, latest_classification, latest_timestamp)
+- `get_volatility_adjustment(base_size)` per position sizing
+
+**Trading Engine Integration**:
+- Config flag: `use_vix_filter: bool = True`
+- Inizializzazione VIXService con db_engine
+- Step 5 in `_calculate_position_size()`: VIX filter
+- Multipliers:
+  - VIX > 30: **0.7x** (Fear - reduce significantly)
+  - VIX 20-30: **0.85x** (Concern - reduce moderately)
+  - VIX < 12: **0.95x** (Complacency - slight caution)
+  - VIX 12-20: **1.0x** (Normal - no adjustment)
+
+**VIX Widget UI** (Left Panel):
+- Posizione: Tra Market Watch e Order Books
+- Compact: 60px height max
+- Label: "Volatility" (bold, centered)
+- Progress bar: 0-50 range, formato "VIX: %v"
+- Classification label: Dynamic color
+  - 🟢 Green (#4CAF50): Normal
+  - 🟡 Yellow (#FFEB3B): Complacency
+  - 🟠 Orange (#FFA726): Concern
+  - 🔴 Red (#FF5252): Fear
+- Auto-update: QTimer ogni 10 secondi
+
+**Left Panel Layout**:
+```
+┌─────────────────────┐
+│  Market Watch (40%) │
+├─────────────────────┤ ← Movable splitter
+│  VIX Widget (10%)   │
+├─────────────────────┤ ← Movable splitter
+│  Order Books (40%)  │
+├─────────────────────┤ ← Movable splitter
+│  Order Flow (10%)   │
+└─────────────────────┘
+```
+
+### 🔧 BONUS FIX
+
+**Historical Pattern Scan**:
+- Aggiunto QMessageBox di conferma quando scan parte
+- Feedback utente: "Pattern scan started for visible chart range.\nResults will appear on the chart shortly."
+- Risolto problema "non succede nulla" quando si clicca 📜🔍
 
 ---
 
