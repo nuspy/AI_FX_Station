@@ -864,7 +864,12 @@ class PlotService(ChartServiceBase):
                                         self._chart_items[target_ax].append(indicator_item)
 
                     except Exception as e:
-                        logger.error(f"Failed to plot indicator {indicator_name}: {e}")
+                        # Distinguish between missing data (warning) and actual errors (error)
+                        error_msg = str(e)
+                        if "disabled due to missing data" in error_msg or "missing data" in error_msg.lower():
+                            logger.debug(f"Indicator {indicator_name} skipped (missing data): {e}")
+                        else:
+                            logger.error(f"Failed to plot indicator {indicator_name}: {e}")
 
             # Store axis reference
             self.ax = ax_price
