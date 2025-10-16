@@ -1082,6 +1082,11 @@ class PatternsService(ChartServiceBase):
     def _run_historical_detection(self, df: pd.DataFrame) -> None:
         """Run pattern detection on historical data"""
         try:
+            # Debug: check self type (defensive programming)
+            if not isinstance(self, PatternsService):
+                logger.error(f"_run_historical_detection called with wrong self type: {type(self).__name__}")
+                return
+            
             # Determine which pattern types to scan based on enabled settings
             kinds = []
             if self._enabled_chart:
@@ -1094,7 +1099,12 @@ class PatternsService(ChartServiceBase):
                 return
 
             # Check if parallel historical detection is enabled
-            use_parallel_historical = (self.parallel_historical and hasattr(self, '_historical_worker'))
+            # Defensive: check if parallel_historical exists (avoid AttributeError)
+            use_parallel_historical = (
+                hasattr(self, 'parallel_historical') and 
+                self.parallel_historical and 
+                hasattr(self, '_historical_worker')
+            )
 
             if use_parallel_historical:
                 logger.info(f"Using parallel historical detection for {len(df)} rows")
