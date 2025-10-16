@@ -1,0 +1,2605 @@
+================================================================================
+TRADING ENGINE END-TO-END OPTIMIZATION SYSTEM
+Development Specifications v1.0
+================================================================================
+
+Document Information:
+- Version: 1.0
+- Date: 2025-01-08
+- Project: ForexGPT Trading Engine E2E Optimization
+- Status: Specification - Ready for Development
+- Related: analysis/trading_engine_optimization_e2e.md (Benefit Analysis)
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. OVERVIEW
+2. SYSTEM ARCHITECTURE
+3. DATABASE SCHEMA & MIGRATIONS
+4. BACKEND COMPONENTS
+5. FRONTEND COMPONENTS (GUI)
+6. INTEGRATION SPECIFICATIONS
+7. OPTIMIZATION ALGORITHMS
+8. TESTING & VALIDATION
+9. DEPLOYMENT & OPERATIONS
+10. LIBRARIES & DEPENDENCIES
+11. DEVELOPMENT PHASES
+12. SUCCESS CRITERIA
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+1.1 PURPOSE
+-----------
+Implement a comprehensive End-to-End Parameter Optimization System that:
+- Integrates 7 major trading components (SSSD, Riskfolio, Patterns, AI, RL, VIX/Sentiment, Volume)
+- Automatically optimizes 90+ parameters using Bayesian Optimization and Genetic Algorithms
+- Supports regime-aware parameter sets (4 market regimes)
+- Provides GUI for configuration, monitoring, and deployment
+- Stores optimized parameters in database with versioning
+
+1.2 SCOPE
+---------
+IN SCOPE:
+✓ E2E Optimizer Core (Bayesian + Genetic Algorithm)
+✓ SSSD Integration (quantile-based sizing)
+✓ Riskfolio-Lib Integration (portfolio optimization)
+✓ Pattern Parameter Loading (from optimization DB)
+✓ RL Actor-Critic Integration (hybrid mode)
+✓ VIX/Sentiment/Volume Filters
+✓ Database schema with Alembic migrations
+✓ GUI integration in Trading Intelligence tab
+✓ Walk-forward validation
+✓ Out-of-sample testing
+✓ Results visualization and reporting
+
+OUT OF SCOPE:
+✗ Real-time broker API integration (handled by existing Trading Engine)
+✗ New ML model training (use existing models)
+✗ High-frequency trading (<1 minute timeframes)
+✗ Multi-asset portfolio optimization (single asset per optimization run)
+
+1.3 KEY OBJECTIVES
+------------------
+1. Increase Sharpe Ratio by 40-80% (target: 1.4-1.8 from baseline 0.8)
+2. Reduce Max Drawdown by 33-50% (target: 9-12% from baseline 18%)
+3. Improve Win Rate by 5-15% (target: 60-65% from baseline 55%)
+4. Automate parameter tuning (eliminate manual tuning)
+5. Enable regime-aware adaptation (4 market regimes)
+6. Provide transparent optimization process (full audit trail)
+
+================================================================================
+2. SYSTEM ARCHITECTURE
+================================================================================
+
+2.1 HIGH-LEVEL ARCHITECTURE
+----------------------------
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                         USER INTERFACE (Qt)                         │
+│  Trading Intelligence Tab → E2E Optimization Sub-Tab                │
+│  - Configuration Panel                                              │
+│  - Optimization Dashboard (Progress, Results)                       │
+│  - Deployment Controls (Activate/Deactivate Optimized Params)      │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                    OPTIMIZATION ORCHESTRATOR                        │
+│  Module: optimization/e2e_optimizer.py                              │
+│  - Parameter Space Definition (90+ parameters)                      │
+│  - Optimization Engine Selector (Bayesian/GA)                       │
+│  - Backtest Runner (walk-forward validation)                        │
+│  - Result Analyzer & Validator                                      │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                    OPTIMIZATION ENGINES                             │
+│  Bayesian: optimization/bayesian_optimizer.py (Optuna)             │
+│  Genetic:  optimization/genetic_optimizer_e2e.py (pymoo NSGA-II)   │
+│  - Trial Sampling                                                   │
+│  - Objective Calculation (Multi-objective: Sharpe, DD, PF, Cost)   │
+│  - Convergence Detection                                            │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                    INTEGRATED BACKTEST ENGINE                       │
+│  Module: backtest/integrated_backtest_e2e.py (Enhanced)            │
+│  - Component Configuration (SSSD, Riskfolio, Patterns, RL, etc.)   │
+│  - Walk-Forward Validation (30d train, 7d test, 7d step)           │
+│  - Transaction Cost Modeling                                        │
+│  - Comprehensive Metrics Calculation                                │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                    COMPONENT INTEGRATORS                            │
+│  1. SSSD Integrator:      integrations/sssd_integrator.py          │
+│  2. Riskfolio Integrator: integrations/riskfolio_integrator.py     │
+│  3. Pattern Integrator:   integrations/pattern_integrator.py       │
+│  4. RL Integrator:        integrations/rl_integrator.py            │
+│  5. Market Data Filters:  integrations/market_filters.py           │
+│     (VIX, Sentiment, Volume)                                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                    EXISTING COMPONENTS (Reused)                     │
+│  - models/sssd.py                 (SSSD Model)                      │
+│  - portfolio/optimizer.py         (Riskfolio-Lib)                   │
+│  - patterns/parameter_selector.py (Pattern Params from DB)          │
+│  - rl/rl_portfolio_manager.py     (RL Actor-Critic)                 │
+│  - trading/automated_trading_engine.py (VIX/Sentiment Services)     │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                    DATABASE (PostgreSQL/SQLite)                     │
+│  Tables (via Alembic migrations):                                  │
+│  - optimization_runs           (optimization metadata)              │
+│  - optimization_parameters     (90+ parameter values per run)       │
+│  - optimization_results        (backtest results per trial)         │
+│  - regime_parameters           (regime-specific parameter sets)     │
+│  - deployment_configs          (active parameter sets)              │
+└─────────────────────────────────────────────────────────────────────┘
+
+2.2 DATA FLOW
+-------------
+
+OPTIMIZATION WORKFLOW:
+1. User configures optimization (GUI) → Saves config to DB
+2. Orchestrator loads config → Defines parameter space
+3. Optimizer (Bayesian/GA) samples parameters → Trial N
+4. Backtest Engine configures components with Trial N parameters
+5. Backtest runs walk-forward validation → Calculates metrics
+6. Optimizer evaluates objectives (Sharpe, DD, PF, Cost)
+7. Optimizer updates search space → Repeat steps 3-6
+8. Convergence detected → Select best parameter set(s)
+9. User reviews results (GUI) → Deploys optimized parameters
+10. Trading Engine loads deployed parameters from DB
+
+RUNTIME WORKFLOW:
+1. Trading Engine detects current regime (HMM)
+2. Query DB for optimized parameters (symbol, timeframe, regime)
+3. Configure all components (SSSD, Riskfolio, Patterns, RL, Filters)
+4. Generate signals → Execute trades
+5. Monitor performance → Trigger re-optimization if drift detected
+
+2.3 MODULE STRUCTURE
+--------------------
+
+New modules to be created:
+
+src/forex_diffusion/
+├── optimization/
+│   ├── e2e_optimizer.py              # Main orchestrator
+│   ├── bayesian_optimizer.py         # Optuna-based optimizer
+│   ├── genetic_optimizer_e2e.py      # NSGA-II for E2E (extends existing)
+│   ├── parameter_space.py            # Parameter definitions (90+ params)
+│   ├── objective_functions.py        # Multi-objective calculators
+│   └── convergence_detector.py       # Early stopping logic
+├── integrations/
+│   ├── sssd_integrator.py            # SSSD → Backtest bridge
+│   ├── riskfolio_integrator.py       # Riskfolio → Backtest bridge
+│   ├── pattern_integrator.py         # Pattern params → Backtest bridge
+│   ├── rl_integrator.py              # RL agent → Backtest bridge
+│   └── market_filters.py             # VIX/Sentiment/Volume filters
+├── backtest/
+│   ├── integrated_backtest_e2e.py    # Enhanced backtest engine
+│   └── result_analyzer.py            # Post-backtest analysis
+├── ui/
+│   ├── e2e_optimization_tab.py       # New GUI tab (Level 2)
+│   │   ├── ConfigurationPanel        # Sub-tab 1
+│   │   ├── OptimizationDashboard     # Sub-tab 2
+│   │   └── DeploymentPanel           # Sub-tab 3
+│   └── e2e_backend_bridge.py         # UI ↔ Backend connector
+└── database/
+    └── optimization_models.py        # SQLAlchemy models for new tables
+
+Enhanced modules (modify existing):
+
+src/forex_diffusion/
+├── backtest/
+│   └── integrated_backtest.py        # Add component hooks
+├── portfolio/
+│   └── optimizer.py                  # Add parameter exposure
+├── rl/
+│   └── rl_portfolio_manager.py       # Add backtest mode
+└── patterns/
+    └── parameter_selector.py         # Add regime query method
+
+================================================================================
+3. DATABASE SCHEMA & MIGRATIONS
+================================================================================
+
+3.1 ALEMBIC MIGRATION REQUIREMENTS
+-----------------------------------
+
+Migration File: migrations/versions/YYYYMMDD_add_e2e_optimization_tables.py
+
+Action: Create 5 new tables for E2E optimization system
+
+CRITICAL REQUIREMENTS:
+- Use Alembic for all schema changes (NO manual SQL)
+- Support both PostgreSQL and SQLite (use generic types)
+- Include indexes for performance-critical queries
+- Add foreign keys with CASCADE constraints
+- Include created_at/updated_at timestamps (auto-managed)
+
+3.2 TABLE DEFINITIONS
+----------------------
+
+TABLE 1: optimization_runs
+--------------------------
+Purpose: Store metadata for each optimization run
+
+Columns:
+- id                    INTEGER PRIMARY KEY AUTOINCREMENT
+- run_uuid              VARCHAR(36) UNIQUE NOT NULL (UUID4)
+- symbol                VARCHAR(20) NOT NULL (e.g., 'EURUSD')
+- timeframe             VARCHAR(10) NOT NULL (e.g., '5m', '15m', '1h')
+- optimization_method   VARCHAR(20) NOT NULL ('bayesian' or 'genetic')
+- regime_mode           VARCHAR(20) NOT NULL ('global' or 'per_regime')
+- start_date            DATETIME NOT NULL
+- end_date              DATETIME NOT NULL
+- n_trials              INTEGER NOT NULL (number of trials/generations)
+- status                VARCHAR(20) NOT NULL ('running', 'completed', 'failed')
+- best_sharpe           FLOAT
+- best_max_drawdown     FLOAT
+- best_win_rate         FLOAT
+- best_profit_factor    FLOAT
+- total_duration_sec    INTEGER
+- created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+- updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+- notes                 TEXT (user notes/comments)
+
+Indexes:
+- idx_run_symbol_timeframe ON (symbol, timeframe)
+- idx_run_status ON (status)
+- idx_run_created_at ON (created_at DESC)
+
+TABLE 2: optimization_parameters
+---------------------------------
+Purpose: Store parameter values for each trial
+
+Columns:
+- id                    INTEGER PRIMARY KEY AUTOINCREMENT
+- run_id                INTEGER NOT NULL FOREIGN KEY → optimization_runs.id ON DELETE CASCADE
+- trial_number          INTEGER NOT NULL
+- regime                VARCHAR(20) ('global', 'trending_up', 'trending_down', 'ranging', 'volatile')
+- parameter_group       VARCHAR(50) NOT NULL ('sssd', 'riskfolio', 'patterns', 'rl', 'risk', 'sizing', 'filters')
+- parameter_name        VARCHAR(100) NOT NULL
+- parameter_value       TEXT NOT NULL (JSON-serialized for complex types)
+- parameter_type        VARCHAR(20) NOT NULL ('int', 'float', 'str', 'bool', 'list', 'dict')
+- created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+Indexes:
+- idx_params_run_trial ON (run_id, trial_number)
+- idx_params_regime ON (regime)
+- idx_params_group ON (parameter_group)
+
+Unique Constraint:
+- UNIQUE(run_id, trial_number, regime, parameter_group, parameter_name)
+
+TABLE 3: optimization_results
+------------------------------
+Purpose: Store backtest results for each trial
+
+Columns:
+- id                    INTEGER PRIMARY KEY AUTOINCREMENT
+- run_id                INTEGER NOT NULL FOREIGN KEY → optimization_runs.id ON DELETE CASCADE
+- trial_number          INTEGER NOT NULL
+- regime                VARCHAR(20) ('global' or specific regime)
+- total_return          FLOAT NOT NULL
+- total_return_pct      FLOAT NOT NULL
+- sharpe_ratio          FLOAT NOT NULL
+- sortino_ratio         FLOAT NOT NULL
+- calmar_ratio          FLOAT NOT NULL
+- max_drawdown          FLOAT NOT NULL
+- max_drawdown_pct      FLOAT NOT NULL
+- win_rate              FLOAT NOT NULL
+- profit_factor         FLOAT NOT NULL
+- total_trades          INTEGER NOT NULL
+- winning_trades        INTEGER NOT NULL
+- losing_trades         INTEGER NOT NULL
+- avg_win               FLOAT NOT NULL
+- avg_loss              FLOAT NOT NULL
+- expectancy            FLOAT NOT NULL
+- total_costs           FLOAT NOT NULL
+- avg_holding_time_hrs  FLOAT NOT NULL
+- objective_value       FLOAT NOT NULL (combined multi-objective score)
+- is_pareto_optimal     BOOLEAN DEFAULT FALSE
+- created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+Indexes:
+- idx_results_run_trial ON (run_id, trial_number)
+- idx_results_sharpe ON (sharpe_ratio DESC)
+- idx_results_drawdown ON (max_drawdown_pct ASC)
+- idx_results_pareto ON (is_pareto_optimal) WHERE is_pareto_optimal = TRUE
+
+TABLE 4: regime_parameters
+---------------------------
+Purpose: Store best parameter sets per regime (after optimization)
+
+Columns:
+- id                    INTEGER PRIMARY KEY AUTOINCREMENT
+- symbol                VARCHAR(20) NOT NULL
+- timeframe             VARCHAR(10) NOT NULL
+- regime                VARCHAR(20) NOT NULL ('trending_up', 'trending_down', 'ranging', 'volatile')
+- optimization_run_id   INTEGER NOT NULL FOREIGN KEY → optimization_runs.id
+- trial_number          INTEGER NOT NULL (which trial produced these params)
+- parameters_json       TEXT NOT NULL (full parameter set as JSON)
+- sharpe_ratio          FLOAT NOT NULL
+- max_drawdown_pct      FLOAT NOT NULL
+- win_rate              FLOAT NOT NULL
+- is_active             BOOLEAN DEFAULT FALSE (only one active per symbol/timeframe/regime)
+- activated_at          DATETIME
+- deactivated_at        DATETIME
+- created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+- updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+Indexes:
+- idx_regime_params_active ON (symbol, timeframe, regime, is_active)
+- idx_regime_params_sharpe ON (sharpe_ratio DESC)
+
+Unique Constraint:
+- UNIQUE(symbol, timeframe, regime) WHERE is_active = TRUE
+
+TABLE 5: deployment_configs
+----------------------------
+Purpose: Track which parameter sets are deployed to live trading
+
+Columns:
+- id                    INTEGER PRIMARY KEY AUTOINCREMENT
+- symbol                VARCHAR(20) NOT NULL
+- timeframe             VARCHAR(10) NOT NULL
+- deployment_mode       VARCHAR(20) NOT NULL ('global', 'per_regime', 'manual')
+- global_params_id      INTEGER FOREIGN KEY → regime_parameters.id (for global mode)
+- regime_params_mapping TEXT (JSON: {regime: regime_parameters.id})
+- deployed_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+- deployed_by           VARCHAR(100) (user/system identifier)
+- is_active             BOOLEAN DEFAULT TRUE
+- deactivated_at        DATETIME
+- performance_metrics   TEXT (JSON: live performance vs backtest)
+- notes                 TEXT
+
+Indexes:
+- idx_deployment_active ON (symbol, timeframe, is_active)
+- idx_deployment_date ON (deployed_at DESC)
+
+Unique Constraint:
+- UNIQUE(symbol, timeframe) WHERE is_active = TRUE
+
+3.3 MIGRATION WORKFLOW
+----------------------
+
+Step 1: Create migration
+------------------------
+Command: alembic revision -m "add_e2e_optimization_tables"
+
+Step 2: Implement upgrade()
+---------------------------
+- Create 5 tables with proper types (generic for SQLite/PostgreSQL)
+- Add indexes
+- Add unique constraints
+- Populate initial data (if needed)
+
+Step 3: Implement downgrade()
+-----------------------------
+- Drop tables in reverse order (respect foreign keys)
+- Drop indexes
+
+Step 4: Test migration
+----------------------
+- Test on SQLite (development)
+- Test on PostgreSQL (production simulation)
+- Verify rollback (downgrade)
+
+Step 5: Apply migration
+-----------------------
+Command: alembic upgrade head
+
+3.4 DATA RETENTION POLICY
+--------------------------
+
+- optimization_runs: Keep last 12 months (auto-archive older)
+- optimization_parameters: Keep with runs (cascading delete)
+- optimization_results: Keep with runs (cascading delete)
+- regime_parameters: Keep all (historical record)
+- deployment_configs: Keep all (audit trail)
+
+Archive table: optimization_runs_archive (move old runs monthly)
+
+================================================================================
+4. BACKEND COMPONENTS
+================================================================================
+
+4.1 E2E OPTIMIZER ORCHESTRATOR
+-------------------------------
+
+Module: src/forex_diffusion/optimization/e2e_optimizer.py
+
+Purpose: Main entry point for E2E optimization
+
+Key Classes:
+
+class E2EOptimizer:
+    """
+    Orchestrates end-to-end parameter optimization.
+    
+    Responsibilities:
+    - Load optimization configuration
+    - Define parameter space (90+ parameters)
+    - Select optimization method (Bayesian/GA)
+    - Run optimization loop
+    - Store results to database
+    - Generate reports
+    """
+    
+    Methods:
+    - __init__(config: E2EOptimizerConfig, db_session: Session)
+    - define_parameter_space() -> ParameterSpace
+    - run_optimization() -> OptimizationResult
+    - _create_optimization_run() -> int (DB run_id)
+    - _run_trial(trial_number: int, params: Dict) -> TrialResult
+    - _store_trial_results(trial_result: TrialResult)
+    - _select_best_parameters() -> Dict[str, Dict]
+    - _validate_out_of_sample(params: Dict) -> ValidationResult
+    - generate_report() -> str (HTML/PDF report)
+
+class E2EOptimizerConfig:
+    """Configuration for optimization run"""
+    
+    Fields:
+    - symbol: str (e.g., 'EURUSD')
+    - timeframe: str (e.g., '5m')
+    - start_date: datetime
+    - end_date: datetime
+    - optimization_method: str ('bayesian' or 'genetic')
+    - regime_mode: str ('global' or 'per_regime')
+    - n_trials: int (50-200 for Bayesian, 20-50 generations for GA)
+    - objectives: List[str] (['sharpe', 'max_drawdown', 'profit_factor', 'cost'])
+    - constraints: Dict (e.g., {'max_drawdown_pct': 15.0})
+    - enable_sssd: bool
+    - enable_riskfolio: bool
+    - enable_patterns: bool
+    - enable_rl: bool
+    - enable_vix_filter: bool
+    - enable_sentiment_filter: bool
+    - enable_volume_filter: bool
+
+Workflow:
+
+1. Initialize optimizer with config
+2. Create optimization_run record in DB
+3. Define parameter space (call ParameterSpace class)
+4. Initialize optimization engine (Bayesian or GA)
+5. Loop: n_trials iterations
+   a. Sample parameters from optimizer
+   b. Configure IntegratedBacktestE2E with parameters
+   c. Run walk-forward backtest
+   d. Calculate objectives (multi-objective)
+   e. Store parameters + results to DB
+   f. Update optimizer with results
+6. Detect convergence or reach max_trials
+7. Select best parameter set(s) (Pareto front for multi-objective)
+8. Validate out-of-sample (unseen data)
+9. Store best parameters to regime_parameters table
+10. Generate optimization report
+11. Update optimization_run.status = 'completed'
+
+4.2 PARAMETER SPACE DEFINITION
+-------------------------------
+
+Module: src/forex_diffusion/optimization/parameter_space.py
+
+Purpose: Define 90+ parameters to be optimized
+
+Key Classes:
+
+class ParameterSpace:
+    """
+    Defines all optimizable parameters across 7 components.
+    
+    Components:
+    1. SSSD (10 parameters)
+    2. Riskfolio (8 parameters)
+    3. Pattern Parameters (20 parameters, loaded from DB schema)
+    4. RL Actor-Critic (15 parameters)
+    5. Risk Management (12 parameters)
+    6. Position Sizing (10 parameters)
+    7. Market Filters (15 parameters: VIX, Sentiment, Volume)
+    """
+    
+    Methods:
+    - get_parameter_definitions() -> Dict[str, ParameterDef]
+    - get_parameter_bounds() -> Dict[str, Tuple]
+    - get_parameter_groups() -> Dict[str, List[str]]
+    - validate_parameters(params: Dict) -> bool
+    - apply_constraints(params: Dict) -> Dict
+
+class ParameterDef:
+    """Single parameter definition"""
+    
+    Fields:
+    - name: str
+    - group: str ('sssd', 'riskfolio', 'patterns', etc.)
+    - type: str ('int', 'float', 'categorical', 'bool')
+    - bounds: Tuple (min, max) or List (categorical choices)
+    - default: Any
+    - description: str
+    - constraints: List[Callable] (e.g., stop_loss < take_profit)
+    - log_scale: bool (for learning rates, etc.)
+
+Parameter Groups:
+
+GROUP 1: SSSD (10 parameters)
+------------------------------
+- sssd_diffusion_steps: int (10-100, default 50)
+- sssd_noise_schedule: categorical (['linear', 'cosine', 'sigmoid'])
+- sssd_sampling_method: categorical (['ddpm', 'ddim'])
+- sssd_guidance_scale: float (0.0-2.0, default 1.0)
+- sssd_temperature: float (0.5-1.5, default 1.0)
+- sssd_quantile_confidence: float (0.6-0.95, default 0.8)
+- sssd_uncertainty_threshold: float (0.1-0.5, default 0.2)
+- sssd_forecast_horizon: int (1-24, default 4)
+- sssd_min_samples: int (100-500, default 200)
+- sssd_use_ensemble: bool (default True)
+
+GROUP 2: RISKFOLIO (8 parameters)
+----------------------------------
+- riskfolio_risk_measure: categorical (['MV', 'CVaR', 'CDaR', 'EVaR', 'WR'])
+- riskfolio_objective: categorical (['Sharpe', 'MinRisk', 'Utility', 'MaxRet'])
+- riskfolio_risk_aversion: float (0.1-5.0, default 1.0, log_scale)
+- riskfolio_max_weight: float (0.1-0.5, default 0.3)
+- riskfolio_min_weight: float (0.0-0.05, default 0.0)
+- riskfolio_risk_free_rate: float (0.0-0.05, default 0.0)
+- riskfolio_use_risk_parity: bool (default False)
+- riskfolio_rebalance_freq: int (1-30, default 7, unit: days)
+
+GROUP 3: PATTERN PARAMETERS (20 parameters)
+--------------------------------------------
+Note: These are meta-parameters for pattern optimization, not individual pattern params
+- pattern_confidence_threshold: float (0.5-0.9, default 0.6)
+- pattern_lookback_period: int (20-100, default 50)
+- pattern_min_pattern_size: int (3-10, default 5)
+- pattern_max_pattern_size: int (10-30, default 15)
+- pattern_use_volume_confirmation: bool (default True)
+- pattern_volume_threshold: float (1.2-3.0, default 1.5)
+- pattern_use_regime_filter: bool (default True)
+- pattern_regime_confirmation_bars: int (3-10, default 5)
+- pattern_false_breakout_filter: bool (default True)
+- pattern_breakout_retest_bars: int (2-8, default 3)
+- pattern_target_multiplier: float (1.0-3.0, default 2.0)
+- pattern_stop_loss_multiplier: float (0.5-1.5, default 1.0)
+- pattern_trailing_activation_pct: float (0.5-2.0, default 1.0)
+- pattern_trailing_step_pct: float (0.1-0.5, default 0.2)
+- pattern_max_age_bars: int (5-50, default 20)
+- pattern_confluence_weight: float (0.0-1.0, default 0.5)
+- pattern_timeframe_alignment: bool (default True)
+- pattern_support_resistance_weight: float (0.0-1.0, default 0.3)
+- pattern_trend_alignment_weight: float (0.0-1.0, default 0.4)
+- pattern_momentum_confirmation: bool (default True)
+
+GROUP 4: RL ACTOR-CRITIC (15 parameters)
+-----------------------------------------
+- rl_actor_lr: float (1e-5 to 1e-3, default 3e-4, log_scale)
+- rl_critic_lr: float (1e-5 to 1e-3, default 3e-4, log_scale)
+- rl_gamma: float (0.90-0.99, default 0.95)
+- rl_clip_epsilon: float (0.1-0.3, default 0.2)
+- rl_gae_lambda: float (0.90-0.99, default 0.95)
+- rl_entropy_coef: float (0.0-0.1, default 0.01)
+- rl_value_coef: float (0.1-1.0, default 0.5)
+- rl_max_grad_norm: float (0.1-1.0, default 0.5)
+- rl_ppo_epochs: int (3-10, default 5)
+- rl_mini_batch_size: int (32-256, default 64)
+- rl_actor_hidden_layers: categorical (['[256,128]', '[512,256]', '[256,256,128]'])
+- rl_critic_hidden_layers: categorical (['[256,128]', '[512,256]', '[256,256,128]'])
+- rl_use_lstm: bool (default False)
+- rl_lstm_hidden_size: int (64-256, default 128)
+- rl_hybrid_alpha: float (0.0-1.0, default 0.5) # blend RL + Riskfolio
+
+GROUP 5: RISK MANAGEMENT (12 parameters)
+-----------------------------------------
+- risk_stop_loss_pct: float (0.5-5.0, default 2.0)
+- risk_take_profit_pct: float (1.0-10.0, default 4.0)
+- risk_trailing_stop_pct: float (0.5-3.0, default 1.0)
+- risk_trailing_activation_pct: float (0.5-2.0, default 1.0)
+- risk_atr_multiplier: float (1.0-3.0, default 2.0)
+- risk_atr_period: int (10-30, default 14)
+- risk_use_trailing_stop: bool (default True)
+- risk_use_time_based_exit: bool (default True)
+- risk_max_holding_hours: int (6-48, default 24)
+- risk_daily_loss_limit_pct: float (2.0-5.0, default 3.0)
+- risk_use_breakeven_stop: bool (default True)
+- risk_breakeven_trigger_pct: float (0.5-1.5, default 1.0)
+
+GROUP 6: POSITION SIZING (10 parameters)
+-----------------------------------------
+- sizing_method: categorical (['fixed_fraction', 'kelly', 'optimal_f', 'volatility_adjusted'])
+- sizing_base_risk_pct: float (0.5-2.0, default 1.0)
+- sizing_kelly_fraction: float (0.1-0.5, default 0.25)
+- sizing_max_position_size_pct: float (10.0-50.0, default 20.0)
+- sizing_regime_trending_multiplier: float (1.0-2.0, default 1.5)
+- sizing_regime_ranging_multiplier: float (0.5-1.0, default 0.7)
+- sizing_regime_volatile_multiplier: float (0.3-0.8, default 0.5)
+- sizing_confidence_scaling: bool (default True)
+- sizing_confidence_min_multiplier: float (0.3-0.7, default 0.5)
+- sizing_confidence_max_multiplier: float (1.0-2.0, default 1.5)
+
+GROUP 7: MARKET FILTERS (15 parameters)
+----------------------------------------
+# VIX Filter (5 params)
+- filter_vix_enabled: bool (default True)
+- filter_vix_high_threshold: float (20.0-40.0, default 30.0)
+- filter_vix_extreme_threshold: float (35.0-60.0, default 50.0)
+- filter_vix_high_reduction_pct: float (0.3-0.7, default 0.5)
+- filter_vix_extreme_reduction_pct: float (0.5-0.9, default 0.7)
+
+# Sentiment Filter (5 params)
+- filter_sentiment_enabled: bool (default True)
+- filter_sentiment_contrarian_threshold: float (0.6-0.9, default 0.75)
+- filter_sentiment_confidence_threshold: float (0.5-0.8, default 0.6)
+- filter_sentiment_fade_strength: float (0.5-1.5, default 1.0)
+- filter_sentiment_use_news: bool (default False)
+
+# Volume Filter (5 params)
+- filter_volume_enabled: bool (default True)
+- filter_volume_obv_period: int (10-50, default 20)
+- filter_volume_vwap_period: int (20-100, default 50)
+- filter_volume_spike_threshold: float (1.5-3.0, default 2.0)
+- filter_volume_min_liquidity_pct: float (0.5-0.9, default 0.7)
+
+TOTAL: 90 parameters
+
+4.3 BAYESIAN OPTIMIZER
+----------------------
+
+Module: src/forex_diffusion/optimization/bayesian_optimizer.py
+
+Purpose: Implement Bayesian Optimization using Optuna
+
+Key Classes:
+
+class BayesianOptimizer:
+    """
+    Bayesian optimization using Optuna's TPE sampler.
+    
+    Advantages:
+    - Efficient search (50-100 trials vs 1000s for grid search)
+    - Adaptive sampling (focuses on promising regions)
+    - Built-in pruning (early stopping for poor trials)
+    - Multi-objective support
+    """
+    
+    Methods:
+    - __init__(parameter_space: ParameterSpace, config: BayesianConfig)
+    - optimize(objective_func: Callable, n_trials: int) -> OptimizationResult
+    - _create_optuna_study() -> optuna.Study
+    - _suggest_parameters(trial: optuna.Trial) -> Dict
+    - _calculate_objectives(backtest_result: BacktestResult) -> Tuple[float, ...]
+    - get_best_parameters() -> Dict
+    - get_pareto_front() -> List[Dict]
+    - plot_optimization_history() -> Figure
+    - plot_parameter_importances() -> Figure
+
+class BayesianConfig:
+    """Configuration for Bayesian optimization"""
+    
+    Fields:
+    - sampler: str ('tpe', 'random', 'cmaes') default 'tpe'
+    - n_startup_trials: int (10-20, default 10)
+    - pruner: str ('median', 'hyperband', 'none') default 'median'
+    - pruner_warmup_steps: int (default 5)
+    - direction: str ('maximize' or List['maximize', 'minimize'] for multi-obj)
+    - n_jobs: int (parallel trials, default 1)
+    - timeout: int (seconds, optional)
+
+Integration with Optuna:
+
+1. Create Optuna study:
+   study = optuna.create_study(
+       study_name=f"e2e_opt_{symbol}_{timeframe}",
+       direction=['maximize', 'minimize', 'maximize', 'minimize'],
+       # Objectives: [Sharpe, Max DD, Profit Factor, Cost]
+       sampler=optuna.samplers.TPESampler(),
+       pruner=optuna.pruners.MedianPruner()
+   )
+
+2. Define objective function:
+   def objective(trial: optuna.Trial) -> Tuple[float, float, float, float]:
+       # Suggest parameters
+       params = {}
+       for param_name, param_def in parameter_space.items():
+           if param_def.type == 'int':
+               params[param_name] = trial.suggest_int(
+                   param_name, param_def.bounds[0], param_def.bounds[1]
+               )
+           elif param_def.type == 'float':
+               if param_def.log_scale:
+                   params[param_name] = trial.suggest_float(
+                       param_name, param_def.bounds[0], param_def.bounds[1], log=True
+                   )
+               else:
+                   params[param_name] = trial.suggest_float(
+                       param_name, param_def.bounds[0], param_def.bounds[1]
+                   )
+           elif param_def.type == 'categorical':
+               params[param_name] = trial.suggest_categorical(
+                   param_name, param_def.bounds
+               )
+           elif param_def.type == 'bool':
+               params[param_name] = trial.suggest_categorical(
+                   param_name, [True, False]
+               )
+       
+       # Run backtest
+       backtest_result = run_integrated_backtest(params)
+       
+       # Return objectives (Sharpe, -MaxDD, ProfitFactor, -Cost)
+       return (
+           backtest_result.sharpe_ratio,
+           -backtest_result.max_drawdown_pct,  # Negative to minimize
+           backtest_result.profit_factor,
+           -backtest_result.total_costs  # Negative to minimize
+       )
+
+3. Run optimization:
+   study.optimize(objective, n_trials=100)
+
+4. Get best results:
+   # For single objective
+   best_params = study.best_params
+   best_value = study.best_value
+   
+   # For multi-objective (Pareto front)
+   pareto_trials = [t for t in study.best_trials if t.values is not None]
+
+5. Visualization:
+   - optuna.visualization.plot_optimization_history(study)
+   - optuna.visualization.plot_param_importances(study)
+   - optuna.visualization.plot_pareto_front(study)
+
+4.4 GENETIC ALGORITHM OPTIMIZER
+--------------------------------
+
+Module: src/forex_diffusion/optimization/genetic_optimizer_e2e.py
+
+Purpose: Implement NSGA-II for multi-objective optimization
+
+Key Classes:
+
+class GeneticOptimizerE2E:
+    """
+    NSGA-II genetic algorithm for E2E optimization.
+    
+    Advantages:
+    - Population-based (explores multiple solutions simultaneously)
+    - Pareto frontier (optimal trade-offs between objectives)
+    - Good for non-convex problems
+    """
+    
+    Methods:
+    - __init__(parameter_space: ParameterSpace, config: GeneticConfig)
+    - optimize(objective_func: Callable, n_generations: int) -> OptimizationResult
+    - _create_pymoo_problem() -> Problem
+    - _run_nsga2() -> Result
+    - get_pareto_front() -> List[Dict]
+    - plot_pareto_front() -> Figure
+
+class GeneticConfig:
+    """Configuration for GA"""
+    
+    Fields:
+    - population_size: int (20-100, default 50)
+    - n_generations: int (20-100, default 50)
+    - crossover_prob: float (0.7-0.95, default 0.9)
+    - mutation_prob: float (0.01-0.2, default 0.1)
+    - n_offsprings: int (default None, auto = population_size)
+    - eliminate_duplicates: bool (default True)
+
+Integration with pymoo:
+
+1. Define Problem:
+   from pymoo.core.problem import ElementwiseProblem
+   
+   class E2EProblem(ElementwiseProblem):
+       def __init__(self, parameter_space):
+           # Extract bounds
+           xl = []  # lower bounds
+           xu = []  # upper bounds
+           for param in parameter_space.values():
+               xl.append(param.bounds[0])
+               xu.append(param.bounds[1])
+           
+           super().__init__(
+               n_var=len(parameter_space),
+               n_obj=4,  # Sharpe, MaxDD, ProfitFactor, Cost
+               n_constr=0,
+               xl=np.array(xl),
+               xu=np.array(xu)
+           )
+       
+       def _evaluate(self, x, out, *args, **kwargs):
+           # Convert x to parameter dict
+           params = convert_vector_to_params(x)
+           
+           # Run backtest
+           result = run_integrated_backtest(params)
+           
+           # Set objectives (minimize all, so negate Sharpe and PF)
+           out["F"] = np.array([
+               -result.sharpe_ratio,  # Maximize Sharpe
+               result.max_drawdown_pct,  # Minimize DD
+               -result.profit_factor,  # Maximize PF
+               result.total_costs  # Minimize Cost
+           ])
+
+2. Run NSGA-II:
+   from pymoo.algorithms.moo.nsga2 import NSGA2
+   from pymoo.optimize import minimize
+   
+   algorithm = NSGA2(
+       pop_size=50,
+       eliminate_duplicates=True
+   )
+   
+   result = minimize(
+       problem,
+       algorithm,
+       ('n_gen', 50),
+       verbose=True
+   )
+
+3. Get Pareto front:
+   pareto_solutions = result.F  # Objective values
+   pareto_params = result.X  # Parameter vectors
+
+4.5 INTEGRATED BACKTEST ENGINE (ENHANCED)
+------------------------------------------
+
+Module: src/forex_diffusion/backtest/integrated_backtest_e2e.py
+
+Purpose: Extend existing integrated_backtest.py with component integrations
+
+Key Enhancements:
+
+class IntegratedBacktestE2E(IntegratedBacktester):
+    """
+    Enhanced backtest engine with full component integration.
+    
+    Extends: backtest.integrated_backtest.IntegratedBacktester
+    
+    New Features:
+    - SSSD quantile-based position sizing
+    - Riskfolio portfolio optimization
+    - Pattern parameter loading from DB
+    - RL agent hybrid mode
+    - VIX/Sentiment/Volume filters
+    """
+    
+    New Methods:
+    - configure_sssd(params: Dict)
+    - configure_riskfolio(params: Dict)
+    - configure_patterns(params: Dict, regime: str)
+    - configure_rl(params: Dict)
+    - configure_filters(params: Dict)
+    - _get_sssd_quantiles(data: pd.DataFrame) -> Tuple[float, float, float]
+    - _optimize_portfolio_riskfolio(returns: pd.DataFrame) -> pd.Series
+    - _load_pattern_parameters(symbol: str, timeframe: str, regime: str) -> Dict
+    - _get_rl_portfolio_weights(state: np.ndarray) -> np.ndarray
+    - _blend_portfolio_weights(rl_weights, riskfolio_weights, alpha) -> np.ndarray
+    - _apply_vix_filter(position_size: float, vix_level: float) -> float
+    - _apply_sentiment_filter(signal: int, sentiment: Dict) -> int
+    - _apply_volume_filter(signal: int, volume_metrics: Dict) -> int
+
+Workflow Changes:
+
+Original _check_entry() method:
+1. Get ML prediction → signal
+2. Check confidence threshold
+3. Calculate position size (regime-aware)
+4. Create trade
+
+Enhanced _check_entry() method:
+1. Get ML prediction → signal
+2. Get SSSD quantiles (q05, q50, q95) → uncertainty
+3. Get Riskfolio optimal weights (if multi-asset) → portfolio_weight
+4. Get RL agent weights (if enabled) → rl_weight
+5. Blend weights (hybrid mode): final_weight = alpha * rl + (1-alpha) * riskfolio
+6. Load pattern parameters for current regime → pattern_params
+7. Check confidence threshold (adjusted by SSSD uncertainty)
+8. Apply VIX filter → adjust position size if VIX > threshold
+9. Apply Sentiment filter → potentially invert signal (contrarian)
+10. Apply Volume filter → skip trade if low liquidity
+11. Calculate final position size (multi-factor):
+    - Base: Kelly criterion
+    - × Regime multiplier
+    - × VIX adjustment
+    - × Confidence weighting (SSSD spread)
+    - × Sentiment factor
+12. Create trade with optimized parameters
+
+4.6 COMPONENT INTEGRATORS
+--------------------------
+
+4.6.1 SSSD INTEGRATOR
+---------------------
+
+Module: src/forex_diffusion/integrations/sssd_integrator.py
+
+Purpose: Bridge SSSD model to backtest engine
+
+class SssdIntegrator:
+    """
+    Integrates SSSD quantile forecasts into backtest.
+    
+    Features:
+    - Load trained SSSD model
+    - Generate quantile forecasts (q05, q50, q95)
+    - Calculate uncertainty (q95 - q05)
+    - Adjust position size based on uncertainty
+    """
+    
+    Methods:
+    - __init__(model_path: str, config: SssdConfig)
+    - load_model() -> SssdModel
+    - predict_quantiles(data: pd.DataFrame) -> Tuple[float, float, float]
+    - calculate_uncertainty(q05: float, q95: float) -> float
+    - calculate_confidence_multiplier(uncertainty: float, threshold: float) -> float
+    - get_scenario_probabilities(quantiles: Tuple) -> Dict[str, float]
+
+Workflow:
+
+1. Load SSSD model from checkpoint
+2. Prepare input data (last N candles)
+3. Run inference → get q05, q50, q95 forecasts
+4. Calculate uncertainty: spread = (q95 - q05) / q50
+5. Adjust position size:
+   - If spread < threshold (low uncertainty): multiply by 1.5
+   - If spread > threshold (high uncertainty): multiply by 0.5
+6. Set stop loss at q05 (pessimistic scenario)
+7. Set take profit at q95 (optimistic scenario)
+
+4.6.2 RISKFOLIO INTEGRATOR
+---------------------------
+
+Module: src/forex_diffusion/integrations/riskfolio_integrator.py
+
+Purpose: Bridge Riskfolio-Lib to backtest engine
+
+class RiskfolioIntegrator:
+    """
+    Integrates Riskfolio-Lib portfolio optimization.
+    
+    Features:
+    - Multi-asset portfolio optimization
+    - Mean-variance, CVaR, Risk Parity
+    - Efficient frontier calculation
+    """
+    
+    Methods:
+    - __init__(optimizer: PortfolioOptimizer, config: RiskfolioConfig)
+    - optimize_portfolio(returns: pd.DataFrame) -> pd.Series (weights)
+    - calculate_portfolio_metrics(weights: pd.Series, returns: pd.DataFrame) -> Dict
+    - rebalance_required(current_weights: pd.Series, optimal_weights: pd.Series) -> bool
+    - get_efficient_frontier(returns: pd.DataFrame) -> pd.DataFrame
+
+Workflow:
+
+1. Collect historical returns (last N days)
+2. Calculate return matrix (assets × time)
+3. Run Riskfolio optimization:
+   - If risk_measure = 'CVaR': minimize tail risk
+   - If objective = 'Sharpe': maximize risk-adjusted return
+4. Get optimal weights (sum to 1.0)
+5. Compare with current portfolio weights
+6. Rebalance if drift > threshold (e.g., 10%)
+
+4.6.3 PATTERN INTEGRATOR
+-------------------------
+
+Module: src/forex_diffusion/integrations/pattern_integrator.py
+
+Purpose: Load optimized pattern parameters from DB
+
+class PatternIntegrator:
+    """
+    Loads regime-specific pattern parameters from optimization DB.
+    
+    Features:
+    - Query parameters by (symbol, timeframe, regime)
+    - Fallback to global parameters if regime-specific not found
+    - Cache parameters for performance
+    """
+    
+    Methods:
+    - __init__(db_session: Session, cache: bool = True)
+    - load_parameters(symbol: str, timeframe: str, regime: str) -> Dict
+    - get_active_parameter_set(symbol: str, timeframe: str, regime: str) -> int (ID)
+    - cache_parameters(symbol: str, timeframe: str)
+    - clear_cache()
+
+Workflow:
+
+1. Detect current regime (HMM)
+2. Query regime_parameters table:
+   SELECT parameters_json
+   FROM regime_parameters
+   WHERE symbol = ? AND timeframe = ? AND regime = ? AND is_active = TRUE
+3. Parse JSON → Dict of pattern parameters
+4. If not found, fallback to global parameters (regime = 'global')
+5. Apply parameters to pattern detectors
+6. Cache for 1 hour (avoid repeated DB queries)
+
+4.6.4 RL INTEGRATOR
+-------------------
+
+Module: src/forex_diffusion/integrations/rl_integrator.py
+
+Purpose: Bridge RL Actor-Critic to backtest engine
+
+class RLIntegrator:
+    """
+    Integrates RL agent for portfolio weight prediction.
+    
+    Features:
+    - Load trained RL agent
+    - Predict portfolio weights (continuous action)
+    - Hybrid mode (blend RL + Riskfolio)
+    - Deployment modes (RL Only, Hybrid, Advisory)
+    """
+    
+    Methods:
+    - __init__(rl_manager: RLPortfolioManager, config: RLConfig)
+    - load_agent(checkpoint_path: str)
+    - predict_weights(state: np.ndarray) -> np.ndarray
+    - blend_weights(rl_weights, riskfolio_weights, alpha: float) -> np.ndarray
+    - get_deployment_mode() -> str
+    - enable_backtest_mode()
+
+Workflow:
+
+1. Load trained RL agent from checkpoint
+2. Prepare state (137-dimensional):
+   - Portfolio returns (last 20 days)
+   - Volatility (rolling 20-day)
+   - Correlation matrix (flattened)
+   - Risk metrics (VaR, CVaR, Sharpe, Sortino)
+   - VIX level + percentile
+   - Sentiment metrics (if available)
+3. Agent.predict(state) → portfolio weights [0, 1]
+4. Normalize weights to sum to 1.0
+5. If hybrid mode:
+   - Get Riskfolio weights
+   - Blend: final = alpha * rl + (1-alpha) * riskfolio
+6. Apply constraints (min_weight, max_weight, long_only)
+7. Return final weights
+
+4.6.5 MARKET FILTERS
+--------------------
+
+Module: src/forex_diffusion/integrations/market_filters.py
+
+Purpose: VIX, Sentiment, Volume filters
+
+class VixFilter:
+    """VIX-based volatility filter"""
+    
+    Methods:
+    - __init__(config: VixConfig)
+    - get_vix_level() -> float
+    - calculate_adjustment_factor(vix_level: float) -> float
+    - is_extreme_volatility(vix_level: float) -> bool
+
+class SentimentFilter:
+    """Sentiment-based contrarian filter"""
+    
+    Methods:
+    - __init__(config: SentimentConfig)
+    - get_sentiment_metrics(symbol: str) -> Dict
+    - should_fade_crowd(sentiment: Dict) -> bool
+    - calculate_contrarian_multiplier(sentiment: Dict) -> float
+
+class VolumeFilter:
+    """Volume-based liquidity filter"""
+    
+    Methods:
+    - __init__(config: VolumeConfig)
+    - calculate_obv(data: pd.DataFrame) -> pd.Series
+    - calculate_vwap(data: pd.DataFrame) -> pd.Series
+    - detect_volume_spike(data: pd.DataFrame) -> bool
+    - is_sufficient_liquidity(volume: float, avg_volume: float) -> bool
+
+================================================================================
+5. FRONTEND COMPONENTS (GUI)
+================================================================================
+
+5.1 GUI INTEGRATION LOCATION
+-----------------------------
+
+Integration Point: Trading Intelligence Tab (Level 1)
+
+Current Structure:
+- Trading Intelligence (main tab)
+  ├── Portfolio Tab (Level 2)
+  ├── Signals Tab (Level 2)
+  └── RL Agent Tab (Level 2)
+
+New Structure:
+- Trading Intelligence (main tab)
+  ├── Portfolio Tab (Level 2)
+  ├── Signals Tab (Level 2)
+  ├── RL Agent Tab (Level 2)
+  └── E2E Optimization Tab (Level 2) ← NEW
+
+5.2 E2E OPTIMIZATION TAB
+-------------------------
+
+Module: src/forex_diffusion/ui/e2e_optimization_tab.py
+
+Layout: 3 Level-3 Sub-Tabs
+
+class E2EOptimizationTab(QWidget):
+    """
+    Main E2E Optimization tab (Level 2).
+    
+    Contains 3 sub-tabs (Level 3):
+    1. Configuration Panel
+    2. Optimization Dashboard
+    3. Deployment Panel
+    """
+    
+    Signals:
+    - optimization_started(run_id: int)
+    - optimization_completed(run_id: int, results: Dict)
+    - parameters_deployed(deployment_id: int)
+
+5.2.1 SUB-TAB 1: CONFIGURATION PANEL
+-------------------------------------
+
+Purpose: Configure optimization run
+
+Sections:
+
+SECTION 1: Basic Configuration
+-------------------------------
+Widgets:
+- Symbol: QComboBox (EURUSD, GBPUSD, USDJPY, etc.)
+- Timeframe: QComboBox (5m, 15m, 30m, 1h, 4h, 1d)
+- Start Date: QDateEdit
+- End Date: QDateEdit
+- Optimization Method: QComboBox ('Bayesian (Recommended)', 'Genetic Algorithm')
+- Regime Mode: QComboBox ('Global Parameters', 'Per-Regime Parameters')
+- Number of Trials: QSpinBox (50-200 for Bayesian, 20-100 for GA)
+
+SECTION 2: Component Selection
+-------------------------------
+Widgets (QCheckBox for each):
+- [ ] Enable SSSD Integration (quantile-based sizing)
+- [ ] Enable Riskfolio-Lib (portfolio optimization)
+- [ ] Enable Pattern Parameters (load from DB)
+- [ ] Enable RL Actor-Critic (hybrid mode)
+- [ ] Enable VIX Filter (volatility adjustment)
+- [ ] Enable Sentiment Filter (contrarian strategy)
+- [ ] Enable Volume Indicators (OBV, VWAP)
+
+SECTION 3: Objectives Configuration
+------------------------------------
+Widgets:
+- Primary Objective: QComboBox ('Sharpe Ratio', 'Calmar Ratio', 'Profit Factor')
+- [ ] Minimize Max Drawdown (weight: QDoubleSpinBox 0.0-1.0)
+- [ ] Maximize Sharpe Ratio (weight: QDoubleSpinBox 0.0-1.0)
+- [ ] Maximize Profit Factor (weight: QDoubleSpinBox 0.0-1.0)
+- [ ] Minimize Transaction Costs (weight: QDoubleSpinBox 0.0-1.0)
+
+SECTION 4: Constraints
+----------------------
+Widgets:
+- Max Drawdown Limit (%): QDoubleSpinBox (5-20%, default 15%)
+- Min Win Rate (%): QDoubleSpinBox (40-70%, default 50%)
+- Max Daily Loss Limit (%): QDoubleSpinBox (2-5%, default 3%)
+- Min Sharpe Ratio: QDoubleSpinBox (0.5-2.0, default 1.0)
+
+SECTION 5: Advanced Settings
+-----------------------------
+Widgets:
+- Walk-Forward Train Days: QSpinBox (20-60, default 30)
+- Walk-Forward Test Days: QSpinBox (5-14, default 7)
+- Walk-Forward Step Days: QSpinBox (5-14, default 7)
+- Enable Out-of-Sample Validation: QCheckBox (default True)
+- Out-of-Sample Period (%): QDoubleSpinBox (10-30%, default 20%)
+- Enable Monte Carlo Validation: QCheckBox (default False)
+- Monte Carlo Runs: QSpinBox (100-1000, default 500)
+
+SECTION 6: Actions
+-------------------
+Widgets:
+- QPushButton "Start Optimization" (primary action)
+- QPushButton "Load Configuration" (load from JSON)
+- QPushButton "Save Configuration" (save to JSON)
+- QPushButton "Reset to Defaults"
+
+Tooltips: All widgets must have comprehensive i18n tooltips (50+ tooltips)
+
+5.2.2 SUB-TAB 2: OPTIMIZATION DASHBOARD
+----------------------------------------
+
+Purpose: Monitor optimization progress and view results
+
+Layout: 2 columns (Left: Progress, Right: Results)
+
+LEFT COLUMN: Progress Monitoring
+---------------------------------
+
+Widget 1: Status Panel (QGroupBox)
+- Status: QLabel (color-coded)
+  - 🟢 Running (green)
+  - 🔵 Completed (blue)
+  - 🔴 Failed (red)
+  - ⚪ Not Started (gray)
+- Current Trial: QLabel (e.g., "Trial 45 / 100")
+- Elapsed Time: QLabel (updated every second)
+- Estimated Remaining: QLabel (based on avg trial time)
+- QPushButton "Stop Optimization" (enabled only when running)
+
+Widget 2: Best Results So Far (QTableWidget)
+- Columns: Trial #, Sharpe, Max DD, Win Rate, Profit Factor, Cost
+- Rows: Top 10 trials (sorted by primary objective)
+- Auto-refresh every 5 seconds
+
+Widget 3: Live Charts (Matplotlib embedded)
+Chart 1: Optimization History
+- X-axis: Trial number
+- Y-axis: Primary objective value
+- Line plot with markers
+- Show convergence trend
+
+Chart 2: Pareto Front (for multi-objective)
+- X-axis: Sharpe Ratio
+- Y-axis: Max Drawdown (%)
+- Scatter plot (Pareto optimal trials highlighted)
+
+RIGHT COLUMN: Results Viewer
+-----------------------------
+
+Widget 4: Run History (QTableWidget)
+- Columns: Run ID, Date, Symbol, TF, Method, Status, Best Sharpe, Actions
+- Row Actions: "View Details", "Compare", "Deploy"
+- Double-click to open detailed report
+
+Widget 5: Detailed Results (QTextEdit, read-only)
+When a run is selected:
+- Display comprehensive report:
+  - Configuration summary
+  - Best parameters (formatted JSON)
+  - Performance metrics (table)
+  - Regime-specific results (if per-regime mode)
+  - Validation results (out-of-sample)
+- QPushButton "Export Report (PDF)"
+- QPushButton "Export Parameters (JSON)"
+
+Widget 6: Parameter Importance (QChartView)
+- Bar chart showing parameter importance
+- Based on Optuna's feature importance or GA sensitivity analysis
+- Top 20 most important parameters
+
+5.2.3 SUB-TAB 3: DEPLOYMENT PANEL
+----------------------------------
+
+Purpose: Deploy optimized parameters to live trading
+
+SECTION 1: Active Deployments
+------------------------------
+
+Widget: QTableWidget
+Columns:
+- Symbol
+- Timeframe
+- Deployment Mode (Global / Per-Regime)
+- Deployed Date
+- Expected Sharpe
+- Actual Sharpe (live)
+- Status (Active / Paused)
+- Actions (Edit, Pause, Stop)
+
+Filter Controls:
+- Show Active Only: QCheckBox
+- Symbol Filter: QComboBox
+- Timeframe Filter: QComboBox
+
+SECTION 2: Deploy New Configuration
+------------------------------------
+
+Step 1: Select Optimization Run
+- Run ID: QComboBox (populated from optimization_runs table)
+- OR
+- Load from File: QPushButton (load JSON)
+
+Step 2: Review Parameters
+- Parameter Summary: QTextEdit (read-only, formatted)
+- Expected Metrics: QGroupBox
+  - Sharpe: 1.65
+  - Max DD: 9.2%
+  - Win Rate: 63%
+  - Profit Factor: 2.1
+
+Step 3: Deployment Mode
+- Radio Buttons:
+  ( ) Global Parameters (same for all regimes)
+  ( ) Per-Regime Parameters (switch based on detected regime)
+  ( ) Manual Selection (pick specific trial/regime)
+
+Step 4: Safety Checks
+- [ ] Enable Safety Limits
+  - Max Position Size (%): QDoubleSpinBox (10-50%, default 20%)
+  - Daily Loss Limit (%): QDoubleSpinBox (2-5%, default 3%)
+  - Max Consecutive Losses: QSpinBox (3-10, default 5)
+  - Auto-Pause on Threshold: QCheckBox (default True)
+
+Step 5: Confirmation
+- QPushButton "Deploy to Live Trading" (requires confirmation dialog)
+- Confirmation Dialog:
+  - "Are you sure you want to deploy these parameters?"
+  - "Symbol: EURUSD, Timeframe: 5m"
+  - "This will replace current active parameters."
+  - [Cancel] [Confirm Deployment]
+
+SECTION 3: Deployment History
+------------------------------
+
+Widget: QTableWidget (with timeline view)
+- Show last 30 days of deployments
+- Columns: Date, Symbol, TF, Sharpe (expected), Sharpe (actual), Duration, Status
+- Filter by Symbol/Timeframe
+- Export to CSV
+
+SECTION 4: Performance Monitoring
+----------------------------------
+
+Widget: Live Performance vs Expected (QChartView)
+- Line chart: 2 lines
+  - Expected Equity Curve (from backtest)
+  - Actual Equity Curve (from live trading)
+- Shaded area: ±1 std dev confidence interval
+- Alert if actual deviates >20% from expected
+
+Metrics Comparison Table:
+| Metric | Expected | Actual | Delta |
+|--------|----------|--------|-------|
+| Sharpe | 1.65 | 1.52 | -0.13 (-8%) |
+| Max DD | 9.2% | 11.3% | +2.1% (+23%) |
+| Win Rate | 63% | 61% | -2% (-3%) |
+
+Alert Widget:
+- If actual performance deviates significantly:
+  ⚠️ Warning: Actual Sharpe is 15% below expected. Consider re-optimization.
+  [Re-Optimize Now] [Ignore]
+
+5.3 BACKEND BRIDGE
+------------------
+
+Module: src/forex_diffusion/ui/e2e_backend_bridge.py
+
+Purpose: Connect GUI to backend optimization engine
+
+class E2EBackendBridge(QObject):
+    """
+    Bridge between UI and E2E Optimizer backend.
+    
+    Responsibilities:
+    - Start/stop optimization runs
+    - Fetch optimization results
+    - Deploy parameters to trading engine
+    - Monitor live performance
+    """
+    
+    Signals:
+    - optimization_progress(trial: int, total: int, best_sharpe: float)
+    - optimization_completed(run_id: int, results: Dict)
+    - optimization_failed(run_id: int, error: str)
+    - deployment_activated(deployment_id: int)
+    - deployment_failed(error: str)
+    - performance_alert(message: str, severity: str)
+    
+    Methods:
+    - start_optimization(config: E2EOptimizerConfig)
+    - stop_optimization(run_id: int)
+    - get_optimization_status(run_id: int) -> Dict
+    - get_optimization_results(run_id: int) -> Dict
+    - get_run_history(limit: int = 50) -> List[Dict]
+    - deploy_parameters(run_id: int, deployment_config: Dict)
+    - pause_deployment(deployment_id: int)
+    - resume_deployment(deployment_id: int)
+    - stop_deployment(deployment_id: int)
+    - get_active_deployments() -> List[Dict]
+    - get_live_performance(deployment_id: int) -> Dict
+    - export_report(run_id: int, format: str) -> str (file path)
+
+Implementation Notes:
+
+1. Use QThread for optimization (avoid UI freeze)
+2. Emit progress signals every trial
+3. Store results in DB as they complete
+4. Cache recent results in memory for fast UI updates
+5. Use Qt signals for async communication
+
+class OptimizationWorker(QThread):
+    """Background worker for optimization"""
+    
+    Signals:
+    - progress(trial: int, total: int, metrics: Dict)
+    - finished(run_id: int, results: Dict)
+    - error(error_message: str)
+    
+    Methods:
+    - run()  # Main optimization loop
+    - stop()  # Graceful shutdown
+
+================================================================================
+6. INTEGRATION SPECIFICATIONS
+================================================================================
+
+6.1 INTEGRATION WITH EXISTING COMPONENTS
+-----------------------------------------
+
+6.1.1 Integration with automated_trading_engine.py
+---------------------------------------------------
+
+Location: src/forex_diffusion/trading/automated_trading_engine.py
+
+Changes Required:
+
+1. Add E2E Parameter Loading
+-----------------------------
+
+class AutomatedTradingEngine:
+    def __init__(self, config: TradingConfig):
+        # ... existing code ...
+        
+        # NEW: E2E Parameter Loader
+        from ..integrations.pattern_integrator import PatternIntegrator
+        self.pattern_integrator = PatternIntegrator(
+            db_session=self.db_session
+        )
+        
+        # NEW: Load deployed parameters on startup
+        self.deployed_params = self._load_deployed_parameters()
+    
+    def _load_deployed_parameters(self) -> Dict:
+        """Load active E2E optimized parameters from DB"""
+        query = f"""
+        SELECT parameters_json, regime
+        FROM regime_parameters rp
+        JOIN deployment_configs dc ON dc.symbol = rp.symbol
+        WHERE rp.symbol = '{self.config.symbols[0]}'
+          AND rp.timeframe = '{self.config.timeframes[0]}'
+          AND rp.is_active = TRUE
+          AND dc.is_active = TRUE
+        """
+        # Parse and return parameters
+    
+    def _generate_signal(self, symbol: str, data: pd.DataFrame) -> int:
+        # ... existing signal generation ...
+        
+        # NEW: Apply pattern parameters from E2E optimization
+        if self.deployed_params:
+            pattern_params = self.pattern_integrator.load_parameters(
+                symbol=symbol,
+                timeframe=self.config.timeframes[0],
+                regime=current_regime
+            )
+            # Apply pattern_params to pattern detectors
+        
+        # ... rest of signal logic ...
+
+2. Add VIX/Sentiment Filter Hooks
+----------------------------------
+
+(Already exists in Trading Engine, just ensure used in _calculate_position_size)
+
+6.1.2 Integration with portfolio/optimizer.py
+----------------------------------------------
+
+Location: src/forex_diffusion/portfolio/optimizer.py
+
+Changes Required:
+
+1. Expose Parameter Configuration
+----------------------------------
+
+class PortfolioOptimizer:
+    def set_parameters(self, params: Dict):
+        """
+        Set optimizer parameters from E2E optimization.
+        
+        Args:
+            params: Dict with keys:
+                - risk_measure: str
+                - objective: str
+                - risk_aversion: float
+                - max_weight: float
+                - min_weight: float
+        """
+        self.risk_measure = params.get('risk_measure', self.risk_measure)
+        self.objective = params.get('objective', self.objective)
+        self.risk_aversion = params.get('risk_aversion', self.risk_aversion)
+        # ... update other parameters ...
+
+2. Add Backtest Mode
+---------------------
+
+class PortfolioOptimizer:
+    def enable_backtest_mode(self):
+        """Enable backtest mode (disable real-time data fetching)"""
+        self.backtest_mode = True
+    
+    def optimize_for_backtest(self, returns: pd.DataFrame, params: Dict) -> pd.Series:
+        """Optimize with provided returns (for backtest)"""
+        self.set_parameters(params)
+        return self.optimize(returns)
+
+6.1.3 Integration with rl/rl_portfolio_manager.py
+--------------------------------------------------
+
+Location: src/forex_diffusion/rl/rl_portfolio_manager.py
+
+Changes Required:
+
+1. Add Backtest Prediction Method
+----------------------------------
+
+class RLPortfolioManager:
+    def predict_weights_backtest(
+        self,
+        state: np.ndarray,
+        deterministic: bool = True
+    ) -> np.ndarray:
+        """
+        Predict portfolio weights for backtest (no side effects).
+        
+        Args:
+            state: Environment state (137-dimensional)
+            deterministic: If True, use mean action (no exploration)
+        
+        Returns:
+            weights: Array of portfolio weights [0, 1] summing to 1.0
+        """
+        if self.agent is None:
+            raise RuntimeError("RL agent not loaded")
+        
+        # Use agent's actor network
+        with torch.no_grad():
+            action = self.agent.select_action(state, deterministic=deterministic)
+        
+        # Normalize to sum to 1.0
+        weights = np.abs(action) / np.sum(np.abs(action))
+        
+        return weights
+
+2. Add Hybrid Mode Configuration
+---------------------------------
+
+class RLPortfolioManager:
+    def set_hybrid_alpha(self, alpha: float):
+        """
+        Set blending factor for hybrid mode.
+        
+        Args:
+            alpha: Weight for RL (0.0 = pure Riskfolio, 1.0 = pure RL)
+        """
+        self.hybrid_alpha = np.clip(alpha, 0.0, 1.0)
+    
+    def blend_weights(
+        self,
+        rl_weights: np.ndarray,
+        riskfolio_weights: np.ndarray
+    ) -> np.ndarray:
+        """Blend RL and Riskfolio weights"""
+        return (self.hybrid_alpha * rl_weights +
+                (1 - self.hybrid_alpha) * riskfolio_weights)
+
+6.1.4 Integration with models/sssd.py
+--------------------------------------
+
+Location: src/forex_diffusion/models/sssd.py
+
+Changes Required:
+
+1. Add Quantile Prediction Method
+----------------------------------
+
+class SssdModel:
+    def predict_quantiles(
+        self,
+        data: pd.DataFrame,
+        horizon: int = 4,
+        quantiles: List[float] = [0.05, 0.50, 0.95]
+    ) -> Dict[str, float]:
+        """
+        Predict multiple quantiles for uncertainty quantification.
+        
+        Args:
+            data: Input OHLCV data
+            horizon: Forecast horizon (bars ahead)
+            quantiles: List of quantiles to predict
+        
+        Returns:
+            Dict mapping quantile to predicted value
+            e.g., {'q05': 1.0850, 'q50': 1.0920, 'q95': 1.0990}
+        """
+        # Run multiple diffusion samples
+        samples = []
+        for _ in range(100):  # 100 Monte Carlo samples
+            sample = self.sample(data, horizon)
+            samples.append(sample)
+        
+        # Calculate quantiles
+        samples = np.array(samples)
+        result = {}
+        for q in quantiles:
+            result[f'q{int(q*100):02d}'] = np.quantile(samples, q)
+        
+        return result
+
+6.2 DATABASE INTEGRATION
+-------------------------
+
+All components must use SQLAlchemy sessions for DB access:
+
+from sqlalchemy.orm import Session
+from ..database.optimization_models import (
+    OptimizationRun,
+    OptimizationParameter,
+    OptimizationResult,
+    RegimeParameter,
+    DeploymentConfig
+)
+
+# Create session
+from ..database import get_session
+session = get_session()
+
+# Query example
+active_params = session.query(RegimeParameter).filter(
+    RegimeParameter.symbol == 'EURUSD',
+    RegimeParameter.timeframe == '5m',
+    RegimeParameter.regime == 'trending_up',
+    RegimeParameter.is_active == True
+).first()
+
+# Insert example
+run = OptimizationRun(
+    run_uuid=str(uuid.uuid4()),
+    symbol='EURUSD',
+    timeframe='5m',
+    optimization_method='bayesian',
+    regime_mode='per_regime',
+    start_date=datetime(2022, 1, 1),
+    end_date=datetime(2024, 1, 1),
+    n_trials=100,
+    status='running'
+)
+session.add(run)
+session.commit()
+
+# Update example
+run.status = 'completed'
+run.best_sharpe = 1.65
+run.updated_at = datetime.utcnow()
+session.commit()
+
+================================================================================
+7. OPTIMIZATION ALGORITHMS
+================================================================================
+
+7.1 BAYESIAN OPTIMIZATION WORKFLOW
+-----------------------------------
+
+Optuna TPE (Tree-structured Parzen Estimator):
+
+1. Initialization Phase (n_startup_trials = 10)
+   - Random sampling to build initial dataset
+   - Explore parameter space broadly
+
+2. Exploitation Phase (trials 11+)
+   - Build probabilistic models:
+     - P(x | y < y*): Parameters that led to good results
+     - P(x | y ≥ y*): Parameters that led to poor results
+   - Sample from P(x | y < y*) to focus on promising regions
+
+3. Adaptive Sampling
+   - EI (Expected Improvement) acquisition function
+   - Balance exploration (uncertainty) vs exploitation (known good regions)
+
+4. Pruning (MedianPruner)
+   - Stop poor trials early (if intermediate objective < median of all trials)
+   - Saves compute time
+
+5. Multi-Objective Handling
+   - Pareto dominance: Trial A dominates B if better in all objectives
+   - Return Pareto front (set of non-dominated solutions)
+
+Parameters:
+- n_trials: 50-100 (efficient search)
+- n_startup_trials: 10 (10% of total)
+- sampler: TPESampler (best for continuous + categorical)
+- pruner: MedianPruner(n_warmup_steps=5)
+
+7.2 GENETIC ALGORITHM WORKFLOW
+-------------------------------
+
+NSGA-II (Non-dominated Sorting Genetic Algorithm II):
+
+1. Initialization
+   - Generate random population (pop_size = 50)
+   - Evaluate fitness (run backtest for each individual)
+
+2. Non-dominated Sorting
+   - Rank individuals into Pareto fronts:
+     - Front 1: Non-dominated (best)
+     - Front 2: Dominated only by Front 1
+     - etc.
+
+3. Crowding Distance
+   - For individuals in same front, calculate crowding distance
+   - Prefer individuals in less crowded regions (diversity)
+
+4. Selection
+   - Tournament selection based on:
+     - Pareto rank (lower is better)
+     - Crowding distance (higher is better)
+
+5. Crossover (SBX: Simulated Binary Crossover)
+   - Combine two parents → two offspring
+   - Crossover rate = 0.9
+
+6. Mutation (Polynomial Mutation)
+   - Randomly perturb offspring
+   - Mutation rate = 0.1
+
+7. Survival Selection
+   - Combine parents + offspring
+   - Select best pop_size individuals for next generation
+
+8. Termination
+   - After n_generations (50-100)
+   - Or convergence (Pareto front stable for 10 generations)
+
+Parameters:
+- pop_size: 50
+- n_gen: 50
+- crossover_eta: 20 (crossover distribution index)
+- mutation_eta: 20 (mutation distribution index)
+
+7.3 OBJECTIVE FUNCTIONS
+------------------------
+
+Multi-Objective Formulation:
+
+Objective 1: Maximize Sharpe Ratio
+-----------------------------------
+F1(x) = Sharpe(x)
+
+where Sharpe = (mean_return - risk_free_rate) / std_return
+
+Objective 2: Minimize Max Drawdown
+-----------------------------------
+F2(x) = MaxDD(x)  # In percentage
+
+where MaxDD = max((running_max - equity) / running_max)
+
+Objective 3: Maximize Profit Factor
+------------------------------------
+F3(x) = ProfitFactor(x)
+
+where ProfitFactor = sum(wins) / abs(sum(losses))
+
+Objective 4: Minimize Transaction Costs
+----------------------------------------
+F4(x) = TotalCosts(x) / TotalReturn(x)
+
+where TotalCosts = sum(commissions + spreads + slippage)
+
+Combined Objective (for single-objective optimization):
+-------------------------------------------------------
+F(x) = w1 * Sharpe(x) - w2 * MaxDD(x) + w3 * ProfitFactor(x) - w4 * CostRatio(x)
+
+Default weights: w1=0.5, w2=0.3, w3=0.15, w4=0.05
+
+For multi-objective, return Tuple[F1, F2, F3, F4]
+
+7.4 CONVERGENCE DETECTION
+--------------------------
+
+Module: src/forex_diffusion/optimization/convergence_detector.py
+
+Early Stopping Criteria:
+
+1. Improvement Threshold
+   - If best objective hasn't improved by >1% in last 20 trials → converged
+
+2. Standard Deviation Threshold
+   - If std(last 20 objectives) < 0.01 → converged (plateau)
+
+3. Pareto Front Stability (multi-objective)
+   - If Pareto front unchanged for 15 trials → converged
+
+4. Timeout
+   - If total time > max_time (e.g., 24 hours) → stop
+
+5. User Interruption
+   - If user clicks "Stop Optimization" → graceful shutdown
+
+Implementation:
+
+class ConvergenceDetector:
+    def __init__(self, patience: int = 20, min_delta: float = 0.01):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_value = -np.inf
+        self.trials_without_improvement = 0
+        self.history = []
+    
+    def update(self, current_value: float) -> bool:
+        """
+        Update with new trial result.
+        
+        Returns:
+            True if converged, False otherwise
+        """
+        self.history.append(current_value)
+        
+        if current_value > self.best_value + self.min_delta:
+            self.best_value = current_value
+            self.trials_without_improvement = 0
+        else:
+            self.trials_without_improvement += 1
+        
+        return self.trials_without_improvement >= self.patience
+
+================================================================================
+8. TESTING & VALIDATION
+================================================================================
+
+8.1 UNIT TESTS
+--------------
+
+Coverage Requirements: ≥80% for all new modules
+
+Test Files (create in tests/):
+- tests/test_e2e_optimizer.py
+- tests/test_bayesian_optimizer.py
+- tests/test_genetic_optimizer_e2e.py
+- tests/test_parameter_space.py
+- tests/test_sssd_integrator.py
+- tests/test_riskfolio_integrator.py
+- tests/test_pattern_integrator.py
+- tests/test_rl_integrator.py
+- tests/test_market_filters.py
+- tests/test_integrated_backtest_e2e.py
+- tests/test_e2e_backend_bridge.py
+
+Key Test Scenarios:
+
+1. Parameter Space Definition
+   - Test all 90 parameters have valid bounds
+   - Test constraints (e.g., stop_loss < take_profit)
+   - Test parameter sampling (int, float, categorical, bool)
+
+2. Optimization Engines
+   - Test Bayesian optimizer converges in <100 trials
+   - Test GA produces Pareto front
+   - Test multi-objective handling
+
+3. Component Integrators
+   - Test SSSD quantile prediction (mock model)
+   - Test Riskfolio optimization (mock returns)
+   - Test Pattern parameter loading from DB (mock DB)
+   - Test RL weight prediction (mock agent)
+   - Test VIX/Sentiment/Volume filters
+
+4. Backtest Engine
+   - Test walk-forward validation (30d train, 7d test)
+   - Test transaction cost calculation
+   - Test metrics calculation (Sharpe, DD, Win Rate)
+
+5. Database Operations
+   - Test CRUD for all 5 tables
+   - Test foreign key constraints
+   - Test unique constraints
+   - Test Alembic migrations (upgrade/downgrade)
+
+6. GUI Components
+   - Test widget initialization
+   - Test signal/slot connections
+   - Test data binding (UI ↔ Backend)
+
+8.2 INTEGRATION TESTS
+----------------------
+
+Test Files:
+- tests/integration/test_e2e_full_workflow.py
+
+Scenarios:
+
+1. Full Optimization Workflow
+   - Configure optimization (GUI)
+   - Start optimization (Backend)
+   - Monitor progress (UI updates)
+   - Complete optimization (DB storage)
+   - View results (GUI)
+   - Deploy parameters (DB + Trading Engine)
+
+2. Multi-Component Integration
+   - Load SSSD model
+   - Configure Riskfolio
+   - Load Pattern params from DB
+   - Load RL agent
+   - Run backtest with all components
+   - Verify metrics
+
+3. Database Consistency
+   - Insert optimization run
+   - Insert 100 trials (parameters + results)
+   - Query best parameters
+   - Deploy to regime_parameters
+   - Activate deployment
+   - Verify Trading Engine loads deployed params
+
+8.3 VALIDATION TESTS
+---------------------
+
+1. Out-of-Sample Validation
+   - Split data: 80% optimization, 20% validation
+   - Optimize on 80%
+   - Test on 20%
+   - Compare metrics:
+     - If out-of-sample Sharpe < 70% of in-sample → overfitting risk
+     - If out-of-sample Sharpe ≥ 70% → acceptable
+
+2. Walk-Forward Validation
+   - Rolling window: train 30d, test 7d, step 7d
+   - Verify performance consistency across windows
+   - Check for regime-specific degradation
+
+3. Monte Carlo Validation
+   - Run 1000 simulations with random entry time shifts
+   - Calculate metrics distribution (mean, std, 5th percentile, 95th percentile)
+   - Verify robustness: 5th percentile Sharpe > 0.5
+
+4. Stress Testing
+   - Test on 2020 COVID crash data
+   - Test on 2022 Fed rate hike data
+   - Verify Max DD < 15% in extreme conditions
+
+8.4 PERFORMANCE BENCHMARKS
+---------------------------
+
+Targets:
+
+1. Optimization Speed
+   - Bayesian (100 trials): <12 hours (wall time)
+   - GA (50 generations, pop 50): <20 hours
+   - Per-trial backtest: <5 minutes (2 years data, 5m timeframe)
+
+2. Database Performance
+   - Insert 100 trials: <10 seconds
+   - Query best parameters: <1 second
+   - Load deployed parameters: <500ms
+
+3. GUI Responsiveness
+   - Widget initialization: <2 seconds
+   - Progress update: <100ms (refresh every 5s)
+   - Chart rendering: <1 second (10,000 points)
+
+4. Memory Usage
+   - Optimization process: <8 GB RAM
+   - GUI: <500 MB RAM
+
+================================================================================
+9. DEPLOYMENT & OPERATIONS
+================================================================================
+
+9.1 DEPLOYMENT WORKFLOW
+------------------------
+
+Phase 1: Proof-of-Concept (2 weeks)
+------------------------------------
+Goal: Validate 30% improvement in Sharpe
+
+1. Implement minimal E2E optimizer (Bayesian only)
+2. Integrate 3 components (SSSD, Riskfolio, Patterns)
+3. Run backtest on 1 year EUR/USD data
+4. Measure Sharpe improvement
+5. Go/No-Go decision
+
+Phase 2: Full Implementation (4 weeks)
+---------------------------------------
+1. Complete all 7 component integrations
+2. Implement GA optimizer
+3. Create database schema (Alembic)
+4. Build GUI (3 sub-tabs)
+5. Unit tests (80% coverage)
+
+Phase 3: Testing & Validation (2 weeks)
+----------------------------------------
+1. Integration tests
+2. Out-of-sample validation
+3. Monte Carlo robustness testing
+4. User acceptance testing (UAT)
+
+Phase 4: Production Deployment (1 week)
+----------------------------------------
+1. Database migration (Alembic upgrade)
+2. GUI integration (add tab to Trading Intelligence)
+3. Documentation (user guide)
+4. Training materials
+
+Phase 5: Monitoring (Ongoing)
+------------------------------
+1. Monthly re-optimization (automated)
+2. Performance monitoring (actual vs expected)
+3. Quarterly system audit
+
+9.2 OPERATIONAL PROCEDURES
+---------------------------
+
+Monthly Re-Optimization:
+------------------------
+Trigger: 1st of each month, 00:00 UTC
+
+Steps:
+1. Export current month's trading data
+2. Run E2E optimization (automated)
+   - Use same config as previous run
+   - Update data range (last 2 years)
+3. Compare new parameters vs current
+   - If Sharpe improvement >10% → recommend deployment
+   - If Sharpe degradation >5% → trigger alert
+4. Generate comparison report
+5. Email report to admin
+6. Deploy if auto-deploy enabled, else wait for manual approval
+
+Performance Monitoring:
+-----------------------
+Frequency: Daily, 23:59 UTC
+
+Steps:
+1. Calculate daily metrics (Sharpe, DD, Win Rate)
+2. Compare vs expected (from backtest)
+3. If deviation >20% for 3 consecutive days:
+   - Trigger alert
+   - Recommend immediate re-optimization
+4. Update performance dashboard
+
+Regime Change Detection:
+------------------------
+Frequency: Real-time (every 5 minutes)
+
+Steps:
+1. Run HMM regime detector
+2. If regime changed:
+   - Log regime transition
+   - Load regime-specific parameters from DB
+   - Reconfigure Trading Engine
+   - Update GUI (show new regime)
+
+Backup & Recovery:
+------------------
+Frequency: Daily, 02:00 UTC
+
+Steps:
+1. Backup database (optimization_runs, regime_parameters, deployment_configs)
+2. Backup deployed parameters (JSON export)
+3. Store backups for 90 days
+4. Test restore procedure monthly
+
+9.3 MONITORING & ALERTS
+------------------------
+
+Key Metrics to Monitor:
+-----------------------
+1. Optimization Success Rate
+   - Target: >90% of runs complete successfully
+   - Alert if <80%
+
+2. Average Trial Time
+   - Target: <5 minutes per trial
+   - Alert if >10 minutes (performance degradation)
+
+3. Deployment Uptime
+   - Target: 99.5% uptime
+   - Alert if Trading Engine fails to load deployed parameters
+
+4. Performance Deviation
+   - Target: Actual Sharpe within ±15% of expected
+   - Alert if deviation >20% for 3 days
+
+5. Database Size
+   - Target: <1 GB per year
+   - Alert if growth >10 GB/year (data retention issue)
+
+Alert Channels:
+---------------
+- Email: admin@forexgpt.ai
+- GUI: Alert widget in Deployment Panel
+- Logs: logs/e2e_optimization.log (ERROR level)
+
+9.4 DISASTER RECOVERY
+----------------------
+
+Scenario 1: Optimization Fails (DB Corruption)
+-----------------------------------------------
+Recovery:
+1. Restore database from last backup (daily)
+2. Re-run optimization from checkpoint (if supported)
+3. Investigate root cause (disk space, memory, bugs)
+
+Scenario 2: Deployed Parameters Cause Losses
+---------------------------------------------
+Recovery:
+1. Pause deployment immediately (GUI or API)
+2. Revert to previous parameter set (keep 3 versions)
+3. Analyze trades (what went wrong?)
+4. Run emergency re-optimization
+5. Paper trade new parameters for 7 days before live
+
+Scenario 3: Database Migration Failure
+---------------------------------------
+Recovery:
+1. Alembic downgrade (rollback migration)
+2. Restore database backup
+3. Investigate migration script error
+4. Fix and test on dev/staging
+5. Retry migration
+
+================================================================================
+10. LIBRARIES & DEPENDENCIES
+================================================================================
+
+10.1 NEW LIBRARIES TO ADD
+--------------------------
+
+Update pyproject.toml with:
+
+[tool.poetry.dependencies]
+# Existing dependencies (keep as-is)
+python = "^3.10"
+pyside6 = "^6.4.0"
+pandas = "^2.0.0"
+numpy = "^1.24.0"
+torch = "^2.0.0"
+# ... existing libs ...
+
+# NEW: Optimization
+optuna = "^3.5.0"               # Bayesian optimization
+pymoo = "^0.6.0"                # Genetic algorithms (NSGA-II)
+scikit-optimize = "^0.9.0"      # Alternative Bayesian (optional)
+
+# NEW: Portfolio Optimization
+riskfolio-lib = "^4.0.0"        # Riskfolio-Lib (portfolio optimization)
+cvxpy = "^1.4.0"                # Convex optimization (required by riskfolio)
+
+# NEW: Database
+alembic = "^1.13.0"             # Database migrations
+sqlalchemy = "^2.0.0"           # ORM (may already exist, ensure ^2.0)
+
+# NEW: Visualization (if not present)
+matplotlib = "^3.8.0"           # Charts (may already exist)
+seaborn = "^0.13.0"             # Statistical plots (optional)
+
+# NEW: Reporting
+jinja2 = "^3.1.0"               # HTML report templates
+weasyprint = "^60.0"            # PDF export (optional, requires system libs)
+
+Installation Commands:
+
+poetry add optuna pymoo riskfolio-lib cvxpy alembic
+poetry add matplotlib seaborn jinja2  # if not present
+poetry add weasyprint  # optional, for PDF reports
+
+OR using pip (if not using poetry):
+
+pip install optuna pymoo riskfolio-lib cvxpy alembic
+pip install matplotlib seaborn jinja2 weasyprint
+
+10.2 LIBRARY COMPATIBILITY
+---------------------------
+
+Critical: Ensure compatibility with existing stack
+
+Python Version: ≥3.10 (required for Optuna 3.5+)
+
+PyTorch Compatibility:
+- optuna integrates with PyTorch (used for RL hyperparameter tuning)
+- No conflicts expected
+
+PySide6 Compatibility:
+- Matplotlib backend: use 'Qt5Agg' or 'QtAgg'
+- Set before importing matplotlib.pyplot:
+  import matplotlib
+  matplotlib.use('QtAgg')
+
+Database Compatibility:
+- SQLAlchemy 2.0 (major version, breaking changes from 1.x)
+- If existing code uses SQLAlchemy 1.4, migration required
+- Alembic 1.13 compatible with SQLAlchemy 2.0
+
+Riskfolio-Lib Requirements:
+- cvxpy (convex optimization, C++ dependencies)
+- scipy, statsmodels (likely already present)
+- On Windows, may require Microsoft Visual C++ 14.0+
+
+10.3 SYSTEM DEPENDENCIES
+-------------------------
+
+Linux (Ubuntu/Debian):
+----------------------
+sudo apt-get install build-essential
+sudo apt-get install libatlas-base-dev gfortran  # for numpy/scipy
+sudo apt-get install python3-dev
+
+Windows:
+--------
+- Microsoft Visual C++ 14.0 or greater (via Visual Studio Build Tools)
+- Download: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+
+macOS:
+------
+xcode-select --install  # Command Line Tools
+brew install openblas   # for numpy acceleration
+
+10.4 OPTIONAL LIBRARIES
+------------------------
+
+For Enhanced Features:
+
+1. GPU Acceleration (if available):
+   - torch with CUDA (for RL training speedup)
+   - Not required for optimization (CPU-bound)
+
+2. Distributed Optimization:
+   - ray[tune] = "^2.8.0"  # Parallel trial execution
+   - Use if optimization time >24 hours
+
+3. Advanced Visualization:
+   - plotly = "^5.18.0"  # Interactive charts (optional)
+   - dash = "^2.14.0"  # Web-based dashboard (optional)
+
+4. Monitoring:
+   - tensorboard = "^2.15.0"  # Optuna integration for live monitoring
+   - wandb = "^0.16.0"  # Weights & Biases (optional, cloud-based)
+
+================================================================================
+11. DEVELOPMENT PHASES
+================================================================================
+
+11.1 PHASE 0: PROOF-OF-CONCEPT (2 WEEKS)
+-----------------------------------------
+
+Goal: Validate 30% Sharpe improvement with minimal implementation
+
+Deliverables:
+1. Minimal E2E optimizer (Bayesian only, 20 parameters)
+2. SSSD integration (quantile-based sizing)
+3. Riskfolio integration (Mean-Variance optimization)
+4. Pattern parameter loading (from existing DB)
+5. Backtest on 1 year EUR/USD 5m data
+6. Go/No-Go decision document
+
+Tasks:
+- Week 1:
+  - Day 1-2: Set up parameter space (20 params: SSSD, Riskfolio, Risk, Sizing)
+  - Day 3-4: Implement Bayesian optimizer (Optuna)
+  - Day 5: Integrate SSSD (quantile prediction)
+- Week 2:
+  - Day 1-2: Integrate Riskfolio (optimize function)
+  - Day 3: Integrate Pattern params (DB query)
+  - Day 4: Run backtest + measure Sharpe
+  - Day 5: Generate PoC report + decision
+
+Success Criteria:
+- Sharpe improvement ≥30% (baseline 0.8 → optimized 1.04+)
+- Optimization completes in <24 hours (50 trials)
+- No critical bugs
+
+11.2 PHASE 1: CORE IMPLEMENTATION (4 WEEKS)
+--------------------------------------------
+
+Goal: Complete all 7 component integrations + GA optimizer + database
+
+Deliverables:
+1. Full parameter space (90 parameters)
+2. Bayesian + GA optimizers
+3. All 7 component integrators (SSSD, Riskfolio, Patterns, RL, VIX, Sentiment, Volume)
+4. Enhanced IntegratedBacktestE2E
+5. Database schema (5 tables) + Alembic migrations
+6. Backend modules (optimization/, integrations/, backtest/)
+
+Tasks:
+- Week 1: Parameter Space + Optimizers
+  - Day 1-2: Define 90 parameters (parameter_space.py)
+  - Day 3-4: Complete Bayesian optimizer (multi-objective)
+  - Day 5: Implement GA optimizer (NSGA-II with pymoo)
+
+- Week 2: Component Integrations
+  - Day 1: SSSD integrator (sssd_integrator.py)
+  - Day 2: Riskfolio integrator (riskfolio_integrator.py)
+  - Day 3: Pattern integrator (pattern_integrator.py)
+  - Day 4: RL integrator (rl_integrator.py)
+  - Day 5: Market filters (market_filters.py: VIX, Sentiment, Volume)
+
+- Week 3: Backtest Engine + Database
+  - Day 1-2: Enhance IntegratedBacktestE2E (integrate all components)
+  - Day 3: Design database schema (5 tables)
+  - Day 4: Create Alembic migration
+  - Day 5: Implement SQLAlchemy models (optimization_models.py)
+
+- Week 4: E2E Orchestrator + Testing
+  - Day 1-2: Implement E2EOptimizer class (e2e_optimizer.py)
+  - Day 3: Implement objective functions (objective_functions.py)
+  - Day 4: Unit tests (80% coverage target)
+  - Day 5: Integration tests (full workflow)
+
+Success Criteria:
+- All 90 parameters defined and validated
+- Bayesian optimizer completes 100 trials in <12 hours
+- GA optimizer produces Pareto front (50 generations in <20 hours)
+- Database schema passes migration tests (upgrade/downgrade)
+- Unit test coverage ≥80%
+
+11.3 PHASE 2: GUI IMPLEMENTATION (3 WEEKS)
+-------------------------------------------
+
+Goal: Complete GUI with 3 sub-tabs + backend bridge
+
+Deliverables:
+1. E2EOptimizationTab (Level 2 tab)
+2. ConfigurationPanel (Level 3 sub-tab 1)
+3. OptimizationDashboard (Level 3 sub-tab 2)
+4. DeploymentPanel (Level 3 sub-tab 3)
+5. E2EBackendBridge (UI ↔ Backend connector)
+6. 50+ i18n tooltips (en_US.json)
+
+Tasks:
+- Week 1: Configuration Panel
+  - Day 1: Layout + basic widgets (symbol, timeframe, dates, method)
+  - Day 2: Component selection checkboxes + objectives config
+  - Day 3: Constraints + advanced settings
+  - Day 4: Actions (start, load, save, reset)
+  - Day 5: i18n tooltips (20 tooltips)
+
+- Week 2: Optimization Dashboard
+  - Day 1: Status panel + progress monitoring
+  - Day 2: Best results table (live updates)
+  - Day 3: Live charts (optimization history, Pareto front)
+  - Day 4: Run history table + detailed results viewer
+  - Day 5: Parameter importance chart + i18n (15 tooltips)
+
+- Week 3: Deployment Panel + Backend Bridge
+  - Day 1: Active deployments table
+  - Day 2: Deploy new configuration (5-step wizard)
+  - Day 3: Deployment history + performance monitoring
+  - Day 4: Backend bridge (E2EBackendBridge, OptimizationWorker)
+  - Day 5: Integration testing + i18n (15 tooltips)
+
+Success Criteria:
+- All widgets functional
+- Backend bridge connects UI ↔ Backend correctly
+- Optimization runs in background (QThread, UI doesn't freeze)
+- Live progress updates every 5 seconds
+- All tooltips documented
+
+11.4 PHASE 3: TESTING & VALIDATION (2 WEEKS)
+---------------------------------------------
+
+Goal: Comprehensive testing + validation on historical data
+
+Deliverables:
+1. Unit tests (≥80% coverage)
+2. Integration tests (full workflow)
+3. Out-of-sample validation report
+4. Monte Carlo robustness report
+5. Bug fixes
+
+Tasks:
+- Week 1: Unit + Integration Tests
+  - Day 1-2: Complete unit tests (all modules)
+  - Day 3: Integration test (E2E workflow)
+  - Day 4: Database tests (CRUD, migrations)
+  - Day 5: GUI tests (widget interactions, signals)
+
+- Week 2: Validation + Bug Fixes
+  - Day 1: Out-of-sample validation (80% train, 20% test)
+  - Day 2: Monte Carlo validation (1000 runs)
+  - Day 3: Stress testing (2020 COVID, 2022 Fed rate hike)
+  - Day 4-5: Bug fixes + performance optimization
+
+Success Criteria:
+- Test coverage ≥80%
+- All tests pass
+- Out-of-sample Sharpe ≥70% of in-sample
+- Monte Carlo 5th percentile Sharpe >0.5
+- No critical bugs
+
+11.5 PHASE 4: PRODUCTION DEPLOYMENT (1 WEEK)
+---------------------------------------------
+
+Goal: Deploy to production + documentation
+
+Deliverables:
+1. Production database migration
+2. GUI integrated into Trading Intelligence tab
+3. User guide (documentation)
+4. Training materials (videos/slides)
+5. Deployment checklist
+
+Tasks:
+- Day 1: Database migration (Alembic upgrade on production DB)
+- Day 2: GUI integration (add tab to app.py)
+- Day 3: Documentation (user guide, API docs)
+- Day 4: Training materials (videos, tutorials)
+- Day 5: Final testing + go-live
+
+Success Criteria:
+- Database migration successful (no data loss)
+- GUI accessible in Trading Intelligence tab
+- Documentation complete (user + developer)
+- Training materials ready
+
+11.6 PHASE 5: MONITORING & MAINTENANCE (ONGOING)
+-------------------------------------------------
+
+Goal: Ensure system reliability + continuous improvement
+
+Activities:
+- Monthly re-optimization (automated)
+- Weekly performance reviews (actual vs expected)
+- Quarterly system audits
+- Bug fixes + feature requests
+- User support
+
+Timeline:
+- Month 1: Daily monitoring (catch early issues)
+- Month 2-3: Weekly monitoring (stabilization)
+- Month 4+: Monthly monitoring (maintenance mode)
+
+================================================================================
+12. SUCCESS CRITERIA
+================================================================================
+
+12.1 PERFORMANCE TARGETS
+-------------------------
+
+PRIMARY TARGETS (Must Achieve):
+--------------------------------
+1. Sharpe Ratio Improvement: ≥40%
+   - Baseline: 0.8
+   - Target: ≥1.12 (40% improvement)
+   - Stretch: 1.44 (80% improvement)
+
+2. Max Drawdown Reduction: ≥33%
+   - Baseline: 18%
+   - Target: ≤12% (33% reduction)
+   - Stretch: ≤9% (50% reduction)
+
+3. Win Rate Improvement: ≥5%
+   - Baseline: 55%
+   - Target: ≥58% (5% improvement)
+   - Stretch: 63% (15% improvement)
+
+SECONDARY TARGETS (Nice-to-Have):
+----------------------------------
+4. Calmar Ratio Improvement: ≥50%
+   - Baseline: 0.83
+   - Target: ≥1.25 (50% improvement)
+   - Stretch: 1.66 (100% improvement)
+
+5. Profit Factor Improvement: ≥30%
+   - Baseline: 1.4
+   - Target: ≥1.82 (30% improvement)
+   - Stretch: 2.1 (50% improvement)
+
+6. Transaction Cost Reduction: ≥20%
+   - Baseline: 5% of gross profit
+   - Target: ≤4% (20% reduction)
+   - Stretch: 3% (40% reduction)
+
+12.2 OPERATIONAL TARGETS
+-------------------------
+
+1. Optimization Runtime
+   - Bayesian (100 trials): ≤12 hours
+   - GA (50 generations): ≤20 hours
+
+2. GUI Responsiveness
+   - Widget initialization: ≤2 seconds
+   - Progress updates: ≤100ms latency
+   - Chart rendering: ≤1 second
+
+3. Database Performance
+   - Insert 100 trials: ≤10 seconds
+   - Query best parameters: ≤1 second
+
+4. System Reliability
+   - Optimization success rate: ≥90%
+   - Deployment uptime: ≥99.5%
+   - Zero data loss
+
+5. Code Quality
+   - Test coverage: ≥80%
+   - No critical bugs
+   - <10 minor bugs in first month
+
+12.3 VALIDATION TARGETS
+------------------------
+
+1. Out-of-Sample Performance
+   - Sharpe degradation: ≤30% (in-sample 1.5 → out-of-sample ≥1.05)
+   - Max DD increase: ≤5 percentage points
+
+2. Monte Carlo Robustness
+   - 5th percentile Sharpe: ≥0.5
+   - 95th percentile Max DD: ≤20%
+
+3. Stress Testing
+   - 2020 COVID crash: Max DD ≤18% (vs baseline 35%)
+   - 2022 Fed rate hike: Max DD ≤15% (vs baseline 25%)
+
+12.4 BUSINESS TARGETS
+----------------------
+
+1. ROI (Return on Investment)
+   - Payback period: ≤18 months
+   - 5-year NPV: ≥$50k (for $100k capital)
+
+2. User Satisfaction
+   - User acceptance testing: ≥8/10 rating
+   - Training completion: ≥80% of users
+
+3. Adoption
+   - ≥50% of active users deploy optimized parameters within 3 months
+   - ≥80% of users run at least one optimization within 6 months
+
+12.5 GO/NO-GO DECISION CRITERIA
+--------------------------------
+
+PROCEED WITH FULL IMPLEMENTATION IF:
+-------------------------------------
+✓ Proof-of-Concept Sharpe ≥1.04 (+30% vs baseline)
+✓ PoC Max Drawdown ≤14% (-22% vs baseline)
+✓ Development cost estimate ≤$25k
+✓ Estimated payback ≤18 months
+✓ No technical blockers identified
+
+ABORT OR REDESIGN IF:
+----------------------
+✗ PoC Sharpe <1.0 (<25% improvement)
+✗ Severe overfitting (out-of-sample Sharpe <0.6)
+✗ Development cost >$40k
+✗ Critical technical limitations (e.g., optimization >48 hours)
+✗ Unacceptable risks (e.g., data corruption, system instability)
+
+================================================================================
+DOCUMENT END
+================================================================================
+
+This specification provides a comprehensive blueprint for implementing the
+E2E Parameter Optimization System. All components are designed to integrate
+seamlessly with existing ForexGPT architecture while following best practices
+for software engineering, database design, and user experience.
+
+Key Principles:
+- Modularity: Each component is independent and testable
+- Scalability: System can handle 100+ trials, multiple symbols, 4 regimes
+- Robustness: Comprehensive validation, error handling, monitoring
+- Usability: Intuitive GUI with 50+ tooltips, clear workflows
+- Maintainability: Well-documented, tested (80% coverage), version-controlled
+
+Next Steps:
+1. Review this specification with development team
+2. Approve budget and timeline
+3. Begin Phase 0 (Proof-of-Concept)
+4. Go/No-Go decision after PoC
+5. Proceed to full implementation if approved
+
+Contact: forexgpt-dev@example.com
