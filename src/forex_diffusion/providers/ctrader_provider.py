@@ -564,14 +564,12 @@ class CTraderProvider(BaseProvider):
                         if payload_type == 2155:
                             decoded_message = Messages.ProtoOADepthEvent()
                             decoded_message.ParseFromString(message.payload)
-                            logger.debug(f"[{self.name}] ✓ Decoded ProtoOADepthEvent (type 2155)")
-                        
+
                         # Type 2131 = ProtoOASpotEvent (spot quotes - real-time prices)
                         elif payload_type == 2131:
                             decoded_message = Messages.ProtoOASpotEvent()
                             decoded_message.ParseFromString(message.payload)
-                            logger.debug(f"[{self.name}] ✓ Decoded ProtoOASpotEvent (type 2131)")
-                        
+
                         # Type 2128 = ProtoOATrailingSLChangedEvent (trailing stop loss changed)
                         elif payload_type == 2128:
                             decoded_message = Messages.ProtoOATrailingSLChangedEvent()
@@ -821,8 +819,7 @@ class CTraderProvider(BaseProvider):
                 }
 
                 self._dom_buffer[symbol_name] = dom_data
-                logger.info(f"[{self.name}] 📈 DOM updated for {symbol_name}: {len(bids)} bids, {len(asks)} asks, buffer keys now: {list(self._dom_buffer.keys())}")
-                
+
                 # DOM stored in RAM buffer only (not database)
                 # All consumers (OrderFlowPanel, AutomatedTradingEngine, etc.) 
                 # use LIMIT 1 queries, so historical data not needed

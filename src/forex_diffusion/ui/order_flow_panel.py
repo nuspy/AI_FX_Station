@@ -87,10 +87,6 @@ class OrderFlowPanel(QWidget):
         # Imbalance Indicators
         imbalance_group = self._create_imbalance_section()
         layout.addWidget(imbalance_group)
-        
-        # Order Books Section
-        order_books_group = self._create_order_books_section()
-        layout.addWidget(order_books_group)
 
         # Order Flow Signals Table
         signals_group = self._create_signals_section()
@@ -528,9 +524,6 @@ class OrderFlowPanel(QWidget):
                 }
 
                 self.update_metrics(metrics_dict)
-                
-                # Update order books display
-                self._update_order_books(snapshot.get('bids', []), snapshot.get('asks', []))
 
                 # Generate and display signals
                 if snapshot['mid_price'] > 0:

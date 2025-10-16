@@ -30,6 +30,18 @@ class SentimentPanel(QWidget):
         self.current_metrics: Dict[str, Any] = {}
         self.sentiment_service = sentiment_service
         self.current_symbol = 'EURUSD'
+        
+        # Cache to prevent redundant UI updates
+        self._metrics_cache: Dict[str, Any] = {
+            "sentiment": None,
+            "confidence": None,
+            "ratio": None,
+            "total_traders": None,
+            "long_pct": None,
+            "short_pct": None,
+            "contrarian_signal": None,
+            "contrarian_state": None,
+        }
 
         self.init_ui()
 
@@ -300,21 +312,37 @@ class SentimentPanel(QWidget):
 
         # Contrarian Signal (-1 to +1)
         contrarian_signal = metrics.get('contrarian_signal', 0.0)
-        contrarian_pct = int(contrarian_signal * 100)
-        self.contrarian_bar.setValue(contrarian_pct)
+        
+        # Update bar value if changed
+        if self._metrics_cache["contrarian_signal"] != contrarian_signal:
+            contrarian_pct = int(contrarian_signal * 100)
+            self.contrarian_bar.setValue(contrarian_pct)
+            self._metrics_cache["contrarian_signal"] = contrarian_signal
+            logger.debug(f"Contrarian signal updated: {contrarian_signal:.2f} ({contrarian_pct}%)")
 
+        # Update state if changed
         if contrarian_signal > 0.3:
-            self.contrarian_label.setText("FADE SHORT (Crowd Bearish)")
-            self.contrarian_label.setStyleSheet("color: green; font-weight: bold;")
-            self.contrarian_bar.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+            contrarian_state = "fade_short"
         elif contrarian_signal < -0.3:
-            self.contrarian_label.setText("FADE LONG (Crowd Bullish)")
-            self.contrarian_label.setStyleSheet("color: red; font-weight: bold;")
-            self.contrarian_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            contrarian_state = "fade_long"
         else:
-            self.contrarian_label.setText("Neutral")
-            self.contrarian_label.setStyleSheet("color: gray;")
-            self.contrarian_bar.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            contrarian_state = "neutral"
+            
+        if self._metrics_cache["contrarian_state"] != contrarian_state:
+            if contrarian_state == "fade_short":
+                self.contrarian_label.setText("FADE SHORT (Crowd Bearish)")
+                self.contrarian_label.setStyleSheet("color: green; font-weight: bold;")
+                self.contrarian_bar.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+            elif contrarian_state == "fade_long":
+                self.contrarian_label.setText("FADE LONG (Crowd Bullish)")
+                self.contrarian_label.setStyleSheet("color: red; font-weight: bold;")
+                self.contrarian_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            else:
+                self.contrarian_label.setText("Neutral")
+                self.contrarian_label.setStyleSheet("color: gray;")
+                self.contrarian_bar.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            self._metrics_cache["contrarian_state"] = contrarian_state
+            logger.debug(f"Contrarian state updated: {contrarian_state}")
 
         # Alerts
         self._update_alerts(metrics)
@@ -360,6 +388,7 @@ class SentimentPanel(QWidget):
     def refresh_display(self):
         """Refresh display (called by timer) - fetches real-time sentiment data"""
         if not self.sentiment_service:
+            logger.debug("Sentiment service not available")
             return
 
         try:
@@ -370,6 +399,7 @@ class SentimentPanel(QWidget):
                 logger.debug(f"No sentiment data available for {self.current_symbol}")
                 return
 
+            logger.debug(f"Sentiment refresh for {self.current_symbol}: long={metrics.get('long_pct')}%, contrarian={metrics.get('contrarian_signal')}")
             self.update_metrics(metrics)
 
         except Exception as e:

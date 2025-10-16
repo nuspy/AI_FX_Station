@@ -54,7 +54,6 @@ class DataService(ChartServiceBase):
     def _handle_tick(self, payload: dict):
         """Thread-safe entrypoint: enqueue tick to GUI thread."""
         try:
-            logger.debug(f"📊 TICK RECEIVED: symbol={payload.get('symbol')}, price={payload.get('price', payload.get('bid'))}")
             self.tickArrived.emit(payload)
         except Exception as e:
             logger.exception("Failed to emit tick: {}", e)
@@ -212,10 +211,7 @@ class DataService(ChartServiceBase):
                 prev_xlim = prev_ylim = None
             # redraw base chart (quantiles overlay mantenuti da _forecasts)
             if self._last_df is not None and not self._last_df.empty:
-                logger.debug(f"📊 Calling update_plot with {len(self._last_df)} rows")
-                logger.debug(f"   Columns: {list(self._last_df.columns)}")
-                logger.debug(f"   Last row: {self._last_df.iloc[-1].to_dict() if len(self._last_df) > 0 else 'empty'}")
-                
+
                 self.update_plot(self._last_df, restore_xlim=prev_xlim, restore_ylim=prev_ylim)
             else:
                 logger.warning(f"⚠️ Cannot update plot: _last_df is {'None' if self._last_df is None else 'empty'}")

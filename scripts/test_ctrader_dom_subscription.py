@@ -560,8 +560,7 @@ class DOMTestMonitor:
                     
                     # Log every 10th spot event summary
                     elif self.event_counts['spot'] % 10 == 0:
-                        logger.debug(f"💹 Spot events received: {self.event_counts['spot']}")
-                        
+
                 except Exception as e:
                     logger.error(f"Failed to parse spot event #{self.event_counts['spot']}: {e}")
                     logger.error(f"Raw payload: {message.payload[:100]}...")
