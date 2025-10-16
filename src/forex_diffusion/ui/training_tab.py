@@ -17,6 +17,7 @@ from loguru import logger
 
 from ..utils.config import get_config
 from ..utils.user_settings import get_setting, set_setting
+from ..i18n import tr
 from .controllers import TrainingController
 from .optimized_params_display_widget import OptimizedParamsDisplayWidget
 
