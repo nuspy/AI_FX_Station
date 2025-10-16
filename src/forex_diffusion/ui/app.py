@@ -24,6 +24,7 @@ from .logs_tab import LogsTab
 from .patterns_tab import PatternsTab
 from .live_trading_tab import LiveTradingTab
 from .portfolio_tab import PortfolioOptimizationTab
+from .rl_config_tab import RLConfigTab
 
 
 def setup_ui(
@@ -290,14 +291,16 @@ def setup_ui(
         }
     """)
 
-    # Create Portfolio and Signals tabs
+    # Create Portfolio, Signals, and RL Agent tabs
     portfolio_tab = PortfolioOptimizationTab(main_window)
     from .signals_tab import SignalsTab
     signals_tab = SignalsTab(main_window, db_service=db_service)
+    rl_config_tab = RLConfigTab(main_window)
 
     # Add as nested tabs under Trading Intelligence
     trading_intelligence_container.addTab(portfolio_tab, "Portfolio")
     trading_intelligence_container.addTab(signals_tab, "Signals")
+    trading_intelligence_container.addTab(rl_config_tab, "RL Agent")
 
     # --- Create Generative Forecast tab with nested tabs (level_2) ---
     uno_tab = QTabWidget()
@@ -356,9 +359,10 @@ def setup_ui(
     layout.addWidget(tab_widget)
 
     result["chart_tab"] = chart_tab  # Chart widget (level_1, no nested tabs)
-    result["trading_intelligence_container"] = trading_intelligence_container  # Trading Intelligence level_1 (contains Portfolio, Signals)
+    result["trading_intelligence_container"] = trading_intelligence_container  # Trading Intelligence level_1 (contains Portfolio, Signals, RL Agent)
     result["portfolio_tab"] = portfolio_tab  # Portfolio tab under Trading Intelligence
     result["signals_tab"] = signals_tab  # Signals tab under Trading Intelligence
+    result["rl_config_tab"] = rl_config_tab  # RL Agent tab under Trading Intelligence
     result["training_tab"] = training_tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
