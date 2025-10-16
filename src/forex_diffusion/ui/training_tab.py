@@ -296,6 +296,9 @@ class TrainingTab(QWidget):
 
         # Load saved settings
         self._load_settings()
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
 
     def _save_settings(self):
         """Save all training settings to persistent storage"""
@@ -527,6 +530,98 @@ class TrainingTab(QWidget):
         """Save settings when tab is hidden (user switches tabs)"""
         self._save_settings()
         super().hideEvent(event)
+    
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        # Top controls
+        apply_tooltip(self.model_name_edit, "model_name", "training")
+        apply_tooltip(self.symbol_combo, "symbol", "training")
+        apply_tooltip(self.tf_combo, "timeframe", "training")
+        apply_tooltip(self.days_spin, "days", "training")
+        apply_tooltip(self.horizon_spin, "horizon", "training")
+        apply_tooltip(self.model_combo, "model", "training")
+        apply_tooltip(self.encoder_combo, "encoder", "training")
+        apply_tooltip(self.use_gpu_training_check, "use_gpu_training", "training")
+        apply_tooltip(self.opt_combo, "optimization", "training")
+        apply_tooltip(self.gen_spin, "generations", "training.genetic")
+        apply_tooltip(self.pop_spin, "population", "training.genetic")
+        
+        # Indicator master toggle
+        apply_tooltip(self.use_indicators_check, "use_indicators", "training.indicators")
+        
+        # Feature Engineering
+        apply_tooltip(self.returns_check, "returns_volatility", "training.features")
+        apply_tooltip(self.returns_window, "returns_window", "training.advanced")
+        apply_tooltip(self.sessions_check, "trading_sessions", "training.features")
+        apply_tooltip(self.session_overlap, "session_overlap", "training.advanced")
+        apply_tooltip(self.candlestick_check, "candlestick_patterns", "training.features")
+        apply_tooltip(self.higher_tf_combo, "higher_tf", "training.advanced")
+        apply_tooltip(self.volume_profile_check, "volume_profile", "training.features")
+        apply_tooltip(self.vp_bins, "vp_bins", "training.advanced")
+        apply_tooltip(self.vp_window, "vp_window", "training.advanced")
+        apply_tooltip(self.vsa_check, "vsa", "training.features")
+        apply_tooltip(self.vsa_volume_ma, "vsa_volume_ma", "training.advanced")
+        apply_tooltip(self.vsa_spread_ma, "vsa_spread_ma", "training.advanced")
+        
+        # Advanced Parameters
+        apply_tooltip(self.warmup, "warmup_bars", "training.advanced")
+        apply_tooltip(self.rv_w, "rv_window", "training.advanced")
+        apply_tooltip(self.min_coverage, "min_coverage", "training.advanced")
+        apply_tooltip(self.atr_n, "atr_n", "training.advanced")
+        apply_tooltip(self.rsi_n, "rsi_n", "training.advanced")
+        apply_tooltip(self.bb_n, "bb_n", "training.advanced")
+        apply_tooltip(self.hurst_w, "hurst_window", "training.advanced")
+        
+        # LightGBM
+        apply_tooltip(self.light_epochs, "epochs", "training.lightgbm")
+        apply_tooltip(self.light_batch, "batch", "training.lightgbm")
+        apply_tooltip(self.light_val_frac, "validation_fraction", "training.lightgbm")
+        
+        # Encoder
+        apply_tooltip(self.patch_len, "patch_len", "training.encoder")
+        apply_tooltip(self.latent_dim, "latent_dim", "training.encoder")
+        apply_tooltip(self.encoder_epochs, "epochs", "training.encoder")
+        
+        # Diffusion (if widgets exist)
+        if hasattr(self, 'diffusion_timesteps'):
+            apply_tooltip(self.diffusion_timesteps, "timesteps", "training.diffusion")
+        if hasattr(self, 'learning_rate'):
+            apply_tooltip(self.learning_rate, "learning_rate", "training.diffusion")
+        if hasattr(self, 'batch_size_dl'):
+            apply_tooltip(self.batch_size_dl, "batch_size", "training.diffusion")
+        if hasattr(self, 'model_channels'):
+            apply_tooltip(self.model_channels, "model_channels", "training.diffusion")
+        if hasattr(self, 'dropout'):
+            apply_tooltip(self.dropout, "dropout", "training.diffusion")
+        if hasattr(self, 'num_heads'):
+            apply_tooltip(self.num_heads, "num_heads", "training.diffusion")
+        
+        # NVIDIA GPU Optimization
+        if hasattr(self, 'nvidia_enable'):
+            apply_tooltip(self.nvidia_enable, "enable", "training.nvidia")
+        if hasattr(self, 'use_amp'):
+            apply_tooltip(self.use_amp, "use_amp", "training.nvidia")
+        if hasattr(self, 'precision_combo'):
+            apply_tooltip(self.precision_combo, "precision", "training.nvidia")
+        if hasattr(self, 'compile_model'):
+            apply_tooltip(self.compile_model, "compile_model", "training.nvidia")
+        if hasattr(self, 'use_fused_optimizer'):
+            apply_tooltip(self.use_fused_optimizer, "fused_optimizer", "training.nvidia")
+        if hasattr(self, 'use_flash_attention'):
+            apply_tooltip(self.use_flash_attention, "flash_attention", "training.nvidia")
+        if hasattr(self, 'grad_accumulation_steps'):
+            apply_tooltip(self.grad_accumulation_steps, "grad_accumulation_steps", "training.nvidia")
+        
+        # Apply indicator tooltips
+        for indicator in INDICATORS:
+            ind_key = indicator.lower().replace("%", "").replace("/", "_")
+            tooltip_key = f"training.indicators.{ind_key}"
+            tooltip_text = tr(f"{tooltip_key}.tooltip", default=None)
+            if tooltip_text:
+                for tf, cb in self.indicator_checks.get(indicator, {}).items():
+                    cb.setToolTip(tooltip_text)
 
     def _build_top_controls(self):
         """Build top control row: model name, load/save config buttons, symbol, timeframe, days, horizon, model, encoder, optimization"""
