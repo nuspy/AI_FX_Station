@@ -95,6 +95,9 @@ class RLConfigTab(QWidget):
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._update_live_metrics)
         
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
+        
         logger.info("RLConfigTab initialized with 6 sub-tabs")
     
     def _create_agent_config_tab(self) -> QWidget:
@@ -1209,6 +1212,114 @@ class RLConfigTab(QWidget):
         self.training_canvas.draw()
     
     def _apply_i18n_tooltips(self):
-        """Apply i18n tooltips to all widgets."""
-        # TODO: Implement i18n tooltips (120 tooltips)
-        pass
+        """Apply i18n tooltips to all widgets (51 tooltips for 4 tabs)."""
+        from ..i18n.widget_helper import apply_tooltip
+        from ..i18n import tr
+        
+        logger.info("Applying i18n tooltips to RL Agent tab widgets...")
+        
+        # Tab 1: Agent Configuration (16 widgets)
+        apply_tooltip(self.algorithm_combo, "algorithm", "rl_agent")
+        apply_tooltip(self.actor_lr_spin, "actor_lr", "rl_agent")
+        apply_tooltip(self.critic_lr_spin, "critic_lr", "rl_agent")
+        apply_tooltip(self.clip_epsilon_spin, "clip_epsilon", "rl_agent")
+        apply_tooltip(self.gae_lambda_spin, "gae_lambda", "rl_agent")
+        apply_tooltip(self.gamma_spin, "gamma", "rl_agent")
+        apply_tooltip(self.entropy_coef_spin, "entropy_coef", "rl_agent")
+        apply_tooltip(self.ppo_epochs_spin, "ppo_epochs", "rl_agent")
+        apply_tooltip(self.mini_batch_spin, "mini_batch_size", "rl_agent")
+        apply_tooltip(self.actor_hidden_edit, "actor_hidden", "rl_agent")
+        apply_tooltip(self.critic_hidden_edit, "critic_hidden", "rl_agent")
+        apply_tooltip(self.use_lstm_check, "use_lstm", "rl_agent")
+        apply_tooltip(self.lstm_hidden_spin, "lstm_hidden", "rl_agent")
+        apply_tooltip(self.dropout_spin, "dropout", "rl_agent")
+        apply_tooltip(self.activation_combo, "activation", "rl_agent")
+        apply_tooltip(self.device_combo, "device", "rl_agent")
+        
+        # Tab 2: Training Settings (13 widgets)
+        apply_tooltip(self.training_mode_combo, "training_mode", "rl_agent")
+        apply_tooltip(self.num_episodes_spin, "num_episodes", "rl_agent")
+        apply_tooltip(self.max_steps_spin, "max_steps_per_episode", "rl_agent")
+        apply_tooltip(self.eval_freq_spin, "eval_frequency", "rl_agent")
+        apply_tooltip(self.eval_episodes_spin, "eval_episodes", "rl_agent")
+        apply_tooltip(self.checkpoint_dir_edit, "checkpoint_dir", "rl_agent")
+        apply_tooltip(self.save_freq_spin, "save_frequency", "rl_agent")
+        apply_tooltip(self.save_best_only_check, "save_best_only", "rl_agent")
+        apply_tooltip(self.early_stopping_check, "early_stopping", "rl_agent")
+        apply_tooltip(self.patience_spin, "patience", "rl_agent")
+        apply_tooltip(self.min_delta_spin, "min_delta", "rl_agent")
+        apply_tooltip(self.use_tensorboard_check, "use_tensorboard", "rl_agent")
+        apply_tooltip(self.tensorboard_dir_edit, "tensorboard_dir", "rl_agent")
+        
+        # Tab 3: State & Action Space (13 widgets - market/risk features)
+        # Market features
+        if hasattr(self, 'market_features'):
+            if 'Returns History' in self.market_features:
+                apply_tooltip(self.market_features['Returns History'], "market_returns_history", "rl_agent")
+            if 'Volatility' in self.market_features:
+                apply_tooltip(self.market_features['Volatility'], "market_volatility", "rl_agent")
+            if 'Correlation Matrix' in self.market_features:
+                apply_tooltip(self.market_features['Correlation Matrix'], "market_correlation", "rl_agent")
+            if 'Momentum' in self.market_features:
+                apply_tooltip(self.market_features['Momentum'], "market_momentum", "rl_agent")
+            if 'RSI' in self.market_features:
+                apply_tooltip(self.market_features['RSI'], "market_rsi", "rl_agent")
+            if 'MACD' in self.market_features:
+                apply_tooltip(self.market_features['MACD'], "market_macd", "rl_agent")
+        
+        # Risk features
+        if hasattr(self, 'risk_features'):
+            if 'VaR (95%)' in self.risk_features:
+                apply_tooltip(self.risk_features['VaR (95%)'], "risk_var", "rl_agent")
+            if 'CVaR (95%)' in self.risk_features:
+                apply_tooltip(self.risk_features['CVaR (95%)'], "risk_cvar", "rl_agent")
+            if 'Sharpe Ratio' in self.risk_features:
+                apply_tooltip(self.risk_features['Sharpe Ratio'], "risk_sharpe", "rl_agent")
+            if 'Sortino Ratio' in self.risk_features:
+                apply_tooltip(self.risk_features['Sortino Ratio'], "risk_sortino", "rl_agent")
+        
+        # Sentiment features
+        if hasattr(self, 'sentiment_features'):
+            if 'VIX Level' in self.sentiment_features:
+                apply_tooltip(self.sentiment_features['VIX Level'], "sentiment_vix", "rl_agent")
+            if 'VIX Percentile' in self.sentiment_features:
+                apply_tooltip(self.sentiment_features['VIX Percentile'], "sentiment_vix_percentile", "rl_agent")
+        
+        # Action constraints
+        apply_tooltip(self.min_weight_spin, "min_weight", "rl_agent")
+        apply_tooltip(self.max_weight_spin, "max_weight", "rl_agent")
+        apply_tooltip(self.long_only_check, "long_only", "rl_agent")
+        apply_tooltip(self.force_sum_check, "force_sum_one", "rl_agent")
+        apply_tooltip(self.action_smoothing_check, "action_smoothing", "rl_agent")
+        apply_tooltip(self.smoothing_alpha_spin, "smoothing_alpha", "rl_agent")
+        
+        # Tab 4: Reward Function (17 widgets)
+        if hasattr(self, 'reward_components'):
+            if 'Sharpe Ratio Improvement' in self.reward_components:
+                apply_tooltip(self.reward_components['Sharpe Ratio Improvement']['weight'], "reward_sharpe", "rl_agent")
+            if 'Transaction Costs' in self.reward_components:
+                apply_tooltip(self.reward_components['Transaction Costs']['weight'], "reward_transaction_cost", "rl_agent")
+            if 'VaR Violation' in self.reward_components:
+                apply_tooltip(self.reward_components['VaR Violation']['weight'], "reward_var_violation", "rl_agent")
+            if 'CVaR Violation' in self.reward_components:
+                apply_tooltip(self.reward_components['CVaR Violation']['weight'], "reward_cvar_violation", "rl_agent")
+            if 'Correlation Violation' in self.reward_components:
+                apply_tooltip(self.reward_components['Correlation Violation']['weight'], "reward_correlation_violation", "rl_agent")
+            if 'Diversification Bonus' in self.reward_components:
+                apply_tooltip(self.reward_components['Diversification Bonus']['weight'], "reward_diversification", "rl_agent")
+            if 'Drawdown Penalty' in self.reward_components:
+                apply_tooltip(self.reward_components['Drawdown Penalty']['weight'], "reward_drawdown", "rl_agent")
+            if 'Turnover Penalty' in self.reward_components:
+                apply_tooltip(self.reward_components['Turnover Penalty']['weight'], "reward_turnover", "rl_agent")
+            if 'Sortino Ratio Improvement' in self.reward_components:
+                apply_tooltip(self.reward_components['Sortino Ratio Improvement']['weight'], "reward_sortino", "rl_agent")
+        
+        apply_tooltip(self.max_var_spin, "max_var", "rl_agent")
+        apply_tooltip(self.max_cvar_spin, "max_cvar", "rl_agent")
+        apply_tooltip(self.max_corr_exposure_spin, "max_corr_exposure", "rl_agent")
+        apply_tooltip(self.transaction_cost_spin, "transaction_cost_bps", "rl_agent")
+        apply_tooltip(self.normalize_rewards_check, "normalize_rewards", "rl_agent")
+        apply_tooltip(self.reward_clip_min_spin, "reward_clip_min", "rl_agent")
+        apply_tooltip(self.reward_clip_max_spin, "reward_clip_max", "rl_agent")
+        
+        logger.info("RL Agent i18n tooltips applied: 51 widgets")

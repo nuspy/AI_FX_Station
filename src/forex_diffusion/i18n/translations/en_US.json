@@ -1393,5 +1393,338 @@
       "label": "Webhook URL:",
       "tooltip": "Webhook for trade notifications. Telegram/Slack/Discord. Get instant alerts. Optional but recommended."
     }
+  },
+  
+  "rl_agent": {
+    "tab_name": "RL Agent",
+    
+    "_comment": "Tab 1: Agent Configuration (25 widgets)",
+    
+    "algorithm": {
+      "label": "Algorithm:",
+      "tooltip": "**WHAT**: Deep RL algorithm for portfolio optimization.\n\n**HOW**: PPO (Proximal Policy Optimization) is the default and most stable. SAC/TD3/A3C are advanced alternatives.\n\n**WHY**: PPO balances sample efficiency, stability, and performance. Clipped objective prevents destructive policy updates.\n\n**EFFECTS**: PPO converges faster with fewer hyperparameter tuning. SAC/TD3 better for continuous control but require more data.\n\n**RANGE**: PPO (recommended), SAC (entropy-based), TD3 (twin critics), A3C (async parallel).\n\n**NOTE**: Start with PPO. Advanced users can experiment with SAC for entropy exploration or TD3 for robustness."
+    },
+    
+    "actor_lr": {
+      "label": "Actor LR:",
+      "tooltip": "**WHAT**: Learning rate for policy network (actor).\n\n**HOW**: Controls step size during gradient descent. Higher LR = faster learning but less stable.\n\n**WHY**: Actor updates policy to maximize reward. Too high → oscillations. Too low → slow convergence.\n\n**EFFECTS**: LR=3e-4 is optimal for most cases. Increase to 1e-3 for faster exploration. Decrease to 1e-4 for fine-tuning.\n\n**RANGE**: 1e-6 to 1e-2. Default: 3e-4.\n\n**NOTE**: Use learning rate schedules (decay) for best results. Monitor actor loss."
+    },
+    
+    "critic_lr": {
+      "label": "Critic LR:",
+      "tooltip": "**WHAT**: Learning rate for value network (critic).\n\n**HOW**: Value function estimates expected return V(s). Critic guides actor updates.\n\n**WHY**: Critic needs higher LR (1e-3) than actor to learn value function quickly.\n\n**EFFECTS**: Higher LR → faster value learning. Lower LR → more stable but slower.\n\n**RANGE**: 1e-6 to 1e-2. Default: 1e-3.\n\n**NOTE**: Typically 3x higher than actor LR. Monitor critic loss convergence."
+    },
+    
+    "clip_epsilon": {
+      "label": "Clip ε:",
+      "tooltip": "**WHAT**: Clipping parameter for PPO surrogate objective.\n\n**HOW**: Prevents large policy updates by clipping importance ratio to [1-ε, 1+ε].\n\n**WHY**: Ensures policy doesn't change too drastically in one update. Improves stability.\n\n**EFFECTS**: ε=0.2 allows 20% policy change. Lower ε (0.1) = more conservative. Higher ε (0.3) = more aggressive.\n\n**RANGE**: 0.05 to 0.5. Default: 0.2.\n\n**NOTE**: Core PPO innovation. Too low → slow learning. Too high → unstable."
+    },
+    
+    "gae_lambda": {
+      "label": "GAE λ:",
+      "tooltip": "**WHAT**: Generalized Advantage Estimation lambda parameter.\n\n**HOW**: Balances bias-variance in advantage estimation. λ=0 (TD), λ=1 (Monte Carlo).\n\n**WHY**: GAE reduces variance in policy gradients while controlling bias.\n\n**EFFECTS**: λ=0.95 is optimal balance. Higher λ → less bias, more variance. Lower λ → more bias, less variance.\n\n**RANGE**: 0.8 to 0.99. Default: 0.95.\n\n**NOTE**: Higher λ for long-horizon tasks. Lower λ for noisy environments."
+    },
+    
+    "gamma": {
+      "label": "Discount γ:",
+      "tooltip": "**WHAT**: Discount factor for future rewards.\n\n**HOW**: γ=0.99 means future reward in 100 steps is worth 37% of immediate reward.\n\n**WHY**: Balances short-term vs long-term rewards. Higher γ = more long-term focus.\n\n**EFFECTS**: γ=0.99 recommended for trading (long horizon). γ=0.95 for short-term.\n\n**RANGE**: 0.9 to 0.999. Default: 0.99.\n\n**NOTE**: Don't change unless you have specific reason. γ=0.99 is standard."
+    },
+    
+    "entropy_coef": {
+      "label": "Entropy Coef:",
+      "tooltip": "**WHAT**: Entropy bonus coefficient for exploration.\n\n**HOW**: Adds entropy bonus to loss: L = L_policy - α * H(π). Encourages exploration.\n\n**WHY**: Prevents premature convergence to suboptimal policy.\n\n**EFFECTS**: Higher coef (0.05) → more exploration. Lower coef (0.001) → more exploitation.\n\n**RANGE**: 0.0 to 0.1. Default: 0.01.\n\n**NOTE**: Decay entropy over time for best results. High entropy early, low entropy late."
+    },
+    
+    "ppo_epochs": {
+      "label": "PPO Epochs:",
+      "tooltip": "**WHAT**: Number of update epochs on same batch.\n\n**HOW**: PPO reuses same batch for multiple updates (sample efficiency).\n\n**WHY**: Improves sample efficiency. More epochs = better learning from each batch.\n\n**EFFECTS**: 10 epochs is optimal. Too many (>20) → overfitting. Too few (<5) → underutilization.\n\n**RANGE**: 1 to 50. Default: 10.\n\n**NOTE**: Monitor KL divergence. Stop early if KL > threshold."
+    },
+    
+    "mini_batch_size": {
+      "label": "Mini-Batch Size:",
+      "tooltip": "**WHAT**: Batch size for SGD updates.\n\n**HOW**: Divides trajectory buffer into mini-batches for gradient updates.\n\n**WHY**: Smaller batches → more updates, more noise. Larger batches → fewer updates, less noise.\n\n**EFFECTS**: 64 is optimal balance. Increase to 128 for stability. Decrease to 32 for faster updates.\n\n**RANGE**: 16 to 512. Default: 64.\n\n**NOTE**: Must be smaller than trajectory buffer size. GPU memory limit."
+    },
+    
+    "actor_hidden": {
+      "label": "Actor Hidden:",
+      "tooltip": "**WHAT**: Hidden layer sizes for actor network.\n\n**HOW**: Comma-separated list (e.g., '256,128' = two layers).\n\n**WHY**: Deeper networks learn complex patterns but risk overfitting.\n\n**EFFECTS**: [256,128] is optimal for most cases. Increase to [512,256,128] for complex strategies.\n\n**RANGE**: 64 to 1024 per layer. Default: '256,128'.\n\n**NOTE**: More layers ≠ better. Start simple, add complexity if needed."
+    },
+    
+    "critic_hidden": {
+      "label": "Critic Hidden:",
+      "tooltip": "**WHAT**: Hidden layer sizes for critic network.\n\n**HOW**: Typically same as actor or slightly smaller.\n\n**WHY**: Critic estimates values, simpler task than policy.\n\n**EFFECTS**: [256,128] recommended. Can be smaller than actor.\n\n**RANGE**: 64 to 1024 per layer. Default: '256,128'.\n\n**NOTE**: Keep same as actor for simplicity."
+    },
+    
+    "use_lstm": {
+      "label": "Use LSTM:",
+      "tooltip": "**WHAT**: Enable LSTM (Long Short-Term Memory) layer.\n\n**HOW**: Adds recurrent layer to actor network. Captures temporal dependencies.\n\n**WHY**: Markets have temporal patterns. LSTM remembers past observations.\n\n**EFFECTS**: Better performance on sequential data. Slower training. Higher memory.\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Recommended for trading. Disable only if training is too slow."
+    },
+    
+    "lstm_hidden": {
+      "label": "LSTM Hidden:",
+      "tooltip": "**WHAT**: Hidden size of LSTM layer.\n\n**HOW**: Number of LSTM cells. Higher = more memory capacity.\n\n**WHY**: LSTM stores market state history.\n\n**EFFECTS**: 64 is optimal. Increase to 128 for long sequences. Decrease to 32 for speed.\n\n**RANGE**: 32 to 256. Default: 64.\n\n**NOTE**: Balance between memory and speed."
+    },
+    
+    "dropout": {
+      "label": "Dropout:",
+      "tooltip": "**WHAT**: Dropout probability for regularization.\n\n**HOW**: Randomly drops neurons during training. Prevents overfitting.\n\n**WHY**: Neural networks overfit to training data. Dropout improves generalization.\n\n**EFFECTS**: 0.1 (10%) is standard. Increase to 0.2 if overfitting. Decrease to 0.05 if underfitting.\n\n**RANGE**: 0.0 to 0.5. Default: 0.1.\n\n**NOTE**: Applied during training only. Disabled during deployment."
+    },
+    
+    "activation": {
+      "label": "Activation:",
+      "tooltip": "**WHAT**: Activation function for hidden layers.\n\n**HOW**: ReLU (Rectified Linear Unit) is standard. Tanh/ELU are alternatives.\n\n**WHY**: Activation adds non-linearity. ReLU is fast and effective.\n\n**EFFECTS**: ReLU recommended. Tanh for bounded outputs. ELU for smooth gradients.\n\n**RANGE**: relu, tanh, elu. Default: relu.\n\n**NOTE**: ReLU is fastest. ELU prevents dead neurons."
+    },
+    
+    "device": {
+      "label": "Device:",
+      "tooltip": "**WHAT**: Compute device for training (CPU or CUDA GPU).\n\n**HOW**: GPU accelerates training 10-50x. CPU is fallback.\n\n**WHY**: Neural network training is computationally intensive.\n\n**EFFECTS**: GPU: Fast training (hours). CPU: Slow training (days).\n\n**RANGE**: cpu, cuda. Default: cuda (if available).\n\n**NOTE**: Requires NVIDIA GPU with CUDA support. Check GPU memory (4GB+ recommended)."
+    },
+    
+    "_comment2": "Tab 2: Training Settings (20 widgets)",
+    
+    "training_mode": {
+      "label": "Training Mode:",
+      "tooltip": "**WHAT**: Offline (historical), Online (live), or Hybrid training.\n\n**HOW**: Offline trains on static dataset. Online trains on live data. Hybrid combines both.\n\n**WHY**: Offline is safe for development. Online adapts to market changes.\n\n**EFFECTS**: Offline: Reproducible, safe. Online: Adaptive, risky. Hybrid: Best of both.\n\n**RANGE**: Offline, Online, Hybrid. Default: Offline.\n\n**NOTE**: Start with Offline. Use Online only after thorough testing."
+    },
+    
+    "num_episodes": {
+      "label": "Total Episodes:",
+      "tooltip": "**WHAT**: Number of training episodes.\n\n**HOW**: Each episode simulates a trading period (e.g., 252 days = 1 year).\n\n**WHY**: More episodes = better convergence. Too many = overfitting.\n\n**EFFECTS**: 1000 episodes typical. Increase to 5000 for complex strategies. Decrease to 100 for quick tests.\n\n**RANGE**: 10 to 10,000. Default: 1000.\n\n**NOTE**: Monitor validation performance. Stop when no improvement."
+    },
+    
+    "max_steps_per_episode": {
+      "label": "Max Steps/Episode:",
+      "tooltip": "**WHAT**: Maximum steps (trading days) per episode.\n\n**HOW**: Episode ends after max_steps or terminal condition.\n\n**WHY**: Limits episode length. Prevents infinite loops.\n\n**EFFECTS**: 252 steps = 1 trading year. Increase to 500 for multi-year. Decrease to 100 for short-term.\n\n**RANGE**: 50 to 1000. Default: 252.\n\n**NOTE**: Longer episodes = longer training time."
+    },
+    
+    "eval_frequency": {
+      "label": "Eval Every N Episodes:",
+      "tooltip": "**WHAT**: Evaluate agent every N episodes.\n\n**HOW**: Runs evaluation on validation set to measure performance.\n\n**WHY**: Monitors generalization. Detects overfitting early.\n\n**EFFECTS**: Every 10 episodes is balanced. More frequent (5) for close monitoring. Less frequent (20) for speed.\n\n**RANGE**: 1 to 100. Default: 10.\n\n**NOTE**: Evaluation pauses training temporarily."
+    },
+    
+    "eval_episodes": {
+      "label": "Eval Episodes:",
+      "tooltip": "**WHAT**: Number of episodes for each evaluation.\n\n**HOW**: Averages performance across multiple episodes.\n\n**WHY**: Single episode can be noisy. Average is more reliable.\n\n**EFFECTS**: 5 episodes is standard. Increase to 10 for stability. Decrease to 3 for speed.\n\n**RANGE**: 1 to 20. Default: 5.\n\n**NOTE**: More episodes = longer evaluation time."
+    },
+    
+    "checkpoint_dir": {
+      "label": "Save Directory:",
+      "tooltip": "**WHAT**: Directory for saving model checkpoints.\n\n**HOW**: Saves .pt files with model weights and optimizer state.\n\n**WHY**: Preserves training progress. Enables resume and deployment.\n\n**EFFECTS**: Default: 'artifacts/rl_checkpoints'. Change for organization.\n\n**RANGE**: Any valid path. Default: 'artifacts/rl_checkpoints'.\n\n**NOTE**: Ensure sufficient disk space (~100MB per checkpoint)."
+    },
+    
+    "save_frequency": {
+      "label": "Save Every N Episodes:",
+      "tooltip": "**WHAT**: Save checkpoint every N episodes.\n\n**HOW**: Creates periodic backups during training.\n\n**WHY**: Prevents data loss. Enables rollback if training diverges.\n\n**EFFECTS**: Every 50 episodes is balanced. More frequent (10) for safety. Less frequent (100) for disk space.\n\n**RANGE**: 1 to 500. Default: 50.\n\n**NOTE**: Disabled if 'Save Best Only' is enabled."
+    },
+    
+    "save_best_only": {
+      "label": "Save Best Only:",
+      "tooltip": "**WHAT**: Save only when validation performance improves.\n\n**HOW**: Compares current eval return with best. Saves if better.\n\n**WHY**: Saves disk space. Keeps only best model.\n\n**EFFECTS**: Enabled: Fewer checkpoints, best model guaranteed. Disabled: All checkpoints saved.\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Recommended for production. Disable for debugging."
+    },
+    
+    "early_stopping": {
+      "label": "Enable Early Stopping:",
+      "tooltip": "**WHAT**: Stop training if no improvement for patience evaluations.\n\n**HOW**: Monitors validation return. Stops if no improvement after N evals.\n\n**WHY**: Prevents wasted computation on converged models.\n\n**EFFECTS**: Enabled: Saves time. Disabled: Trains full duration.\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Recommended. Prevents overfitting and saves resources."
+    },
+    
+    "patience": {
+      "label": "Patience:",
+      "tooltip": "**WHAT**: Number of evaluations without improvement before stopping.\n\n**HOW**: Counts consecutive evals with no improvement. Stops at patience.\n\n**WHY**: Balances thoroughness vs efficiency.\n\n**EFFECTS**: 100 is standard (10 * 100 = 1000 episodes without improvement). Increase to 200 for patience. Decrease to 50 for speed.\n\n**RANGE**: 10 to 500. Default: 100.\n\n**NOTE**: Higher patience = more training time."
+    },
+    
+    "min_delta": {
+      "label": "Min Improvement:",
+      "tooltip": "**WHAT**: Minimum improvement to reset patience counter.\n\n**HOW**: Improvement < min_delta is ignored (noise).\n\n**WHY**: Filters noise. Only significant improvements count.\n\n**EFFECTS**: 0.01 (1% return improvement) is standard. Increase to 0.02 for stricter. Decrease to 0.005 for lenient.\n\n**RANGE**: 0.001 to 0.1. Default: 0.01.\n\n**NOTE**: Lower value = more sensitive to small improvements."
+    },
+    
+    "use_tensorboard": {
+      "label": "Enable TensorBoard:",
+      "tooltip": "**WHAT**: Enable TensorBoard logging for visualization.\n\n**HOW**: Logs metrics (loss, reward, Sharpe) to TensorBoard.\n\n**WHY**: Visualize training progress. Debug issues. Compare experiments.\n\n**EFFECTS**: Enabled: Rich visualizations, overhead ~1%. Disabled: Faster, no visualization.\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Highly recommended. Open with: tensorboard --logdir=artifacts/rl_tensorboard"
+    },
+    
+    "tensorboard_dir": {
+      "label": "Log Directory:",
+      "tooltip": "**WHAT**: Directory for TensorBoard logs.\n\n**HOW**: Stores event files for TensorBoard visualization.\n\n**WHY**: Organizes experiments. Enables comparison.\n\n**EFFECTS**: Default: 'artifacts/rl_tensorboard'. Change for organization.\n\n**RANGE**: Any valid path. Default: 'artifacts/rl_tensorboard'.\n\n**NOTE**: View with: tensorboard --logdir=<this_path>"
+    },
+    
+    "_comment3": "Tab 3: State & Action Space (35 widgets)",
+    
+    "portfolio_features": {
+      "tooltip": "**WHAT**: Core portfolio state features (always included).\n\n**HOW**: Current weights, days in position, unrealized P&L, portfolio value, cash, drawdown.\n\n**WHY**: Essential for portfolio management decisions.\n\n**EFFECTS**: Cannot be disabled. Foundation of state space.\n\n**NOTE**: 6 features per asset + 3 global = 3*N + 3 dimensions."
+    },
+    
+    "market_returns_history": {
+      "label": "Returns History:",
+      "tooltip": "**WHAT**: Historical returns for lookback period.\n\n**HOW**: Returns for last N days (default: 20).\n\n**WHY**: Captures market trends and momentum.\n\n**EFFECTS**: Enabled: Better trend detection. Adds N*n_assets dimensions.\n\n**NOTE**: Essential feature. Recommended to keep enabled."
+    },
+    
+    "market_volatility": {
+      "label": "Volatility:",
+      "tooltip": "**WHAT**: Current volatility (std of returns).\n\n**HOW**: Rolling std over lookback period.\n\n**WHY**: Risk assessment. High volatility = higher risk.\n\n**EFFECTS**: Enabled: Better risk-aware decisions.\n\n**NOTE**: Recommended. Low overhead, high value."
+    },
+    
+    "market_correlation": {
+      "label": "Correlation Matrix:",
+      "tooltip": "**WHAT**: Pairwise correlation between assets.\n\n**HOW**: Upper triangle of correlation matrix.\n\n**WHY**: Diversification. Avoid correlated assets.\n\n**EFFECTS**: Enabled: Better diversification. Adds n_assets*(n_assets-1)/2 dimensions.\n\n**NOTE**: Important for multi-asset portfolios."
+    },
+    
+    "market_momentum": {
+      "label": "Momentum:",
+      "tooltip": "**WHAT**: Cumulative return over lookback period.\n\n**HOW**: Sum of returns.\n\n**WHY**: Trend following. Positive momentum = uptrend.\n\n**EFFECTS**: Enabled: Better trend capture.\n\n**NOTE**: Useful for momentum strategies."
+    },
+    
+    "market_rsi": {
+      "label": "RSI:",
+      "tooltip": "**WHAT**: Relative Strength Index (14-period).\n\n**HOW**: Measures overbought/oversold conditions.\n\n**WHY**: Mean reversion signals. RSI > 70 = overbought.\n\n**EFFECTS**: Enabled: Better reversal detection.\n\n**NOTE**: Optional. Useful for mean reversion."
+    },
+    
+    "market_macd": {
+      "label": "MACD:",
+      "tooltip": "**WHAT**: Moving Average Convergence Divergence.\n\n**HOW**: Difference between fast and slow EMAs.\n\n**WHY**: Trend strength and direction.\n\n**EFFECTS**: Enabled: Better trend confirmation.\n\n**NOTE**: Optional. Useful for trend following."
+    },
+    
+    "risk_var": {
+      "label": "VaR (95%):",
+      "tooltip": "**WHAT**: Value at Risk at 95% confidence.\n\n**HOW**: 5th percentile of returns distribution.\n\n**WHY**: Downside risk measure.\n\n**EFFECTS**: Enabled: Risk-aware decisions.\n\n**NOTE**: Recommended. Core risk metric."
+    },
+    
+    "risk_cvar": {
+      "label": "CVaR (95%):",
+      "tooltip": "**WHAT**: Conditional Value at Risk (Expected Shortfall).\n\n**HOW**: Average of returns below VaR.\n\n**WHY**: Tail risk measure. Worse than VaR.\n\n**EFFECTS**: Enabled: Better tail risk awareness.\n\n**NOTE**: Recommended. Complements VaR."
+    },
+    
+    "risk_sharpe": {
+      "label": "Sharpe Ratio:",
+      "tooltip": "**WHAT**: Risk-adjusted return (return / volatility).\n\n**HOW**: Annualized Sharpe ratio.\n\n**WHY**: Performance metric. Higher = better risk-adjusted return.\n\n**EFFECTS**: Enabled: Reward maximization awareness.\n\n**NOTE**: Recommended. Primary objective."
+    },
+    
+    "risk_sortino": {
+      "label": "Sortino Ratio:",
+      "tooltip": "**WHAT**: Downside risk-adjusted return.\n\n**HOW**: Return / downside deviation.\n\n**WHY**: Better than Sharpe for asymmetric returns.\n\n**EFFECTS**: Enabled: Penalizes only downside.\n\n**NOTE**: Optional. Useful for long-only."
+    },
+    
+    "sentiment_vix": {
+      "label": "VIX Level:",
+      "tooltip": "**WHAT**: VIX volatility index (fear gauge).\n\n**HOW**: Market implied volatility.\n\n**WHY**: Market sentiment. High VIX = fear.\n\n**EFFECTS**: Enabled: Sentiment-aware decisions.\n\n**NOTE**: Recommended. Strong signal."
+    },
+    
+    "sentiment_vix_percentile": {
+      "label": "VIX Percentile:",
+      "tooltip": "**WHAT**: VIX percentile (historical context).\n\n**HOW**: Where current VIX ranks historically.\n\n**WHY**: Absolute VIX varies. Percentile is stable.\n\n**EFFECTS**: Enabled: Better VIX interpretation.\n\n**NOTE**: Recommended with VIX Level."
+    },
+    
+    "min_weight": {
+      "label": "Min Weight per Asset:",
+      "tooltip": "**WHAT**: Minimum allocation per asset.\n\n**HOW**: Lower bound on portfolio weights.\n\n**WHY**: Prevents tiny positions (transaction costs).\n\n**EFFECTS**: 0.0 = no minimum. 0.05 = min 5% per asset.\n\n**RANGE**: 0.0 to 0.5. Default: 0.0.\n\n**NOTE**: Usually 0.0 for flexibility."
+    },
+    
+    "max_weight": {
+      "label": "Max Weight per Asset:",
+      "tooltip": "**WHAT**: Maximum allocation per asset.\n\n**HOW**: Upper bound on portfolio weights.\n\n**WHY**: Diversification. Prevents concentration risk.\n\n**EFFECTS**: 0.25 = max 25% per asset (4+ assets required for full investment).\n\n**RANGE**: 0.0 to 1.0. Default: 0.25.\n\n**NOTE**: 1/n_assets to 0.5 is typical range."
+    },
+    
+    "long_only": {
+      "label": "Long Only:",
+      "tooltip": "**WHAT**: Prevent short positions (no negative weights).\n\n**HOW**: Constrains weights >= 0.\n\n**WHY**: Shorting is risky and not always available.\n\n**EFFECTS**: Enabled: Only long positions. Disabled: Long + short allowed.\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Recommended for beginners. Disable for advanced strategies."
+    },
+    
+    "force_sum_one": {
+      "label": "Force Sum to 1.0:",
+      "tooltip": "**WHAT**: Force portfolio weights to sum to 100%.\n\n**HOW**: Normalizes weights after action selection.\n\n**WHY**: Fully invested portfolio.\n\n**EFFECTS**: Enabled: Always 100% invested. Disabled: Can hold cash.\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Recommended. Ensures full capital utilization."
+    },
+    
+    "action_smoothing": {
+      "label": "Action Smoothing:",
+      "tooltip": "**WHAT**: Smooth actions with exponential moving average.\n\n**HOW**: new_action = alpha * raw_action + (1-alpha) * prev_action.\n\n**WHY**: Reduces turnover. Prevents jittery rebalancing.\n\n**EFFECTS**: Enabled: Smoother transitions, lower costs. Disabled: Raw actions.\n\n**RANGE**: Enabled/Disabled. Default: Disabled.\n\n**NOTE**: Enable if transaction costs are high."
+    },
+    
+    "smoothing_alpha": {
+      "label": "Smoothing Factor:",
+      "tooltip": "**WHAT**: EMA smoothing coefficient (0-1).\n\n**HOW**: Alpha=0.5 gives equal weight to current and previous.\n\n**WHY**: Controls smoothing strength.\n\n**EFFECTS**: Higher alpha (0.8) = less smoothing. Lower alpha (0.2) = more smoothing.\n\n**RANGE**: 0.0 to 1.0. Default: 0.5.\n\n**NOTE**: Start with 0.5. Adjust based on turnover."
+    },
+    
+    "_comment4": "Tab 4: Reward Function (20 widgets)",
+    
+    "reward_sharpe": {
+      "label": "Sharpe Improvement:",
+      "tooltip": "**WHAT**: Reward for improving Sharpe ratio.\n\n**HOW**: Δ Sharpe * weight. Positive weight encourages Sharpe maximization.\n\n**WHY**: Primary objective. Higher Sharpe = better risk-adjusted returns.\n\n**EFFECTS**: Weight=5.0 is strong signal. Increase to 10.0 for emphasis. Decrease to 2.0 for balanced.\n\n**RANGE**: 0.0 to 100.0. Default: 5.0.\n\n**NOTE**: Core component. Keep enabled with high weight."
+    },
+    
+    "reward_transaction_cost": {
+      "label": "Transaction Costs:",
+      "tooltip": "**WHAT**: Penalty for portfolio turnover.\n\n**HOW**: Turnover * cost_bps * weight. Negative weight penalizes costs.\n\n**WHY**: Costs reduce returns. Minimize unnecessary trades.\n\n**EFFECTS**: Weight=-10.0 is standard. Increase to -20.0 if costs are high. Decrease to -5.0 if costs are low.\n\n**RANGE**: -100.0 to 0.0. Default: -10.0.\n\n**NOTE**: Critical for real trading. Keep enabled."
+    },
+    
+    "reward_var_violation": {
+      "label": "VaR Violation:",
+      "tooltip": "**WHAT**: Penalty for exceeding VaR limit.\n\n**HOW**: If VaR > max_var, penalty = (VaR - max_var) / max_var * weight.\n\n**WHY**: Risk control. Prevents excessive risk-taking.\n\n**EFFECTS**: Weight=-20.0 is strong penalty. Increase to -30.0 for strict control.\n\n**RANGE**: -100.0 to 0.0. Default: -20.0.\n\n**NOTE**: Important for risk management."
+    },
+    
+    "reward_cvar_violation": {
+      "label": "CVaR Violation:",
+      "tooltip": "**WHAT**: Penalty for exceeding CVaR (tail risk) limit.\n\n**HOW**: Similar to VaR but for tail risk.\n\n**WHY**: Tail risk control. Worse than VaR violations.\n\n**EFFECTS**: Weight=-15.0 is standard. CVaR violations are rarer but more severe.\n\n**RANGE**: -100.0 to 0.0. Default: -15.0.\n\n**NOTE**: Complements VaR. Keep enabled."
+    },
+    
+    "reward_correlation_violation": {
+      "label": "Correlation Violation:",
+      "tooltip": "**WHAT**: Penalty for high correlated exposure.\n\n**HOW**: If correlated assets > max_correlated_exposure, penalty applied.\n\n**WHY**: Diversification. Avoid concentration in correlated assets.\n\n**EFFECTS**: Weight=-5.0 encourages diversification.\n\n**RANGE**: -100.0 to 0.0. Default: -5.0.\n\n**NOTE**: Important for multi-asset portfolios."
+    },
+    
+    "reward_diversification": {
+      "label": "Diversification Bonus:",
+      "tooltip": "**WHAT**: Reward for well-diversified portfolio.\n\n**HOW**: Bonus = (1 - HHI) * weight. HHI = Herfindahl-Hirschman Index.\n\n**WHY**: Diversification reduces risk without sacrificing return.\n\n**EFFECTS**: Weight=1.0 is mild bonus. Increase to 3.0 for strong emphasis.\n\n**RANGE**: 0.0 to 100.0. Default: 1.0.\n\n**NOTE**: Positive reinforcement for diversification."
+    },
+    
+    "reward_drawdown": {
+      "label": "Drawdown Penalty:",
+      "tooltip": "**WHAT**: Penalty for current drawdown.\n\n**HOW**: Penalty = abs(drawdown) * weight. Negative weight penalizes drawdowns.\n\n**WHY**: Drawdowns are painful. Minimize them.\n\n**EFFECTS**: Weight=-10.0 penalizes drawdowns. Optional component.\n\n**RANGE**: -100.0 to 0.0. Default: -10.0.\n\n**NOTE**: Optional. Enable for drawdown-sensitive strategies."
+    },
+    
+    "reward_turnover": {
+      "label": "Turnover Penalty:",
+      "tooltip": "**WHAT**: Penalty for excessive portfolio turnover.\n\n**HOW**: Penalty = turnover * weight. Similar to transaction costs.\n\n**WHY**: High turnover increases costs and taxes.\n\n**EFFECTS**: Weight=-3.0 is mild. Redundant if transaction costs are enabled.\n\n**RANGE**: -100.0 to 0.0. Default: -3.0.\n\n**NOTE**: Optional. Use if transaction costs disabled."
+    },
+    
+    "reward_sortino": {
+      "label": "Sortino Improvement:",
+      "tooltip": "**WHAT**: Reward for improving Sortino ratio.\n\n**HOW**: Similar to Sharpe but uses downside deviation.\n\n**WHY**: Better for asymmetric returns (long-only).\n\n**EFFECTS**: Weight=3.0 if enabled. Redundant with Sharpe.\n\n**RANGE**: 0.0 to 100.0. Default: 3.0.\n\n**NOTE**: Optional. Use instead of Sharpe for long-only."
+    },
+    
+    "max_var": {
+      "label": "Max VaR (95%):",
+      "tooltip": "**WHAT**: Maximum allowed VaR (Value at Risk).\n\n**HOW**: VaR > this value triggers penalty.\n\n**WHY**: Risk limit. Prevents excessive risk.\n\n**EFFECTS**: 0.10 (10%) is standard for daily returns. Adjust for timeframe.\n\n**RANGE**: 0.01 to 0.5. Default: 0.10.\n\n**NOTE**: Daily VaR. Annualized VaR ≈ daily * sqrt(252)."
+    },
+    
+    "max_cvar": {
+      "label": "Max CVaR (95%):",
+      "tooltip": "**WHAT**: Maximum allowed CVaR (tail risk).\n\n**HOW**: CVaR > this value triggers penalty.\n\n**WHY**: Tail risk limit. Typically higher than VaR.\n\n**EFFECTS**: 0.15 (15%) is standard. CVaR > VaR always.\n\n**RANGE**: 0.01 to 0.5. Default: 0.15.\n\n**NOTE**: Should be ~1.5x VaR limit."
+    },
+    
+    "max_corr_exposure": {
+      "label": "Max Correlated Exposure:",
+      "tooltip": "**WHAT**: Maximum weight in highly correlated assets.\n\n**HOW**: Sum of weights where correlation > 0.7.\n\n**WHY**: Concentration risk. Correlated assets move together.\n\n**EFFECTS**: 0.50 (50%) limits correlated exposure to half portfolio.\n\n**RANGE**: 0.0 to 1.0. Default: 0.50.\n\n**NOTE**: Higher value = less diversification requirement."
+    },
+    
+    "transaction_cost_bps": {
+      "label": "Transaction Cost (bps):",
+      "tooltip": "**WHAT**: Transaction cost in basis points (1 bps = 0.01%).\n\n**HOW**: Cost per unit of turnover.\n\n**WHY**: Realistic cost modeling. Includes spread + commission.\n\n**EFFECTS**: 5 bps is typical for forex. Increase to 10 bps for stocks. Decrease to 2 bps for institutional.\n\n**RANGE**: 0.0 to 50.0. Default: 5.0.\n\n**NOTE**: Critical for realistic backtesting."
+    },
+    
+    "normalize_rewards": {
+      "label": "Normalize Rewards:",
+      "tooltip": "**WHAT**: Apply z-score normalization to rewards.\n\n**HOW**: reward = (reward - mean) / std. Centers and scales rewards.\n\n**WHY**: Stabilizes training. Prevents reward explosion/collapse.\n\n**EFFECTS**: Enabled: Stable training. Disabled: Raw rewards (can be unstable).\n\n**RANGE**: Enabled/Disabled. Default: Enabled.\n\n**NOTE**: Highly recommended. Improves convergence."
+    },
+    
+    "reward_clip_min": {
+      "label": "Clip Min:",
+      "tooltip": "**WHAT**: Minimum reward value (clipping).\n\n**HOW**: Clip rewards to [min, max] range.\n\n**WHY**: Prevents extreme rewards from destabilizing training.\n\n**EFFECTS**: -100.0 is standard. Extreme negative rewards are rare.\n\n**RANGE**: -1000.0 to 0.0. Default: -100.0.\n\n**NOTE**: Adjust if you see frequent clipping in logs."
+    },
+    
+    "reward_clip_max": {
+      "label": "Clip Max:",
+      "tooltip": "**WHAT**: Maximum reward value (clipping).\n\n**HOW**: Clip rewards to [min, max] range.\n\n**WHY**: Prevents extreme rewards from destabilizing training.\n\n**EFFECTS**: 100.0 is standard. Extreme positive rewards are rare.\n\n**RANGE**: 0.0 to 1000.0. Default: 100.0.\n\n**NOTE**: Adjust if you see frequent clipping in logs."
+    },
+    
+    "_comment5": "Tab 5 & 6: Progress and Deployment (UI-only, no tooltips needed)"
   }
 }
