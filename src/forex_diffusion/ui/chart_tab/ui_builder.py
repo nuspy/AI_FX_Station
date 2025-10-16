@@ -175,9 +175,11 @@ class UIBuilderMixin:
 
         main_splitter.addWidget(left_splitter)
 
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.right_splitter = right_splitter
-
+        # Create center area with horizontal splitter: chart | analysis panels
+        center_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.center_splitter = center_splitter
+        
+        # Left side of center: chart area with vertical splitter
         chart_area_splitter = QSplitter(Qt.Orientation.Vertical)
         self._chart_area = chart_area_splitter
 
@@ -241,49 +243,94 @@ class UIBuilderMixin:
         self.chart_container = chart_container  # keep reference for overlays
         chart_area_splitter.addWidget(chart_container)
 
-        right_splitter.addWidget(chart_area_splitter)
-
+        # Orders table below chart
         self.orders_table = QTableWidget(0, 9)
         self.orders_table.setHorizontalHeaderLabels(["ID", "Time", "Symbol", "Type", "Volume", "Price", "SL", "TP", "Status"])
-        # Hide vertical header (row numbers) and minimize margins
         self.orders_table.verticalHeader().setVisible(False)
         self.orders_table.setContentsMargins(0, 0, 0, 0)
-        right_splitter.addWidget(self.orders_table)
+        chart_area_splitter.addWidget(self.orders_table)
 
-        # Add Order Flow Panel below orders table
+        # Add chart area to center splitter (left side)
+        center_splitter.addWidget(chart_area_splitter)
+
+        # Right side of center: Analysis panels (Order Flow + Sentiment)
+        analysis_splitter = QSplitter(Qt.Orientation.Vertical)
+        analysis_splitter.setObjectName("analysisSplitter")
+        
+        # Style for analysis panel container with visible frame
+        analysis_splitter.setStyleSheet("""
+            QSplitter#analysisSplitter {
+                background-color: #1e1e1e;
+                border: 2px solid #3a3a3a;
+                border-radius: 4px;
+            }
+            QSplitter#analysisSplitter::handle {
+                background-color: #0078d7;
+                height: 4px;
+            }
+            QSplitter#analysisSplitter::handle:hover {
+                background-color: #1e90ff;
+            }
+        """)
+        
+        # Order Flow Panel (top of analysis panel)
         from ..order_flow_panel import OrderFlowPanel
         self.order_flow_panel = OrderFlowPanel(
             parent=self,
             dom_service=getattr(self, 'dom_service', None),
             order_flow_analyzer=getattr(self, 'order_flow_analyzer', None)
         )
-        right_splitter.addWidget(self.order_flow_panel)
+        analysis_splitter.addWidget(self.order_flow_panel)
 
-        # Add Sentiment Panel below Order Flow Panel
+        # Sentiment Panel (bottom of analysis panel)
         from ..sentiment_panel import SentimentPanel
         self.sentiment_panel = SentimentPanel(
             parent=self,
             sentiment_service=getattr(self, 'sentiment_service', None)
         )
-        right_splitter.addWidget(self.sentiment_panel)
-
-        # Minimize splitter handle width
-        right_splitter.setHandleWidth(1)
+        analysis_splitter.addWidget(self.sentiment_panel)
         
-        # Set initial sizes for right splitter widgets to ensure all are visible
-        # Total height will be distributed: chart=400, orders=100, order_flow=200, sentiment=250
-        right_splitter.setSizes([400, 100, 200, 250])
+        # Set initial sizes for analysis panels (50/50 split)
+        analysis_splitter.setSizes([300, 300])
+        analysis_splitter.setHandleWidth(4)
         
-        # Save/restore right splitter state
-        saved_right_state = get_setting('chart.right_splitter_state')
-        if saved_right_state:
+        # Set minimum width for analysis panel
+        analysis_splitter.setMinimumWidth(350)
+        
+        # Save/restore analysis splitter state
+        saved_analysis_state = get_setting('chart.analysis_splitter_state')
+        if saved_analysis_state:
             try:
-                right_splitter.restoreState(bytes.fromhex(saved_right_state))
+                analysis_splitter.restoreState(bytes.fromhex(saved_analysis_state))
             except Exception:
                 pass
-        right_splitter.splitterMoved.connect(lambda: set_setting('chart.right_splitter_state', right_splitter.saveState().hex()))
+        analysis_splitter.splitterMoved.connect(
+            lambda: set_setting('chart.analysis_splitter_state', analysis_splitter.saveState().hex())
+        )
+        
+        # Add analysis panel to center splitter (right side)
+        center_splitter.addWidget(analysis_splitter)
+        
+        # Set stretch factors for center splitter (chart gets more space)
+        center_splitter.setStretchFactor(0, 7)  # Chart area
+        center_splitter.setStretchFactor(1, 3)  # Analysis panels
+        
+        # Set initial sizes for center splitter
+        center_splitter.setSizes([700, 350])
+        
+        # Save/restore center splitter state
+        saved_center_state = get_setting('chart.center_splitter_state')
+        if saved_center_state:
+            try:
+                center_splitter.restoreState(bytes.fromhex(saved_center_state))
+            except Exception:
+                pass
+        center_splitter.splitterMoved.connect(
+            lambda: set_setting('chart.center_splitter_state', center_splitter.saveState().hex())
+        )
 
-        main_splitter.addWidget(right_splitter)
+        # Add center splitter to main splitter
+        main_splitter.addWidget(center_splitter)
         
         # Save/restore main splitter state
         saved_main_state = get_setting('chart.main_splitter_state')
@@ -300,16 +347,14 @@ class UIBuilderMixin:
         chart_layout.setSpacing(0)
         chart_layout.addWidget(main_splitter)
 
-        # Set stretch factors to make the chart area expand
-        main_splitter.setStretchFactor(1, 8)
+        # Set stretch factors to make the layout balanced
+        # main_splitter widgets: 0=left_splitter, 1=center_splitter
+        main_splitter.setStretchFactor(0, 2)   # Left panel (Market Watch, Order Books)
+        main_splitter.setStretchFactor(1, 8)   # Center (Chart + Analysis panels)
         
-        # Right splitter widgets: 0=chart_area, 1=orders_table, 2=order_flow_panel, 3=sentiment_panel
-        right_splitter.setStretchFactor(0, 6)   # Chart area gets most space
-        right_splitter.setStretchFactor(1, 1)   # Orders table
-        right_splitter.setStretchFactor(2, 2)   # Order Flow Panel
-        right_splitter.setStretchFactor(3, 2)   # Sentiment Panel (ENSURE VISIBILITY)
-        
-        chart_area_splitter.setStretchFactor(1, 1)
+        # chart_area_splitter widgets: 0=chart, 1=orders_table
+        chart_area_splitter.setStretchFactor(0, 8)  # Chart gets most space
+        chart_area_splitter.setStretchFactor(1, 1)  # Orders table
 
         self.main_tabs.addTab(chart_tab, "Chart")
 
