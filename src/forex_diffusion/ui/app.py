@@ -25,6 +25,7 @@ from .patterns_tab import PatternsTab
 from .live_trading_tab import LiveTradingTab
 from .portfolio_tab import PortfolioOptimizationTab
 from .rl_config_tab import RLConfigTab
+from .rl_backend_bridge import RLBackendBridge
 
 
 def setup_ui(
@@ -508,11 +509,18 @@ def setup_ui(
         else:
             logger.info(f"Tiingo WebSocket connector NOT started (primary provider: {primary_provider})")
 
+    # --- Connect RL Backend Bridge ---
+    rl_backend_bridge = RLBackendBridge(rl_config_tab, db_service)
+    rl_backend_bridge.connect_signals()
+    result["rl_backend_bridge"] = rl_backend_bridge
+    logger.info("RL Backend Bridge connected")
+    
     # --- Connect Logs Tab to Main Window for Data Sources monitoring ---
     main_window.tiingo_ws_connector = connector
     main_window.controller = controller
     main_window.market_service = market_service  # Expose MarketDataService for monitoring
     main_window.live_trading_tab = live_trading_tab  # Expose for Live Trading window
+    main_window.rl_backend_bridge = rl_backend_bridge  # Expose for RL integration
     logs_tab.set_main_window(main_window)
 
     # --- Check for provider fallback and show warning ---

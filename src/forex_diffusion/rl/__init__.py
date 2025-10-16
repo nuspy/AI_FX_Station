@@ -11,7 +11,7 @@ Integration with Riskfolio-Lib optimizer and Trading Engine.
 
 from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from .rewards import RewardFunction, MultiObjectiveReward, RewardConfig
-from .environments import PortfolioEnvironment
+from .environments import PortfolioEnvironment, PortfolioEnvConfig
 from .networks import ActorNetwork, CriticNetwork
 from .actor_critic import BaseAgent, PPOAgent
 from .trainer import RLTrainer, TrainerConfig
@@ -24,6 +24,7 @@ __all__ = [
     'MultiObjectiveReward',
     'RewardConfig',
     'PortfolioEnvironment',
+    'PortfolioEnvConfig',
     'ActorNetwork',
     'CriticNetwork',
     'BaseAgent',
