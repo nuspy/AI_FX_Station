@@ -606,24 +606,64 @@
   "portfolio": {
     "tab_name": "Portfolio",
     
-    "symbols": {
-      "label": "Symbols:",
-      "tooltip": "Symbols to include in portfolio. Select multiple. Diversification reduces risk. Avoid highly correlated pairs."
+    "risk_measure": {
+      "label": "Risk Measure:",
+      "tooltip": "Risk Measure - How Portfolio Risk is Quantified\n\n1) WHAT: Metric to measure portfolio risk. MV=std dev, CVaR=tail loss, CDaR=drawdown risk, MDD=max drawdown.\n\n2) HOW: MV assumes normal distribution. CVaR focuses on worst 5% scenarios. CDaR captures prolonged losses.\n\n3) WHY: Different measures for different risk preferences. CVaR better captures tail risk than variance.\n\n4) EFFECTS: MV=balanced. CVaR=conservative, protects tails. CDaR/MDD=very conservative, minimizes drawdowns.\n\n5) RANGE: Select from dropdown. CVaR recommended (captures extreme losses).\n\n6) NOTES: CVaR > VaR (accounts for loss magnitude). Drawdown measures critical for leveraged trading."
     },
     
-    "allocation_method": {
-      "label": "Allocation Method:",
-      "tooltip": "Portfolio allocation. Options: equal_weight, risk_parity, kelly_criterion, optimal_f. DEFAULT: risk_parity."
+    "objective": {
+      "label": "Optimization Objective:",
+      "tooltip": "Optimization Objective - What to Maximize\n\n1) WHAT: Goal function. Sharpe=risk-adjusted return. MinRisk=defensive. Utility=return-λ×risk. MaxRet=aggressive.\n\n2) HOW: Sharpe seeks best return/volatility ratio. MinRisk ignores returns. Utility balances via λ parameter.\n\n3) WHY: Defines optimal portfolio character. Sharpe=balanced, MinRisk=defensive, MaxRet=risky.\n\n4) EFFECTS: Sharpe→balanced. MinRisk→low vol/returns. Utility→custom (adjust λ). MaxRet→concentrated/risky.\n\n5) RANGE: Select from dropdown. Sharpe most common. Use Utility for custom risk tolerance.\n\n6) NOTES: MaxRet should have weight constraints. Utility: λ=1 neutral, λ=3 conservative, λ=0.5 aggressive."
+    },
+    
+    "risk_free_rate": {
+      "label": "Risk-Free Rate (%):",
+      "tooltip": "Risk-Free Rate - Baseline Return\n\n1) WHAT: Annual return on risk-free asset (government bonds). Used in Sharpe calculation.\n\n2) HOW: Sharpe = (Return - RiskFree) / Vol. Portfolio must beat this rate to justify risk.\n\n3) WHY: Accounts for opportunity cost. Higher rate → portfolio must work harder for good Sharpe.\n\n4) EFFECTS: Higher rate → optimizer favors higher-return assets. 0% = simplest assumption.\n\n5) RANGE: 0-4%. Current US T-bill ~4% (2024). Forex: often set to 0% for simplicity.\n\n6) NOTES: Use current short-term T-bill rate. If using leverage, match your borrowing cost."
+    },
+    
+    "risk_aversion": {
+      "label": "Risk Aversion (λ):",
+      "tooltip": "Risk Aversion Lambda - Risk Tolerance Parameter\n\n1) WHAT: Parameter λ in Utility = Return - λ×Risk. Higher λ = more risk-averse.\n\n2) HOW: λ=1: neutral (1 unit risk = 1 unit return). λ=2: conservative. λ=0.5: aggressive.\n\n3) WHY: Personalizes portfolio to risk tolerance. Conservative→high λ, Aggressive→low λ.\n\n4) EFFECTS: λ=0.5→aggressive/concentrated. λ=1→balanced. λ=2-3→conservative/diversified. λ>5→minimal risk.\n\n5) RANGE: 0.5-3.0. DEFAULT: 1.0 (neutral). Adjust to comfort level.\n\n6) NOTES: Only applies when Objective=Utility. Leveraged accounts use higher λ. Young/aggressive→low, older/conservative→high."
+    },
+    
+    "max_weight": {
+      "label": "Max Weight per Asset (%):",
+      "tooltip": "Maximum Position Size Constraint\n\n1) WHAT: Max % of portfolio per asset. Prevents over-concentration.\n\n2) HOW: Optimizer capped at max_weight per asset. Excess distributed to others.\n\n3) WHY: Diversification enforcement. Prevents 1-2 assets dominating. Reduces idiosyncratic risk.\n\n4) EFFECTS: 100%→no limit (dangerous). 25%→4+ assets. 10%→10+ assets (diversified).\n\n5) RANGE: 10-30% typical. 25% DEFAULT. Lower=more diversification, less concentration.\n\n6) NOTES: 3-5 assets→25-33%. 10+ assets→10-15%. Volatile assets→lower max (5-10%)."
+    },
+    
+    "min_weight": {
+      "label": "Min Weight per Asset (%):",
+      "tooltip": "Minimum Position Size Constraint\n\n1) WHAT: Min % per asset if included. Prevents tiny uneconomical positions.\n\n2) HOW: Either allocate ≥min_weight OR exclude entirely. Avoids 0.5% positions with high costs.\n\n3) WHY: Transaction costs proportional to trades, not size. Min weight ensures positions justify costs.\n\n4) EFFECTS: 0%→allows tiny positions. 5%→max 20 assets. 10%→max 10 assets, forced concentration.\n\n5) RANGE: 1-2% DEFAULT. Retail (high costs)→2-5%. Institutional (low costs)→0.5-1%.\n\n6) NOTES: Set based on transaction costs. min_weight × N_assets ≤ 100%. Balance: too low=uneconomical, too high=forced concentration."
+    },
+    
+    "adaptive_sizing": {
+      "label": "Adaptive Position Sizing:",
+      "tooltip": "Dynamic Allocation Adjustment\n\n1) WHAT: Adjusts position sizes based on market conditions (volatility, momentum, confidence).\n\n2) HOW: Base weight × adjustment factor. Low vol→scale up. High vol→scale down. Strong signals→scale up.\n\n3) WHY: Static allocations ignore regime changes. Adaptive reduces exposure in volatility, increases in favorable conditions.\n\n4) EFFECTS: ENABLED + high vol→smaller positions. ENABLED + low vol→larger positions. DISABLED→static allocations.\n\n5) RANGE: Boolean. Enable for dynamic risk management. Disable for simple/transparent allocations.\n\n6) NOTES: Reduces drawdowns 20-40%. Especially important for leveraged accounts. Adds complexity but improves risk-adjusted returns."
+    },
+    
+    "lookback_period": {
+      "label": "Lookback Period (days):",
+      "tooltip": "Historical Window for Statistics\n\n1) WHAT: Past days for calculating returns, volatility, correlations for optimization.\n\n2) HOW: Uses last N days to estimate mean returns, covariance, risk metrics. Longer=stable but slow adaptation.\n\n3) WHY: Balances stability vs responsiveness. Short=fast adaptation but noisy. Long=stable but slow.\n\n4) EFFECTS: 20-40→responsive/high turnover. 60-90→balanced. 120-180→stable/low turnover. 252+→minimal changes.\n\n5) RANGE: 60 days DEFAULT. Day trading→20-40. Weekly rebalance→60-90. Monthly→120-180. Annual→252.\n\n6) NOTES: Rule: lookback ≥ 4 × rebalance frequency. Min 20 days for reliable estimates. Max ~500 days (regime changes)."
     },
     
     "rebalance_frequency": {
-      "label": "Rebalance Frequency:",
-      "tooltip": "How often to rebalance. Options: daily, weekly, monthly. DEFAULT: weekly. More frequent = higher costs."
+      "label": "Rebalance Frequency (days):",
+      "tooltip": "How Often to Adjust Portfolio\n\n1) WHAT: Days between portfolio rebalancing. Recalculate optimal weights and adjust positions.\n\n2) HOW: Every N days: 1) Recalculate weights, 2) Compare to current, 3) Execute trades to realign.\n\n3) WHY: Balances drift (market moves) vs costs (transaction fees). Optimal frequency minimizes both.\n\n4) EFFECTS: Daily→max responsive/high costs. Weekly (5-7)→balanced. Monthly (20-30)→minimal turnover/costs.\n\n5) RANGE: 5-7 days DEFAULT (balanced for swing trading). Day trading→1-2. Position trading→20-30.\n\n6) NOTES: More frequent→better tracking but higher costs. Transaction costs ~0.1-0.3% per round-trip. Daily rebalancing adds ~25-75% annual costs!"
     },
     
-    "correlation_threshold": {
-      "label": "Max Correlation:",
-      "tooltip": "Maximum allowed correlation between pairs. DEFAULT: 0.7. Higher = more diversified. Avoid >0.8 (too correlated)."
+    "risk_parity": {
+      "label": "Risk Parity Allocation:",
+      "tooltip": "Equal Risk Contribution from Each Asset\n\n1) WHAT: Each asset contributes equally to portfolio risk (not equal dollar weights). Diversification by risk.\n\n2) HOW: Solves Risk_Contribution_i = Total_Risk / N. Low-vol assets get higher weights, high-vol get lower weights.\n\n3) WHY: Equal-weight often means 1-2 volatile assets dominate risk. Risk parity ensures balanced risk exposure.\n\n4) EFFECTS: ENABLED→overweight stable, underweight volatile, balanced risk, lower volatility. DISABLED→optimizer objective controls allocation.\n\n5) RANGE: Boolean. Enable for defensive diversified portfolios. Disable for return-focused optimization.\n\n6) NOTES: Often outperforms equal-weight in high volatility. Requires leverage for target returns. Works best with low-correlation assets. Used by Bridgewater All Weather."
+    },
+    
+    "vol_targeting": {
+      "label": "Volatility Targeting:",
+      "tooltip": "Maintain Constant Portfolio Volatility\n\n1) WHAT: Dynamic leverage to keep portfolio volatility constant. Scale up when vol is low, down when high.\n\n2) HOW: Leverage = Target_Vol / Current_Vol. Low vol→higher leverage. High vol→lower leverage.\n\n3) WHY: Stabilizes risk exposure. Reduces exposure in volatile periods (lower drawdowns), increases in calm (higher returns).\n\n4) EFFECTS: ENABLED + low vol→higher leverage. ENABLED + high vol→lower leverage, rapid de-risking. DISABLED→static exposure, volatile equity curve.\n\n5) RANGE: Boolean. Essential for leveraged accounts (prevents margin calls). Improves Sharpe by 20-40%.\n\n6) NOTES: Pro-cyclical (reduces in crises, increases in calm). Vol estimation: 20-60 day EWMA. Used by CTAs and risk-parity funds."
+    },
+    
+    "target_volatility": {
+      "label": "Target Annual Volatility (%):",
+      "tooltip": "Desired Portfolio Risk Level\n\n1) WHAT: Desired annual volatility (std dev of returns). Vol targeting scales positions to maintain this.\n\n2) HOW: If portfolio vol ≠ target, adjust leverage. Vol=10% target=15% → scale 1.5×. Vol=20% target=15% → scale 0.75×.\n\n3) WHY: Defines risk appetite. Higher target = higher returns but higher drawdowns. Lower = capital preservation.\n\n4) EFFECTS: 5-10%→conservative, bond-like, ~5-10% max DD. 10-15%→balanced, ~15-20% DD. 15-20%→aggressive, ~25-35% DD. 20-30%→very aggressive, ~40-60% DD.\n\n5) RANGE: 15% DEFAULT (balanced). Conservative→10%. Aggressive→20%. Leveraged→25-30%.\n\n6) NOTES: Expected return ≈ 0.3-0.5 × target vol. S&P500~15%, Nasdaq~20%, Forex~10-12%. Monitor actual vs target for adjustments."
     }
   },
   
@@ -659,34 +699,14 @@
   "signals": {
     "tab_name": "Signals",
     
-    "signal_strength_threshold": {
-      "label": "Min Signal Strength:",
-      "tooltip": "Minimum prediction confidence to generate signal. DEFAULT: 0.6. Conservative: 0.7. Aggressive: 0.5. Higher = fewer but stronger signals."
+    "refresh_btn": {
+      "label": "Refresh Signals:",
+      "tooltip": "Refresh Signals - Reload Latest Trading Signals\n\n1) WHAT: Manually reload trading signals from database. Shows most recent signals generated by models.\n\n2) HOW: Queries database for latest signals sorted by creation time. Limit controlled by Limit spinbox.\n\n3) WHY: Check new signals without waiting for auto-refresh (60s). Verify signal generation after model training.\n\n4) EFFECTS: Instant table update. Shows signal details: symbol, timeframe, entry/target/stop prices.\n\n5) RANGE: Button click action. No parameters.\n\n6) NOTES: Auto-refreshes every 60 seconds. Manual refresh useful after training completion or to verify signal quality."
     },
     
-    "signal_timeframe": {
-      "label": "Signal Timeframe:",
-      "tooltip": "Timeframe for signal generation. Should match trading style. Scalping: 1m-5m. Day: 15m-1h. Swing: 4h-1d."
-    },
-    
-    "combine_signals": {
-      "label": "Combine Multi-TF Signals:",
-      "tooltip": "Combine signals from multiple timeframes. Increases reliability. DEFAULT: Enabled. Requires alignment across 2-3 timeframes."
-    },
-    
-    "filter_news_events": {
-      "label": "Filter During News:",
-      "tooltip": "Disable signals during major news events. DEFAULT: Enabled. Prevents trading high-impact news (NFP, FOMC, CPI)."
-    },
-    
-    "signal_expiry_bars": {
-      "label": "Signal Expiry (bars):",
-      "tooltip": "Bars before signal expires. DEFAULT: 5. Short-term: 3. Longer: 10. Prevents stale signals."
-    },
-    
-    "send_notifications": {
-      "label": "Send Notifications:",
-      "tooltip": "Send signal alerts via webhook/email. Real-time notifications for manual trading. Configure webhook URL in settings."
+    "limit_spinbox": {
+      "label": "Limit:",
+      "tooltip": "Signal Display Limit - Number of Signals to Show\n\n1) WHAT: Maximum number of signals to display in table. Limits query size for performance.\n\n2) HOW: Controls SQL query LIMIT clause. Higher value shows more historical signals.\n\n3) WHY: Large signal history can slow table rendering. Limit balances completeness vs performance.\n\n4) EFFECTS: 10→fast load, recent signals only. 100→balanced (DEFAULT). 1000→complete history, slower load.\n\n5) RANGE: 10-1000. DEFAULT: 100 signals. Increase to see more history, decrease for faster loading.\n\n6) NOTES: Most recent signals shown first (sorted by creation time DESC). Signals older than displayed limit are in database but not shown."
     }
   },
   

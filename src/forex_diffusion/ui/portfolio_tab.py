@@ -370,15 +370,21 @@ class PortfolioOptimizationTab(QWidget):
         """Apply i18n tooltips to all widgets"""
         from ..i18n.widget_helper import apply_tooltip
         
-        # Portfolio (4 tooltips)
-        if hasattr(self, 'symbols_edit'):
-            apply_tooltip(self.symbols_edit, "symbols", "portfolio")
-        if hasattr(self, 'allocation_method_combo'):
-            apply_tooltip(self.allocation_method_combo, "allocation_method", "portfolio")
-        if hasattr(self, 'rebalance_frequency_combo'):
-            apply_tooltip(self.rebalance_frequency_combo, "rebalance_frequency", "portfolio")
-        if hasattr(self, 'correlation_threshold_spin'):
-            apply_tooltip(self.correlation_threshold_spin, "correlation_threshold", "portfolio")
+        # Portfolio Optimizer Settings (12 tooltips)
+        apply_tooltip(self.risk_measure_combo, "risk_measure", "portfolio")
+        apply_tooltip(self.objective_combo, "objective", "portfolio")
+        apply_tooltip(self.risk_free_rate_spin, "risk_free_rate", "portfolio")
+        apply_tooltip(self.risk_aversion_spin, "risk_aversion", "portfolio")
+        apply_tooltip(self.max_weight_spin, "max_weight", "portfolio")
+        apply_tooltip(self.min_weight_spin, "min_weight", "portfolio")
+        
+        # Position Sizing
+        apply_tooltip(self.adaptive_sizing_checkbox, "adaptive_sizing", "portfolio")
+        apply_tooltip(self.lookback_spin, "lookback_period", "portfolio")
+        apply_tooltip(self.rebalance_spin, "rebalance_frequency", "portfolio")
+        apply_tooltip(self.risk_parity_checkbox, "risk_parity", "portfolio")
+        apply_tooltip(self.vol_targeting_checkbox, "vol_targeting", "portfolio")
+        apply_tooltip(self.target_vol_spin, "target_volatility", "portfolio")
     
     def _load_settings(self):
         """Load settings from configuration."""

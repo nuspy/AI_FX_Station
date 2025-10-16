@@ -61,19 +61,9 @@ class SignalsTab(QWidget):
         """Apply i18n tooltips to all widgets"""
         from ..i18n.widget_helper import apply_tooltip
         
-        # Signals (6 tooltips)
-        if hasattr(self, 'signal_strength_threshold_spin'):
-            apply_tooltip(self.signal_strength_threshold_spin, "signal_strength_threshold", "signals")
-        if hasattr(self, 'signal_timeframe_combo'):
-            apply_tooltip(self.signal_timeframe_combo, "signal_timeframe", "signals")
-        if hasattr(self, 'combine_signals_check'):
-            apply_tooltip(self.combine_signals_check, "combine_signals", "signals")
-        if hasattr(self, 'filter_news_events_check'):
-            apply_tooltip(self.filter_news_events_check, "filter_news_events", "signals")
-        if hasattr(self, 'signal_expiry_bars_spin'):
-            apply_tooltip(self.signal_expiry_bars_spin, "signal_expiry_bars", "signals")
-        if hasattr(self, 'send_notifications_check'):
-            apply_tooltip(self.send_notifications_check, "send_notifications", "signals")
+        # Signals (2 tooltips - only existing widgets)
+        apply_tooltip(self.refresh_btn, "refresh_btn", "signals")
+        apply_tooltip(self.limit_spinbox, "limit_spinbox", "signals")
     
     def refresh(self):
         """Refreshes the signals table with the latest data from the database."""
