@@ -49,6 +49,7 @@ class LiveTradingTab(QWidget):
 
         self._init_ui()
         self._setup_refresh_timer()
+        self._apply_i18n_tooltips()
 
     def _init_ui(self):
         """Initialize the user interface"""
@@ -229,6 +230,24 @@ class LiveTradingTab(QWidget):
 
         layout.addWidget(group)
 
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        # Live Trading (6 tooltips)
+        if hasattr(self, 'mode_combo'):
+            apply_tooltip(self.mode_combo, "broker", "live_trading")
+        if hasattr(self, 'account_type_combo'):
+            apply_tooltip(self.account_type_combo, "account_type", "live_trading")
+        if hasattr(self, 'max_daily_loss_spin'):
+            apply_tooltip(self.max_daily_loss_spin, "max_daily_loss", "live_trading")
+        if hasattr(self, 'max_drawdown_spin'):
+            apply_tooltip(self.max_drawdown_spin, "max_drawdown", "live_trading")
+        if hasattr(self, 'auto_restart_check'):
+            apply_tooltip(self.auto_restart_check, "auto_restart", "live_trading")
+        if hasattr(self, 'notification_webhook_edit'):
+            apply_tooltip(self.notification_webhook_edit, "notification_webhook", "live_trading")
+    
     def _setup_refresh_timer(self):
         """Setup auto-refresh timer for positions"""
         self.refresh_timer = QTimer()

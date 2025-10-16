@@ -52,6 +52,7 @@ class PortfolioOptimizationTab(QWidget):
 
         self._setup_ui()
         self._load_settings()
+        self._apply_i18n_tooltips()
 
     def _setup_ui(self):
         """Setup the user interface."""
@@ -365,6 +366,20 @@ class PortfolioOptimizationTab(QWidget):
 
         return layout
 
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        # Portfolio (4 tooltips)
+        if hasattr(self, 'symbols_edit'):
+            apply_tooltip(self.symbols_edit, "symbols", "portfolio")
+        if hasattr(self, 'allocation_method_combo'):
+            apply_tooltip(self.allocation_method_combo, "allocation_method", "portfolio")
+        if hasattr(self, 'rebalance_frequency_combo'):
+            apply_tooltip(self.rebalance_frequency_combo, "rebalance_frequency", "portfolio")
+        if hasattr(self, 'correlation_threshold_spin'):
+            apply_tooltip(self.correlation_threshold_spin, "correlation_threshold", "portfolio")
+    
     def _load_settings(self):
         """Load settings from configuration."""
         # TODO: Load from config file

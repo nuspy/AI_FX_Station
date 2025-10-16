@@ -65,6 +65,9 @@ class BacktestingTab(QWidget):
             self._poll_timer.timeout.connect(self._poll_job_status)
         except Exception:
             self._poll_timer = None
+        
+        # Apply i18n tooltips
+        self._apply_i18n_tooltips()
 
     def _build_ui(self):
         # Scrollable content root
@@ -326,6 +329,32 @@ class BacktestingTab(QWidget):
         scroll.setWidget(content)
         root.addWidget(scroll)
 
+    def _apply_i18n_tooltips(self):
+        """Apply i18n tooltips to all widgets"""
+        from ..i18n.widget_helper import apply_tooltip
+        
+        # Backtesting parameters (10 tooltips from backtesting category)
+        if hasattr(self, 'initial_balance_spin'):
+            apply_tooltip(self.initial_balance_spin, "initial_balance", "backtesting")
+        if hasattr(self, 'risk_per_trade_spin'):
+            apply_tooltip(self.risk_per_trade_spin, "risk_per_trade", "backtesting")
+        if hasattr(self, 'max_positions_spin'):
+            apply_tooltip(self.max_positions_spin, "max_positions", "backtesting")
+        if hasattr(self, 'commission_spin'):
+            apply_tooltip(self.commission_spin, "commission", "backtesting")
+        if hasattr(self, 'slippage_spin'):
+            apply_tooltip(self.slippage_spin, "slippage_pips", "backtesting")
+        if hasattr(self, 'stop_loss_atr_spin'):
+            apply_tooltip(self.stop_loss_atr_spin, "stop_loss_atr", "backtesting")
+        if hasattr(self, 'take_profit_atr_spin'):
+            apply_tooltip(self.take_profit_atr_spin, "take_profit_atr", "backtesting")
+        if hasattr(self, 'trailing_stop_check'):
+            apply_tooltip(self.trailing_stop_check, "trailing_stop", "backtesting")
+        if hasattr(self, 'walk_forward_check'):
+            apply_tooltip(self.walk_forward_check, "walk_forward", "backtesting")
+        if hasattr(self, 'optimization_metric_combo'):
+            apply_tooltip(self.optimization_metric_combo, "optimization_metric", "backtesting")
+    
     def _poll_job_status(self):
         try:
             from ..backtest.db import BacktestDB
