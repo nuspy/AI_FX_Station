@@ -251,16 +251,17 @@ class EventHandlersMixin:
             self.plot_service._saved_view_range = False
             logger.debug("Cleared saved view range for timeframe change")
         
-        # Delegate to data_service for proper timeframe change handling
-        if hasattr(self, 'data_service'):
-            logger.info(f"Delegating timeframe change to data_service: {value}")
+        # Delegate to chart_controller.data_service for proper timeframe change handling
+        chart_controller = getattr(self, 'chart_controller', None)
+        if chart_controller and hasattr(chart_controller, 'data_service'):
+            logger.info(f"Delegating timeframe change to chart_controller.data_service: {value}")
             try:
-                self.data_service._on_timeframe_changed(value)
+                chart_controller.data_service._on_timeframe_changed(value)
                 logger.info(f"Timeframe change delegated successfully")
             except Exception as e:
                 logger.error(f"Error in data_service timeframe change: {e}", exc_info=True)
         else:
-            logger.warning("No data_service available for timeframe change")
+            logger.warning(f"No chart_controller.data_service available for timeframe change (chart_controller={chart_controller})")
     
     def _reload_chart_data_for_timeframe(self, timeframe: str):
         """Reload chart data from database for new timeframe."""
