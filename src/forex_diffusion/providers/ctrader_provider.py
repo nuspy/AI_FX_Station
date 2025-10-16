@@ -646,7 +646,13 @@ class CTraderProvider(BaseProvider):
             client: The cTrader client instance (passed by library)
             reason: The disconnection reason
         """
-        logger.warning(f"[{self.name}] Disconnected from cTrader server: {reason}")
+        # Check if it's a clean disconnection
+        reason_str = str(reason)
+        if "cleanly" in reason_str.lower() or "ConnectionDone" in reason_str:
+            logger.info(f"[{self.name}] Disconnected cleanly from cTrader server")
+        else:
+            logger.warning(f"[{self.name}] Disconnected from cTrader server: {reason}")
+        
         self.health.is_connected = False
         self._running = False
 
@@ -667,6 +673,11 @@ class CTraderProvider(BaseProvider):
                         if sid == symbol_id:
                             symbol_name = name
                             break
+                
+                # Handle symbol ID 0 (heartbeat or system message)
+                if symbol_id == 0:
+                    logger.debug(f"[{self.name}] Received spot event with symbol_id=0 (heartbeat/system message)")
+                    return {"type": "heartbeat"}
                 
                 # Log if symbol not found
                 if not symbol_name:
