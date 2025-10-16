@@ -6,6 +6,6 @@ Provides OpenAI Gym-compatible environments:
 - TradingEnvironment: Direct trading actions (buy/sell/hold)
 """
 
-from .portfolio_env import PortfolioEnvironment
+from .portfolio_env import PortfolioEnvironment, PortfolioEnvConfig
 
-__all__ = ['PortfolioEnvironment']
+__all__ = ['PortfolioEnvironment', 'PortfolioEnvConfig']

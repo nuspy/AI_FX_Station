@@ -14,6 +14,8 @@ from .rewards import RewardFunction, MultiObjectiveReward, RewardConfig
 from .environments import PortfolioEnvironment
 from .networks import ActorNetwork, CriticNetwork
 from .actor_critic import BaseAgent, PPOAgent
+from .trainer import RLTrainer, TrainerConfig
+from .rl_portfolio_manager import RLPortfolioManager, RLPortfolioConfig
 
 __all__ = [
     'ReplayBuffer',
@@ -26,4 +28,8 @@ __all__ = [
     'CriticNetwork',
     'BaseAgent',
     'PPOAgent',
+    'RLTrainer',
+    'TrainerConfig',
+    'RLPortfolioManager',
+    'RLPortfolioConfig',
 ]
