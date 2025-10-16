@@ -132,6 +132,11 @@ dependencies = [
   "arch>=7.0,<8.0",                # ARCH/GARCH models for volatility (required by riskfolio-lib)
   "ta-lib>=0.4.28,<1.0",           # Technical Analysis Library (optional, requires separate install)
 
+  # Visualization & PDF Generation
+  "cutecharts>=1.0.0",             # Cute charts for visualization
+  "reportlab>=4.0.0,<5.0",         # PDF generation
+  "pillow>=10.0.0",                # Image processing for charts
+
   # Portfolio Optimization (Riskfolio-Lib)
   "riskfolio-lib>=7.0,<8.0",       # Portfolio optimization and quantitative asset allocation
   "cvxpy>=1.3.0,<2.0",             # Convex optimization (required by riskfolio-lib)
