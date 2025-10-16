@@ -487,89 +487,6 @@ class DataService(ChartServiceBase):
         except Exception:
             return float(x_c)
 
-    def _period_includes_weekend(self, start_ms: int, end_ms: int) -> bool:
-        """True se [start..end] include sab/dom (chiusura mercato)."""
-        try:
-            s = pd.to_datetime(int(start_ms), unit="ms", utc=True).tz_convert(None)
-            e = pd.to_datetime(int(end_ms), unit="ms", utc=True).tz_convert(None)
-            days = pd.date_range(s.normalize(), e.normalize(), freq="D")
-            return any(d.weekday() >= 5 for d in days)
-        except Exception:
-            return False
-
-    def _find_earliest_data_gap(self, df: pd.DataFrame, timeframe: str) -> int | None:
-        """Trova il più antico buco non-weekend nel df e ritorna lo start_ms suggerito per backfill."""
-        try:
-            if df is None or df.empty or "ts_utc" not in df.columns:
-                return None
-            ts = df["ts_utc"].astype("int64").to_numpy()
-            if len(ts) < 2:
-                return None
-            # expected spacing
-            try:
-                tf = str(timeframe or "auto").lower()
-                if tf != "auto":
-                    td = self._tf_to_timedelta(tf)
-                    exp_ms = int(td.total_seconds() * 1000.0)
-                else:
-                    diffs = (ts[1:] - ts[:-1]).astype("int64")
-                    exp_ms = int(max(60000, float(pd.Series(diffs).median())))
-            except Exception:
-                exp_ms = 60000
-            for i in range(1, len(ts)):
-                gap = int(ts[i] - ts[i-1])
-                if gap > exp_ms * 2:
-                    if self._period_includes_weekend(ts[i-1], ts[i]):
-                        continue
-                    return int(ts[i-1] + exp_ms)
-            return None
-        except Exception:
-            return None
-
-    def _backfill_on_open(self, df: pd.DataFrame) -> None:
-        """Lancia backfill dal primo buco non-weekend fino ad oggi, poi ricarica la finestra."""
-        try:
-            start_override = self._find_earliest_data_gap(df, getattr(self, "timeframe", "auto"))
-            if start_override is None:
-                return
-            controller = getattr(self._main_window, "controller", None)
-            ms = getattr(controller, "market_service", None) if controller else None
-            if ms is None:
-                return
-
-            from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
-
-            class _Signals(QObject):
-                finished = Signal(bool)
-
-            class _Job(QRunnable):
-                def __init__(self, svc, symbol, timeframe, start_ms, signals):
-                    super().__init__()
-                    self.svc = svc; self.symbol = symbol; self.timeframe = timeframe
-                    self.start_ms = int(start_ms); self.signals = signals
-                def run(self):
-                    ok = True
-                    try:
-                        self.svc.backfill_symbol_timeframe(self.symbol, self.timeframe, force_full=False, progress_cb=None, start_ms_override=self.start_ms)
-                    except Exception:
-                        ok = False
-                    finally:
-                        try:
-                            self.signals.finished.emit(ok)
-                        except Exception:
-                            pass
-
-            sig = _Signals(self.view)
-            def _on_done(_ok: bool):
-                try:
-                    self._schedule_view_reload()
-                except Exception:
-                    pass
-            sig.finished.connect(_on_done)
-            QThreadPool.globalInstance().start(_Job(ms, getattr(self, "symbol", ""), getattr(self, "timeframe", ""), int(start_override), sig))
-        except Exception:
-            pass
-
     def set_symbol_timeframe(self, db_service, symbol: str, timeframe: str):
         self.db_service = db_service
         self.symbol = symbol
@@ -776,10 +693,14 @@ class DataService(ChartServiceBase):
         try:
             start_override = self._find_earliest_data_gap(df, getattr(self, "timeframe", "auto"))
             if start_override is None:
+                logger.debug(f"No data gaps found for backfill (symbol={getattr(self, 'symbol', 'N/A')}, tf={getattr(self, 'timeframe', 'N/A')})")
                 return
+            
+            logger.info(f"Auto-backfill triggered: filling gap from {start_override} for {getattr(self, 'symbol', 'N/A')} {getattr(self, 'timeframe', 'N/A')}")
             controller = getattr(self._main_window, "controller", None)
             ms = getattr(controller, "market_service", None) if controller else None
             if ms is None:
+                logger.warning(f"Auto-backfill skipped: MarketDataService not available (controller={controller})")
                 return
 
             from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
