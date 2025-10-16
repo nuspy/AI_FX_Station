@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Callable
 import uuid
 import json
 import time
+import numpy as np
 from loguru import logger
 
 from .parameter_space import ParameterSpace
