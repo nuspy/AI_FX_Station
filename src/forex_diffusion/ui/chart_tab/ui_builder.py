@@ -270,6 +270,10 @@ class UIBuilderMixin:
         # Minimize splitter handle width
         right_splitter.setHandleWidth(1)
         
+        # Set initial sizes for right splitter widgets to ensure all are visible
+        # Total height will be distributed: chart=400, orders=100, order_flow=200, sentiment=250
+        right_splitter.setSizes([400, 100, 200, 250])
+        
         # Save/restore right splitter state
         saved_right_state = get_setting('chart.right_splitter_state')
         if saved_right_state:
@@ -298,7 +302,13 @@ class UIBuilderMixin:
 
         # Set stretch factors to make the chart area expand
         main_splitter.setStretchFactor(1, 8)
-        right_splitter.setStretchFactor(0, 6)
+        
+        # Right splitter widgets: 0=chart_area, 1=orders_table, 2=order_flow_panel, 3=sentiment_panel
+        right_splitter.setStretchFactor(0, 6)   # Chart area gets most space
+        right_splitter.setStretchFactor(1, 1)   # Orders table
+        right_splitter.setStretchFactor(2, 2)   # Order Flow Panel
+        right_splitter.setStretchFactor(3, 2)   # Sentiment Panel (ENSURE VISIBILITY)
+        
         chart_area_splitter.setStretchFactor(1, 1)
 
         self.main_tabs.addTab(chart_tab, "Chart")

@@ -36,6 +36,20 @@ class SentimentPanel(QWidget):
     def init_ui(self):
         """Initialize user interface"""
         layout = QVBoxLayout(self)
+        
+        # Set minimum height to ensure visibility in splitter
+        self.setMinimumHeight(250)
+        self.setMinimumWidth(200)
+        
+        # Set styling with visible border for debugging
+        self.setStyleSheet("""
+            QWidget#sentimentPanel {
+                background-color: #2b2b2b;
+                border: 2px solid #0078d7;
+                border-radius: 4px;
+            }
+        """)
+        self.setObjectName("sentimentPanel")
 
         # Title
         title_layout = QHBoxLayout()
