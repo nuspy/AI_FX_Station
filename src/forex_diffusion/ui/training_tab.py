@@ -534,9 +534,13 @@ class TrainingTab(QWidget):
     def _apply_i18n_tooltips(self):
         """Apply i18n tooltips to all widgets"""
         from ..i18n.widget_helper import apply_tooltip
+        from ..i18n import tr
+        
+        logger.info("Applying i18n tooltips to Training Tab widgets...")
         
         # Top controls
         apply_tooltip(self.model_name_edit, "model_name", "training")
+        logger.debug(f"Applied tooltip to model_name_edit: {self.model_name_edit.toolTip()[:50]}...")
         apply_tooltip(self.symbol_combo, "symbol", "training")
         apply_tooltip(self.tf_combo, "timeframe", "training")
         apply_tooltip(self.days_spin, "days", "training")
