@@ -545,74 +545,74 @@ class TrainingTab(QWidget):
         apply_tooltip(self.encoder_combo, "encoder", "training")
         apply_tooltip(self.use_gpu_training_check, "use_gpu_training", "training")
         apply_tooltip(self.opt_combo, "optimization", "training")
-        apply_tooltip(self.gen_spin, "generations", "training.genetic")
-        apply_tooltip(self.pop_spin, "population", "training.genetic")
+        apply_tooltip(self.gen_spin, "gen", "training")
+        apply_tooltip(self.pop_spin, "pop", "training")
         
         # Indicator master toggle
         apply_tooltip(self.use_indicators_check, "use_indicators", "training.indicators")
         
         # Feature Engineering
-        apply_tooltip(self.returns_check, "returns_volatility", "training.features")
-        apply_tooltip(self.returns_window, "returns_window", "training.advanced")
-        apply_tooltip(self.sessions_check, "trading_sessions", "training.features")
-        apply_tooltip(self.session_overlap, "session_overlap", "training.advanced")
-        apply_tooltip(self.candlestick_check, "candlestick_patterns", "training.features")
-        apply_tooltip(self.higher_tf_combo, "higher_tf", "training.advanced")
-        apply_tooltip(self.volume_profile_check, "volume_profile", "training.features")
-        apply_tooltip(self.vp_bins, "vp_bins", "training.advanced")
-        apply_tooltip(self.vp_window, "vp_window", "training.advanced")
-        apply_tooltip(self.vsa_check, "vsa", "training.features")
-        apply_tooltip(self.vsa_volume_ma, "vsa_volume_ma", "training.advanced")
-        apply_tooltip(self.vsa_spread_ma, "vsa_spread_ma", "training.advanced")
+        apply_tooltip(self.returns_check, "returns_volatility", "training.advanced.features")
+        apply_tooltip(self.returns_window, "returns_window", "training.advanced.feature_engineering")
+        apply_tooltip(self.sessions_check, "trading_sessions", "training.advanced.features")
+        apply_tooltip(self.session_overlap, "session_overlap", "training.advanced.feature_engineering")
+        apply_tooltip(self.candlestick_check, "candlestick_patterns", "training.advanced.features")
+        apply_tooltip(self.higher_tf_combo, "higher_tf", "training.advanced.feature_engineering")
+        apply_tooltip(self.volume_profile_check, "volume_profile", "training.advanced.features")
+        apply_tooltip(self.vp_bins, "vp_bins", "training.advanced.feature_engineering")
+        apply_tooltip(self.vp_window, "vp_window", "training.advanced.feature_engineering")
+        apply_tooltip(self.vsa_check, "vsa", "training.advanced.features")
+        apply_tooltip(self.vsa_volume_ma, "vsa_volume_ma", "training.advanced.feature_engineering")
+        apply_tooltip(self.vsa_spread_ma, "vsa_spread_ma", "training.advanced.feature_engineering")
         
         # Advanced Parameters
         apply_tooltip(self.warmup, "warmup_bars", "training.advanced")
         apply_tooltip(self.rv_w, "rv_window", "training.advanced")
         apply_tooltip(self.min_coverage, "min_coverage", "training.advanced")
-        apply_tooltip(self.atr_n, "atr_n", "training.advanced")
-        apply_tooltip(self.rsi_n, "rsi_n", "training.advanced")
-        apply_tooltip(self.bb_n, "bb_n", "training.advanced")
-        apply_tooltip(self.hurst_w, "hurst_window", "training.advanced")
+        apply_tooltip(self.atr_n, "atr_n", "training.advanced.indicator_periods")
+        apply_tooltip(self.rsi_n, "rsi_n", "training.advanced.indicator_periods")
+        apply_tooltip(self.bb_n, "bb_n", "training.advanced.indicator_periods")
+        apply_tooltip(self.hurst_w, "hurst_window", "training.advanced.indicator_periods")
         
         # LightGBM
-        apply_tooltip(self.light_epochs, "epochs", "training.lightgbm")
-        apply_tooltip(self.light_batch, "batch", "training.lightgbm")
-        apply_tooltip(self.light_val_frac, "validation_fraction", "training.lightgbm")
+        apply_tooltip(self.light_epochs, "epochs", "training.advanced.lightgbm")
+        apply_tooltip(self.light_batch, "batch", "training.advanced.lightgbm")
+        apply_tooltip(self.light_val_frac, "validation_fraction", "training.advanced.lightgbm")
         
         # Encoder
-        apply_tooltip(self.patch_len, "patch_len", "training.encoder")
-        apply_tooltip(self.latent_dim, "latent_dim", "training.encoder")
-        apply_tooltip(self.encoder_epochs, "epochs", "training.encoder")
+        apply_tooltip(self.patch_len, "patch_len", "training.advanced.encoder")
+        apply_tooltip(self.latent_dim, "latent_dim", "training.advanced.encoder")
+        apply_tooltip(self.encoder_epochs, "epochs", "training.advanced.encoder")
         
         # Diffusion (if widgets exist)
         if hasattr(self, 'diffusion_timesteps'):
-            apply_tooltip(self.diffusion_timesteps, "timesteps", "training.diffusion")
+            apply_tooltip(self.diffusion_timesteps, "timesteps", "training.advanced.diffusion")
         if hasattr(self, 'learning_rate'):
-            apply_tooltip(self.learning_rate, "learning_rate", "training.diffusion")
+            apply_tooltip(self.learning_rate, "learning_rate", "training.advanced.diffusion")
         if hasattr(self, 'batch_size_dl'):
-            apply_tooltip(self.batch_size_dl, "batch_size", "training.diffusion")
+            apply_tooltip(self.batch_size_dl, "batch_size", "training.advanced.diffusion")
         if hasattr(self, 'model_channels'):
-            apply_tooltip(self.model_channels, "model_channels", "training.diffusion")
+            apply_tooltip(self.model_channels, "model_channels", "training.advanced.diffusion")
         if hasattr(self, 'dropout'):
-            apply_tooltip(self.dropout, "dropout", "training.diffusion")
+            apply_tooltip(self.dropout, "dropout", "training.advanced.diffusion")
         if hasattr(self, 'num_heads'):
-            apply_tooltip(self.num_heads, "num_heads", "training.diffusion")
+            apply_tooltip(self.num_heads, "num_heads", "training.advanced.diffusion")
         
         # NVIDIA GPU Optimization
         if hasattr(self, 'nvidia_enable'):
-            apply_tooltip(self.nvidia_enable, "enable", "training.nvidia")
+            apply_tooltip(self.nvidia_enable, "enable", "training.advanced.nvidia")
         if hasattr(self, 'use_amp'):
-            apply_tooltip(self.use_amp, "use_amp", "training.nvidia")
+            apply_tooltip(self.use_amp, "use_amp", "training.advanced.nvidia")
         if hasattr(self, 'precision_combo'):
-            apply_tooltip(self.precision_combo, "precision", "training.nvidia")
+            apply_tooltip(self.precision_combo, "precision", "training.advanced.nvidia")
         if hasattr(self, 'compile_model'):
-            apply_tooltip(self.compile_model, "compile_model", "training.nvidia")
+            apply_tooltip(self.compile_model, "compile_model", "training.advanced.nvidia")
         if hasattr(self, 'use_fused_optimizer'):
-            apply_tooltip(self.use_fused_optimizer, "fused_optimizer", "training.nvidia")
+            apply_tooltip(self.use_fused_optimizer, "fused_optimizer", "training.advanced.nvidia")
         if hasattr(self, 'use_flash_attention'):
-            apply_tooltip(self.use_flash_attention, "flash_attention", "training.nvidia")
+            apply_tooltip(self.use_flash_attention, "flash_attention", "training.advanced.nvidia")
         if hasattr(self, 'grad_accumulation_steps'):
-            apply_tooltip(self.grad_accumulation_steps, "grad_accumulation_steps", "training.nvidia")
+            apply_tooltip(self.grad_accumulation_steps, "grad_accumulation_steps", "training.advanced.nvidia")
         
         # Apply indicator tooltips
         for indicator in INDICATORS:

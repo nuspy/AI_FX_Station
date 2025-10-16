@@ -112,16 +112,17 @@ def get_current_language() -> str:
     return _current_language
 
 
-def tr(key: str, **kwargs) -> str:
+def tr(key: str, default: Optional[str] = None, **kwargs) -> str:
     """
     Translate a key to the current language.
     
     Args:
         key: Translation key in dot notation (e.g., "training.symbol.label")
+        default: Default value to return if translation not found
         **kwargs: Optional format arguments for string interpolation
     
     Returns:
-        Translated string, or the key itself if translation not found
+        Translated string, or default/key if translation not found
     
     Examples:
         >>> tr("training.symbol.label")
@@ -139,18 +140,34 @@ def tr(key: str, **kwargs) -> str:
     if _current_language not in _translations:
         _translations[_current_language] = load_translations(_current_language)
     
+    # Navigate nested dictionary using dot notation
+    def get_nested(data: dict, key_path: str):
+        """Navigate nested dictionary with dot notation."""
+        keys = key_path.split('.')
+        value = data
+        for k in keys:
+            if isinstance(value, dict):
+                value = value.get(k)
+                if value is None:
+                    return None
+            else:
+                return None
+        return value
+    
     # Get translation
-    translation = _translations[_current_language].get(key)
+    translation = get_nested(_translations[_current_language], key)
     
     if translation is None:
         # Fallback to English if current language doesn't have the key
         if _current_language != "en_US":
             if "en_US" not in _translations:
                 _translations["en_US"] = load_translations("en_US")
-            translation = _translations["en_US"].get(key)
+            translation = get_nested(_translations["en_US"], key)
         
         if translation is None:
-            logger.warning(f"Translation not found for key: {key}")
+            if default is not None:
+                return default
+            logger.debug(f"Translation not found for key: {key}")
             return key
     
     # Apply string formatting if kwargs provided
