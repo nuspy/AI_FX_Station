@@ -23,7 +23,7 @@ Il **SentimentPanel** è ora completamente integrato e funzionante in ForexGPT. 
 - ✅ Auto-refresh ogni 5 secondi
 - ✅ Selector per cambiare simbolo (EURUSD, GBPUSD, USDJPY, etc.)
 
-### 3. **Database Schema** (`migrations/versions/0015_add_sentiment_data.py`)
+### 3. **Database Schema** (`data/forex_diffusion.db`)
 - ✅ Tabella `sentiment_data` con campi:
   - `symbol`, `ts_utc`, `long_pct`, `short_pct`
   - `total_traders`, `confidence`, `sentiment`, `ratio`

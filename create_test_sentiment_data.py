@@ -16,7 +16,7 @@ def create_test_data():
     """Crea dati sentiment di test."""
     logger.info("Creazione dati sentiment di test...")
     
-    db_path = project_root / "forexgpt.db"
+    db_path = project_root / "data" / "forex_diffusion.db"
     engine = create_engine(f"sqlite:///{db_path}")
     
     symbols = ["EURUSD", "GBPUSD", "USDJPY"]

@@ -25,7 +25,7 @@ def check_database():
     logger.info("=" * 80)
     
     # Connect to database
-    db_path = project_root / "forexgpt.db"
+    db_path = project_root / "data" / "forex_diffusion.db"
     if not db_path.exists():
         logger.error(f"Database non trovato: {db_path}")
         return False
@@ -129,7 +129,7 @@ def test_sentiment_service():
     logger.info("TEST SENTIMENT AGGREGATOR SERVICE")
     logger.info("=" * 80)
     
-    db_path = project_root / "forexgpt.db"
+    db_path = project_root / "data" / "forex_diffusion.db"
     engine = create_engine(f"sqlite:///{db_path}")
     
     # Create service
