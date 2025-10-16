@@ -170,7 +170,6 @@ class UIBuilderMixin:
         order_flow_label.setStyleSheet("font-weight: bold; font-size: 11px; color: #e0e0e0;")
         order_flow_layout.addWidget(order_flow_label)
         
-        from PySide6.QtWidgets import QProgressBar
         self.order_flow_bar = QProgressBar()
         self.order_flow_bar.setRange(-100, 100)
         self.order_flow_bar.setValue(0)
