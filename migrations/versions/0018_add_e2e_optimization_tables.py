@@ -1,7 +1,7 @@
 """add_e2e_optimization_tables
 
-Revision ID: f19e2695024b
-Revises: 94ca081433e4
+Revision ID: 0018
+Revises: 0017
 Create Date: 2025-01-08 19:47:28.503691
 
 E2E Optimization System Database Schema
@@ -18,8 +18,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'f19e2695024b'
-down_revision = '94ca081433e4'
+revision = '0018'
+down_revision = '0017'
 branch_labels = None
 depends_on = None
 

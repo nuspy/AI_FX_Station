@@ -1,7 +1,7 @@
 """add_optimized_parameters_risk_profiles_advanced_metrics
 
-Revision ID: 544e5525b0f5
-Revises: 94ca081433e4
+Revision ID: 0016
+Revises: 0015
 Create Date: 2025-10-07 23:21:36.742990
 
 Adds three critical tables for automated trading system:
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision = '544e5525b0f5'
+revision = '0016'
 down_revision = '0015'
 branch_labels = None
 depends_on = None

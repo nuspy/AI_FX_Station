@@ -1,7 +1,7 @@
 """add_signal_quality_and_new_tables
 
-Revision ID: 94ca081433e4
-Revises: 0014
+Revision ID: 0017
+Revises: 0016
 Create Date: 2025-10-07 16:18:57.887206
 
 Adds signal quality scoring, order flow metrics, correlation matrices,
@@ -16,8 +16,8 @@ from sqlalchemy.dialects import sqlite
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision = '94ca081433e4'
-down_revision = '544e5525b0f5'
+revision = '0017'
+down_revision = '0016'
 branch_labels = None
 depends_on = None
 

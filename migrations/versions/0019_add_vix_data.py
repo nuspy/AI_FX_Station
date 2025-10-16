@@ -1,7 +1,7 @@
 """add vix_data table
 
-Revision ID: 0016
-Revises: f19e2695024b
+Revision ID: 0019
+Revises: 0018
 Create Date: 2025-01-08 23:30:00.000000
 
 """
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '0016'
-down_revision = 'f19e2695024b'  # Depends on E2E optimization tables
+revision = '0019'
+down_revision = '0018'
 branch_labels = None
 depends_on = None
 
