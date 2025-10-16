@@ -891,5 +891,246 @@
       "label": "Vacuum on Startup:",
       "tooltip": "Optimize database on startup. Reclaims space, improves performance. SQLite only. Disable if database very large (slow)."
     }
+  },
+  
+  "chart_advanced": {
+    "tab_name": "Chart",
+    
+    "drawing_tools": {
+      "label": "Drawing Tools:",
+      "tooltip": "Technical drawing tools. Trendlines, Fibonacci, support/resistance, channels. Save drawings across sessions."
+    },
+    
+    "timeframe_sync": {
+      "label": "Multi-Timeframe Sync:",
+      "tooltip": "Sync cursor across timeframe charts. See same moment on 15m, 1h, 4h simultaneously. Multi-timeframe analysis."
+    },
+    
+    "price_alerts": {
+      "label": "Price Alerts:",
+      "tooltip": "Alert when price hits level. Visual + audio + webhook notifications. Set multiple alerts per symbol."
+    },
+    
+    "chart_templates": {
+      "label": "Chart Templates:",
+      "tooltip": "Save/load chart configurations. Indicators, drawings, layout. Apply to any symbol. Quick setup."
+    },
+    
+    "volume_profile_chart": {
+      "label": "Volume Profile on Chart:",
+      "tooltip": "Display volume profile histogram on chart. POC, value area, HVN/LVN visible. Institutional levels."
+    },
+    
+    "order_flow_chart": {
+      "label": "Order Flow on Chart:",
+      "tooltip": "Show order flow imbalance on chart. Bid/ask pressure, delta. Requires Level 2 data."
+    }
+  },
+  
+  "news_calendar": {
+    "tab_name": "News Calendar",
+    
+    "impact_filter": {
+      "label": "Impact Filter:",
+      "tooltip": "Filter events by impact. High/Medium/Low. Focus on market-moving events. DEFAULT: High only."
+    },
+    
+    "currency_filter": {
+      "label": "Currency Filter:",
+      "tooltip": "Filter events by currency. USD, EUR, GBP, etc. Show only relevant to traded pairs."
+    },
+    
+    "auto_disable_trading": {
+      "label": "Auto Disable Trading:",
+      "tooltip": "Stop trading before high-impact news. DEFAULT: 15min before, 30min after. Prevents news volatility."
+    },
+    
+    "news_lookback_hours": {
+      "label": "News Lookback (hours):",
+      "tooltip": "Hours of past events to show. DEFAULT: 24. See what caused recent moves."
+    },
+    
+    "news_lookahead_hours": {
+      "label": "News Lookahead (hours):",
+      "tooltip": "Hours of future events to show. DEFAULT: 48. Plan around upcoming releases."
+    }
+  },
+  
+  "regime_analysis": {
+    "tab_name": "Regime Analysis",
+    
+    "regime_window": {
+      "label": "Regime Detection Window:",
+      "tooltip": "Bars for regime classification. DEFAULT: 50. Trending/ranging/volatile detection. Hurst + volatility based."
+    },
+    
+    "trend_threshold": {
+      "label": "Trend Threshold:",
+      "tooltip": "Hurst threshold for trending. DEFAULT: 0.55. Above = trending, below = ranging. Range: 0.5-0.7."
+    },
+    
+    "volatility_threshold": {
+      "label": "Volatility Threshold:",
+      "tooltip": "ATR percentile for high volatility. DEFAULT: 80th percentile. Above = volatile regime."
+    },
+    
+    "regime_stability": {
+      "label": "Regime Stability (bars):",
+      "tooltip": "Bars required to confirm regime change. DEFAULT: 10. Prevents false regime switches."
+    },
+    
+    "adaptive_strategy": {
+      "label": "Adaptive Strategy:",
+      "tooltip": "Switch strategy by regime. Trend following in trends, mean reversion in ranges. Auto-adaptation."
+    }
+  },
+  
+  "correlation_matrix": {
+    "tab_name": "Correlation Matrix",
+    
+    "correlation_window": {
+      "label": "Correlation Window:",
+      "tooltip": "Bars for correlation calculation. DEFAULT: 30. Shorter = recent correlation. Longer = stable."
+    },
+    
+    "correlation_method": {
+      "label": "Correlation Method:",
+      "tooltip": "Method: pearson, spearman, kendall. DEFAULT: pearson (standard). Spearman for non-linear."
+    },
+    
+    "highlight_threshold": {
+      "label": "Highlight Threshold:",
+      "tooltip": "Highlight correlations above threshold. DEFAULT: 0.7. Red >0.7, yellow 0.5-0.7. Warning levels."
+    },
+    
+    "auto_diversify": {
+      "label": "Auto Diversify:",
+      "tooltip": "Reject correlated positions. If EUR/USD long and GBP/USD correlation >0.7, block second position."
+    }
+  },
+  
+  "training_queue": {
+    "tab_name": "Training Queue",
+    
+    "max_concurrent_jobs": {
+      "label": "Max Concurrent Jobs:",
+      "tooltip": "Training jobs to run simultaneously. DEFAULT: 1. Multi-GPU: 2-4. Limited by GPU memory."
+    },
+    
+    "auto_retry_failed": {
+      "label": "Auto Retry Failed:",
+      "tooltip": "Retry failed trainings. DEFAULT: 3 attempts. Helps with transient errors (OOM, data fetch)."
+    },
+    
+    "priority_queue": {
+      "label": "Priority Queue:",
+      "tooltip": "Enable job priorities. High priority jobs run first. Manual override of FIFO order."
+    },
+    
+    "save_failed_configs": {
+      "label": "Save Failed Configs:",
+      "tooltip": "Save configs of failed jobs. Debug why training failed. Review hyperparameters."
+    }
+  },
+  
+  "training_history": {
+    "tab_name": "Training History",
+    
+    "history_retention_days": {
+      "label": "History Retention (days):",
+      "tooltip": "Days to keep training history. DEFAULT: 90. Old history auto-deleted. Saves database space."
+    },
+    
+    "compare_runs": {
+      "label": "Compare Runs:",
+      "tooltip": "Compare multiple training runs. Side-by-side metrics, hyperparameters, performance. Find best config."
+    },
+    
+    "export_tensorboard": {
+      "label": "Export TensorBoard:",
+      "tooltip": "Export training logs to TensorBoard format. Visualize learning curves, metrics. Advanced analysis."
+    }
+  },
+  
+  "signal_quality": {
+    "tab_name": "Signal Quality",
+    
+    "min_win_rate": {
+      "label": "Min Win Rate (%):",
+      "tooltip": "Minimum win rate for signal. DEFAULT: 52%. Below = disable signal generation. Quality control."
+    },
+    
+    "min_profit_factor": {
+      "label": "Min Profit Factor:",
+      "tooltip": "Minimum profit factor. DEFAULT: 1.2. Gross profit / gross loss. Below 1 = losing strategy."
+    },
+    
+    "min_sharpe_ratio": {
+      "label": "Min Sharpe Ratio:",
+      "tooltip": "Minimum Sharpe ratio. DEFAULT: 0.5. Return/volatility. Below = poor risk-adjusted return."
+    },
+    
+    "track_signal_performance": {
+      "label": "Track Signal Performance:",
+      "tooltip": "Monitor each signal outcome. Win/loss, pips, hold time. Continuous quality monitoring."
+    },
+    
+    "auto_disable_poor_signals": {
+      "label": "Auto Disable Poor Signals:",
+      "tooltip": "Disable underperforming signal types. If win rate <40% for 50 trades, auto-disable. Protection."
+    }
+  },
+  
+  "reports_3d": {
+    "tab_name": "3D Reports",
+    
+    "plot_type": {
+      "label": "Plot Type:",
+      "tooltip": "3D visualization type. Surface, scatter, heatmap. Shows hyperparameter interactions."
+    },
+    
+    "x_parameter": {
+      "label": "X Parameter:",
+      "tooltip": "Parameter for X axis. Example: learning_rate. Choose from trained hyperparameters."
+    },
+    
+    "y_parameter": {
+      "label": "Y Parameter:",
+      "tooltip": "Parameter for Y axis. Example: max_depth. Second hyperparameter dimension."
+    },
+    
+    "z_metric": {
+      "label": "Z Metric:",
+      "tooltip": "Metric for Z axis. Example: accuracy, sharpe_ratio. Performance measure."
+    },
+    
+    "interpolation": {
+      "label": "Interpolation:",
+      "tooltip": "Interpolate between points. Smooth surface, easier to read. DEFAULT: enabled."
+    }
+  },
+  
+  "parameter_adaptation": {
+    "tab_name": "Parameter Adaptation",
+    
+    "enable_adaptation": {
+      "label": "Enable Adaptation:",
+      "tooltip": "Auto-adjust parameters based on performance. Meta-learning. Experimental feature."
+    },
+    
+    "adaptation_frequency": {
+      "label": "Adaptation Frequency:",
+      "tooltip": "How often to adapt. Options: daily, weekly, monthly. DEFAULT: weekly. Retrain with adapted params."
+    },
+    
+    "adaptation_metric": {
+      "label": "Adaptation Metric:",
+      "tooltip": "Metric to optimize during adaptation. DEFAULT: sharpe_ratio. Could be profit_factor, max_drawdown."
+    },
+    
+    "adaptation_method": {
+      "label": "Adaptation Method:",
+      "tooltip": "Method: gradient_based, bayesian, evolutionary. DEFAULT: bayesian. Meta-optimization."
+    }
   }
 }
