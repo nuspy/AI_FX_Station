@@ -304,6 +304,36 @@
         "vsa_features": {
           "label": "VSA Features:",
           "tooltip": "VSA - Volume Spread Analysis (Wyckoff Method)\n\n1) WHAT IT IS:\nEffort (volume) vs Result (spread) analysis. Detects smart money.\nSHORT: Use with caution on Forex. BEST: Stocks/Futures.\n\n2) HOW/WHEN: Enable for stocks/futures. Disable for Forex (tick volume unreliable).\n\n3) WHY: Detect accumulation, distribution, exhaustion. Classic Wyckoff (1930s).\n\n4) EFFECTS: Disabled = misses smart money. Enabled = +1-2% (if true volume).\n\n5) DEFAULT: DISABLED (Forex unreliable). Stocks/Futures: ENABLE.\n\n6) Patterns: climax_volume, no_demand, no_supply, stopping_volume. Features: effort_result_divergence, vsa_pattern. Forex: tick volume makes VSA less reliable."
+        },
+        
+        "market_microstructure": {
+          "label": "Market Microstructure:",
+          "tooltip": "Market Microstructure Features\n\n1) WHAT IT IS: Order flow, bid-ask spread, tick data analysis. Institutional trading signals.\n\n2) HOW/WHEN: Enable for tick data, HFT strategies. Disable for longer timeframes.\n\n3) WHY: Detects institutional activity, order flow imbalance, market depth changes.\n\n4) EFFECTS: Disabled = misses order flow. Enabled = +0.5-2% (tick data only).\n\n5) DEFAULT: DISABLED (requires tick data). Enable only if have order book data.\n\n6) Features: bid_ask_spread, order_imbalance, depth_imbalance, tick_rule. Best for: Stocks/Futures with Level 2 data."
+        },
+        
+        "correlation_features": {
+          "label": "Correlation Features:",
+          "tooltip": "Cross-Asset Correlation Features\n\n1) WHAT IT IS: Correlation with other instruments (EUR/USD vs GBP/USD, SPX, VIX, etc).\n\n2) HOW/WHEN: Enable for multi-asset strategies. Disable for single-pair focus.\n\n3) WHY: Captures cross-market relationships. EUR/USD correlates with GBP/USD (+80%).\n\n4) EFFECTS: Disabled = ignores correlations. Enabled = +0.5-1.5% (if correlations stable).\n\n5) DEFAULT: DISABLED (requires multiple symbols). Enable for portfolio strategies.\n\n6) Features: rolling_correlation_30, correlation_change, divergence_signals. Works best: Major forex pairs, indices."
+        },
+        
+        "calendar_features": {
+          "label": "Calendar Features:",
+          "tooltip": "Calendar & Seasonal Features\n\n1) WHAT IT IS: Day of week, month, quarter, holidays, seasonality patterns.\n\n2) HOW/WHEN: Enable for intraday/daily data. Disable for very short timeframes (<5m).\n\n3) WHY: Seasonality exists (Monday different from Friday, January different from July).\n\n4) EFFECTS: Disabled = ignores seasonality. Enabled = +0.3-1% (intraday strategies).\n\n5) DEFAULT: ENABLED (for 15m+ timeframes). Disable for 1m-5m.\n\n6) Features: day_of_week, is_monday_friday, month, is_end_of_month, is_holiday. Best for: Day/swing trading."
+        },
+        
+        "statistical_arbitrage": {
+          "label": "Statistical Arbitrage Features:",
+          "tooltip": "Statistical Arbitrage Features\n\n1) WHAT IT IS: Z-score, mean reversion signals, cointegration, spread trading.\n\n2) HOW/WHEN: Enable for mean reversion strategies. Disable for trend following.\n\n3) WHY: Captures deviation from mean, reversion signals, statistical edges.\n\n4) EFFECTS: Disabled = no mean reversion signals. Enabled = +0.5-2% (mean-reverting markets).\n\n5) DEFAULT: DISABLED (specialized). Enable for ranging markets, pairs trading.\n\n6) Features: z_score, deviation_from_mean, half_life, cointegration_residual. Best for: Range-bound markets, forex majors."
+        },
+        
+        "regime_detection": {
+          "label": "Market Regime Detection:",
+          "tooltip": "Market Regime Detection Features\n\n1) WHAT IT IS: Trending vs ranging vs volatile regimes. Adaptive strategy selection.\n\n2) HOW/WHEN: Enable for adaptive strategies. Disable for single-regime strategies.\n\n3) WHY: Different regimes need different strategies (trend follow in trends, mean revert in ranges).\n\n4) EFFECTS: Disabled = same strategy always. Enabled = +1-3% (adaptive strategies).\n\n5) DEFAULT: ENABLED (RECOMMENDED). Helps model adapt to market conditions.\n\n6) Features: is_trending, is_ranging, volatility_regime, hurst_regime. Regimes: trend/range/volatile/calm. Model learns which strategy when."
+        },
+        
+        "order_flow": {
+          "label": "Order Flow Features:",
+          "tooltip": "Order Flow Imbalance Features\n\n1) WHAT IT IS: Buy vs sell pressure, volume delta, aggressive buying/selling.\n\n2) HOW/WHEN: Enable if have tick data with buy/sell classification. Disable otherwise.\n\n3) WHY: Order flow predicts short-term direction. Aggressive buying → price up.\n\n4) EFFECTS: Disabled = ignores order flow. Enabled = +0.5-1.5% (if tick data available).\n\n5) DEFAULT: DISABLED (requires tick data). Enable only with Level 2 / tick data.\n\n6) Features: volume_delta, buy_sell_ratio, aggressive_buy_pct, order_flow_imbalance. Best for: Futures with tick data."
         }
       },
       
