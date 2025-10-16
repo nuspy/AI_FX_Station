@@ -569,6 +569,11 @@ class CTraderProvider(BaseProvider):
                         elif payload_type == 2131:
                             decoded_message = Messages.ProtoOASpotEvent()
                             decoded_message.ParseFromString(message.payload)
+                        
+                        # Type 51 = ProtoOASpotEvent (alternative encoding)
+                        elif payload_type == 51:
+                            decoded_message = Messages.ProtoOASpotEvent()
+                            decoded_message.ParseFromString(message.payload)
 
                         # Type 2128 = ProtoOATrailingSLChangedEvent (trailing stop loss changed)
                         elif payload_type == 2128:
