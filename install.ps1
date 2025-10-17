@@ -147,6 +147,31 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  The installation may still work, but some features might be missing" -ForegroundColor Yellow
 }
 
+# Step 8: Download Hugging Face models for LDM4TS
+Write-Host "`n[8/8] Downloading Hugging Face models for LDM4TS..." -ForegroundColor Yellow
+& .\venv\Scripts\python.exe -c @"
+from diffusers import AutoencoderKL
+from transformers import CLIPTokenizer, CLIPTextModel
+import os
+
+print('  Downloading Stable Diffusion VAE...')
+vae = AutoencoderKL.from_pretrained('stabilityai/sd-vae-ft-mse')
+print('  VAE downloaded')
+
+print('  Downloading CLIP models...')
+tok = CLIPTokenizer.from_pretrained('openai/clip-vit-base-patch32')
+model = CLIPTextModel.from_pretrained('openai/clip-vit-base-patch32')
+print('  CLIP models downloaded')
+print('  All models ready')
+"@
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  Hugging Face models downloaded successfully!" -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: Model download failed" -ForegroundColor Yellow
+    Write-Host "  LDM4TS features may not work until models are downloaded" -ForegroundColor Yellow
+}
+
 # Summary
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "  Installation Complete!" -ForegroundColor Green
