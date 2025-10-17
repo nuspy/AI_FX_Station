@@ -182,13 +182,41 @@ def fetch_candles_from_db_recent(
 
         # Fetch with limit parameter if supported, otherwise fetch and slice
         logger.debug(f"Fetching recent {n_bars} bars for {symbol} {timeframe}...")
-        df = ms.get_candles(symbol, timeframe, days_history=90)  # Fallback
-
-        if df is None or df.empty:
+        
+        # Query DB directly
+        from sqlalchemy import select
+        from ..data.schema import MarketDataCandle
+        from sqlalchemy.orm import Session
+        
+        with Session(ms.engine) as session:
+            query = (
+                select(MarketDataCandle)
+                .where(
+                    MarketDataCandle.symbol == symbol,
+                    MarketDataCandle.timeframe == timeframe
+                )
+                .order_by(MarketDataCandle.timestamp_ms.desc())
+                .limit(n_bars)
+            )
+            candles = session.execute(query).scalars().all()
+        
+        if not candles:
             raise RuntimeError(f"No data for {symbol} {timeframe}")
-
-        # Return only last n_bars
-        df_recent = df.tail(n_bars).copy()
+        
+        # Convert to DataFrame
+        import pandas as pd
+        df_recent = pd.DataFrame([
+            {
+                'timestamp': pd.to_datetime(c.timestamp_ms, unit='ms', utc=True),
+                'open': c.open,
+                'high': c.high,
+                'low': c.low,
+                'close': c.close,
+                'volume': c.volume
+            }
+            for c in reversed(candles)
+        ])
+        df_recent = df_recent.set_index('timestamp')
 
         logger.debug(f"✓ Loaded {len(df_recent)} recent candles for {symbol} {timeframe}")
 
