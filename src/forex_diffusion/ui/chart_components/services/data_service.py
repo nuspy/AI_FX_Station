@@ -14,6 +14,51 @@ from .base import ChartServiceBase
 class DataService(ChartServiceBase):
     """Auto-generated service extracted from ChartTab."""
     
+    def _persist_realtime_candle(self, symbol: str, timeframe: str, ts_utc: int, price: float, bid: float = None, ask: float = None):
+        """
+        Persist real-time candle to database (UPSERT pattern).
+        
+        Critical for data continuity - without this, real-time data is lost on restart
+        and creates gaps that backfill cannot fill.
+        """
+        if timeframe == 'tick':
+            # Don't persist individual ticks (too many)
+            return
+        
+        try:
+            controller = getattr(self._main_window, "controller", None)
+            eng = getattr(getattr(controller, "market_service", None), "engine", None) if controller else None
+            if eng is None:
+                return
+            
+            # Get OHLC from last candle in buffer
+            if self._last_df is not None and not self._last_df.empty:
+                last_row = self._last_df.iloc[-1]
+                if int(last_row["ts_utc"]) == int(ts_utc):
+                    # UPSERT: insert or update the candle
+                    from sqlalchemy import text
+                    with eng.begin() as conn:
+                        # Try insert first, on conflict update
+                        query = text("""
+                            INSERT INTO market_data_candles (symbol, timeframe, ts_utc, open, high, low, close, volume)
+                            VALUES (:symbol, :timeframe, :ts_utc, :open, :high, :low, :close, :volume)
+                            ON CONFLICT(symbol, timeframe, ts_utc) 
+                            DO UPDATE SET high=:high, low=:low, close=:close, volume=:volume
+                        """)
+                        conn.execute(query, {
+                            "symbol": symbol,
+                            "timeframe": timeframe,
+                            "ts_utc": int(ts_utc),
+                            "open": float(last_row["open"]),
+                            "high": float(last_row["high"]),
+                            "low": float(last_row["low"]),
+                            "close": float(last_row["close"]),
+                            "volume": float(last_row.get("volume", 0))
+                        })
+                        logger.debug(f"Persisted {timeframe} candle for {symbol} at {ts_utc}")
+        except Exception as e:
+            logger.error(f"Failed to persist candle: {e}")
+    
     def _load_1m_fallback_for_ticks(self, symbol: str):
         """Load 1m candles when timeframe='tick' but no ticks available.
         
@@ -182,6 +227,13 @@ class DataService(ChartServiceBase):
                     
                     # mark dirty for throttled redraw
                     self._rt_dirty = True
+                    
+                    # CRITICAL: Persist real-time candles to DB
+                    # Save the last candle to database (upsert pattern)
+                    try:
+                        self._persist_realtime_candle(symbol, current_tf, candle_ts, y, bid_val, ask_val)
+                    except Exception as persist_err:
+                        logger.error(f"Failed to persist real-time candle: {persist_err}")
 
                 except Exception as e:
                     logger.error(f"Failed to update chart buffer: {e}")
