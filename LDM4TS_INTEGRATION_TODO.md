@@ -4,12 +4,13 @@
 
 ---
 
-## ✅ COMPLETATO (Phase 1-3)
+## ✅ COMPLETATO (Phase 1-5)
 
 ### **1. Dependencies & Database**
 - [x] pyproject.toml: Added diffusers, transformers, accelerate, safetensors
 - [x] Alembic migration 0020: ldm4ts_predictions, ldm4ts_model_metadata, ldm4ts_inference_metrics
 - [x] trading_engine_configs: Added LDM4TS columns
+- [x] Migration executed: `alembic upgrade head` ✅
 
 ### **2. Model Core**
 - [x] vision_transforms.py: SEG, GAF, RP encoding
@@ -26,21 +27,30 @@
 ### **4. Signal Fusion**
 - [x] signal_quality_scorer.py: Added SignalSource.LDM4TS_FORECAST
 - [x] unified_signal_fusion.py: _collect_ldm4ts_signals() method
+- [x] unified_signal_fusion.py: fuse_signals() LDM4TS integration ✅ NEW
 - [x] Uncertainty-based signal creation
 
-### **5. Trading Engine (Partial)**
+### **5. Trading Engine (COMPLETE)** ✅ NEW
 - [x] TradingConfig: Added LDM4TS settings (disabilitabile)
 - [x] AutomatedTradingEngine.__init__: LDM4TS service initialization
+- [x] _process_signals_for_symbol(): OHLCV fetching ✅ NEW
+- [x] _calculate_position_size_with_uncertainty() method ✅ NEW
+- [x] Signal fusion call with ldm4ts_ohlcv ✅ NEW
 
 ---
 
-## 🚧 DA COMPLETARE (Phase 4-5)
+## 🚧 DA COMPLETARE (Phase 6-8)
 
-### **6. Trading Engine - Signal Collection**
+### **STATUS UPDATE**: Trading Engine Integration COMPLETE ✅
 
-**File**: `src/forex_diffusion/trading/automated_trading_engine.py`
+~~**6. Trading Engine - Signal Collection**~~ ✅ DONE (commit: e442722)
+~~**7. Trading Engine - Position Sizing**~~ ✅ DONE (commit: e442722)
 
-**Metodo**: `_process_signals_for_symbol(symbol, market_data)`
+**Remaining Work:**
+
+### **8. Backtesting Integration**
+
+**File**: `src/forex_diffusion/backtest/engine.py` (or similar)
 
 **Modifiche necessarie**:
 
