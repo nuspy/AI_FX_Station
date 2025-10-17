@@ -89,13 +89,21 @@ class InteractionService(ChartServiceBase):
             from PySide6.QtCore import Qt
             alt_pressed = False
             shift_pressed = False
+            ctrl_pressed = False
             if modifiers is not None:
                 try:
                     alt_pressed = bool(modifiers & Qt.AltModifier)
                     shift_pressed = bool(modifiers & Qt.ShiftModifier)
+                    ctrl_pressed = bool(modifiers & Qt.ControlModifier)
                 except Exception:
                     alt_pressed = False
                     shift_pressed = False
+                    ctrl_pressed = False
+
+            # Ctrl+Click: LDM4TS forecast from clicked point
+            if ctrl_pressed and event.xdata is not None:
+                self._handle_ldm4ts_contextual_forecast(event.xdata, event.ydata)
+                return
 
             if not alt_pressed:
                 return  # only interested in Alt+click combos
@@ -437,3 +445,47 @@ class InteractionService(ChartServiceBase):
             self.toolbar.zoom()
         except Exception:
             pass
+    
+    def _handle_ldm4ts_contextual_forecast(self, xdata: float, ydata: Optional[float]):
+        """
+        Handle Ctrl+Click for LDM4TS contextual forecast.
+        Launches LDM4TS forecast starting from the clicked timestamp.
+        """
+        try:
+            from forex_diffusion.ui.unified_prediction_settings_dialog import UnifiedPredictionSettingsDialog
+            settings = UnifiedPredictionSettingsDialog.get_settings_from_file()
+            
+            # Check if LDM4TS is enabled
+            if not settings.get("ldm4ts_enabled", False):
+                QMessageBox.warning(
+                    self.view,
+                    "LDM4TS Not Enabled",
+                    "Please enable LDM4TS in Prediction Settings (Generative Forecast tab)."
+                )
+                return
+            
+            # Convert xdata (matplotlib coordinate) to timestamp
+            from matplotlib.dates import num2date
+            import pytz
+            clicked_time = num2date(xdata).replace(tzinfo=pytz.UTC)
+            
+            logger.info(f"Ctrl+Click LDM4TS forecast from {clicked_time}")
+            
+            # Create payload with contextual start time
+            payload = {
+                "symbol": self.symbol,
+                "timeframe": self.timeframe,
+                "forecast_type": "ldm4ts",
+                "contextual_start_time": clicked_time.isoformat(),  # Store clicked timestamp
+                **settings
+            }
+            
+            # Emit forecast request through forecast service
+            if hasattr(self.view, 'forecast_service'):
+                self.view.forecast_service.forecastRequested.emit(payload)
+                logger.info(f"✅ Contextual LDM4TS forecast requested from {clicked_time}")
+            else:
+                logger.error("forecast_service not available on view")
+                
+        except Exception as e:
+            logger.exception(f"Failed to handle Ctrl+Click LDM4TS forecast: {e}")

@@ -137,17 +137,42 @@ class ForecastWorker(QRunnable):
             from sqlalchemy import text
             import pandas as pd
             
+            # Check if contextual start time is provided (Ctrl+Click)
+            contextual_start = self.payload.get('contextual_start_time')
+            
             with self.market_service.engine.connect() as conn:
-                query = text("""
-                    SELECT ts_utc, open, high, low, close, volume
-                    FROM market_data_candles
-                    WHERE symbol = :symbol AND timeframe = :timeframe
-                    ORDER BY ts_utc DESC
-                    LIMIT :window_size
-                """)
-                rows = conn.execute(query, {
-                    "symbol": symbol,
-                    "timeframe": timeframe,
+                if contextual_start:
+                    # Contextual forecast: fetch data UP TO clicked timestamp
+                    from dateutil.parser import parse
+                    start_ts_ms = int(parse(contextual_start).timestamp() * 1000)
+                    
+                    query = text("""
+                        SELECT ts_utc, open, high, low, close, volume
+                        FROM market_data_candles
+                        WHERE symbol = :symbol AND timeframe = :timeframe
+                              AND ts_utc <= :start_ts
+                        ORDER BY ts_utc DESC
+                        LIMIT :window_size
+                    """)
+                    rows = conn.execute(query, {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "start_ts": start_ts_ms,
+                        "window_size": window_size
+                    }).fetchall()
+                    logger.info(f"Contextual LDM4TS: fetching {window_size} bars up to {contextual_start}")
+                else:
+                    # Normal forecast: fetch most recent data
+                    query = text("""
+                        SELECT ts_utc, open, high, low, close, volume
+                        FROM market_data_candles
+                        WHERE symbol = :symbol AND timeframe = :timeframe
+                        ORDER BY ts_utc DESC
+                        LIMIT :window_size
+                    """)
+                    rows = conn.execute(query, {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
                     "window_size": window_size
                 }).fetchall()
             
