@@ -1,7 +1,7 @@
 """
 Parameter Space Definition for E2E Optimization
 
-Defines all 90+ optimizable parameters across 7 component groups:
+Defines all 100+ optimizable parameters across 8 component groups:
 1. SSSD (10 params)
 2. Riskfolio (8 params)
 3. Pattern Parameters (20 params)
@@ -9,6 +9,7 @@ Defines all 90+ optimizable parameters across 7 component groups:
 5. Risk Management (12 params)
 6. Position Sizing (10 params)
 7. Market Filters (15 params: VIX, Sentiment, Volume)
+8. LDM4TS (10 params: NEW - Vision-enhanced forecasting)
 """
 from __future__ import annotations
 
@@ -32,9 +33,9 @@ class ParameterDef:
 
 class ParameterSpace:
     """
-    Complete parameter space for E2E optimization (90+ parameters).
+    Complete parameter space for E2E optimization (100+ parameters).
     
-    All parameters are organized into 7 groups with proper bounds,
+    All parameters are organized into 8 groups with proper bounds,
     defaults, and constraints.
     """
     
@@ -43,7 +44,7 @@ class ParameterSpace:
         self._define_parameters()
     
     def _define_parameters(self):
-        """Define all 90+ parameters"""
+        """Define all 100+ parameters"""
         
         # ========== GROUP 1: SSSD (10 parameters) ==========
         self._add_param('sssd_diffusion_steps', 'sssd', 'int', (10, 100), 50,
@@ -250,6 +251,28 @@ class ParameterSpace:
                        'Volume spike threshold vs average')
         self._add_param('filter_volume_min_liquidity_pct', 'filters', 'float', (0.5, 0.9), 0.7,
                        'Minimum liquidity for trade execution')
+        
+        # ========== GROUP 8: LDM4TS (10 parameters) ==========
+        self._add_param('ldm4ts_enabled', 'ldm4ts', 'bool', [True, False], False,
+                       'Enable LDM4TS latent diffusion forecasting')
+        self._add_param('ldm4ts_uncertainty_threshold', 'ldm4ts', 'float', (0.3, 0.7), 0.5,
+                       'Maximum uncertainty % for signal acceptance')
+        self._add_param('ldm4ts_min_strength', 'ldm4ts', 'float', (0.2, 0.5), 0.3,
+                       'Minimum signal strength for execution')
+        self._add_param('ldm4ts_position_scaling', 'ldm4ts', 'bool', [True, False], True,
+                       'Scale position size by uncertainty')
+        self._add_param('ldm4ts_num_samples', 'ldm4ts', 'int', (30, 100), 50,
+                       'Monte Carlo samples for uncertainty quantification')
+        self._add_param('ldm4ts_horizon_15m_weight', 'ldm4ts', 'float', (0.0, 1.0), 0.3,
+                       'Weight for 15-minute horizon predictions')
+        self._add_param('ldm4ts_horizon_1h_weight', 'ldm4ts', 'float', (0.0, 1.0), 0.5,
+                       'Weight for 1-hour horizon predictions')
+        self._add_param('ldm4ts_horizon_4h_weight', 'ldm4ts', 'float', (0.0, 1.0), 0.2,
+                       'Weight for 4-hour horizon predictions')
+        self._add_param('ldm4ts_quality_threshold', 'ldm4ts', 'float', (0.5, 0.9), 0.65,
+                       'Minimum composite quality score')
+        self._add_param('ldm4ts_directional_confidence', 'ldm4ts', 'float', (0.5, 0.9), 0.6,
+                       'Minimum confidence for directional signals')
     
     def _add_param(self, name: str, group: str, type: str, bounds: Tuple | List,
                    default: Any, description: str, log_scale: bool = False):
