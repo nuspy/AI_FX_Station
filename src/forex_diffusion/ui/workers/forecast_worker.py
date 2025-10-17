@@ -191,9 +191,25 @@ class ForecastWorker(QRunnable):
         try:
             self.signals.status.emit("Forecast: running inference...")
             
-            # Check if LDM4TS is enabled
-            if self._check_ldm4ts_enabled():
-                logger.info("LDM4TS enabled - running vision-enhanced forecast")
+            # Check forecast type from payload
+            forecast_type = self.payload.get("forecast_type", "diffusion")
+            
+            if forecast_type == "ldm4ts":
+                # LDM4TS forecast explicitly requested
+                logger.info("LDM4TS forecast requested explicitly")
+                quantiles = self._run_ldm4ts_inference()
+                
+                if quantiles:
+                    # Emit LDM4TS results
+                    self.signals.forecastReady.emit(pd.DataFrame(), quantiles)
+                    self.signals.status.emit("LDM4TS forecast completed")
+                    return
+                else:
+                    raise RuntimeError("LDM4TS inference failed")
+            
+            # Check if LDM4TS is enabled via settings (old behavior for compatibility)
+            elif self._check_ldm4ts_enabled():
+                logger.info("LDM4TS enabled via settings - running vision-enhanced forecast")
                 quantiles = self._run_ldm4ts_inference()
                 
                 if quantiles:
@@ -204,7 +220,7 @@ class ForecastWorker(QRunnable):
                 else:
                     logger.warning("LDM4TS inference failed, falling back to standard models")
             
-            # Standard models inference
+            # Standard diffusion models inference
             df, quantiles = self._parallel_infer()
             self.signals.status.emit("Forecast: ready")
             self.signals.forecastReady.emit(df, quantiles)

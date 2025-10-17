@@ -106,6 +106,9 @@ class ChartTabController:
 
     def on_advanced_forecast_clicked(self, *args, **kwargs):
         return self.forecast_service._on_advanced_forecast_clicked(*args, **kwargs)
+    
+    def on_ldm4ts_forecast_clicked(self, *args, **kwargs):
+        return self.forecast_service._on_ldm4ts_forecast_clicked(*args, **kwargs)
 
     def on_forecast_ready(self, *args, **kwargs):
         return self.forecast_service.on_forecast_ready(*args, **kwargs)

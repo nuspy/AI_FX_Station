@@ -646,6 +646,41 @@ class ForecastService(ChartServiceBase):
         except Exception:
             pass
         self.forecastRequested.emit(payload)
+    
+    def _on_ldm4ts_forecast_clicked(self):
+        """Handle LDM4TS forecast button click."""
+        from forex_diffusion.ui.unified_prediction_settings_dialog import UnifiedPredictionSettingsDialog
+        settings = UnifiedPredictionSettingsDialog.get_settings_from_file()
+        
+        # Check if LDM4TS is enabled
+        if not settings.get("ldm4ts_enabled", False):
+            QMessageBox.warning(
+                self.view, 
+                "LDM4TS Not Enabled", 
+                "Please enable LDM4TS in Prediction Settings (Generative Forecast tab)."
+            )
+            return
+        
+        # Check if checkpoint exists
+        checkpoint_path = settings.get("ldm4ts_checkpoint_path", "")
+        if not checkpoint_path or not Path(checkpoint_path).exists():
+            QMessageBox.warning(
+                self.view,
+                "LDM4TS Checkpoint Missing",
+                "Please configure LDM4TS checkpoint path in Prediction Settings."
+            )
+            return
+        
+        # Create payload for LDM4TS forecast
+        payload = {
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "forecast_type": "ldm4ts",  # Tag for worker to identify LDM4TS request
+            **settings
+        }
+        
+        logger.info(f"LDM4TS forecast requested for {self.symbol} {self.timeframe}")
+        self.forecastRequested.emit(payload)
 
     def on_forecast_ready(self, df: pd.DataFrame, quantiles: dict):
         """

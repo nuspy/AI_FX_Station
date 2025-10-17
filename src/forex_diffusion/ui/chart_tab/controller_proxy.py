@@ -210,6 +210,10 @@ class ControllerProxyMixin:
     def _on_advanced_forecast_clicked(self):
         """Handle advanced forecast button click."""
         return self.chart_controller.on_advanced_forecast_clicked()
+    
+    def _on_ldm4ts_forecast_clicked(self):
+        """Handle LDM4TS forecast button click."""
+        return self.chart_controller.on_ldm4ts_forecast_clicked()
 
     def on_forecast_ready(self, df: pd.DataFrame, quantiles: dict):
         """Handle forecast ready signal."""

@@ -3,12 +3,12 @@
     "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=01-val/EURUSD-1m-best-1.pt"
   ],
   "type_basic": true,
-  "type_advanced": true,
+  "type_advanced": false,
   "type_rw": false,
   "combine_models": true,
   "use_gpu_inference": false,
-  "horizons": "1-90m",
-  "n_samples": 130,
+  "horizons": "1m, 5m, 15m",
+  "n_samples": 100,
   "quantiles": "0.05, 0.50, 0.95",
   "indicators": {
     "atr": {
@@ -102,9 +102,9 @@
       "weight": 100
     }
   },
-  "warmup_bars": 16,
+  "warmup_bars": 50,
   "rv_window": 60,
-  "returns_window": 100,
+  "returns_window": 10,
   "min_coverage": 0.15,
   "override_warmup_bars": true,
   "override_rv_window": true,

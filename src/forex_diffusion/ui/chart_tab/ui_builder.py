@@ -640,11 +640,17 @@ class UIBuilderMixin:
         row1_layout.addWidget(self.build_latents_btn)
 
         # Forecast controls (Settings buttons removed - now in Generative Forecast tab)
-        self.forecast_btn = QPushButton("🔮 Forecast")
+        self.forecast_btn = QPushButton("🔮 Forecast Diffusion Base")
+        self.forecast_btn.setToolTip("Standard diffusion forecast (base parameters)")
         row1_layout.addWidget(self.forecast_btn)
 
-        self.adv_forecast_btn = QPushButton("🔮 Adv Forecast")
+        self.adv_forecast_btn = QPushButton("🔮 Forecast Diffusion Adv")
+        self.adv_forecast_btn.setToolTip("Advanced diffusion forecast (advanced parameters)")
         row1_layout.addWidget(self.adv_forecast_btn)
+        
+        self.ldm4ts_forecast_btn = QPushButton("🔮 Forecast LDM4TS")
+        self.ldm4ts_forecast_btn.setToolTip("Vision-enhanced LDM4TS forecast\nCtrl+Click on chart to forecast from specific point")
+        row1_layout.addWidget(self.ldm4ts_forecast_btn)
 
         self.clear_forecasts_btn = QPushButton("🗑️ Clear")
         row1_layout.addWidget(self.clear_forecasts_btn)
