@@ -765,7 +765,10 @@ class PlotService(ChartServiceBase):
 
             # Plot indicators
             if ENHANCED_INDICATORS_AVAILABLE and enabled_indicator_names:
-                indicators_system = BTALibIndicators()
+                # Initialize with volume support if present
+                available_cols = df2.columns.tolist()
+                indicators_system = BTALibIndicators(available_data=available_cols)
+                logger.debug(f"Initialized indicators with columns: {available_cols}, has_volume={indicators_system.has_volume}")
 
                 # Prepare OHLCV DataFrame
                 # Check if data is in pip format (values > 100 indicate pip format for forex)
@@ -1533,8 +1536,9 @@ class PlotService(ChartServiceBase):
 
             logger.debug(f"Plotting {len(enabled_indicator_names)} enhanced indicators")
 
-            # Initialize BTALibIndicators system
-            indicators_system = BTALibIndicators()
+            # Initialize BTALibIndicators system with volume support
+            available_cols = df2.columns.tolist()
+            indicators_system = BTALibIndicators(available_data=available_cols)
 
             # Prepare OHLCV data for indicator calculation
             close = df2['close'] if 'close' in df2.columns else df2['price']
