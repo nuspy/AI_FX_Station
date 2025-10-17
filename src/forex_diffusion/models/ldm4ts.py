@@ -25,8 +25,14 @@ from .ldm4ts_temporal_fusion import TemporalFusionModule
 try:
     from diffusers import UNet2DConditionModel, DDPMScheduler
     DIFFUSERS_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError) as e:
     DIFFUSERS_AVAILABLE = False
+    UNet2DConditionModel = None
+    DDPMScheduler = None
+    logger.warning(
+        f"diffusers models not available ({type(e).__name__}): LDM4TS will not work. "
+        "This is usually caused by TensorFlow DLL issues on Windows."
+    )
 
 
 class LDM4TSModel(nn.Module):
