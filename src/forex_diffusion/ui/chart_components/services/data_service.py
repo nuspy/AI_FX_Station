@@ -231,7 +231,7 @@ class DataService(ChartServiceBase):
                     # CRITICAL: Persist real-time candles to DB
                     # Save the last candle to database (upsert pattern)
                     try:
-                        self._persist_realtime_candle(symbol, current_tf, candle_ts, y, bid_val, ask_val)
+                        self._persist_realtime_candle(sym, current_tf, candle_ts, y, bid_val, ask_val)
                     except Exception as persist_err:
                         logger.error(f"Failed to persist real-time candle: {persist_err}")
 
