@@ -58,24 +58,20 @@ class LDM4TSVAE(nn.Module):
         self.downsample_factor = downsample_factor
         self.latent_scale_factor = latent_scale_factor
         
-        # Load pre-trained VAE from local cache
-        import os
+        # Load pre-trained VAE from local model files
         from pathlib import Path
         
-        # Try local cache first, fallback to Hugging Face
         project_root = Path(__file__).parent.parent.parent.parent
-        local_cache = project_root / "models" / "huggingface"
+        local_vae = project_root / "models" / "vae"
         
-        logger.info(f"Loading pre-trained VAE: {pretrained_model}")
-        if local_cache.exists():
-            logger.info(f"Using local cache: {local_cache}")
+        if local_vae.exists() and (local_vae / "config.json").exists():
+            logger.info(f"Loading VAE from local: {local_vae}")
             self.vae = AutoencoderKL.from_pretrained(
-                pretrained_model,
-                cache_dir=str(local_cache),
+                str(local_vae),
                 torch_dtype=torch.float32
             )
         else:
-            logger.warning(f"Local cache not found, downloading from Hugging Face")
+            logger.info(f"Downloading VAE from Hugging Face: {pretrained_model}")
             self.vae = AutoencoderKL.from_pretrained(
                 pretrained_model,
                 torch_dtype=torch.float32

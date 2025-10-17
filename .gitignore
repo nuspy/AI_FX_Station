@@ -85,7 +85,8 @@ tmp/
 .cache/
 
 # Hugging Face models (large files - download via install.ps1)
-models/huggingface/
+models/vae/
+models/clip/
 
 # Environment files
 .env
@@ -110,7 +111,8 @@ tmp/
 .cache/
 
 # Hugging Face models (large files - download via install.ps1)
-models/huggingface/
+models/vae/
+models/clip/
 
 # Environment files
 .env

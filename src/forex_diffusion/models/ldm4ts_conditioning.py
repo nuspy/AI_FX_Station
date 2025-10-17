@@ -67,14 +67,14 @@ class TextConditioner(nn.Module):
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError("transformers required")
         
-        # Load from local cache if available
+        # Load from local model files
         from pathlib import Path
         project_root = Path(__file__).parent.parent.parent.parent
-        local_cache = project_root / "models" / "huggingface"
+        local_clip = project_root / "models" / "clip"
         
-        if local_cache.exists():
-            self.tokenizer = CLIPTokenizer.from_pretrained(model_name, cache_dir=str(local_cache))
-            self.text_encoder = CLIPTextModel.from_pretrained(model_name, cache_dir=str(local_cache))
+        if local_clip.exists() and (local_clip / "config.json").exists():
+            self.tokenizer = CLIPTokenizer.from_pretrained(str(local_clip))
+            self.text_encoder = CLIPTextModel.from_pretrained(str(local_clip))
         else:
             self.tokenizer = CLIPTokenizer.from_pretrained(model_name)
             self.text_encoder = CLIPTextModel.from_pretrained(model_name)
