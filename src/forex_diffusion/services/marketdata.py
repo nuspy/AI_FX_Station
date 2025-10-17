@@ -724,7 +724,8 @@ class MarketDataService:
             return []
 
         # MINIMUM GAP SIZE THRESHOLD: Filter out runs smaller than min_gap_size
-        min_gap_size = getattr(self, "min_gap_size", 10)
+        # Reduced from 10 to 3 to fill smaller gaps
+        min_gap_size = getattr(self, "min_gap_size", 3)
         
         # group consecutive expected timestamps into contiguous runs
         runs: List[List[int]] = []
