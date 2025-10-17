@@ -33,16 +33,9 @@ try:
         KDPM2DiscreteScheduler,
     )
     DIFFUSERS_AVAILABLE = True
-except (ImportError, RuntimeError) as e:
+except ImportError:
     DIFFUSERS_AVAILABLE = False
-    DDIMScheduler = None
-    DPMSolverMultistepScheduler = None
-    EulerDiscreteScheduler = None
-    KDPM2DiscreteScheduler = None
-    logger.warning(
-        f"diffusers not available ({type(e).__name__}): falling back to custom scheduler. "
-        "This is usually caused by TensorFlow DLL issues on Windows."
-    )
+    logger.warning("diffusers not available - falling back to custom scheduler")
 
 
 class ImprovedSSSDModel(SSSDModel):

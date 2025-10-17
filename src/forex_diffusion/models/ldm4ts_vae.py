@@ -16,14 +16,9 @@ from loguru import logger
 try:
     from diffusers import AutoencoderKL
     DIFFUSERS_AVAILABLE = True
-except (ImportError, RuntimeError) as e:
+except ImportError:
     DIFFUSERS_AVAILABLE = False
-    AutoencoderKL = None
-    logger.warning(
-        f"diffusers AutoencoderKL not available: {type(e).__name__}. "
-        "This is usually caused by TensorFlow DLL issues on Windows. "
-        "LDM4TS features will be disabled. Install TensorFlow properly or use CPU-only version."
-    )
+    logger.warning("diffusers not installed. Install with: pip install diffusers>=0.25.0")
 
 
 class LDM4TSVAE(nn.Module):
