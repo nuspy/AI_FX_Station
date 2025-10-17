@@ -24,6 +24,7 @@ class SignalSource(Enum):
     CORRELATION = "correlation"
     ENSEMBLE = "ensemble"
     HYBRID = "hybrid"
+    LDM4TS_FORECAST = "ldm4ts_forecast"  # LDM4TS vision-enhanced forecasts
 
 
 @dataclass

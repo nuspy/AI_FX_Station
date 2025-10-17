@@ -191,6 +191,114 @@ class UnifiedSignalFusion:
                         if adaptation.parameter_name == 'quality_threshold' and adaptation.deployed:
                             self.default_quality_threshold = adaptation.new_value
 
+    def _collect_ldm4ts_signals(
+        self,
+        symbol: str,
+        timeframe: str,
+        current_ohlcv: np.ndarray,
+        horizons: List[int] = [15, 60, 240]
+    ) -> List[FusedSignal]:
+        """
+        Collect LDM4TS forecast signals.
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe
+            current_ohlcv: Latest OHLCV data [L, 5]
+            horizons: Forecast horizons in minutes
+            
+        Returns:
+            List of FusedSignals
+        """
+        signals = []
+        
+        try:
+            from ..inference.ldm4ts_inference import LDM4TSInferenceService
+            
+            # Get service instance
+            service = LDM4TSInferenceService.get_instance()
+            
+            if not service._initialized:
+                logger.debug("LDM4TS not initialized, skipping")
+                return signals
+            
+            # Run inference
+            prediction = service.predict(
+                ohlcv=current_ohlcv,
+                horizons=horizons,
+                num_samples=50,
+                symbol=symbol
+            )
+            
+            current_price = float(current_ohlcv[-1, 3])
+            
+            # Create signal for each horizon
+            for horizon in prediction.horizons:
+                mean_pred = prediction.mean[horizon]
+                uncertainty = prediction.std[horizon]
+                uncertainty_pct = uncertainty / current_price
+                
+                # Direction
+                price_change = mean_pred - current_price
+                direction = "bull" if price_change > 0 else ("bear" if price_change < 0 else "neutral")
+                
+                # Strength (Sharpe-like: change / uncertainty)
+                if uncertainty > 0:
+                    strength = min(abs(price_change) / uncertainty, 1.0)
+                else:
+                    strength = 0.5
+                
+                # Price levels
+                entry_price = current_price
+                target_price = mean_pred
+                
+                if direction == "bull":
+                    stop_price = prediction.q05[horizon]
+                elif direction == "bear":
+                    stop_price = prediction.q95[horizon]
+                else:
+                    stop_price = current_price * 0.999  # 0.1% stop
+                
+                signal = FusedSignal(
+                    signal_id=f"ldm4ts_{symbol}_{timeframe}_{horizon}m_{int(time.time())}",
+                    source=SignalSource.LDM4TS_FORECAST,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=direction,
+                    strength=strength,
+                    quality_score=None,  # Filled later
+                    regime=self.current_regime,
+                    regime_confidence=self.current_regime_confidence,
+                    entry_price=entry_price,
+                    target_price=target_price,
+                    stop_price=stop_price,
+                    timestamp=int(prediction.timestamp.timestamp() * 1000),
+                    valid_until=int((prediction.timestamp + pd.Timedelta(minutes=horizon)).timestamp() * 1000),
+                    metadata={
+                        "horizon_minutes": horizon,
+                        "mean_pred": mean_pred,
+                        "uncertainty": uncertainty,
+                        "uncertainty_pct": uncertainty_pct,
+                        "q05": prediction.q05[horizon],
+                        "q50": prediction.q50[horizon],
+                        "q95": prediction.q95[horizon],
+                        "price_change": price_change,
+                        "price_change_pct": price_change / current_price,
+                        "model_name": "LDM4TS",
+                        "inference_time_ms": prediction.inference_time_ms,
+                        "num_samples": prediction.num_samples
+                    }
+                )
+                
+                signals.append(signal)
+            
+            logger.debug(f"Generated {len(signals)} LDM4TS signals for {symbol}")
+            
+        except Exception as e:
+            logger.error(f"LDM4TS signal collection failed: {e}")
+        
+        return signals
+
     def fuse_signals(
         self,
         pattern_signals: Optional[List[Any]] = None,
@@ -198,6 +306,7 @@ class UnifiedSignalFusion:
         orderflow_signals: Optional[List[OrderFlowSignal]] = None,
         correlation_signals: Optional[List[CorrelationSignal]] = None,
         event_signals: Optional[List[EventSignal]] = None,
+        ldm4ts_ohlcv: Optional[np.ndarray] = None,  # NEW: OHLCV for LDM4TS
         market_data: Optional[pd.DataFrame] = None,
         sentiment_score: Optional[float] = None
     ) -> List[FusedSignal]:

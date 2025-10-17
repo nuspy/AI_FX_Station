@@ -128,8 +128,13 @@ dependencies = [
   "wandb>=0.15.0,<1.0",            # Weights & Biases experiment tracking
   "tensorboard>=2.14.0,<3.0",      # TensorBoard logging
 
+  # LDM4TS (Vision-Enhanced Latent Diffusion for Time Series) - Phase 3
+  "diffusers>=0.25.0,<1.0",        # Hugging Face diffusion models (Stable Diffusion VAE)
+  "accelerate>=0.25.0,<1.0",       # Efficient inference & training
+  "safetensors>=0.4.0,<1.0",       # Fast & safe model serialization
+
   # Enhanced Trading System Dependencies (New Trading Specs)
-  "transformers>=4.30.0,<5.0",     # Transformer models for sequence prediction
+  "transformers>=4.30.0,<5.0",     # Transformer models for sequence prediction (also for LDM4TS CLIP)
   "tokenizers>=0.13.0,<1.0",       # Fast tokenization for transformers
   "sentencepiece>=0.2.0,<1.0",     # Tokenizer (>=0.2.0 has pre-built wheels for Windows)
   "statsmodels>=0.14.0,<1.0",      # Statistical models and tests (cointegration, etc.)
