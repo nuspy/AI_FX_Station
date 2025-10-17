@@ -16,6 +16,9 @@ from pathlib import Path
 # Configure transformers to use PyTorch instead of TensorFlow
 os.environ['USE_TF'] = '0'
 os.environ['USE_TORCH'] = '1'
+
+# Disable sageattention (not used, avoid import overhead)
+os.environ['DISABLE_SAGE_ATTENTION'] = '1'
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QStatusBar, QSizePolicy
 from loguru import logger
 
