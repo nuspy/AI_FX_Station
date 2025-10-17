@@ -110,9 +110,10 @@ class ImprovedSSSDModel(SSSDModel):
         
         if scheduler_type == "dpmpp":
             # DPM-Solver++ (BEST: fast + high quality)
+            # NOTE: DPMSolver doesn't support "cosine" beta_schedule, use "scaled_linear"
             scheduler = DPMSolverMultistepScheduler(
                 num_train_timesteps=num_train_timesteps,
-                beta_schedule="cosine",
+                beta_schedule="scaled_linear",  # DPMSolver compatible
                 prediction_type="v_prediction",  # Match SSSD
                 solver_order=2,  # 2nd order = faster convergence
                 algorithm_type="dpmsolver++",
@@ -124,7 +125,7 @@ class ImprovedSSSDModel(SSSDModel):
             # DDIM (deterministic, good for reproducibility)
             scheduler = DDIMScheduler(
                 num_train_timesteps=num_train_timesteps,
-                beta_schedule="cosine",
+                beta_schedule="scaled_linear",  # More compatible
                 prediction_type="v_prediction",
                 clip_sample=False,
                 set_alpha_to_one=False
@@ -134,7 +135,7 @@ class ImprovedSSSDModel(SSSDModel):
             # Euler (simple and fast)
             scheduler = EulerDiscreteScheduler(
                 num_train_timesteps=num_train_timesteps,
-                beta_schedule="cosine",
+                beta_schedule="scaled_linear",  # More compatible
                 prediction_type="v_prediction"
             )
         
@@ -142,7 +143,7 @@ class ImprovedSSSDModel(SSSDModel):
             # Karras-optimized DPM (high quality)
             scheduler = KDPM2DiscreteScheduler(
                 num_train_timesteps=num_train_timesteps,
-                beta_schedule="cosine",
+                beta_schedule="scaled_linear",  # More compatible
                 prediction_type="v_prediction"
             )
         
