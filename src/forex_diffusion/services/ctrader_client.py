@@ -161,8 +161,19 @@ class CTraderClient:
 
         try:
             # Convert dates to timestamps (milliseconds)
+            # IMPORTANT: For intraday data, if end_date is today, use current time instead of midnight
             start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end_dt_parsed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            
+            # If end_date is today, use current UTC time to get intraday data
+            now_utc = datetime.now(tz=timezone.utc)
+            if end_dt_parsed.date() == now_utc.date():
+                end_dt = now_utc
+                logger.debug(f"End date is today, using current time: {end_dt}")
+            else:
+                # For historical dates, use end of day (23:59:59)
+                end_dt = end_dt_parsed.replace(hour=23, minute=59, second=59)
+                logger.debug(f"Historical data, using end of day: {end_dt}")
 
             start_ms = int(start_dt.timestamp() * 1000)
             end_ms = int(end_dt.timestamp() * 1000)
