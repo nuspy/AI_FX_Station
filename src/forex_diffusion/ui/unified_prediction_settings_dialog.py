@@ -641,6 +641,15 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         # Connect enable checkbox to update status
         self.ldm4ts_enabled_cb.toggled.connect(self._update_ldm4ts_status)
+        
+        # Connect all LDM4TS widgets to auto-save
+        self.ldm4ts_enabled_cb.toggled.connect(self._auto_save_ldm4ts_settings)
+        self.ldm4ts_checkpoint_edit.textChanged.connect(self._auto_save_ldm4ts_settings)
+        self.ldm4ts_horizons_edit.textChanged.connect(self._auto_save_ldm4ts_settings)
+        self.ldm4ts_num_samples_spinbox.valueChanged.connect(self._auto_save_ldm4ts_settings)
+        self.ldm4ts_window_size_spinbox.valueChanged.connect(self._auto_save_ldm4ts_settings)
+        self.ldm4ts_uncertainty_threshold_spinbox.valueChanged.connect(self._auto_save_ldm4ts_settings)
+        self.ldm4ts_min_strength_spinbox.valueChanged.connect(self._auto_save_ldm4ts_settings)
 
         layout.addStretch()
 
@@ -652,17 +661,56 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
     def _browse_ldm4ts_checkpoint(self):
         """Browse for LDM4TS checkpoint file"""
+        # Base directory: parent of src (D:\Projects\ForexGPT)
+        base_dir = Path(__file__).resolve().parents[3]
+        
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select LDM4TS Checkpoint",
-            str(Path.home()),
+            str(base_dir),
             "PyTorch Models (*.pt *.pth);;All Files (*.*)"
         )
         
         if file_path:
             self.ldm4ts_checkpoint_edit.setText(file_path)
             logger.info(f"Selected LDM4TS checkpoint: {file_path}")
+            # Auto-save settings
+            self._auto_save_ldm4ts_settings()
 
+    def _auto_save_ldm4ts_settings(self):
+        """Auto-save LDM4TS settings (inter and intra-session persistence)"""
+        try:
+            # Get current LDM4TS settings
+            ldm4ts_settings = {
+                'ldm4ts_enabled': self.ldm4ts_enabled_cb.isChecked(),
+                'ldm4ts_checkpoint_path': self.ldm4ts_checkpoint_edit.text().strip(),
+                'ldm4ts_horizons': self.ldm4ts_horizons_edit.text().strip(),
+                'ldm4ts_num_samples': self.ldm4ts_num_samples_spinbox.value(),
+                'ldm4ts_window_size': self.ldm4ts_window_size_spinbox.value(),
+                'ldm4ts_uncertainty_threshold': self.ldm4ts_uncertainty_threshold_spinbox.value(),
+                'ldm4ts_min_strength': self.ldm4ts_min_strength_spinbox.value(),
+            }
+            
+            # Load existing settings
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+            else:
+                settings = {}
+            
+            # Update LDM4TS settings
+            settings.update(ldm4ts_settings)
+            
+            # Save back
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2)
+            
+            logger.debug("LDM4TS settings auto-saved")
+            
+        except Exception as e:
+            logger.exception(f"Failed to auto-save LDM4TS settings: {e}")
+    
     def _update_ldm4ts_status(self):
         """Update LDM4TS status label"""
         if self.ldm4ts_enabled_cb.isChecked():
