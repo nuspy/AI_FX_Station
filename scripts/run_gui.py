@@ -6,11 +6,16 @@ Standalone runner for the MagicForex GUI.
 """
 from __future__ import annotations
 
+import os
 import sys
 import argparse
 import subprocess
 import atexit
 from pathlib import Path
+
+# Configure transformers to use PyTorch instead of TensorFlow
+os.environ['USE_TF'] = '0'
+os.environ['USE_TORCH'] = '1'
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QStatusBar, QSizePolicy
 from loguru import logger
 
