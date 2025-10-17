@@ -88,6 +88,20 @@ class TradingConfig:
     use_sentiment_data: bool = True  # Use sentiment for signal filtering and position sizing
     use_vix_filter: bool = True  # Use VIX for volatility-based position sizing
     db_engine: Optional[Any] = None  # Database engine for DOM, sentiment, and VIX services
+    
+    # LDM4TS configuration (NEW - disabilitabile)
+    use_ldm4ts: bool = False  # Enable LDM4TS vision-enhanced forecasts
+    ldm4ts_checkpoint_path: Optional[str] = None  # Path to LDM4TS model checkpoint
+    ldm4ts_horizons: List[int] = None  # Forecast horizons in minutes [15, 60, 240]
+    ldm4ts_uncertainty_threshold: float = 0.5  # Max uncertainty % to accept (0.5 = 0.5% of price)
+    ldm4ts_min_strength: float = 0.3  # Min signal strength to accept
+    ldm4ts_position_scaling: bool = True  # Scale position size by uncertainty
+    ldm4ts_num_samples: int = 50  # Monte Carlo samples for uncertainty
+    
+    def __post_init__(self):
+        """Initialize default LDM4TS horizons."""
+        if self.ldm4ts_horizons is None:
+            self.ldm4ts_horizons = [15, 60, 240]
 
 
 class AutomatedTradingEngine:
@@ -244,6 +258,27 @@ class AutomatedTradingEngine:
                 logger.info("✅ VIX Service initialized and started")
             except Exception as e:
                 logger.warning(f"Could not initialize VIX Service: {e}. Trading without VIX filter.")
+
+        # LDM4TS Service (NEW - disabilitabile)
+        self.ldm4ts_service: Optional[Any] = None
+        if config.use_ldm4ts:
+            try:
+                from ..inference.ldm4ts_inference import LDM4TSInferenceService
+                
+                self.ldm4ts_service = LDM4TSInferenceService.get_instance()
+                
+                if config.ldm4ts_checkpoint_path:
+                    self.ldm4ts_service.load_model(
+                        checkpoint_path=config.ldm4ts_checkpoint_path,
+                        horizons=config.ldm4ts_horizons,
+                        compile_model=True
+                    )
+                    logger.info(f"✅ LDM4TS initialized: horizons={config.ldm4ts_horizons}")
+                else:
+                    logger.warning("LDM4TS enabled but no checkpoint provided")
+            except Exception as e:
+                logger.warning(f"Could not initialize LDM4TS: {e}")
+                self.ldm4ts_service = None
 
         # Threading
         self.trading_thread: Optional[threading.Thread] = None
