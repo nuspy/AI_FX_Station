@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import sqlite
 
 # revision identifiers, used by Alembic.
-revision = '0020_20251017_182545'
-down_revision = '0019_add_vix_data'
+revision = '0020'
+down_revision = '0019'
 branch_labels = None
 depends_on = None
 
