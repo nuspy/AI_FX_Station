@@ -639,8 +639,24 @@ class DataService(ChartServiceBase):
                 start_ms_view = None
             
             symbol = getattr(self, "symbol", "EURUSD")
-            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, start_ms={start_ms_view}")
-            df = self._load_candles_from_db(symbol, new_timeframe, limit=50000, start_ms=start_ms_view)
+            
+            # Adjust limit based on timeframe to avoid performance issues
+            # Lower timeframes (1m, 5m) need fewer candles for same visual range
+            tf_limits = {
+                "tick": 5000,
+                "1m": 2000,
+                "5m": 3000,
+                "15m": 5000,
+                "30m": 7000,
+                "1h": 10000,
+                "4h": 15000,
+                "1d": 20000,
+                "1w": 50000
+            }
+            limit = tf_limits.get(new_timeframe, 5000)
+            
+            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, limit={limit}, start_ms={start_ms_view}")
+            df = self._load_candles_from_db(symbol, new_timeframe, limit=limit, start_ms=start_ms_view)
             
             if df is not None and not df.empty:
                 logger.info(f"Loaded {len(df)} candles, updating plot...")

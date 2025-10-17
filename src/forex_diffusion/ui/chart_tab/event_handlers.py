@@ -246,10 +246,11 @@ class EventHandlersMixin:
         set_setting('chart.timeframe', value)
         self.timeframe = value
         
-        # Clear saved view range so chart resets to default zoom for new timeframe
-        if hasattr(self, 'plot_service') and hasattr(self.plot_service, '_saved_view_range'):
-            self.plot_service._saved_view_range = False
-            logger.debug("Cleared saved view range for timeframe change")
+        # Preserve view range when changing timeframe (don't reset position)
+        # NOTE: Commented out to maintain chart position on timeframe change
+        # if hasattr(self, 'plot_service') and hasattr(self.plot_service, '_saved_view_range'):
+        #     self.plot_service._saved_view_range = False
+        #     logger.debug("Cleared saved view range for timeframe change")
         
         # Delegate to chart_controller.data_service for proper timeframe change handling
         chart_controller = getattr(self, 'chart_controller', None)
