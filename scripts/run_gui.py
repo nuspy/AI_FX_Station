@@ -16,10 +16,6 @@ from pathlib import Path
 # Configure transformers to use PyTorch instead of TensorFlow
 os.environ['USE_TF'] = '0'
 os.environ['USE_TORCH'] = '1'
-
-# Disable xformers and sageattention to avoid Triton DLL issues on Windows
-os.environ['XFORMERS_DISABLED'] = '1'
-os.environ['DISABLE_SAGE_ATTENTION'] = '1'
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QStatusBar, QSizePolicy
 from loguru import logger
 
