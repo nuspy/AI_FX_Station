@@ -133,39 +133,39 @@ class ForecastWorker(QRunnable):
             timeframe = self.payload['timeframe']
             window_size = settings.get('ldm4ts_window_size', 100)
             
-            # Fetch from market service
-            from sqlalchemy import select
-            from ...data.schema import MarketDataCandle
-            from sqlalchemy.orm import Session
+            # Fetch from market service using direct SQL
+            from sqlalchemy import text
+            import pandas as pd
             
-            with Session(self.market_service.engine) as session:
-                query = (
-                    select(MarketDataCandle)
-                    .where(
-                        MarketDataCandle.symbol == symbol,
-                        MarketDataCandle.timeframe == timeframe
-                    )
-                    .order_by(MarketDataCandle.timestamp_ms.desc())
-                    .limit(window_size)
-                )
-                candles = session.execute(query).scalars().all()
+            with self.market_service.engine.connect() as conn:
+                query = text("""
+                    SELECT ts_utc, open, high, low, close, volume
+                    FROM market_data_candles
+                    WHERE symbol = :symbol AND timeframe = :timeframe
+                    ORDER BY ts_utc DESC
+                    LIMIT :window_size
+                """)
+                rows = conn.execute(query, {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "window_size": window_size
+                }).fetchall()
             
-            if not candles or len(candles) < window_size:
-                logger.warning(f"Insufficient data for LDM4TS: {len(candles) if candles else 0} < {window_size}")
+            if not rows or len(rows) < window_size:
+                logger.warning(f"Insufficient data for LDM4TS: {len(rows) if rows else 0} < {window_size}")
                 return None
             
-            # Convert to DataFrame
-            import pandas as pd
+            # Convert to DataFrame (reverse to chronological order)
             df = pd.DataFrame([
                 {
-                    'timestamp': pd.to_datetime(c.timestamp_ms, unit='ms', utc=True),
-                    'open': c.open,
-                    'high': c.high,
-                    'low': c.low,
-                    'close': c.close,
-                    'volume': c.volume
+                    'timestamp': pd.to_datetime(r[0], unit='ms', utc=True),
+                    'open': float(r[1]),
+                    'high': float(r[2]),
+                    'low': float(r[3]),
+                    'close': float(r[4]),
+                    'volume': float(r[5]) if r[5] is not None else 0.0
                 }
-                for c in reversed(candles)
+                for r in reversed(rows)
             ])
             df = df.set_index('timestamp')
             

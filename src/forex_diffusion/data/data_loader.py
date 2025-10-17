@@ -183,38 +183,38 @@ def fetch_candles_from_db_recent(
         # Fetch with limit parameter if supported, otherwise fetch and slice
         logger.debug(f"Fetching recent {n_bars} bars for {symbol} {timeframe}...")
         
-        # Query DB directly
-        from sqlalchemy import select
-        from ..data.schema import MarketDataCandle
-        from sqlalchemy.orm import Session
+        # Query DB directly using table name
+        from sqlalchemy import text
+        import pandas as pd
         
-        with Session(ms.engine) as session:
-            query = (
-                select(MarketDataCandle)
-                .where(
-                    MarketDataCandle.symbol == symbol,
-                    MarketDataCandle.timeframe == timeframe
-                )
-                .order_by(MarketDataCandle.timestamp_ms.desc())
-                .limit(n_bars)
-            )
-            candles = session.execute(query).scalars().all()
+        with ms.engine.connect() as conn:
+            query = text("""
+                SELECT ts_utc, open, high, low, close, volume
+                FROM market_data_candles
+                WHERE symbol = :symbol AND timeframe = :timeframe
+                ORDER BY ts_utc DESC
+                LIMIT :n_bars
+            """)
+            rows = conn.execute(query, {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "n_bars": n_bars
+            }).fetchall()
         
-        if not candles:
+        if not rows:
             raise RuntimeError(f"No data for {symbol} {timeframe}")
         
-        # Convert to DataFrame
-        import pandas as pd
+        # Convert to DataFrame (reverse to chronological order)
         df_recent = pd.DataFrame([
             {
-                'timestamp': pd.to_datetime(c.timestamp_ms, unit='ms', utc=True),
-                'open': c.open,
-                'high': c.high,
-                'low': c.low,
-                'close': c.close,
-                'volume': c.volume
+                'timestamp': pd.to_datetime(r[0], unit='ms', utc=True),
+                'open': float(r[1]),
+                'high': float(r[2]),
+                'low': float(r[3]),
+                'close': float(r[4]),
+                'volume': float(r[5]) if r[5] is not None else 0.0
             }
-            for c in reversed(candles)
+            for r in reversed(rows)
         ])
         df_recent = df_recent.set_index('timestamp')
 
