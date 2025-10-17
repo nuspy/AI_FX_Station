@@ -101,12 +101,14 @@ class UnifiedPredictionSettingsDialog(QDialog):
         # Create tab widget
         self.tabs = QTabWidget()
 
-        # Create Base and Advanced tabs
+        # Create Base, Advanced, and LDM4TS tabs
         self.base_tab = self._create_base_tab()
         self.advanced_tab = self._create_advanced_tab()
+        self.ldm4ts_tab = self._create_ldm4ts_tab()
 
         self.tabs.addTab(self.base_tab, "Base Settings")
         self.tabs.addTab(self.advanced_tab, "Advanced Settings")
+        self.tabs.addTab(self.ldm4ts_tab, "LDM4TS (Vision)")
 
         main_layout.addWidget(self.tabs)
 
@@ -439,6 +441,241 @@ class UnifiedPredictionSettingsDialog(QDialog):
         tab_layout.addWidget(scroll)
 
         return tab
+
+    def _create_ldm4ts_tab(self) -> QWidget:
+        """Create the LDM4TS (Vision-Enhanced Forecasting) settings tab"""
+        tab = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        # Header info
+        info_box = QGroupBox("About LDM4TS")
+        info_layout = QVBoxLayout(info_box)
+        info_label = QLabel(
+            "<b>LDM4TS</b> (Latent Diffusion Models for Time Series) - Vision-enhanced forecasting<br><br>"
+            "Trasforma OHLCV in immagini RGB (SEG + GAF + RP) e usa Stable Diffusion per predizioni.<br>"
+            "Fornisce incertezza quantificata tramite Monte Carlo sampling.<br><br>"
+            "<b>Paper:</b> https://arxiv.org/html/2502.14887v1"
+        )
+        info_label.setWordWrap(True)
+        info_layout.addWidget(info_label)
+        layout.addWidget(info_box)
+
+        # Enable/Disable
+        enable_box = QGroupBox("Enable LDM4TS")
+        enable_layout = QVBoxLayout(enable_box)
+        
+        self.ldm4ts_enabled_cb = QCheckBox("Enable LDM4TS Forecasting")
+        self.ldm4ts_enabled_cb.setChecked(False)
+        self.ldm4ts_enabled_cb.setToolTip(
+            "Abilita LDM4TS per forecasting vision-enhanced.\n"
+            "Richiede modello trainato (checkpoint .pt)."
+        )
+        enable_layout.addWidget(self.ldm4ts_enabled_cb)
+        layout.addWidget(enable_box)
+
+        # Model Settings
+        model_box = QGroupBox("Model Settings")
+        model_layout = QFormLayout(model_box)
+
+        # Checkpoint path
+        checkpoint_layout = QHBoxLayout()
+        self.ldm4ts_checkpoint_edit = QLineEdit()
+        self.ldm4ts_checkpoint_edit.setPlaceholderText("Path to LDM4TS checkpoint (.pt)")
+        self.ldm4ts_checkpoint_edit.setToolTip(
+            "Percorso al file checkpoint del modello LDM4TS trainato.\n"
+            "Generato da: python -m forex_diffusion.training.train_ldm4ts"
+        )
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_ldm4ts_checkpoint)
+        browse_btn.setToolTip("Seleziona file checkpoint (.pt)")
+        
+        checkpoint_layout.addWidget(self.ldm4ts_checkpoint_edit)
+        checkpoint_layout.addWidget(browse_btn)
+        model_layout.addRow("Checkpoint:", checkpoint_layout)
+
+        # Horizons (multi-horizon predictions)
+        self.ldm4ts_horizons_edit = QLineEdit("15, 60, 240")
+        self.ldm4ts_horizons_edit.setToolTip(
+            "Orizzonti di previsione in minuti (separati da virgola).\n"
+            "Esempio: 15, 60, 240 = 15min, 1h, 4h\n"
+            "Devono corrispondere agli orizzonti usati in training."
+        )
+        model_layout.addRow("Horizons (minutes):", self.ldm4ts_horizons_edit)
+
+        layout.addWidget(model_box)
+
+        # Inference Settings
+        inference_box = QGroupBox("Inference Settings")
+        inference_layout = QFormLayout(inference_box)
+
+        # Number of Monte Carlo samples
+        self.ldm4ts_num_samples_spinbox = QSpinBox()
+        self.ldm4ts_num_samples_spinbox.setRange(10, 200)
+        self.ldm4ts_num_samples_spinbox.setValue(50)
+        self.ldm4ts_num_samples_spinbox.setToolTip(
+            "Numero di campioni Monte Carlo per quantificare incertezza.\n"
+            "Più campioni = incertezza più accurata ma più lento.\n"
+            "Range: 10-200, Default: 50, Paper: 50"
+        )
+        inference_layout.addRow("Monte Carlo Samples:", self.ldm4ts_num_samples_spinbox)
+
+        # Window size for vision encoding
+        self.ldm4ts_window_size_spinbox = QSpinBox()
+        self.ldm4ts_window_size_spinbox.setRange(50, 200)
+        self.ldm4ts_window_size_spinbox.setValue(100)
+        self.ldm4ts_window_size_spinbox.setToolTip(
+            "Numero di candles OHLCV per vision encoding.\n"
+            "Deve corrispondere al window_size usato in training.\n"
+            "Default: 100 candles"
+        )
+        inference_layout.addRow("OHLCV Window Size:", self.ldm4ts_window_size_spinbox)
+
+        layout.addWidget(inference_box)
+
+        # Signal Generation Settings
+        signal_box = QGroupBox("Signal Generation")
+        signal_layout = QFormLayout(signal_box)
+
+        # Uncertainty threshold
+        self.ldm4ts_uncertainty_threshold_spinbox = QSpinBox()
+        self.ldm4ts_uncertainty_threshold_spinbox.setRange(10, 100)
+        self.ldm4ts_uncertainty_threshold_spinbox.setValue(50)
+        self.ldm4ts_uncertainty_threshold_spinbox.setSuffix("%")
+        self.ldm4ts_uncertainty_threshold_spinbox.setToolTip(
+            "Soglia massima di incertezza per accettare segnali.\n"
+            "Segnali con incertezza >= threshold vengono rejettati.\n"
+            "Range: 10-100%, Default: 50%"
+        )
+        signal_layout.addRow("Uncertainty Threshold:", self.ldm4ts_uncertainty_threshold_spinbox)
+
+        # Minimum strength
+        self.ldm4ts_min_strength_spinbox = QSpinBox()
+        self.ldm4ts_min_strength_spinbox.setRange(10, 90)
+        self.ldm4ts_min_strength_spinbox.setValue(30)
+        self.ldm4ts_min_strength_spinbox.setSuffix("%")
+        self.ldm4ts_min_strength_spinbox.setToolTip(
+            "Forza minima del segnale per esecuzione.\n"
+            "Calcolata come: |price_change| / uncertainty\n"
+            "Range: 10-90%, Default: 30%"
+        )
+        signal_layout.addRow("Min Signal Strength:", self.ldm4ts_min_strength_spinbox)
+
+        # Position scaling
+        self.ldm4ts_position_scaling_cb = QCheckBox("Enable Position Scaling")
+        self.ldm4ts_position_scaling_cb.setChecked(True)
+        self.ldm4ts_position_scaling_cb.setToolTip(
+            "Scala la posizione in base all'incertezza.\n"
+            "position_size = base_size × (1 - uncertainty / threshold)\n"
+            "Alta incertezza → posizione più piccola"
+        )
+        signal_layout.addRow(self.ldm4ts_position_scaling_cb)
+
+        layout.addWidget(signal_box)
+
+        # Horizon Weights (for combining multi-horizon predictions)
+        weights_box = QGroupBox("Horizon Weights (Multi-Horizon Combination)")
+        weights_layout = QFormLayout(weights_box)
+
+        self.ldm4ts_horizon_15m_weight_spinbox = QSpinBox()
+        self.ldm4ts_horizon_15m_weight_spinbox.setRange(0, 100)
+        self.ldm4ts_horizon_15m_weight_spinbox.setValue(30)
+        self.ldm4ts_horizon_15m_weight_spinbox.setSuffix("%")
+        self.ldm4ts_horizon_15m_weight_spinbox.setToolTip("Peso per previsioni a 15 minuti (reattivo)")
+        weights_layout.addRow("15-min Horizon Weight:", self.ldm4ts_horizon_15m_weight_spinbox)
+
+        self.ldm4ts_horizon_1h_weight_spinbox = QSpinBox()
+        self.ldm4ts_horizon_1h_weight_spinbox.setRange(0, 100)
+        self.ldm4ts_horizon_1h_weight_spinbox.setValue(50)
+        self.ldm4ts_horizon_1h_weight_spinbox.setSuffix("%")
+        self.ldm4ts_horizon_1h_weight_spinbox.setToolTip("Peso per previsioni a 1 ora (bilanciato)")
+        weights_layout.addRow("1-hour Horizon Weight:", self.ldm4ts_horizon_1h_weight_spinbox)
+
+        self.ldm4ts_horizon_4h_weight_spinbox = QSpinBox()
+        self.ldm4ts_horizon_4h_weight_spinbox.setRange(0, 100)
+        self.ldm4ts_horizon_4h_weight_spinbox.setValue(20)
+        self.ldm4ts_horizon_4h_weight_spinbox.setSuffix("%")
+        self.ldm4ts_horizon_4h_weight_spinbox.setToolTip("Peso per previsioni a 4 ore (trend)")
+        weights_layout.addRow("4-hour Horizon Weight:", self.ldm4ts_horizon_4h_weight_spinbox)
+
+        layout.addWidget(weights_box)
+
+        # Quality Thresholds
+        quality_box = QGroupBox("Quality Thresholds")
+        quality_layout = QFormLayout(quality_box)
+
+        self.ldm4ts_quality_threshold_spinbox = QSpinBox()
+        self.ldm4ts_quality_threshold_spinbox.setRange(30, 95)
+        self.ldm4ts_quality_threshold_spinbox.setValue(65)
+        self.ldm4ts_quality_threshold_spinbox.setSuffix("%")
+        self.ldm4ts_quality_threshold_spinbox.setToolTip(
+            "Composite quality score minimo per signal acceptance.\n"
+            "Combina 6 dimensioni: pattern, regime, risk/reward, etc."
+        )
+        quality_layout.addRow("Min Quality Score:", self.ldm4ts_quality_threshold_spinbox)
+
+        self.ldm4ts_directional_confidence_spinbox = QSpinBox()
+        self.ldm4ts_directional_confidence_spinbox.setRange(50, 95)
+        self.ldm4ts_directional_confidence_spinbox.setValue(60)
+        self.ldm4ts_directional_confidence_spinbox.setSuffix("%")
+        self.ldm4ts_directional_confidence_spinbox.setToolTip(
+            "Confidence minima per segnali direzionali (bull/bear).\n"
+            "Basata su % di campioni MC concordi sulla direzione."
+        )
+        quality_layout.addRow("Directional Confidence:", self.ldm4ts_directional_confidence_spinbox)
+
+        layout.addWidget(quality_box)
+
+        # Status/Info
+        status_box = QGroupBox("Status")
+        status_layout = QVBoxLayout(status_box)
+        
+        self.ldm4ts_status_label = QLabel("LDM4TS: Disabled")
+        self.ldm4ts_status_label.setStyleSheet("color: #888; font-style: italic;")
+        status_layout.addWidget(self.ldm4ts_status_label)
+        
+        layout.addWidget(status_box)
+
+        # Connect enable checkbox to update status
+        self.ldm4ts_enabled_cb.toggled.connect(self._update_ldm4ts_status)
+
+        layout.addStretch()
+
+        scroll.setWidget(content)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.addWidget(scroll)
+
+        return tab
+
+    def _browse_ldm4ts_checkpoint(self):
+        """Browse for LDM4TS checkpoint file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select LDM4TS Checkpoint",
+            str(Path.home()),
+            "PyTorch Models (*.pt *.pth);;All Files (*.*)"
+        )
+        
+        if file_path:
+            self.ldm4ts_checkpoint_edit.setText(file_path)
+            logger.info(f"Selected LDM4TS checkpoint: {file_path}")
+
+    def _update_ldm4ts_status(self):
+        """Update LDM4TS status label"""
+        if self.ldm4ts_enabled_cb.isChecked():
+            checkpoint = self.ldm4ts_checkpoint_edit.text().strip()
+            if checkpoint and Path(checkpoint).exists():
+                self.ldm4ts_status_label.setText(f"LDM4TS: ✅ Enabled - Model: {Path(checkpoint).name}")
+                self.ldm4ts_status_label.setStyleSheet("color: green;")
+            else:
+                self.ldm4ts_status_label.setText("LDM4TS: ⚠️ Enabled but no valid checkpoint")
+                self.ldm4ts_status_label.setStyleSheet("color: orange;")
+        else:
+            self.ldm4ts_status_label.setText("LDM4TS: Disabled")
+            self.ldm4ts_status_label.setStyleSheet("color: #888; font-style: italic;")
 
     def _browse_model_paths_multi(self):
         """Browse and select multiple model files"""
