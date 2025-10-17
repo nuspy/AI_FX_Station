@@ -132,10 +132,10 @@ dependencies = [
   "accelerate>=0.25.0,<1.0",       # Efficient inference & training
   "safetensors>=0.4.0,<1.0",       # Fast & safe model serialization
   "peft>=0.17.0,<1.0",             # Parameter-Efficient Fine-Tuning (required by diffusers >=0.25)
-  "triton-windows>=3.5.0; sys_platform == 'win32'",  # Triton for Windows (xformers optimization)
   # NOTE: TensorFlow removed - transformers uses PyTorch backend (USE_TORCH=1)
-  # NOTE: sageattention uninstalled - causes Triton DLL errors on Windows, not used in codebase
-  # xformers uses triton-windows >=3.5.0 on Windows
+  # NOTE: xformers uninstalled - not used in codebase, causes Triton DLL warnings
+  # NOTE: sageattention uninstalled - not used in codebase, causes Triton DLL errors
+  # diffusers uses PyTorch native attention (fully functional, slightly slower)
 
   # Enhanced Trading System Dependencies (New Trading Specs)
   "transformers>=4.30.0,<5.0",     # Transformer models for sequence prediction (also for LDM4TS CLIP)
