@@ -867,7 +867,7 @@ class PlotService(ChartServiceBase):
                         # Distinguish between missing data (warning) and actual errors (error)
                         error_msg = str(e)
                         if "disabled due to missing data" in error_msg or "missing data" in error_msg.lower():
-                            logger.debug(f"Indicator {indicator_name} skipped (missing data): {e}")
+                            logger.debug(f"Indicator {indicator_name} skipped: required data not available (volume data missing for volume-based indicators)")
                         else:
                             logger.error(f"Failed to plot indicator {indicator_name}: {e}")
 
