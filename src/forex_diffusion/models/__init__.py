@@ -4,6 +4,7 @@ from .diffusion import DiffusionModel, cosine_alphas, sampler_ddim, sampler_dpmp
 from .ensemble import StackingEnsemble, EnsembleConfig, BaseModelSpec, create_stacking_ensemble
 from .multi_timeframe_ensemble import MultiTimeframeEnsemble, Timeframe, TimeframeModelPrediction
 from .ml_stacked_ensemble import StackedMLEnsemble
+from .sssd_improved import ImprovedSSSDModel, benchmark_improvement
 
 __all__ = [
     "VAE",
@@ -21,4 +22,6 @@ __all__ = [
     "Timeframe",
     "TimeframeModelPrediction",
     "StackedMLEnsemble",
+    "ImprovedSSSDModel",
+    "benchmark_improvement",
 ]
