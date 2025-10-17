@@ -947,7 +947,7 @@ class DataService(ChartServiceBase):
                         .where(cond).order_by(tkt.c.ts_utc.desc()).limit(limit)
                     rows = conn.execute(stmt).fetchall()
                     if not rows:
-                        # No tick data found, fallback to 1m candles
+                        # No tick data at all, fallback to 1m candles for entire range
                         logger.info(f"No tick data found for {symbol}, falling back to 1m candles")
                         return self._load_candles_from_db(symbol, "1m", limit=limit, start_ms=start_ms, end_ms=end_ms)
                     # rows may be tuples with (ts_utc, price, bid, ask) depending on schema
@@ -987,11 +987,51 @@ class DataService(ChartServiceBase):
                     except Exception:
                         pass
                     
-                    # If tick data is empty, fallback to 1m candles
+                    # If tick data is completely empty, fallback to 1m candles
                     if df.empty:
                         logger.info(f"No tick data found for {symbol}, falling back to 1m candles")
-                        # Recursively load 1m candles instead
                         return self._load_candles_from_db(symbol, "1m", limit=limit, start_ms=start_ms, end_ms=end_ms)
+                    
+                    # SMART FALLBACK: Fill gaps in tick data with 1m candles
+                    # Detect gaps > 60 seconds (no ticks) and fill with 1m candles
+                    if start_ms is not None and end_ms is not None and len(df) > 1:
+                        df_sorted = df.sort_values("ts_utc").reset_index(drop=True)
+                        gaps = []
+                        
+                        # Check for gap at start
+                        if df_sorted["ts_utc"].iloc[0] - start_ms > 60_000:  # >1 min gap at start
+                            gaps.append((start_ms, df_sorted["ts_utc"].iloc[0]))
+                        
+                        # Check gaps between ticks
+                        for i in range(len(df_sorted) - 1):
+                            gap_ms = df_sorted["ts_utc"].iloc[i+1] - df_sorted["ts_utc"].iloc[i]
+                            if gap_ms > 60_000:  # Gap > 1 minute
+                                gaps.append((df_sorted["ts_utc"].iloc[i], df_sorted["ts_utc"].iloc[i+1]))
+                        
+                        # Check for gap at end
+                        if end_ms - df_sorted["ts_utc"].iloc[-1] > 60_000:  # >1 min gap at end
+                            gaps.append((df_sorted["ts_utc"].iloc[-1], end_ms))
+                        
+                        # Fill gaps with 1m candles
+                        if gaps:
+                            logger.info(f"Found {len(gaps)} tick gaps for {symbol}, filling with 1m candles")
+                            df_1m_parts = []
+                            for gap_start, gap_end in gaps:
+                                df_1m = self._load_candles_from_db(symbol, "1m", limit=None, start_ms=int(gap_start), end_ms=int(gap_end))
+                                if not df_1m.empty:
+                                    # Convert 1m candles to tick format (use close price)
+                                    df_1m_ticks = pd.DataFrame({
+                                        "ts_utc": df_1m["ts_utc"],
+                                        "price": df_1m["close"]
+                                    })
+                                    df_1m_parts.append(df_1m_ticks)
+                            
+                            # Merge ticks and 1m data
+                            if df_1m_parts:
+                                df_combined = pd.concat([df[["ts_utc", "price"]]] + df_1m_parts, ignore_index=True)
+                                df_combined = df_combined.sort_values("ts_utc").drop_duplicates(subset=["ts_utc"]).reset_index(drop=True)
+                                logger.info(f"Merged {len(df)} ticks + {sum(len(p) for p in df_1m_parts)} 1m candles = {len(df_combined)} total")
+                                return df_combined
                     
                     return df[["ts_utc", "price"] + ([c for c in ["bid","ask"] if c in df.columns])]
             else:
