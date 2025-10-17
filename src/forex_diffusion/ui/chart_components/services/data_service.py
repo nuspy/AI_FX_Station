@@ -738,8 +738,11 @@ class DataService(ChartServiceBase):
                 lookback_ms = candle_duration_ms * (initial_display + BUFFER_CANDLES)
                 start_ms_view = int((datetime.now(timezone.utc).timestamp() * 1000) - lookback_ms)
             
-            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, start_ms={start_ms_view} (NO LIMIT - smart cache)")
-            df = self._load_candles_from_db(symbol, new_timeframe, limit=None, start_ms=start_ms_view, end_ms=None)
+            # Calculate end_ms for bounded query (avoids loading entire history)
+            end_ms_view = int(datetime.now(timezone.utc).timestamp() * 1000)
+            
+            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, range={start_ms_view} to {end_ms_view} (smart cache)")
+            df = self._load_candles_from_db(symbol, new_timeframe, limit=None, start_ms=start_ms_view, end_ms=end_ms_view)
             
             if df is not None and not df.empty:
                 logger.info(f"Loaded {len(df)} candles, updating plot...")
@@ -838,9 +841,18 @@ class DataService(ChartServiceBase):
             def _on_done(_ok: bool):
                 # reload current window after backfill to fill the holes
                 try:
-                    self._schedule_view_reload()
-                except Exception:
-                    pass
+                    logger.info(f"Backfill completed (ok={_ok}), reloading data from DB")
+                    # Reload data from DB for current symbol/timeframe
+                    current_symbol = getattr(self, "symbol", None)
+                    current_tf = getattr(self, "timeframe", None)
+                    if current_symbol and current_tf and _ok:
+                        # Force reload from DB with same parameters
+                        df = self._load_candles_from_db(current_symbol, current_tf, limit=None, start_ms=None, end_ms=None)
+                        if df is not None and not df.empty:
+                            self.update_plot(df)
+                            logger.info(f"Chart refreshed with {len(df)} candles after backfill")
+                except Exception as e:
+                    logger.error(f"Failed to reload after backfill: {e}")
             sig.finished.connect(_on_done)
             QThreadPool.globalInstance().start(_Job(ms, getattr(self, "symbol", ""), getattr(self, "timeframe", ""), int(start_override), sig))
         except Exception:

@@ -692,7 +692,11 @@ class MarketDataService:
         # generate expected period ends for given timeframe between start and end
         expected = time_utils.generate_expected_period_ends(start_ms, end_ms, timeframe)
         if not expected:
+            logger.debug(f"No expected timestamps generated for {symbol} {timeframe} in range {start_ms}-{end_ms}")
             return []
+        
+        logger.info(f"Gap detection for {symbol} {timeframe}: expecting {len(expected)} candles in range")
+        
         # fetch existing timestamps from DB within [start_ms, end_ms]
         try:
             with self.engine.connect() as conn:
@@ -700,6 +704,7 @@ class MarketDataService:
                 q = text("SELECT ts_utc FROM market_data_candles WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc BETWEEN :s AND :e")
                 rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "s": start_ms, "e": end_ms}).fetchall()
                 existing = set(int(r[0]) for r in rows if r and r[0] is not None)
+                logger.info(f"Found {len(existing)} existing candles in DB for {symbol} {timeframe}")
         except Exception as e:
             logger.exception("Failed to query existing candles for gap detection: {}", e)
             existing = set()
@@ -721,7 +726,10 @@ class MarketDataService:
         
         missing_points = sorted(missing_points)
         if not missing_points:
+            logger.info(f"No missing data points found for {symbol} {timeframe} (all {len(expected)} candles present)")
             return []
+        
+        logger.info(f"Found {len(missing_points)} missing timestamps for {symbol} {timeframe} before filtering")
 
         # MINIMUM GAP SIZE THRESHOLD: Filter out runs smaller than min_gap_size
         # Reduced from 10 to 3 to fill smaller gaps
