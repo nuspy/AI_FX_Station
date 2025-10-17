@@ -985,42 +985,21 @@ class CTraderProvider(BaseProvider):
             start_ms = start_ts_ms
             end_ms = end_ts_ms
 
-            # cTrader API DOES NOT support fromTimestamp+toTimestamp range!
-            # Only supports: fromTimestamp + count (number of bars)
-            # Calculate count based on time range and timeframe
-            timeframe_ms = {
-                1: 60_000,      # M1 = 1 minute
-                2: 120_000,     # M2 = 2 minutes
-                3: 180_000,     # M3 = 3 minutes
-                4: 240_000,     # M4 = 4 minutes
-                5: 300_000,     # M5 = 5 minutes
-                6: 600_000,     # M10 = 10 minutes
-                7: 900_000,     # M15 = 15 minutes
-                8: 1_800_000,   # M30 = 30 minutes
-                9: 3_600_000,   # H1 = 1 hour
-                10: 14_400_000, # H4 = 4 hours
-                11: 43_200_000, # H12 = 12 hours
-                12: 86_400_000, # D1 = 1 day
-                13: 604_800_000,# W1 = 1 week
-                14: 2_592_000_000, # MN1 = 30 days (approx)
-            }
-            
-            period_ms = timeframe_ms.get(ct_timeframe, 60_000)
-            count = min(10000, max(1, int((end_ms - start_ms) / period_ms) + 1))  # cTrader max is 10000
-            
             # Request historical trendbars
+            # cTrader API requires both fromTimestamp and toTimestamp
             request = Messages.ProtoOAGetTrendbarsReq()
             request.ctidTraderAccountId = self._account_id
             request.symbolId = symbol_id
             request.period = ct_timeframe
             request.fromTimestamp = start_ms
-            request.count = count  # Number of bars to retrieve from fromTimestamp
+            request.toTimestamp = end_ms
             
             # Log request details for debugging
             from datetime import datetime, timezone
             start_dt = datetime.fromtimestamp(start_ms/1000, tz=timezone.utc)
             end_dt = datetime.fromtimestamp(end_ms/1000, tz=timezone.utc)
-            logger.info(f"[{self.name}] Requesting trendbars: symbol_id={symbol_id}, period={ct_timeframe} ({timeframe}), from={start_dt}, count={count} (covers to ~{end_dt})")
+            expected_bars = int((end_ms - start_ms) / (60_000 * ct_timeframe)) if ct_timeframe <= 8 else int((end_ms - start_ms) / (3_600_000 * (ct_timeframe - 8)))
+            logger.info(f"[{self.name}] Requesting trendbars: symbol_id={symbol_id}, period={ct_timeframe} ({timeframe}), from={start_dt}, to={end_dt}, expecting ~{expected_bars} bars")
 
             response = await self._send_and_wait(request, Messages.ProtoOAGetTrendbarsRes)
 
