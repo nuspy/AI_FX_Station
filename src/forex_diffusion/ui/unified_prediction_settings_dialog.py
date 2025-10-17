@@ -101,14 +101,16 @@ class UnifiedPredictionSettingsDialog(QDialog):
         # Create tab widget
         self.tabs = QTabWidget()
 
-        # Create Base, Advanced, and LDM4TS tabs
+        # Create Base and Advanced tabs
         self.base_tab = self._create_base_tab()
         self.advanced_tab = self._create_advanced_tab()
-        self.ldm4ts_tab = self._create_ldm4ts_tab()
+        
+        # Create Generative Forecast tab with sub-tabs
+        self.generative_tab = self._create_generative_forecast_tab()
 
         self.tabs.addTab(self.base_tab, "Base Settings")
         self.tabs.addTab(self.advanced_tab, "Advanced Settings")
-        self.tabs.addTab(self.ldm4ts_tab, "LDM4TS (Vision)")
+        self.tabs.addTab(self.generative_tab, "Generative Forecast")
 
         main_layout.addWidget(self.tabs)
 
@@ -441,6 +443,196 @@ class UnifiedPredictionSettingsDialog(QDialog):
         tab_layout.addWidget(scroll)
 
         return tab
+    
+    def _create_generative_forecast_tab(self) -> QWidget:
+        """Create Generative Forecast tab with Diffusion and LDM4TS Training sub-tabs"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Create sub-tabs
+        sub_tabs = QTabWidget()
+        
+        # Sub-tab 1: Diffusion (current LDM4TS content)
+        diffusion_tab = self._create_ldm4ts_tab()
+        sub_tabs.addTab(diffusion_tab, "Diffusion")
+        
+        # Sub-tab 2: LDM4TS Training
+        training_tab = self._create_ldm4ts_training_tab()
+        sub_tabs.addTab(training_tab, "LDM4TS Training")
+        
+        layout.addWidget(sub_tabs)
+        
+        return tab
+    
+    def _create_ldm4ts_training_tab(self) -> QWidget:
+        """Create LDM4TS Training tab"""
+        tab = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        
+        # Header info
+        info_box = QGroupBox("LDM4TS Training")
+        info_layout = QVBoxLayout(info_box)
+        info_label = QLabel(
+            "<b>Train LDM4TS vision-enhanced forecasting model</b><br><br>"
+            "LDM4TS usa Stable Diffusion pre-trained e adapters per time series forecasting.<br>"
+            "Trasforma OHLCV → RGB images (SEG + GAF + RP) → Latent Diffusion."
+        )
+        info_label.setWordWrap(True)
+        info_layout.addWidget(info_label)
+        layout.addWidget(info_box)
+        
+        # Data Settings
+        data_box = QGroupBox("Data Settings")
+        data_layout = QFormLayout(data_box)
+        
+        # Symbol
+        self.ldm4ts_train_symbol_combo = QComboBox()
+        self.ldm4ts_train_symbol_combo.addItems(["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"])
+        self.ldm4ts_train_symbol_combo.setToolTip("Symbol to train on")
+        data_layout.addRow("Symbol:", self.ldm4ts_train_symbol_combo)
+        
+        # Timeframe
+        self.ldm4ts_train_timeframe_combo = QComboBox()
+        self.ldm4ts_train_timeframe_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h"])
+        self.ldm4ts_train_timeframe_combo.setCurrentText("1m")
+        self.ldm4ts_train_timeframe_combo.setToolTip("Base timeframe for training")
+        data_layout.addRow("Timeframe:", self.ldm4ts_train_timeframe_combo)
+        
+        # Window size
+        self.ldm4ts_train_window_spinbox = QSpinBox()
+        self.ldm4ts_train_window_spinbox.setRange(50, 200)
+        self.ldm4ts_train_window_spinbox.setValue(100)
+        self.ldm4ts_train_window_spinbox.setToolTip("Number of candles for vision encoding (default: 100)")
+        data_layout.addRow("Window Size:", self.ldm4ts_train_window_spinbox)
+        
+        # Horizons
+        self.ldm4ts_train_horizons_edit = QLineEdit("15, 60, 240")
+        self.ldm4ts_train_horizons_edit.setToolTip("Forecast horizons in minutes (comma-separated)")
+        data_layout.addRow("Horizons (minutes):", self.ldm4ts_train_horizons_edit)
+        
+        layout.addWidget(data_box)
+        
+        # Model Settings
+        model_box = QGroupBox("Model Settings")
+        model_layout = QFormLayout(model_box)
+        
+        # Diffusion steps
+        self.ldm4ts_train_diffusion_steps_spinbox = QSpinBox()
+        self.ldm4ts_train_diffusion_steps_spinbox.setRange(10, 100)
+        self.ldm4ts_train_diffusion_steps_spinbox.setValue(50)
+        self.ldm4ts_train_diffusion_steps_spinbox.setToolTip("Diffusion timesteps (default: 50)")
+        model_layout.addRow("Diffusion Steps:", self.ldm4ts_train_diffusion_steps_spinbox)
+        
+        # Image size
+        self.ldm4ts_train_image_size_combo = QComboBox()
+        self.ldm4ts_train_image_size_combo.addItems(["64", "128", "256", "512"])
+        self.ldm4ts_train_image_size_combo.setCurrentText("256")
+        self.ldm4ts_train_image_size_combo.setToolTip("Image size for vision encoding (256x256 recommended)")
+        model_layout.addRow("Image Size:", self.ldm4ts_train_image_size_combo)
+        
+        layout.addWidget(model_box)
+        
+        # Training Settings
+        training_box = QGroupBox("Training Settings")
+        training_layout = QFormLayout(training_box)
+        
+        # Epochs
+        self.ldm4ts_train_epochs_spinbox = QSpinBox()
+        self.ldm4ts_train_epochs_spinbox.setRange(1, 100)
+        self.ldm4ts_train_epochs_spinbox.setValue(10)
+        self.ldm4ts_train_epochs_spinbox.setToolTip("Number of training epochs")
+        training_layout.addRow("Epochs:", self.ldm4ts_train_epochs_spinbox)
+        
+        # Batch size
+        self.ldm4ts_train_batch_size_spinbox = QSpinBox()
+        self.ldm4ts_train_batch_size_spinbox.setRange(1, 64)
+        self.ldm4ts_train_batch_size_spinbox.setValue(4)
+        self.ldm4ts_train_batch_size_spinbox.setToolTip("Batch size (reduce if GPU OOM)")
+        training_layout.addRow("Batch Size:", self.ldm4ts_train_batch_size_spinbox)
+        
+        # Learning rate
+        self.ldm4ts_train_lr_spinbox = QDoubleSpinBox()
+        self.ldm4ts_train_lr_spinbox.setRange(0.00001, 0.01)
+        self.ldm4ts_train_lr_spinbox.setValue(0.0001)
+        self.ldm4ts_train_lr_spinbox.setDecimals(5)
+        self.ldm4ts_train_lr_spinbox.setSingleStep(0.00001)
+        self.ldm4ts_train_lr_spinbox.setToolTip("Learning rate for AdamW optimizer")
+        training_layout.addRow("Learning Rate:", self.ldm4ts_train_lr_spinbox)
+        
+        # Use GPU
+        self.ldm4ts_train_use_gpu_cb = QCheckBox("Use GPU for Training")
+        self.ldm4ts_train_use_gpu_cb.setChecked(True)
+        self.ldm4ts_train_use_gpu_cb.setToolTip("Enable CUDA GPU acceleration (highly recommended)")
+        training_layout.addRow("", self.ldm4ts_train_use_gpu_cb)
+        
+        layout.addWidget(training_box)
+        
+        # Output Settings
+        output_box = QGroupBox("Output Settings")
+        output_layout = QFormLayout(output_box)
+        
+        # Output directory
+        output_dir_layout = QHBoxLayout()
+        self.ldm4ts_train_output_edit = QLineEdit()
+        self.ldm4ts_train_output_edit.setPlaceholderText("Output directory for checkpoints")
+        
+        # Base directory for browse
+        base_dir = Path(__file__).resolve().parents[3]
+        default_output = str(base_dir / "artifacts" / "ldm4ts")
+        self.ldm4ts_train_output_edit.setText(default_output)
+        
+        browse_output_btn = QPushButton("Browse...")
+        browse_output_btn.clicked.connect(self._browse_ldm4ts_train_output)
+        browse_output_btn.setToolTip("Select output directory")
+        
+        output_dir_layout.addWidget(self.ldm4ts_train_output_edit)
+        output_dir_layout.addWidget(browse_output_btn)
+        output_layout.addRow("Output Directory:", output_dir_layout)
+        
+        layout.addWidget(output_box)
+        
+        # Training buttons
+        button_box = QGroupBox("Training Control")
+        button_layout = QHBoxLayout(button_box)
+        
+        self.ldm4ts_start_training_btn = QPushButton("🚀 Start Training")
+        self.ldm4ts_start_training_btn.clicked.connect(self._start_ldm4ts_training)
+        self.ldm4ts_start_training_btn.setToolTip("Start LDM4TS training")
+        
+        self.ldm4ts_stop_training_btn = QPushButton("⏹️ Stop Training")
+        self.ldm4ts_stop_training_btn.clicked.connect(self._stop_ldm4ts_training)
+        self.ldm4ts_stop_training_btn.setEnabled(False)
+        self.ldm4ts_stop_training_btn.setToolTip("Stop training")
+        
+        button_layout.addWidget(self.ldm4ts_start_training_btn)
+        button_layout.addWidget(self.ldm4ts_stop_training_btn)
+        button_layout.addStretch()
+        
+        layout.addWidget(button_box)
+        
+        # Progress
+        progress_box = QGroupBox("Training Progress")
+        progress_layout = QVBoxLayout(progress_box)
+        
+        self.ldm4ts_train_progress_bar = QProgressBar()
+        self.ldm4ts_train_progress_bar.setValue(0)
+        progress_layout.addWidget(self.ldm4ts_train_progress_bar)
+        
+        self.ldm4ts_train_status_label = QLabel("Ready to train")
+        progress_layout.addWidget(self.ldm4ts_train_status_label)
+        
+        layout.addWidget(progress_box)
+        
+        layout.addStretch()
+        
+        scroll.setWidget(content)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.addWidget(scroll)
+        
+        return tab
 
     def _create_ldm4ts_tab(self) -> QWidget:
         """Create the LDM4TS (Vision-Enhanced Forecasting) settings tab"""
@@ -724,6 +916,80 @@ class UnifiedPredictionSettingsDialog(QDialog):
         else:
             self.ldm4ts_status_label.setText("LDM4TS: Disabled")
             self.ldm4ts_status_label.setStyleSheet("color: #888; font-style: italic;")
+    
+    def _browse_ldm4ts_train_output(self):
+        """Browse for LDM4TS training output directory"""
+        base_dir = Path(__file__).resolve().parents[3]
+        
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            str(base_dir),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if directory:
+            self.ldm4ts_train_output_edit.setText(directory)
+            logger.info(f"Selected LDM4TS training output directory: {directory}")
+    
+    def _start_ldm4ts_training(self):
+        """Start LDM4TS training"""
+        try:
+            # Collect training parameters
+            params = {
+                'symbol': self.ldm4ts_train_symbol_combo.currentText(),
+                'timeframe': self.ldm4ts_train_timeframe_combo.currentText(),
+                'window_size': self.ldm4ts_train_window_spinbox.value(),
+                'horizons': self.ldm4ts_train_horizons_edit.text().strip(),
+                'diffusion_steps': self.ldm4ts_train_diffusion_steps_spinbox.value(),
+                'image_size': int(self.ldm4ts_train_image_size_combo.currentText()),
+                'epochs': self.ldm4ts_train_epochs_spinbox.value(),
+                'batch_size': self.ldm4ts_train_batch_size_spinbox.value(),
+                'learning_rate': self.ldm4ts_train_lr_spinbox.value(),
+                'use_gpu': self.ldm4ts_train_use_gpu_cb.isChecked(),
+                'output_dir': self.ldm4ts_train_output_edit.text().strip(),
+            }
+            
+            # Validate params
+            if not params['output_dir']:
+                QMessageBox.warning(self, "Missing Output Directory", "Please specify output directory for checkpoints.")
+                return
+            
+            # TODO: Implement training worker/thread
+            QMessageBox.information(
+                self,
+                "Training Started",
+                f"LDM4TS training started:\n\n"
+                f"Symbol: {params['symbol']}\n"
+                f"Timeframe: {params['timeframe']}\n"
+                f"Epochs: {params['epochs']}\n"
+                f"Output: {params['output_dir']}\n\n"
+                f"Training logic implementation pending."
+            )
+            
+            logger.info(f"LDM4TS training requested with params: {params}")
+            
+            # Update UI
+            self.ldm4ts_start_training_btn.setEnabled(False)
+            self.ldm4ts_stop_training_btn.setEnabled(True)
+            self.ldm4ts_train_status_label.setText("Training... (implementation pending)")
+            self.ldm4ts_train_progress_bar.setValue(0)
+            
+        except Exception as e:
+            logger.exception(f"Failed to start LDM4TS training: {e}")
+            QMessageBox.critical(self, "Training Error", f"Failed to start training:\n{e}")
+    
+    def _stop_ldm4ts_training(self):
+        """Stop LDM4TS training"""
+        logger.info("LDM4TS training stop requested")
+        
+        # TODO: Implement stop logic
+        
+        # Update UI
+        self.ldm4ts_start_training_btn.setEnabled(True)
+        self.ldm4ts_stop_training_btn.setEnabled(False)
+        self.ldm4ts_train_status_label.setText("Training stopped")
+        QMessageBox.information(self, "Training Stopped", "LDM4TS training has been stopped.")
 
     def _browse_model_paths_multi(self):
         """Browse and select multiple model files"""
