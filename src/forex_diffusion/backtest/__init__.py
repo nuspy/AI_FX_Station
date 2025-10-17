@@ -23,6 +23,12 @@ from .integrated_backtest import (
     Trade
 )
 
+# LDM4TS backtest integration
+from .ldm4ts_backtest import (
+    LDM4TSBacktester,
+    LDM4TSBacktestConfig
+)
+
 __all__ = [
     # Original backtest engine
     "BacktestEngine",
@@ -43,5 +49,8 @@ __all__ = [
     "IntegratedBacktester",
     "BacktestConfig",
     "BacktestResult",
-    "Trade"
+    "Trade",
+    # LDM4TS backtest
+    "LDM4TSBacktester",
+    "LDM4TSBacktestConfig"
 ]
