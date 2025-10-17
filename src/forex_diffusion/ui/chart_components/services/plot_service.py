@@ -140,6 +140,28 @@ class PlotService(ChartServiceBase):
 
         try:
             df2 = df.copy()
+            
+            # PERFORMANCE: Downsample if too many candles to avoid UI freeze
+            MAX_CANDLES_RENDER = 50000  # Reasonable limit for smooth rendering
+            if len(df2) > MAX_CANDLES_RENDER:
+                logger.warning(f"Too many candles ({len(df2)}), downsampling to {MAX_CANDLES_RENDER} for rendering")
+                # Keep most recent data + sample older data
+                recent_keep = MAX_CANDLES_RENDER // 2  # Keep last 25k
+                older_sample = MAX_CANDLES_RENDER // 2  # Sample 25k from older
+                
+                df_recent = df2.iloc[-recent_keep:]
+                df_older = df2.iloc[:-recent_keep]
+                
+                if len(df_older) > older_sample:
+                    # Systematic sampling to preserve temporal distribution
+                    step = len(df_older) // older_sample
+                    df_older_sampled = df_older.iloc[::step][:older_sample]
+                else:
+                    df_older_sampled = df_older
+                
+                df2 = pd.concat([df_older_sampled, df_recent]).reset_index(drop=True)
+                logger.info(f"Downsampled to {len(df2)} candles for rendering")
+            
             y_col = 'close' if 'close' in df2.columns else 'price'
             df2['ts_utc'] = pd.to_numeric(df2['ts_utc'], errors='coerce')
             df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')
@@ -419,6 +441,28 @@ class PlotService(ChartServiceBase):
 
             # Prepare data
             df2 = df.copy()
+            
+            # PERFORMANCE: Downsample if too many candles to avoid UI freeze
+            MAX_CANDLES_RENDER = 50000  # Reasonable limit for smooth rendering
+            if len(df2) > MAX_CANDLES_RENDER:
+                logger.warning(f"Too many candles ({len(df2)}), downsampling to {MAX_CANDLES_RENDER} for rendering")
+                # Keep most recent data + sample older data
+                recent_keep = MAX_CANDLES_RENDER // 2  # Keep last 25k
+                older_sample = MAX_CANDLES_RENDER // 2  # Sample 25k from older
+                
+                df_recent = df2.iloc[-recent_keep:]
+                df_older = df2.iloc[:-recent_keep]
+                
+                if len(df_older) > older_sample:
+                    # Systematic sampling to preserve temporal distribution
+                    step = len(df_older) // older_sample
+                    df_older_sampled = df_older.iloc[::step][:older_sample]
+                else:
+                    df_older_sampled = df_older
+                
+                df2 = pd.concat([df_older_sampled, df_recent]).reset_index(drop=True)
+                logger.info(f"Downsampled to {len(df2)} candles for rendering")
+            
             y_col = 'close' if 'close' in df2.columns else 'price'
             df2['ts_utc'] = pd.to_numeric(df2['ts_utc'], errors='coerce')
             df2[y_col] = pd.to_numeric(df2[y_col], errors='coerce')

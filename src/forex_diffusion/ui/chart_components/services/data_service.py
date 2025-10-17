@@ -922,11 +922,34 @@ class DataService(ChartServiceBase):
                     current_symbol = getattr(self, "symbol", None)
                     current_tf = getattr(self, "timeframe", None)
                     if current_symbol and current_tf and _ok:
-                        # Force reload from DB with same parameters
-                        df = self._load_candles_from_db(current_symbol, current_tf, limit=None, start_ms=None, end_ms=None)
+                        # Calculate smart range to avoid loading millions of candles
+                        from datetime import datetime, timezone, timedelta
+                        
+                        # Get current view range or use default
+                        try:
+                            yrs = int(self.years_combo.currentText() or "0")
+                            mos = int(self.months_combo.currentText() or "0")
+                            days = yrs * 365 + mos * 30
+                            start_ms = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000) if days > 0 else None
+                        except Exception:
+                            start_ms = None
+                        
+                        # If no range specified, use smart default based on timeframe
+                        if start_ms is None:
+                            tf_lookback_days = {
+                                "tick": 1, "1m": 7, "5m": 14, "15m": 30,
+                                "30m": 60, "1h": 90, "4h": 180, "1d": 365, "1w": 730
+                            }
+                            days_lookback = tf_lookback_days.get(current_tf, 30)
+                            start_ms = int((datetime.now(timezone.utc) - timedelta(days=days_lookback)).timestamp() * 1000)
+                        
+                        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                        
+                        # Reload with bounded range
+                        df = self._load_candles_from_db(current_symbol, current_tf, limit=None, start_ms=start_ms, end_ms=end_ms)
                         if df is not None and not df.empty:
                             self.update_plot(df)
-                            logger.info(f"Chart refreshed with {len(df)} candles after backfill")
+                            logger.info(f"Chart refreshed with {len(df)} candles after backfill (range: {days_lookback if start_ms else 'unlimited'} days)")
                 except Exception as e:
                     logger.error(f"Failed to reload after backfill: {e}")
             sig.finished.connect(_on_done)
