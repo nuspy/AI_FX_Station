@@ -7,10 +7,10 @@ This guide explains how to install optional NVIDIA dependencies for GPU-accelera
 Before installing the NVIDIA stack, ensure you have:
 
 1. **NVIDIA GPU** - Any CUDA-capable GPU (GTX 10xx series or newer)
-2. **CUDA Toolkit 12.x** - [Download from NVIDIA](https://developer.nvidia.com/cuda-downloads)
+2. **CUDA Toolkit 13.0** - [Download from NVIDIA](https://developer.nvidia.com/cuda-downloads)
 3. **PyTorch with CUDA** - Install first:
    ```bash
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
    ```
 
 ## Quick Start
@@ -205,7 +205,7 @@ print("\n" + "="*60)
 pip uninstall torch torchvision torchaudio
 
 # Install CUDA version
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
 
 #### 2. APEX installation fails with "CUDA extension build failed"
@@ -268,7 +268,7 @@ model.gradient_checkpointing_enable()
 | **PyTorch CUDA + APEX + Flash Attn** | 2.1 min | 21.4x |
 | **Full Stack** (CUDA + APEX + Flash + DALI) | 1.5 min | 30.0x |
 
-*Benchmarked on RTX 4090, CUDA 12.1, Windows 11*
+*Benchmarked on RTX 4090, CUDA 13.0, Windows 11*
 
 ### Memory Usage
 

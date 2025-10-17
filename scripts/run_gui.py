@@ -13,6 +13,11 @@ import subprocess
 import atexit
 from pathlib import Path
 
+# Add CUDA 13.0 to PATH for Triton
+cuda_13_path = r'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin'
+if os.path.exists(cuda_13_path):
+    os.environ['PATH'] = cuda_13_path + os.pathsep + os.environ.get('PATH', '')
+
 # Configure transformers to use PyTorch instead of TensorFlow
 os.environ['USE_TF'] = '0'
 os.environ['USE_TORCH'] = '1'

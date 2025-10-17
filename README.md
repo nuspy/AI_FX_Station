@@ -36,7 +36,7 @@ cd ForexGPT
 pip install -e .
 
 # Install PyTorch with CUDA support (optional, for GPU training)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
 # Install VectorBT Pro (if available)
 pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl

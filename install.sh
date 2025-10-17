@@ -87,9 +87,9 @@ python -m pip install --upgrade pip setuptools wheel
 echo -e "${GREEN}  pip upgraded successfully${NC}"
 
 # Step 5: Install PyTorch with CUDA support (before main install)
-echo -e "\n${YELLOW}[5/8] Installing PyTorch with CUDA 12.1 support...${NC}"
+echo -e "\n${YELLOW}[5/8] Installing PyTorch with CUDA 13.0 support...${NC}"
 echo -e "  This may take several minutes..."
-python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 echo -e "${GREEN}  PyTorch with CUDA installed${NC}"
 
 # Step 6: Install main package
