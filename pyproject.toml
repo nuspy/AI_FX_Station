@@ -47,7 +47,6 @@ dependencies = [
   "asyncio-throttle>=1.0.2",
 
   # Phase 3 Advanced Features Dependencies
-  "tensorflow>=2.13.0,<2.21",
   # PyTorch with CUDA 12.x support (install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121)
   # Note: Remove CPU-only versions first: pip uninstall torch torchvision torchaudio
   "scipy>=1.10.0,<2.0",
