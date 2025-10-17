@@ -14,6 +14,7 @@ from ..services.db_writer import DBWriter
 from ..services.marketdata import MarketDataService
 from ..services.tiingo_ws_connector import TiingoWSConnector
 from ..services.aggregator import AggregatorService
+from ..services.market_hours_manager import MarketHoursManager
 from .controllers import UIController
 from .training_tab import TrainingTab
 from .signals_tab import SignalsTab
@@ -438,6 +439,16 @@ def setup_ui(
             connector.start()
             result["tiingo_ws_connector"] = connector
             logger.info("Tiingo WebSocket connector started (primary provider: tiingo)")
+            
+            # Setup market hours manager for automatic WS lifecycle
+            market_hours_manager = MarketHoursManager(
+                on_market_open=lambda: connector.start() if not connector.running else None,
+                on_market_close=lambda: connector.stop() if connector.running else None,
+                check_interval_seconds=300  # Check every 5 minutes
+            )
+            market_hours_manager.start()
+            result["market_hours_manager"] = market_hours_manager
+            logger.info("Market hours manager started (auto WS disconnect during weekend)")
         # cTrader WebSocket for primary provider
         # STRATEGY: CTraderProvider (historical data) and CTraderWebSocketService (real-time streams)
         # both use Twisted reactor. To avoid conflicts:

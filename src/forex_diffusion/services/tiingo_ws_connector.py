@@ -40,6 +40,11 @@ class TiingoWSConnector:
         self._ws_app: Optional[websocket.WebSocketApp] = None
         self._was_down = False
 
+    @property
+    def running(self) -> bool:
+        """Check if WebSocket connector is currently running."""
+        return self._thread is not None and self._thread.is_alive() and not self._stop_event.is_set()
+
     def start(self):
         if not _HAS_WS_CLIENT:
             logger.warning("TiingoWSConnector not started: 'websocket' package not installed.")
