@@ -585,7 +585,18 @@ class CTraderProvider(BaseProvider):
                         elif payload_type == 2157:
                             decoded_message = Messages.ProtoOAOrderErrorEvent()
                             decoded_message.ParseFromString(message.payload)
-                            logger.warning(f"[{self.name}] ⚠️ Order error: {decoded_message}")
+                            # Extract error details if available
+                            try:
+                                error_code = getattr(decoded_message, 'errorCode', 'N/A')
+                                description = getattr(decoded_message, 'description', str(decoded_message))
+                                
+                                # Special handling for common errors
+                                if '503' in str(error_code) or '503' in description:
+                                    logger.warning(f"[{self.name}] ⚠️ cTrader server temporarily unavailable (503): Accounts not accessible. This is a temporary server-side issue - retry later.")
+                                else:
+                                    logger.warning(f"[{self.name}] ⚠️ Order error (code={error_code}): {description}")
+                            except Exception:
+                                logger.warning(f"[{self.name}] ⚠️ Order error: {decoded_message}")
                         
                         # Type 2127 = ProtoOAExecutionEvent (order execution/cancellation/fill)
                         elif payload_type == 2127:
