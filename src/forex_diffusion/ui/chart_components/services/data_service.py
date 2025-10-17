@@ -629,35 +629,55 @@ class DataService(ChartServiceBase):
                 logger.warning(f"Failed to calculate date range: {e}")
                 start_ms_view = None
 
-            # Try to load candles from DB
-            # If no date range specified, load ALL available data
-            limit_candles = 50000 if start_ms_view is not None else 500000
+            # Load candles in background to avoid UI freeze
+            from PySide6.QtCore import QRunnable, QThreadPool, Signal, QObject
+            
+            class LoadSymbolSignals(QObject):
+                finished = Signal(object, str, str)  # (df, symbol, timeframe)
+                
+            class LoadSymbolTask(QRunnable):
+                def __init__(self, service, symbol, timeframe, start_ms, signals):
+                    super().__init__()
+                    self.service = service
+                    self.symbol = symbol
+                    self.timeframe = timeframe
+                    self.start_ms = start_ms
+                    self.signals = signals
+                
+                def run(self):
+                    try:
+                        logger.info(f"[BG] Loading {self.symbol} {self.timeframe} from DB...")
+                        # Calculate end_ms for bounded query
+                        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                        df = self.service._load_candles_from_db(
+                            self.symbol, self.timeframe, 
+                            limit=None, start_ms=self.start_ms, end_ms=end_ms
+                        )
+                        
+                        # If no data, trigger auto-download
+                        if df is None or df.empty:
+                            logger.warning(f"[BG] No data for {self.symbol}, triggering auto-download...")
+                            self.service._trigger_auto_download(self.symbol)
+                            # Retry after download
+                            df = self.service._load_candles_from_db(
+                                self.symbol, self.timeframe,
+                                limit=None, start_ms=self.start_ms, end_ms=end_ms
+                            )
+                        
+                        if df is not None and not df.empty:
+                            logger.info(f"[BG] Loaded {len(df)} candles for {self.symbol}")
+                        
+                        self.signals.finished.emit(df, self.symbol, self.timeframe)
+                        
+                    except Exception as e:
+                        logger.error(f"[BG] Failed to load symbol data: {e}")
+                        self.signals.finished.emit(None, self.symbol, self.timeframe)
+            
             current_timeframe = getattr(self, "timeframe", "1m")
-            logger.info(f"Loading {limit_candles} candles for {new_symbol} {current_timeframe}")
-            df = self._load_candles_from_db(new_symbol, current_timeframe, limit=limit_candles, start_ms=start_ms_view)
-
-            # If no data found, trigger auto-download
-            if df is None or df.empty:
-                logger.warning(f"No candles found for {new_symbol} {current_timeframe}, triggering auto-download...")
-                self._trigger_auto_download(new_symbol)
-                # Try loading again after download
-                df = self._load_candles_from_db(new_symbol, current_timeframe, limit=limit_candles, start_ms=start_ms_view)
-
-            if df is not None and not df.empty:
-                logger.info(f"Loaded {len(df)} candles for {new_symbol}, updating plot...")
-                self.update_plot(df)
-                logger.info(f"Plot updated successfully for {new_symbol}")
-                try:
-                    self._backfill_all_missing_1m()
-                except Exception:
-                    pass
-            else:
-                logger.error(f"No candles available for {new_symbol} {current_timeframe} after auto-download attempt")
-
-            try:
-                self._backfill_on_open(df)
-            except Exception:
-                pass
+            signals = LoadSymbolSignals()
+            signals.finished.connect(self._on_symbol_data_loaded)
+            task = LoadSymbolTask(self, new_symbol, current_timeframe, start_ms_view, signals)
+            QThreadPool.globalInstance().start(task)
         except Exception as e:
             logger.exception("Failed to switch symbol: {}", e)
 
@@ -686,17 +706,19 @@ class DataService(ChartServiceBase):
             logger.error(f"Auto-download failed for {symbol}: {e}")
 
     def _on_timeframe_changed(self, new_timeframe: str):
-        """Handle timeframe change: reload candles from DB with new timeframe."""
+        """Handle timeframe change: reload candles from DB with new timeframe (async to avoid UI freeze)."""
         try:
             logger.info(f"DataService: Handling timeframe change to {new_timeframe}")
             if not new_timeframe:
                 logger.warning("Empty timeframe provided")
                 return
+            
             self.timeframe = new_timeframe
             # reset cache so next reload uses the new context
             self._current_cache_tf = None
             self._current_cache_range = None
-            # reload last candles for this symbol/timeframe (respect view range)
+            
+            # Calculate parameters
             from datetime import datetime, timezone, timedelta
             try:
                 yrs = int(self.years_combo.currentText() or "0")
@@ -709,26 +731,17 @@ class DataService(ChartServiceBase):
             symbol = getattr(self, "symbol", "EURUSD")
             
             # Smart cache: NO fixed limit, load based on date range + buffer
-            # This allows unlimited scrolling in history
             BUFFER_CANDLES = 500
             
             # Calculate how many candles to show initially (viewport)
             tf_initial_display = {
-                "tick": 1000,   # Show last 1000 ticks
-                "1m": 500,      # ~8 hours
-                "5m": 300,      # ~24 hours  
-                "15m": 200,     # ~2 days
-                "30m": 150,     # ~3 days
-                "1h": 168,      # ~1 week
-                "4h": 168,      # ~1 month
-                "1d": 90,       # ~3 months
-                "1w": 52        # ~1 year
+                "tick": 1000, "1m": 500, "5m": 300, "15m": 200,
+                "30m": 150, "1h": 168, "4h": 168, "1d": 90, "1w": 52
             }
             initial_display = tf_initial_display.get(new_timeframe, 500)
             
             # Calculate start_ms for initial display + buffer
             if start_ms_view is None:
-                # No date range specified, load recent data with viewport + buffer
                 tf_ms = {
                     "tick": 1000, "1m": 60_000, "5m": 300_000, "15m": 900_000,
                     "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
@@ -738,24 +751,87 @@ class DataService(ChartServiceBase):
                 lookback_ms = candle_duration_ms * (initial_display + BUFFER_CANDLES)
                 start_ms_view = int((datetime.now(timezone.utc).timestamp() * 1000) - lookback_ms)
             
-            # Calculate end_ms for bounded query (avoids loading entire history)
             end_ms_view = int(datetime.now(timezone.utc).timestamp() * 1000)
             
-            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, range={start_ms_view} to {end_ms_view} (smart cache)")
-            df = self._load_candles_from_db(symbol, new_timeframe, limit=None, start_ms=start_ms_view, end_ms=end_ms_view)
+            # Load data in background thread to avoid UI freeze
+            from PySide6.QtCore import QRunnable, QThreadPool, Signal, QObject
             
-            if df is not None and not df.empty:
-                logger.info(f"Loaded {len(df)} candles, updating plot...")
-                self.update_plot(df)
-                logger.info(f"Plot updated successfully for {symbol} {new_timeframe}")
-                try:
-                    self._backfill_on_open(df)
-                except Exception:
-                    pass
-            else:
-                logger.warning(f"No data found for {symbol} {new_timeframe}")
+            class LoadSignals(QObject):
+                finished = Signal(object, str)  # (df, timeframe)
+            
+            class LoadDataTask(QRunnable):
+                def __init__(self, service, symbol, timeframe, start_ms, end_ms, signals):
+                    super().__init__()
+                    self.service = service
+                    self.symbol = symbol
+                    self.timeframe = timeframe
+                    self.start_ms = start_ms
+                    self.end_ms = end_ms
+                    self.signals = signals
+                
+                def run(self):
+                    try:
+                        logger.info(f"[BG] Loading {self.symbol} {self.timeframe} from DB...")
+                        df = self.service._load_candles_from_db(
+                            self.symbol, self.timeframe, 
+                            limit=None, start_ms=self.start_ms, end_ms=self.end_ms
+                        )
+                        
+                        if df is not None and not df.empty:
+                            logger.info(f"[BG] Loaded {len(df)} candles, emitting signal...")
+                            self.signals.finished.emit(df, self.timeframe)
+                        else:
+                            logger.warning(f"[BG] No data found for {self.symbol} {self.timeframe}")
+                            self.signals.finished.emit(None, self.timeframe)
+                    except Exception as e:
+                        logger.error(f"[BG] Failed to load data: {e}")
+                        self.signals.finished.emit(None, self.timeframe)
+            
+            signals = LoadSignals()
+            signals.finished.connect(self._on_data_loaded)
+            task = LoadDataTask(self, symbol, new_timeframe, start_ms_view, end_ms_view, signals)
+            QThreadPool.globalInstance().start(task)
+            
         except Exception as e:
             logger.exception("Failed to switch timeframe: {}", e)
+    
+    def _on_data_loaded(self, df, timeframe):
+        """Slot called on main thread when background data loading completes (timeframe change)."""
+        try:
+            if df is None or df.empty:
+                logger.warning(f"No data loaded for {timeframe}")
+                return
+            
+            logger.info(f"Updating plot with {len(df)} candles for {timeframe}")
+            self.update_plot(df)
+            logger.info(f"Plot updated successfully")
+            
+            # Start backfill in background
+            try:
+                self._backfill_on_open(df)
+            except Exception as e:
+                logger.error(f"Backfill failed: {e}")
+        except Exception as e:
+            logger.error(f"Failed to update plot: {e}")
+    
+    def _on_symbol_data_loaded(self, df, symbol, timeframe):
+        """Slot called on main thread when background symbol data loading completes."""
+        try:
+            if df is None or df.empty:
+                logger.error(f"No candles available for {symbol} {timeframe} after auto-download attempt")
+                return
+            
+            logger.info(f"Updating plot with {len(df)} candles for {symbol}")
+            self.update_plot(df)
+            logger.info(f"Plot updated successfully for {symbol}")
+            
+            # Start backfill in background
+            try:
+                self._backfill_on_open(df)
+            except Exception as e:
+                logger.error(f"Backfill failed: {e}")
+        except Exception as e:
+            logger.error(f"Failed to update plot: {e}")
 
     # --- Backfill-on-open helpers ---
     def _period_includes_weekend(self, start_ms: int, end_ms: int) -> bool:
