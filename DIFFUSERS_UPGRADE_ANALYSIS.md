@@ -417,6 +417,10 @@ class SSSDDiffusionPipeline(DiffusionPipeline):
 1. **Install diffusers** (already done for LDM4TS):
 ```bash
 pip install diffusers>=0.25.0
+
+# NOTE: If you get flash-attn version errors, uninstall it:
+pip uninstall flash-attn -y
+# Diffusers will use PyTorch native attention (slightly slower but works)
 ```
 
 2. **Create new file**: `src/forex_diffusion/models/sssd_improved.py`
