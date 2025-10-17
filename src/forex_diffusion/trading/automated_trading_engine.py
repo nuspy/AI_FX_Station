@@ -570,8 +570,22 @@ class AutomatedTradingEngine:
         # 2. Detect patterns (CRITICAL-001)
         pattern_events = self._detect_patterns(data)
         
-        # 3. Use signal fusion if available (CRITICAL-002)
-        if self.signal_fusion and (pattern_events or ai_signal != 0):
+        # 3. Fetch OHLCV for LDM4TS (if enabled)
+        ldm4ts_ohlcv = None
+        if self.config.use_ldm4ts and self.ldm4ts_service and self.ldm4ts_service._initialized:
+            try:
+                # Get latest 100 candles for vision encoding
+                # Use same data source as data (already fetched)
+                if len(data) >= 100:
+                    ldm4ts_ohlcv = data[['open', 'high', 'low', 'close', 'volume']].tail(100).values
+                    logger.debug(f"Prepared LDM4TS OHLCV: {ldm4ts_ohlcv.shape} for {symbol}")
+                else:
+                    logger.debug(f"Insufficient candles for LDM4TS: {len(data)} < 100")
+            except Exception as e:
+                logger.error(f"Failed to prepare OHLCV for LDM4TS: {e}")
+        
+        # 4. Use signal fusion if available (CRITICAL-002)
+        if self.signal_fusion and (pattern_events or ai_signal != 0 or ldm4ts_ohlcv is not None):
             try:
                 # Convert AI forecast to list format for fusion
                 ensemble_predictions = [{
@@ -580,12 +594,13 @@ class AutomatedTradingEngine:
                     'source': 'ai_ensemble'
                 }] if ai_signal != 0 else None
                 
-                # Fuse signals with quality scoring
+                # Fuse signals with quality scoring (including LDM4TS)
                 fused_signals = self.signal_fusion.fuse_signals(
                     pattern_signals=pattern_events if pattern_events else None,
                     ensemble_predictions=ensemble_predictions,
-                    market_data=data,
-                    symbol=symbol
+                    ldm4ts_ohlcv=ldm4ts_ohlcv,  # NEW: OHLCV for LDM4TS
+                    market_data={'symbol': symbol, 'timeframe': '1m'},  # NEW: dict format
+                    sentiment_score=None  # TODO: add if available
                 )
                 
                 if fused_signals:
@@ -1172,6 +1187,80 @@ class AutomatedTradingEngine:
         self.positions[symbol] = position
 
         logger.info(f"🟢 OPENED {direction.upper()} {symbol} @ {price:.5f}, size={size:.2f}, regime={regime}")
+
+    def _calculate_position_size_with_uncertainty(
+        self,
+        signal: "FusedSignal",
+        account_balance: float
+    ) -> float:
+        """
+        Calculate position size with LDM4TS uncertainty adjustment.
+        
+        For LDM4TS signals, scales position size based on forecast uncertainty.
+        Higher uncertainty → smaller position to manage risk.
+        
+        Args:
+            signal: FusedSignal object (may contain LDM4TS metadata)
+            account_balance: Current account balance
+            
+        Returns:
+            Adjusted position size
+        """
+        from ..intelligence.signal_quality_scorer import SignalSource
+        
+        # Calculate base position size using existing logic
+        # Use signal's price levels for stop loss calculation
+        base_size = self.advanced_position_sizer.calculate_position_size(
+            account_balance=account_balance,
+            entry_price=signal.entry_price or 0.0,
+            stop_loss_price=signal.stop_price or 0.0,
+            symbol=signal.symbol,
+            method=self.config.position_sizing_method
+        )
+        
+        # Apply LDM4TS uncertainty adjustment if applicable
+        if (signal.source == SignalSource.LDM4TS_FORECAST and 
+            self.config.ldm4ts_position_scaling and 
+            signal.metadata):
+            
+            uncertainty_pct = signal.metadata.get('uncertainty_pct', 0)
+            threshold = self.config.ldm4ts_uncertainty_threshold
+            
+            # Calculate uncertainty factor [0, 1]
+            # 0% uncertainty → factor = 1.0 (full size)
+            # threshold% uncertainty → factor = 0.0 (no position)
+            if uncertainty_pct >= threshold:
+                # Uncertainty too high, reject signal
+                logger.warning(
+                    f"⚠️ LDM4TS signal rejected: uncertainty {uncertainty_pct:.3f}% "
+                    f">= threshold {threshold:.3f}% for {signal.symbol}"
+                )
+                return 0.0
+            
+            uncertainty_factor = 1.0 - (uncertainty_pct / threshold)
+            
+            # Apply adjustment
+            adjusted_size = base_size * uncertainty_factor
+            
+            # Log adjustment
+            logger.info(
+                f"📊 LDM4TS position sizing for {signal.symbol}: "
+                f"base={base_size:.2f}, uncertainty={uncertainty_pct:.3f}%, "
+                f"factor={uncertainty_factor:.2f}, adjusted={adjusted_size:.2f}"
+            )
+            
+            # Store adjustment info in signal metadata for tracking
+            signal.metadata['position_size_adjustment'] = {
+                'base_size': base_size,
+                'uncertainty_factor': uncertainty_factor,
+                'adjusted_size': adjusted_size,
+                'adjustment_pct': (adjusted_size - base_size) / base_size * 100 if base_size > 0 else 0
+            }
+            
+            return adjusted_size
+        
+        # Non-LDM4TS signals: return base size
+        return base_size
 
     def _close_position(self, symbol: str, reason: str):
         """Close existing position."""

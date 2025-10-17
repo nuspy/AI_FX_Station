@@ -356,6 +356,27 @@ class UnifiedSignalFusion:
             fused_signals.extend(self._process_event_signals(
                 event_signals, sentiment_score
             ))
+        
+        # NEW: Process LDM4TS forecasts
+        if ldm4ts_ohlcv is not None and len(ldm4ts_ohlcv) >= 100:
+            try:
+                # Extract symbol/timeframe from market_data
+                symbol = market_data.get('symbol', 'EUR/USD') if isinstance(market_data, dict) else 'EUR/USD'
+                timeframe = market_data.get('timeframe', '1m') if isinstance(market_data, dict) else '1m'
+                
+                ldm4ts_signals = self._collect_ldm4ts_signals(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    current_ohlcv=ldm4ts_ohlcv,
+                    horizons=[15, 60, 240]
+                )
+                
+                if ldm4ts_signals:
+                    logger.info(f"✅ Added {len(ldm4ts_signals)} LDM4TS forecast signals for {symbol}")
+                    fused_signals.extend(ldm4ts_signals)
+                    
+            except Exception as e:
+                logger.error(f"Failed to collect LDM4TS signals: {e}", exc_info=True)
 
         # Filter by regime and quality
         filtered_signals = self._filter_by_regime_and_quality(fused_signals)
