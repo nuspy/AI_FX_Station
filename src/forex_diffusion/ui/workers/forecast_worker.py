@@ -95,10 +95,116 @@ class ForecastWorker(QRunnable):
         logger.debug(f"Using default {param_name}={default_value} (metadata not available)")
         return default_value
 
+    def _check_ldm4ts_enabled(self) -> bool:
+        """Check if LDM4TS is enabled in settings."""
+        try:
+            from ..unified_prediction_settings_dialog import UnifiedPredictionSettingsDialog
+            settings = UnifiedPredictionSettingsDialog.get_settings_from_file()
+            return settings.get('ldm4ts_enabled', False)
+        except Exception as e:
+            logger.debug(f"Could not check LDM4TS settings: {e}")
+            return False
+
+    def _run_ldm4ts_inference(self) -> Optional[dict]:
+        """Run LDM4TS inference if enabled."""
+        try:
+            from ...inference.ldm4ts_inference import LDM4TSInferenceService
+            from ..unified_prediction_settings_dialog import UnifiedPredictionSettingsDialog
+            
+            # Load settings
+            settings = UnifiedPredictionSettingsDialog.get_settings_from_file()
+            
+            checkpoint_path = settings.get('ldm4ts_checkpoint', '')
+            if not checkpoint_path or not Path(checkpoint_path).exists():
+                logger.warning("LDM4TS enabled but no valid checkpoint")
+                return None
+            
+            # Get service
+            service = LDM4TSInferenceService.get_instance(
+                checkpoint_path=checkpoint_path
+            )
+            
+            if not service._initialized:
+                logger.warning("LDM4TS service not initialized")
+                return None
+            
+            # Get OHLCV data
+            symbol = self.payload['symbol']
+            timeframe = self.payload['timeframe']
+            window_size = settings.get('ldm4ts_window_size', 100)
+            
+            # Fetch from market service
+            from sqlalchemy import select
+            from ...data.schema import MarketDataCandle
+            from sqlalchemy.orm import Session
+            
+            with Session(self.market_service.engine) as session:
+                query = (
+                    select(MarketDataCandle)
+                    .where(
+                        MarketDataCandle.symbol == symbol,
+                        MarketDataCandle.timeframe == timeframe
+                    )
+                    .order_by(MarketDataCandle.timestamp_ms.desc())
+                    .limit(window_size)
+                )
+                candles = session.execute(query).scalars().all()
+            
+            if not candles or len(candles) < window_size:
+                logger.warning(f"Insufficient data for LDM4TS: {len(candles) if candles else 0} < {window_size}")
+                return None
+            
+            # Convert to DataFrame
+            import pandas as pd
+            df = pd.DataFrame([
+                {
+                    'timestamp': pd.to_datetime(c.timestamp_ms, unit='ms', utc=True),
+                    'open': c.open,
+                    'high': c.high,
+                    'low': c.low,
+                    'close': c.close,
+                    'volume': c.volume
+                }
+                for c in reversed(candles)
+            ])
+            df = df.set_index('timestamp')
+            
+            # Run inference
+            num_samples = settings.get('ldm4ts_num_samples', 50)
+            prediction = service.predict(
+                ohlcv_data=df,
+                num_samples=num_samples
+            )
+            
+            # Convert to quantiles format
+            quantiles = prediction.to_quantiles_format()
+            quantiles['source'] = 'ldm4ts'
+            
+            logger.info(f"LDM4TS inference completed: {len(prediction.horizons)} horizons, {prediction.inference_time_ms:.0f}ms")
+            return quantiles
+            
+        except Exception as e:
+            logger.error(f"LDM4TS inference failed: {e}", exc_info=True)
+            return None
+
     def run(self):
         try:
             self.signals.status.emit("Forecast: running inference...")
-            # UNIFIED PATH: Always use _parallel_infer (handles both single and multiple models)
+            
+            # Check if LDM4TS is enabled
+            if self._check_ldm4ts_enabled():
+                logger.info("LDM4TS enabled - running vision-enhanced forecast")
+                quantiles = self._run_ldm4ts_inference()
+                
+                if quantiles:
+                    # Emit LDM4TS results
+                    self.signals.forecastReady.emit(pd.DataFrame(), quantiles)
+                    self.signals.status.emit("LDM4TS forecast completed")
+                    return
+                else:
+                    logger.warning("LDM4TS inference failed, falling back to standard models")
+            
+            # Standard models inference
             df, quantiles = self._parallel_infer()
             self.signals.status.emit("Forecast: ready")
             self.signals.forecastReady.emit(df, quantiles)

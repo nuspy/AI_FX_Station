@@ -178,7 +178,16 @@ class ForecastService(ChartServiceBase):
 
             # Get consistent color for this model
             model_path = quantiles.get("model_path_used", quantiles.get("model_path", source))
-            color = self._get_color_for_model(model_path)
+            
+            # LDM4TS-specific styling
+            if source == 'ldm4ts':
+                color = '#9C27B0'  # Purple for LDM4TS
+                line_width = 3
+                fill_alpha = 0.25
+            else:
+                color = self._get_color_for_model(model_path)
+                line_width = 2
+                fill_alpha = 0.15
 
             # nome modello per legenda (mostra una sola volta)
             try:
@@ -212,7 +221,7 @@ class ForecastService(ChartServiceBase):
             # PyQtGraph returns single PlotDataItem, not tuple like matplotlib
             line50 = self.ax.plot(
                 x_numeric, q50_arr,
-                pen=pg.mkPen(color, width=2),
+                pen=pg.mkPen(color, width=line_width),
                 symbol='o', symbolSize=3.5,
                 symbolBrush=pg.mkBrush(color), symbolPen=pg.mkPen(color),
                 name=(model_name if first_for_model else None)
@@ -390,8 +399,9 @@ class ForecastService(ChartServiceBase):
 
                 # Create semi-transparent colors for borders (alpha=180)
                 border_color = QColor(r, g, b, 180)
-                # Create fill color (alpha=100)
-                fill_color = QColor(r, g, b, 100)
+                # Create fill color (alpha scaled by fill_alpha)
+                fill_alpha_int = int(255 * fill_alpha)
+                fill_color = QColor(r, g, b, fill_alpha_int)
 
                 # Draw filled area between q05 and q95
                 fill_curve = pg.FillBetweenItem(
