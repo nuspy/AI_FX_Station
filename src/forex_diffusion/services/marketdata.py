@@ -756,8 +756,10 @@ class MarketDataService:
         
         # Log filtered gaps
         if not runs:
-            logger.debug("No significant gaps found for {} {} (all gaps < {} candles)", symbol, timeframe, min_gap_size)
+            logger.info("No significant gaps found for {} {} (all gaps < {} candles)", symbol, timeframe, min_gap_size)
             return []
+        
+        logger.info(f"Found {len(runs)} gap(s) for {symbol} {timeframe}: total missing {sum(len(r) for r in runs)} candles")
 
         # convert runs to [start_ms,end_ms] inclusive for requesting (add a small margin)
         out_ranges: List[Tuple[int, int]] = []

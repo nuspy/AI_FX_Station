@@ -123,15 +123,20 @@ class DataService(ChartServiceBase):
                     # Get current timeframe for aggregation
                     current_tf = getattr(self, 'timeframe', '1m')
                     
-                    # Calculate candle interval in milliseconds
-                    tf_map = {
-                        '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
-                        '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000
-                    }
-                    candle_interval_ms = tf_map.get(current_tf, 60_000)  # Default 1m
-                    
-                    # Normalize timestamp to candle boundary
-                    candle_ts = (ts // candle_interval_ms) * candle_interval_ms
+                    # For tick timeframe, use actual tick timestamp (no aggregation)
+                    if current_tf == 'tick':
+                        candle_ts = ts
+                        candle_interval_ms = 0  # No aggregation for ticks
+                    else:
+                        # Calculate candle interval in milliseconds
+                        tf_map = {
+                            '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+                            '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000
+                        }
+                        candle_interval_ms = tf_map.get(current_tf, 60_000)  # Default 1m
+                        
+                        # Normalize timestamp to candle boundary
+                        candle_ts = (ts // candle_interval_ms) * candle_interval_ms
                     
                     # se buffer vuoto: crea
                     if self._last_df is None or self._last_df.empty:
@@ -141,7 +146,18 @@ class DataService(ChartServiceBase):
                     else:
                         last_candle_ts = int(self._last_df["ts_utc"].iloc[-1])
                         
-                        if candle_ts > last_candle_ts:
+                        # For tick timeframe, always append (no aggregation)
+                        if current_tf == 'tick':
+                            new_row = {"ts_utc": candle_ts, "open": y, "high": y, "low": y, "close": y, "volume": 0}
+                            if bid_val is not None:
+                                new_row["bid"] = bid_val
+                            if ask_val is not None:
+                                new_row["ask"] = ask_val
+                            self._last_df.loc[len(self._last_df)] = new_row
+                            # trim buffer to last 5000 ticks
+                            if len(self._last_df) > 5000:
+                                self._last_df = self._last_df.iloc[-5000:].reset_index(drop=True)
+                        elif candle_ts > last_candle_ts:
                             # New candle - append new row
                             new_row = {"ts_utc": candle_ts, "open": y, "high": y, "low": y, "close": y, "volume": 0}
                             if bid_val is not None:
@@ -640,28 +656,38 @@ class DataService(ChartServiceBase):
             
             symbol = getattr(self, "symbol", "EURUSD")
             
-            # Smart cache: Load initial data + 500 candles buffer on each side
-            # This provides smooth panning without immediate reloading
+            # Smart cache: NO fixed limit, load based on date range + buffer
+            # This allows unlimited scrolling in history
             BUFFER_CANDLES = 500
             
-            # Adjust base limit based on timeframe
-            tf_base_limits = {
-                "tick": 2000,
-                "1m": 2000,
-                "5m": 3000,
-                "15m": 5000,
-                "30m": 7000,
-                "1h": 10000,
-                "4h": 15000,
-                "1d": 20000,
-                "1w": 50000
+            # Calculate how many candles to show initially (viewport)
+            tf_initial_display = {
+                "tick": 1000,   # Show last 1000 ticks
+                "1m": 500,      # ~8 hours
+                "5m": 300,      # ~24 hours  
+                "15m": 200,     # ~2 days
+                "30m": 150,     # ~3 days
+                "1h": 168,      # ~1 week
+                "4h": 168,      # ~1 month
+                "1d": 90,       # ~3 months
+                "1w": 52        # ~1 year
             }
-            base_limit = tf_base_limits.get(new_timeframe, 5000)
-            # Add buffer on both sides for smooth panning
-            limit = base_limit + (BUFFER_CANDLES * 2)
+            initial_display = tf_initial_display.get(new_timeframe, 500)
             
-            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, limit={limit}, start_ms={start_ms_view}")
-            df = self._load_candles_from_db(symbol, new_timeframe, limit=limit, start_ms=start_ms_view)
+            # Calculate start_ms for initial display + buffer
+            if start_ms_view is None:
+                # No date range specified, load recent data with viewport + buffer
+                tf_ms = {
+                    "tick": 1000, "1m": 60_000, "5m": 300_000, "15m": 900_000,
+                    "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
+                    "1d": 86_400_000, "1w": 604_800_000
+                }
+                candle_duration_ms = tf_ms.get(new_timeframe, 60_000)
+                lookback_ms = candle_duration_ms * (initial_display + BUFFER_CANDLES)
+                start_ms_view = int((datetime.now(timezone.utc).timestamp() * 1000) - lookback_ms)
+            
+            logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, start_ms={start_ms_view} (NO LIMIT - smart cache)")
+            df = self._load_candles_from_db(symbol, new_timeframe, limit=None, start_ms=start_ms_view, end_ms=None)
             
             if df is not None and not df.empty:
                 logger.info(f"Loaded {len(df)} candles, updating plot...")
