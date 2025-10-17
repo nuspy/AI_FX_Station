@@ -84,6 +84,9 @@ artifacts/
 tmp/
 .cache/
 
+# Hugging Face models (large files - download via install.ps1)
+models/huggingface/
+
 # Environment files
 .env
 .env.local
@@ -105,6 +108,9 @@ data/
 artifacts/
 tmp/
 .cache/
+
+# Hugging Face models (large files - download via install.ps1)
+models/huggingface/
 
 # Environment files
 .env

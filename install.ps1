@@ -149,20 +149,30 @@ if ($LASTEXITCODE -eq 0) {
 
 # Step 8: Download Hugging Face models for LDM4TS
 Write-Host "`n[8/8] Downloading Hugging Face models for LDM4TS..." -ForegroundColor Yellow
+
+# Create models directory
+if (-not (Test-Path "models\huggingface")) {
+    New-Item -ItemType Directory -Path "models\huggingface" -Force | Out-Null
+}
+
 & .\venv\Scripts\python.exe -c @"
 from diffusers import AutoencoderKL
 from transformers import CLIPTokenizer, CLIPTextModel
 import os
 
+# Set cache to project directory
+cache_dir = os.path.join(os.getcwd(), 'models', 'huggingface')
+os.makedirs(cache_dir, exist_ok=True)
+
 print('  Downloading Stable Diffusion VAE...')
-vae = AutoencoderKL.from_pretrained('stabilityai/sd-vae-ft-mse')
+vae = AutoencoderKL.from_pretrained('stabilityai/sd-vae-ft-mse', cache_dir=cache_dir)
 print('  VAE downloaded')
 
 print('  Downloading CLIP models...')
-tok = CLIPTokenizer.from_pretrained('openai/clip-vit-base-patch32')
-model = CLIPTextModel.from_pretrained('openai/clip-vit-base-patch32')
+tok = CLIPTokenizer.from_pretrained('openai/clip-vit-base-patch32', cache_dir=cache_dir)
+model = CLIPTextModel.from_pretrained('openai/clip-vit-base-patch32', cache_dir=cache_dir)
 print('  CLIP models downloaded')
-print('  All models ready')
+print('  All models ready in: models/huggingface/')
 "@
 
 if ($LASTEXITCODE -eq 0) {
