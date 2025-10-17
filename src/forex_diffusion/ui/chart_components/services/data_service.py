@@ -640,10 +640,13 @@ class DataService(ChartServiceBase):
             
             symbol = getattr(self, "symbol", "EURUSD")
             
-            # Adjust limit based on timeframe to avoid performance issues
-            # Lower timeframes (1m, 5m) need fewer candles for same visual range
-            tf_limits = {
-                "tick": 5000,
+            # Smart cache: Load initial data + 500 candles buffer on each side
+            # This provides smooth panning without immediate reloading
+            BUFFER_CANDLES = 500
+            
+            # Adjust base limit based on timeframe
+            tf_base_limits = {
+                "tick": 2000,
                 "1m": 2000,
                 "5m": 3000,
                 "15m": 5000,
@@ -653,7 +656,9 @@ class DataService(ChartServiceBase):
                 "1d": 20000,
                 "1w": 50000
             }
-            limit = tf_limits.get(new_timeframe, 5000)
+            base_limit = tf_base_limits.get(new_timeframe, 5000)
+            # Add buffer on both sides for smooth panning
+            limit = base_limit + (BUFFER_CANDLES * 2)
             
             logger.info(f"Loading candles: symbol={symbol}, tf={new_timeframe}, limit={limit}, start_ms={start_ms_view}")
             df = self._load_candles_from_db(symbol, new_timeframe, limit=limit, start_ms=start_ms_view)
