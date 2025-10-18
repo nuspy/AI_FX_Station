@@ -339,6 +339,50 @@ class MarketDataService:
                 self.fallback_reason = f"Provider initialization error: {str(e)}. No fallback configured."
                 raise
 
+    def get_candles(self, symbol: str, timeframe: str, days_history: int = 90) -> pd.DataFrame:
+        """
+        Fetch OHLCV candles from database for training/inference.
+        
+        Args:
+            symbol: Trading pair (e.g., "EUR/USD")
+            timeframe: Timeframe string (e.g., "1m", "5m", "1h")
+            days_history: Number of days of historical data
+            
+        Returns:
+            DataFrame with columns: ts_utc, open, high, low, close, volume
+        """
+        from sqlalchemy import MetaData, select
+        from datetime import datetime, timedelta
+        
+        meta = MetaData()
+        meta.reflect(bind=self.engine, only=["market_data_candles"])
+        tbl = meta.tables.get("market_data_candles")
+        if tbl is None:
+            raise RuntimeError("Table 'market_data_candles' not found in DB")
+        
+        # Calculate start timestamp
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(days=days_history)
+        start_ms = int(start_time.timestamp() * 1000)
+        
+        with self.engine.connect() as conn:
+            stmt = (
+                select(
+                    tbl.c.ts_utc, tbl.c.open, tbl.c.high, tbl.c.low, tbl.c.close, tbl.c.volume
+                )
+                .where(tbl.c.symbol == symbol)
+                .where(tbl.c.timeframe == timeframe)
+                .where(tbl.c.ts_utc >= start_ms)
+                .order_by(tbl.c.ts_utc.asc())
+            )
+            rows = conn.execute(stmt).fetchall()
+        
+        if not rows:
+            return pd.DataFrame(columns=["ts_utc", "open", "high", "low", "close", "volume"])
+        
+        df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
+        return df.reset_index(drop=True)
+
     def backfill_symbol_timeframe(self, symbol: str, timeframe: str, force_full: bool = False, progress_cb: Optional[callable] = None, start_ms_override: Optional[int] = None):
         """
         Backfill implementation replaced:
