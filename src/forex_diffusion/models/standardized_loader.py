@@ -160,6 +160,10 @@ class StandardizedModelLoader:
                 data = torch.load(model_path, map_location='cpu')
 
             # Check if this is a Lightning checkpoint
+            logger.debug(f"Loaded data type: {type(data)}, is dict: {isinstance(data, dict)}")
+            if isinstance(data, dict):
+                logger.debug(f"Dict keys: {list(data.keys())}")
+            
             if isinstance(data, dict) and 'state_dict' in data:
                 # This is a Lightning checkpoint - use LightningMultiHorizonPredictor
                 logger.info(f"Lightning checkpoint detected: {model_path.name}, loading with LightningMultiHorizonPredictor")
