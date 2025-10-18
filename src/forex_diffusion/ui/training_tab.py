@@ -1871,12 +1871,18 @@ class TrainingTab(QWidget):
 
             self._pending_meta = meta
             self._pending_out_dir = pending_dir
-            self._append_log(f"[meta] prepared: {meta}")
+            # Log meta in a more readable format
+            import json
+            self._append_log("[meta] Training parameters prepared:")
+            self._append_log(json.dumps(meta, indent=2, default=str))
 
             self.progress.setRange(0, 100)
             self.progress.setValue(0)
+            self._append_log(f"\n[command] Starting training process...")
+            self._append_log(f"[command] {' '.join(args)}")
+            self._append_log(f"[command] Working directory: {root}\n")
             self.controller.start_training(args, cwd=str(root))
-            self._append_log(f"[start] {' '.join(args)}")
+            self._append_log("[status] Training process launched, waiting for output...")
 
         except Exception as e:
             logger.exception("Start training error: {}", e)
