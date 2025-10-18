@@ -2415,7 +2415,8 @@ class PatternsService(ChartServiceBase):
                     return []
 
             # Start synchronous pattern detection to avoid thread blocking
-            result = self._sync_pattern_detection(dfN, kind)
+            # Pass is_historical flag to skip market closed check for historical scans
+            result = self._sync_pattern_detection(dfN, kind, is_historical=is_historical_scan)
             return result or []
 
         except Exception as e:
@@ -2497,11 +2498,19 @@ class PatternsService(ChartServiceBase):
             logger.error(f"Async pattern detection error: {e}")
             return []
 
-    def _sync_pattern_detection(self, dfN, kind: str):
-        """Synchronous pattern detection to avoid thread blocking"""
+    def _sync_pattern_detection(self, dfN, kind: str, is_historical: bool = False):
+        """
+        Synchronous pattern detection to avoid thread blocking
+        
+        Args:
+            dfN: Normalized dataframe
+            kind: Pattern kind ('chart' or 'candle')
+            is_historical: If True, skip market closed check (for historical scans)
+        """
         try:
             # Additional check to avoid unnecessary computation during market closure
-            if self._is_market_likely_closed():
+            # BUT: skip this check for historical scans (user explicitly requested)
+            if not is_historical and self._is_market_likely_closed():
                 logger.debug(f"Skipping {kind} sync pattern detection - market closed")
                 return []
 
