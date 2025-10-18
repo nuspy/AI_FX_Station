@@ -64,18 +64,19 @@ class LDM4TSVAE(nn.Module):
         project_root = Path(__file__).parent.parent.parent.parent
         local_vae = project_root / "models" / "vae"
         
-        if local_vae.exists() and (local_vae / "config.json").exists():
-            logger.info(f"Loading VAE from local: {local_vae}")
-            self.vae = AutoencoderKL.from_pretrained(
-                str(local_vae),
-                torch_dtype=torch.float32
+        if not local_vae.exists() or not (local_vae / "config.json").exists():
+            raise FileNotFoundError(
+                f"VAE model not found at {local_vae}\n"
+                f"Please ensure the 'models/vae' directory contains the pre-trained VAE model.\n"
+                f"Expected model: {pretrained_model}\n"
+                f"The model files should be included in the distribution package."
             )
-        else:
-            logger.info(f"Downloading VAE from Hugging Face: {pretrained_model}")
-            self.vae = AutoencoderKL.from_pretrained(
-                pretrained_model,
-                torch_dtype=torch.float32
-            )
+        
+        logger.info(f"Loading VAE from local: {local_vae}")
+        self.vae = AutoencoderKL.from_pretrained(
+            str(local_vae),
+            torch_dtype=torch.float32
+        )
         
         # Freeze VAE weights if requested
         if freeze_vae:

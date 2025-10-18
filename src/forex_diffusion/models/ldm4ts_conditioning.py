@@ -104,12 +104,17 @@ class TextConditioner(nn.Module):
         project_root = Path(__file__).parent.parent.parent.parent
         local_clip = project_root / "models" / "clip"
         
-        if local_clip.exists() and (local_clip / "config.json").exists():
-            self.tokenizer = CLIPTokenizer.from_pretrained(str(local_clip))
-            self.text_encoder = CLIPTextModel.from_pretrained(str(local_clip))
-        else:
-            self.tokenizer = CLIPTokenizer.from_pretrained(model_name)
-            self.text_encoder = CLIPTextModel.from_pretrained(model_name)
+        if not local_clip.exists() or not (local_clip / "config.json").exists():
+            raise FileNotFoundError(
+                f"CLIP model not found at {local_clip}\n"
+                f"Please ensure the 'models/clip' directory contains the pre-trained CLIP model.\n"
+                f"Expected model: {model_name}\n"
+                f"The model files should be included in the distribution package."
+            )
+        
+        logger.info(f"Loading CLIP from local: {local_clip}")
+        self.tokenizer = CLIPTokenizer.from_pretrained(str(local_clip))
+        self.text_encoder = CLIPTextModel.from_pretrained(str(local_clip))
         
         # Get CLIP embedding dimension (512 for clip-vit-base-patch32)
         clip_dim = self.text_encoder.config.hidden_size
