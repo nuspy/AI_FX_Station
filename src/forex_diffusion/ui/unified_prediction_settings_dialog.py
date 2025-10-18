@@ -955,41 +955,94 @@ class UnifiedPredictionSettingsDialog(QDialog):
                 QMessageBox.warning(self, "Missing Output Directory", "Please specify output directory for checkpoints.")
                 return
             
-            # TODO: Implement training worker/thread
-            QMessageBox.information(
-                self,
-                "Training Started",
-                f"LDM4TS training started:\n\n"
-                f"Symbol: {params['symbol']}\n"
-                f"Timeframe: {params['timeframe']}\n"
-                f"Epochs: {params['epochs']}\n"
-                f"Output: {params['output_dir']}\n\n"
-                f"Training logic implementation pending."
-            )
-            
             logger.info(f"LDM4TS training requested with params: {params}")
+            
+            # Create and start training worker
+            from .workers.ldm4ts_training_worker import LDM4TSTrainingWorker
+            from PySide6.QtCore import QThreadPool
+            
+            self._training_worker = LDM4TSTrainingWorker(params)
+            
+            # Connect signals
+            self._training_worker.signals.progress.connect(self._on_training_progress)
+            self._training_worker.signals.status.connect(self._on_training_status)
+            self._training_worker.signals.epoch_complete.connect(self._on_epoch_complete)
+            self._training_worker.signals.training_complete.connect(self._on_training_complete)
+            self._training_worker.signals.error.connect(self._on_training_error)
+            
+            # Start worker in thread pool
+            QThreadPool.globalInstance().start(self._training_worker)
             
             # Update UI
             self.ldm4ts_start_training_btn.setEnabled(False)
             self.ldm4ts_stop_training_btn.setEnabled(True)
-            self.ldm4ts_train_status_label.setText("Training... (implementation pending)")
+            self.ldm4ts_train_status_label.setText("Starting training...")
             self.ldm4ts_train_progress_bar.setValue(0)
+            
+            logger.info("LDM4TS training worker started")
             
         except Exception as e:
             logger.exception(f"Failed to start LDM4TS training: {e}")
             QMessageBox.critical(self, "Training Error", f"Failed to start training:\n{e}")
     
+    def _on_training_progress(self, progress: int):
+        """Handle training progress update"""
+        self.ldm4ts_train_progress_bar.setValue(progress)
+    
+    def _on_training_status(self, status: str):
+        """Handle training status update"""
+        self.ldm4ts_train_status_label.setText(status)
+    
+    def _on_epoch_complete(self, epoch: int, metrics: dict):
+        """Handle epoch completion"""
+        train_loss = metrics.get('train_loss', 0.0)
+        val_loss = metrics.get('val_loss', 0.0)
+        logger.info(f"Epoch {epoch} complete - train_loss: {train_loss:.4f}, val_loss: {val_loss:.4f}")
+    
+    def _on_training_complete(self, checkpoint_path: str):
+        """Handle training completion"""
+        self.ldm4ts_start_training_btn.setEnabled(True)
+        self.ldm4ts_stop_training_btn.setEnabled(False)
+        self.ldm4ts_train_progress_bar.setValue(100)
+        
+        QMessageBox.information(
+            self,
+            "Training Complete",
+            f"LDM4TS training completed successfully!\n\n"
+            f"Final checkpoint saved to:\n{checkpoint_path}"
+        )
+        
+        # Optionally set checkpoint in inference tab
+        try:
+            self.ldm4ts_checkpoint_edit.setText(checkpoint_path)
+        except Exception:
+            pass
+    
+    def _on_training_error(self, error: str):
+        """Handle training error"""
+        self.ldm4ts_start_training_btn.setEnabled(True)
+        self.ldm4ts_stop_training_btn.setEnabled(False)
+        
+        QMessageBox.critical(
+            self,
+            "Training Error",
+            f"Training failed with error:\n\n{error}"
+        )
+    
     def _stop_ldm4ts_training(self):
         """Stop LDM4TS training"""
         logger.info("LDM4TS training stop requested")
         
-        # TODO: Implement stop logic
+        # Request worker to stop
+        if hasattr(self, '_training_worker') and self._training_worker:
+            self._training_worker.stop()
         
         # Update UI
         self.ldm4ts_start_training_btn.setEnabled(True)
         self.ldm4ts_stop_training_btn.setEnabled(False)
         self.ldm4ts_train_status_label.setText("Training stopped")
-        QMessageBox.information(self, "Training Stopped", "LDM4TS training has been stopped.")
+        
+        QMessageBox.information(self, "Training Stopped", "LDM4TS training stop requested.")
 
     def _browse_model_paths_multi(self):
         """Browse and select multiple model files"""

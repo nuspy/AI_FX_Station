@@ -1080,25 +1080,37 @@ class LDM4TSBacktestingTab(QWidget):
             
             logger.info(f"LDM4TS backtest requested: {params}")
             
+            # Create and start backtest worker
+            from .workers.ldm4ts_backtest_worker import LDM4TSBacktestWorker
+            from PySide6.QtCore import QThreadPool
+            
+            self._backtest_worker = LDM4TSBacktestWorker(params)
+            
+            # Connect signals
+            self._backtest_worker.signals.progress.connect(self._on_backtest_progress)
+            self._backtest_worker.signals.status.connect(self._on_backtest_status)
+            self._backtest_worker.signals.result_row.connect(self._on_result_row)
+            self._backtest_worker.signals.metrics_update.connect(self._on_metrics_update)
+            self._backtest_worker.signals.backtest_complete.connect(self._on_backtest_complete)
+            self._backtest_worker.signals.error.connect(self._on_backtest_error)
+            
+            # Clear previous results
+            self.ldm4ts_bt_results_table.setRowCount(0)
+            self.ldm4ts_bt_metrics_label.setText("Metrics: -")
+            
+            # Start worker
+            QThreadPool.globalInstance().start(self._backtest_worker)
+            
             # Emit start signal
             self.startRequested.emit(params)
             
             # Update UI
             self.ldm4ts_bt_start_btn.setEnabled(False)
             self.ldm4ts_bt_stop_btn.setEnabled(True)
-            self.ldm4ts_bt_status_label.setText("Backtest running...")
+            self.ldm4ts_bt_status_label.setText("Starting backtest...")
             self.ldm4ts_bt_progress_bar.setValue(0)
             
-            # TODO: Implement actual backtest worker
-            QMessageBox.information(
-                self,
-                "Backtest Started",
-                f"LDM4TS backtest started:\n\n"
-                f"Symbol: {params['symbol']}\n"
-                f"Period: {params['start_date']} → {params['end_date']}\n"
-                f"Horizons: {params['horizons']}\n\n"
-                f"Implementation pending."
-            )
+            logger.info("LDM4TS backtest worker started")
             
         except Exception as e:
             logger.exception(f"Failed to start LDM4TS backtest: {e}")
@@ -1111,6 +1123,10 @@ class LDM4TSBacktestingTab(QWidget):
         
         logger.info("LDM4TS backtest stop requested")
         
+        # Request worker to stop
+        if hasattr(self, '_backtest_worker') and self._backtest_worker:
+            self._backtest_worker.stop()
+        
         # Emit stop signal
         self.stopRequested.emit()
         
@@ -1119,6 +1135,78 @@ class LDM4TSBacktestingTab(QWidget):
         self.ldm4ts_bt_stop_btn.setEnabled(False)
         self.ldm4ts_bt_status_label.setText("Backtest stopped")
         
-        QMessageBox.information(self, "Backtest Stopped", "LDM4TS backtest has been stopped.")
+        QMessageBox.information(self, "Backtest Stopped", "LDM4TS backtest stop requested.")
+    
+    def _on_backtest_progress(self, progress: int):
+        """Handle backtest progress update"""
+        self.ldm4ts_bt_progress_bar.setValue(progress)
+    
+    def _on_backtest_status(self, status: str):
+        """Handle backtest status update"""
+        self.ldm4ts_bt_status_label.setText(status)
+    
+    def _on_result_row(self, result: dict):
+        """Handle new result row"""
+        # Add row to table
+        row_position = self.ldm4ts_bt_results_table.rowCount()
+        self.ldm4ts_bt_results_table.insertRow(row_position)
+        
+        # Populate cells
+        columns = ['timestamp', 'horizon', 'true', 'predicted', 'uncertainty', 'error', 'coverage']
+        for col_idx, col_name in enumerate(columns):
+            item = QTableWidgetItem(result.get(col_name, ''))
+            self.ldm4ts_bt_results_table.setItem(row_position, col_idx, item)
+        
+        # Auto-scroll to bottom
+        self.ldm4ts_bt_results_table.scrollToBottom()
+    
+    def _on_metrics_update(self, metrics: dict):
+        """Handle metrics update"""
+        mae = metrics.get('mae', 0.0)
+        rmse = metrics.get('rmse', 0.0)
+        coverage = metrics.get('coverage', 0.0)
+        num = metrics.get('num_predictions', 0)
+        
+        self.ldm4ts_bt_metrics_label.setText(
+            f"Metrics: MAE={mae:.5f}, RMSE={rmse:.5f}, Coverage={coverage:.2%}, N={num}"
+        )
+    
+    def _on_backtest_complete(self, metrics: dict):
+        """Handle backtest completion"""
+        from PySide6.QtWidgets import QMessageBox
+        from loguru import logger
+        
+        self.ldm4ts_bt_start_btn.setEnabled(True)
+        self.ldm4ts_bt_stop_btn.setEnabled(False)
+        
+        mae = metrics.get('mae', 0.0)
+        rmse = metrics.get('rmse', 0.0)
+        coverage = metrics.get('coverage', 0.0)
+        num = metrics.get('num_predictions', 0)
+        
+        logger.info(f"Backtest complete: MAE={mae:.5f}, RMSE={rmse:.5f}, Coverage={coverage:.2%}")
+        
+        QMessageBox.information(
+            self,
+            "Backtest Complete",
+            f"LDM4TS backtest completed successfully!\n\n"
+            f"Predictions: {num}\n"
+            f"MAE: {mae:.5f}\n"
+            f"RMSE: {rmse:.5f}\n"
+            f"Coverage (95%): {coverage:.2%}"
+        )
+    
+    def _on_backtest_error(self, error: str):
+        """Handle backtest error"""
+        from PySide6.QtWidgets import QMessageBox
+        
+        self.ldm4ts_bt_start_btn.setEnabled(True)
+        self.ldm4ts_bt_stop_btn.setEnabled(False)
+        
+        QMessageBox.critical(
+            self,
+            "Backtest Error",
+            f"Backtest failed with error:\n\n{error}"
+        )
 
 
