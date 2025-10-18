@@ -10,7 +10,8 @@ ForexGPT is an advanced trading platform with AI-powered forecasting, pattern re
 - **Multi-Provider Architecture**: Unified interface for Tiingo, cTrader, AlphaVantage
 - **Real-Time Data**: WebSocket streaming with asyncio integration
 - **Historical Backfill**: Intelligent gap detection and filling
-- **AI Forecasting**: Diffusion models + traditional ML
+- **AI Forecasting**: LDM4TS (vision-enhanced diffusion), SSSD, traditional ML
+- **Memory Optimization**: SageAttention/FlashAttention for VRAM reduction (35-55%)
 - **Pattern Recognition**: Advanced pattern detection with optimization
 - **Sentiment Analysis**: Trader sentiment indicators
 - **News & Calendar**: Economic events and news feed integration
@@ -40,6 +41,12 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 # Install VectorBT Pro (if available)
 pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl
+
+# Optional: Memory optimization for LDM4TS training (VRAM < 12 GB)
+# Install SageAttention 2 (~35% VRAM reduction)
+python install_memory_optimization.py
+# Or install with FlashAttention 2 (~45% VRAM reduction, requires RTX 30/40)
+python install_memory_optimization.py --flash
 
 # Run database migrations
 alembic upgrade head
