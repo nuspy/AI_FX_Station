@@ -93,6 +93,7 @@ class EventHandlersMixin:
             # Forecast settings buttons removed - now in Generative Forecast tab
             getattr(self, "forecast_btn", None): ("clicked", self.chart_controller.on_forecast_clicked),
             getattr(self, "adv_forecast_btn", None): ("clicked", self.chart_controller.on_advanced_forecast_clicked),
+            getattr(self, "ldm4ts_forecast_btn", None): ("clicked", self.chart_controller.on_ldm4ts_forecast_clicked),
             getattr(self, "clear_forecasts_btn", None): ("clicked", self.chart_controller.clear_all_forecasts),
             getattr(self, "toggle_drawbar_btn", None): ("toggled", self._toggle_drawbar),
             getattr(self, "mode_btn", None): ("toggled", self._on_price_mode_toggled),
