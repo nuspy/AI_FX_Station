@@ -1548,3 +1548,250 @@ class DataService(ChartServiceBase):
 
         except Exception as e:
             logger.debug(f"Failed to update provider label: {e}")
+    
+    # ============================================================================
+    # SMART BUFFER - Automatic data loading on chart scroll
+    # ============================================================================
+    
+    def setup_smart_buffer(self):
+        """
+        Connect to chart view range changes to enable automatic data loading on scroll.
+        
+        This should be called after the plot is created (in plot_service).
+        """
+        try:
+            # Get the main plot's ViewBox
+            plot_service = self.controller.plot_service
+            if not hasattr(plot_service, 'ax') or plot_service.ax is None:
+                logger.debug("Smart buffer: plot not initialized yet")
+                return
+            
+            viewbox = plot_service.ax.getViewBox()
+            
+            # Disconnect if already connected (avoid duplicates)
+            try:
+                viewbox.sigRangeChanged.disconnect(self._on_view_range_changed)
+            except:
+                pass  # Not connected yet
+            
+            # Connect to range change signal
+            viewbox.sigRangeChanged.connect(self._on_view_range_changed)
+            
+            # Initialize buffer state
+            self._smart_buffer_state = {
+                'loading': False,
+                'last_load_time': 0,
+                'min_load_interval': 2.0,  # Minimum 2 seconds between loads
+                'buffer_threshold': 0.2,  # Load when within 20% of edge
+                'buffer_size': 200  # Load 200 candles at a time
+            }
+            
+            logger.info("✅ Smart buffer connected to view range changes")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup smart buffer: {e}")
+    
+    def _on_view_range_changed(self, viewbox, ranges):
+        """
+        Called when user scrolls or zooms the chart.
+        
+        Args:
+            viewbox: PyQtGraph ViewBox
+            ranges: [[x_min, x_max], [y_min, y_max]]
+        """
+        try:
+            # Check if we have data
+            if not hasattr(self, '_last_df') or self._last_df is None or self._last_df.empty:
+                return
+            
+            # Throttle: don't load too frequently
+            import time
+            current_time = time.time()
+            if self._smart_buffer_state['loading']:
+                return  # Already loading
+            
+            last_load = self._smart_buffer_state['last_load_time']
+            min_interval = self._smart_buffer_state['min_load_interval']
+            if current_time - last_load < min_interval:
+                return  # Too soon
+            
+            # Get visible X range (timestamps)
+            x_range = ranges[0]
+            x_min_visible, x_max_visible = x_range
+            
+            # Get data bounds
+            if 'ts_utc' not in self._last_df.columns:
+                logger.debug("Smart buffer: no ts_utc column")
+                return
+            
+            data_min = self._last_df['ts_utc'].min()
+            data_max = self._last_df['ts_utc'].max()
+            
+            # Calculate data range width
+            data_width = data_max - data_min
+            if data_width == 0:
+                return
+            
+            # Calculate visible width
+            visible_width = x_max_visible - x_min_visible
+            
+            # Check if scrolled near left edge (need older data)
+            threshold = self._smart_buffer_state['buffer_threshold']
+            left_distance = (x_min_visible - data_min) / visible_width
+            
+            if left_distance < threshold:
+                logger.info(f"📜 Smart buffer: scrolled near left edge (distance={left_distance:.2%}), loading older data...")
+                self._load_more_data(direction='older', before_ts=data_min)
+                return
+            
+            # Check if scrolled near right edge (need newer data)
+            right_distance = (data_max - x_max_visible) / visible_width
+            
+            if right_distance < threshold:
+                logger.info(f"📜 Smart buffer: scrolled near right edge (distance={right_distance:.2%}), loading newer data...")
+                self._load_more_data(direction='newer', after_ts=data_max)
+                return
+                
+        except Exception as e:
+            logger.error(f"Smart buffer range change error: {e}")
+    
+    def _load_more_data(self, direction: str, before_ts: int = None, after_ts: int = None):
+        """
+        Load more data in the specified direction.
+        
+        Args:
+            direction: 'older' or 'newer'
+            before_ts: Load data before this timestamp (for 'older')
+            after_ts: Load data after this timestamp (for 'newer')
+        """
+        try:
+            self._smart_buffer_state['loading'] = True
+            
+            symbol = getattr(self, 'symbol', 'EURUSD')
+            timeframe = getattr(self, 'timeframe', '1m')
+            buffer_size = self._smart_buffer_state['buffer_size']
+            
+            # Calculate timestamp range based on direction
+            if direction == 'older':
+                # Load older data: end_ms = before_ts, start_ms = before_ts - buffer
+                end_ms = int(before_ts)
+                
+                # Calculate buffer duration in milliseconds
+                tf_ms = {
+                    "tick": 1000, "1m": 60_000, "5m": 300_000, "15m": 900_000,
+                    "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
+                    "1d": 86_400_000, "1w": 604_800_000
+                }
+                candle_duration_ms = tf_ms.get(timeframe, 60_000)
+                buffer_duration_ms = candle_duration_ms * buffer_size
+                
+                start_ms = end_ms - buffer_duration_ms
+                
+            else:  # newer
+                # Load newer data: start_ms = after_ts, end_ms = after_ts + buffer
+                start_ms = int(after_ts)
+                
+                tf_ms = {
+                    "tick": 1000, "1m": 60_000, "5m": 300_000, "15m": 900_000,
+                    "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
+                    "1d": 86_400_000, "1w": 604_800_000
+                }
+                candle_duration_ms = tf_ms.get(timeframe, 60_000)
+                buffer_duration_ms = candle_duration_ms * buffer_size
+                
+                from datetime import datetime, timezone
+                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                end_ms = min(start_ms + buffer_duration_ms, now_ms)
+            
+            logger.info(f"Smart buffer: loading {direction} data for {symbol} {timeframe} from {start_ms} to {end_ms}")
+            
+            # Load data in background
+            from PySide6.QtCore import QRunnable, QThreadPool, Signal, QObject
+            
+            class LoadMoreSignals(QObject):
+                finished = Signal(object, str)  # (df, direction)
+            
+            class LoadMoreTask(QRunnable):
+                def __init__(self, service, symbol, timeframe, start_ms, end_ms, direction, signals):
+                    super().__init__()
+                    self.service = service
+                    self.symbol = symbol
+                    self.timeframe = timeframe
+                    self.start_ms = start_ms
+                    self.end_ms = end_ms
+                    self.direction = direction
+                    self.signals = signals
+                
+                def run(self):
+                    try:
+                        logger.debug(f"[BG] Loading {self.direction} data...")
+                        df = self.service._load_candles_from_db(
+                            self.symbol, self.timeframe,
+                            limit=None, start_ms=self.start_ms, end_ms=self.end_ms
+                        )
+                        
+                        if df is not None and not df.empty:
+                            logger.info(f"[BG] Loaded {len(df)} {self.direction} candles")
+                            self.signals.finished.emit(df, self.direction)
+                        else:
+                            logger.debug(f"[BG] No {self.direction} data found")
+                            self.signals.finished.emit(None, self.direction)
+                    except Exception as e:
+                        logger.error(f"[BG] Failed to load {self.direction} data: {e}")
+                        self.signals.finished.emit(None, self.direction)
+            
+            signals = LoadMoreSignals()
+            signals.finished.connect(self._on_more_data_loaded)
+            task = LoadMoreTask(self, symbol, timeframe, start_ms, end_ms, direction, signals)
+            QThreadPool.globalInstance().start(task)
+            
+        except Exception as e:
+            logger.error(f"Failed to load more data: {e}")
+            self._smart_buffer_state['loading'] = False
+    
+    def _on_more_data_loaded(self, new_df, direction):
+        """Called when background data loading completes."""
+        try:
+            import time
+            self._smart_buffer_state['loading'] = False
+            self._smart_buffer_state['last_load_time'] = time.time()
+            
+            if new_df is None or new_df.empty:
+                logger.debug(f"Smart buffer: no {direction} data to append")
+                return
+            
+            # Merge with existing data
+            if self._last_df is None or self._last_df.empty:
+                logger.warning("Smart buffer: no existing data to merge with")
+                return
+            
+            # Save current view range
+            plot_service = self.controller.plot_service
+            if hasattr(plot_service, 'ax') and plot_service.ax is not None:
+                try:
+                    current_range = plot_service.ax.viewRange()
+                    plot_service._saved_view_range = current_range
+                    logger.debug(f"Saved view range before merge: {current_range}")
+                except:
+                    pass
+            
+            # Combine dataframes
+            if direction == 'older':
+                # Prepend older data
+                combined_df = pd.concat([new_df, self._last_df], ignore_index=True)
+            else:
+                # Append newer data
+                combined_df = pd.concat([self._last_df, new_df], ignore_index=True)
+            
+            # Remove duplicates (keep first occurrence)
+            if 'ts_utc' in combined_df.columns:
+                combined_df = combined_df.drop_duplicates(subset=['ts_utc'], keep='first')
+                combined_df = combined_df.sort_values('ts_utc').reset_index(drop=True)
+            
+            logger.info(f"✅ Smart buffer: merged {len(new_df)} {direction} candles (total: {len(self._last_df)} → {len(combined_df)})")
+            
+            # Update plot with merged data
+            self.controller.plot_service.update_plot(combined_df)
+            
+        except Exception as e:
+            logger.error(f"Failed to merge loaded data: {e}")

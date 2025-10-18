@@ -208,44 +208,37 @@ class PyQtGraphAxesWrapper:
         else:
             pen.setStyle(Qt.PenStyle.SolidLine)
 
-        # Draw vertical line from badge to target price
-        line = pg.PlotCurveItem(
-            x=[x0, x1],
-            y=[y0, y1],
-            pen=pen
-        )
-        line.setZValue(118)
-        self.plot_item.addItem(line)
-        self._pattern_items.append(line)
-
-        # Draw arrowhead as a triangle symbol at the target point
-        # Determine triangle orientation based on direction
+        # Draw arrow using PyQtGraph ArrowItem (clean arrow without vertical line)
+        # ArrowItem params: angle = direction in degrees (0 = right, 90 = up, -90 = down)
         dy = y1 - y0
+        
+        # Determine arrow angle based on vertical direction
         if dy > 0:
             # Pointing up
-            symbol = 't'  # Triangle up
+            angle = 90
         else:
-            # Pointing down
-            symbol = 't1'  # Triangle down
-
-        # Create scatter plot for arrowhead
-        arrow_scatter = pg.ScatterPlotItem(
-            x=[x1],
-            y=[y1],
-            size=10,  # Size of triangle
-            symbol=symbol,
+            # Pointing down  
+            angle = -90
+        
+        # Create arrow at target position
+        arrow = pg.ArrowItem(
+            angle=angle,
+            tipAngle=40,  # Arrow tip angle (degrees)
+            tailLen=0,    # No tail - just the arrowhead
+            tailWidth=0,
+            headLen=15,   # Arrow head length (pixels)
             brush=QBrush(qcolor),
             pen=QPen(qcolor)
         )
-        arrow_scatter.setZValue(119)
-
-        self.plot_item.addItem(arrow_scatter)
-        self._pattern_items.append(arrow_scatter)
+        arrow.setPos(x1, y1)
+        arrow.setZValue(119)
+        
+        self.plot_item.addItem(arrow)
+        self._pattern_items.append(arrow)
 
         # Return fake annotation for compatibility
         class FakeAnnotation:
-            def __init__(self, line_item, arrow_item):
-                self._line = line_item
+            def __init__(self, arrow_item):
                 self._arrow = arrow_item
             def remove(self):
                 # Cleanup handled by clear_pattern_overlays
@@ -253,12 +246,11 @@ class PyQtGraphAxesWrapper:
             def set_visible(self, visible):
                 # Support visibility toggle
                 try:
-                    self._line.setVisible(visible)
                     self._arrow.setVisible(visible)
                 except Exception:
                     pass
 
-        return FakeAnnotation(line, arrow_scatter)
+        return FakeAnnotation(arrow)
 
     def text(self, x, y, text, **kwargs):
         """Add text annotation - matplotlib compatible"""
@@ -1123,8 +1115,8 @@ class PatternOverlayRenderer:
         color = self._direction_color(direction)
 
         # Draw only a circle marker - no text label initially
-        # Reduced to 1/5 of original size per user request
-        ms = 2.4  # Was 12.0, now reduced to 1/5
+        # Increased to 3x size per user request (was 2.4, now 7.2)
+        ms = 7.2  # 3x larger for better visibility
         ln = ax.plot([x], [y], marker="o", markersize=ms, markerfacecolor=color,
                      markeredgecolor="none", markeredgewidth=0, zorder=120, picker=HIT_RADIUS_PX)[0]
 
