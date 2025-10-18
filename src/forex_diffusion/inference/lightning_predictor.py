@@ -53,11 +53,12 @@ class LightningMultiHorizonPredictor:
     def _load_model(self):
         """Load Lightning model from checkpoint."""
         try:
+            import os
             import torch
             from ..train.loop import ForexDiffusionLit
             
-            # Disable torch.compile and dynamo for inference
-            torch._dynamo.config.suppress_errors = True
+            # Disable torch dynamo completely via environment variable
+            os.environ['TORCH_COMPILE_DISABLE'] = '1'
             
             # Load checkpoint
             self.model = ForexDiffusionLit.load_from_checkpoint(
@@ -145,8 +146,7 @@ class LightningMultiHorizonPredictor:
         if x.ndim == 2:
             x = x.unsqueeze(0)  # Add batch dimension
         
-        # Disable dynamo compilation for this forward pass
-        with torch.no_grad(), torch._dynamo.disable():
+        with torch.no_grad():
             # Encode to latent space
             mu, logvar = self.model.vae.encode(x)
             
