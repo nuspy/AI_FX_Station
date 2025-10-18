@@ -756,23 +756,32 @@ class TrainingTab(QWidget):
         top.addWidget(lbl_h)
         self.horizon_spin = QLineEdit()
         self.horizon_spin.setText("5")
-        self.horizon_spin.setPlaceholderText("Single: 5 | Multi: 15,60,240")
+        self.horizon_spin.setPlaceholderText("5 | 1-7/2 | 15,60,240")
         self.horizon_spin.setToolTip(
             "Numero di candele future da prevedere.\n\n"
-            "SINGLE HORIZON (Lightning & Sklearn):\n"
-            "  • 1-5: ottimo per scalping/day trading, alta precisione\n"
-            "  • 10-20: swing intraday, accuratezza media\n"
-            "  • 50-100: swing multi-day, serve modello complesso\n"
-            "  • 200-500: lungo termine, solo per diffusion models\n\n"
-            "MULTI-HORIZON (Lightning & Sklearn):\n"
-            "  • Formato: '15,60,240' (comma-separated)\n"
-            "  • Esempio: '15,60,240' → predici a 15min, 1h, 4h\n"
+            "FORMATI SUPPORTATI:\n"
+            "  • Singolo: '5'\n"
+            "  • Lista: '15,60,240'\n"
+            "  • Range: '5-10' → [5,6,7,8,9,10]\n"
+            "  • Range con step: '1-7/2' → [1,3,5,7]\n"
+            "  • Misto: '1-7/2,60,100-200/50'\n\n"
+            "ESEMPI:\n"
+            "  • '5' → predici a 5 bars\n"
+            "  • '1-10' → predici da 1 a 10 bars (10 orizzonti)\n"
+            "  • '1-7/2' → predici a 1,3,5,7 bars\n"
+            "  • '15,60,240' → predici a 15min, 1h, 4h\n"
+            "  • '10-20/5,50,100-200/25' → [10,15,20,50,100,125,150,175,200]\n\n"
+            "RACCOMANDAZIONI:\n"
+            "  • 1-5: scalping/day trading\n"
+            "  • 10-20: swing intraday\n"
+            "  • 50-100: swing multi-day\n"
+            "  • 200-500: lungo termine (solo diffusion)\n\n"
+            "MULTI-HORIZON:\n"
             "  • UN SOLO modello per tutti gli orizzonti\n"
-            "  • Migliore generalizzazione cross-timeframe\n"
-            "  • Sklearn: Ridge/Lasso/ElasticNet/RF supportano multi-output nativamente\n"
-            "  • Lightning: Transformer impara distribuzioni congiunte\n\n"
-            "Esempio TF=1m, horizon=5 → predici prossimi 5 minuti\n"
-            "Esempio TF=1m, horizon=15,60,240 → predici 15m, 1h, 4h"
+            "  • Sklearn: Ridge/Lasso/ElasticNet/RF multi-output\n"
+            "  • Lightning: Transformer joint distribution\n\n"
+            "TF=1m, horizon='5-10' → predici da 5 a 10 minuti\n"
+            "TF=1h, horizon='1-24/6,48,72' → predici 1h,7h,13h,19h,48h,72h"
         )
         top.addWidget(self.horizon_spin)
 

@@ -409,14 +409,21 @@ def main() -> None:
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
     candles = _add_time_features(candles)
 
-    # Parse horizon(s)
+    # Parse horizon(s) with advanced syntax support
+    from forex_diffusion.utils.horizon_parser import parse_horizon_spec
+    
     horizon_str = args.horizon.strip()
-    if ',' in horizon_str:
-        horizons = [int(h.strip()) for h in horizon_str.split(',')]
-        logger.info(f"[Multi-Horizon] Training with horizons: {horizons}")
-    else:
-        horizons = int(horizon_str)
+    try:
+        horizons_list = parse_horizon_spec(horizon_str)
+    except ValueError as e:
+        raise ValueError(f"Invalid horizon specification '{horizon_str}': {e}")
+    
+    if len(horizons_list) == 1:
+        horizons = horizons_list[0]
         logger.info(f"[Single-Horizon] Training with horizon: {horizons}")
+    else:
+        horizons = horizons_list
+        logger.info(f"[Multi-Horizon] Training with horizons: {horizons}")
     
     patches, targets, cond = _build_arrays(
         candles, args.patch_len, horizons, args.warmup_bars

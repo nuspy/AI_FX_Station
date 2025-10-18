@@ -154,15 +154,20 @@ def _build_features(candles: pd.DataFrame, args):
     """
     from loguru import logger
 
-    # Parse horizon(s)
+    # Parse horizon(s) with advanced syntax support
+    from forex_diffusion.utils.horizon_parser import parse_horizon_spec
+    
     horizon_str = str(args.horizon).strip()
-    if ',' in horizon_str:
-        horizons = [int(h.strip()) for h in horizon_str.split(',')]
-        is_multi_horizon = True
+    try:
+        horizons = parse_horizon_spec(horizon_str)
+    except ValueError as e:
+        raise ValueError(f"Invalid horizon specification '{horizon_str}': {e}")
+    
+    is_multi_horizon = len(horizons) > 1
+    
+    if is_multi_horizon:
         logger.info(f"[Multi-Horizon] Building targets for horizons: {horizons}")
     else:
-        horizons = [int(horizon_str)]
-        is_multi_horizon = False
         logger.info(f"[Single-Horizon] Building target for horizon: {horizons[0]}")
     
     # Validate horizons
@@ -1225,16 +1230,17 @@ def main():
     elif encoder_type == "latents":
         encoder_suffix = "_latents"
 
-    # Parse horizons for metadata
+    # Parse horizons for metadata (reuse parsed horizons from _build_features)
+    from forex_diffusion.utils.horizon_parser import parse_horizon_spec, format_horizon_spec
+    
     horizon_str = str(args.horizon).strip()
-    if ',' in horizon_str:
-        horizons_meta = [int(h.strip()) for h in horizon_str.split(',')]
-        num_horizons = len(horizons_meta)
-        horizon_display = ','.join(map(str, horizons_meta))
-    else:
-        horizons_meta = [int(horizon_str)]
-        num_horizons = 1
-        horizon_display = str(horizons_meta[0])
+    try:
+        horizons_meta = parse_horizon_spec(horizon_str)
+    except ValueError as e:
+        raise ValueError(f"Invalid horizon specification '{horizon_str}': {e}")
+    
+    num_horizons = len(horizons_meta)
+    horizon_display = format_horizon_spec(horizons_meta)  # Compact format for filename
     
     run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{horizon_display}_{args.algo}{encoder_suffix}"
 
