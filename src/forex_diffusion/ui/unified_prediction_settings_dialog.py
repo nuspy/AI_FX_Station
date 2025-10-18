@@ -1206,7 +1206,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
                 self.horizons_edit.setText(horizons_time)
                 
                 if metadata['model_type'] == 'lightning':
-                    self.samples_spinbox.setValue(recommended['num_samples'])
+                    self.n_samples_spinbox.setValue(recommended['num_samples'])
                 
                 logger.info(f"Auto-configured settings from model: {Path(model_path).name}")
                 QMessageBox.information(
