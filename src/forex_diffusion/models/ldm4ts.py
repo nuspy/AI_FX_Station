@@ -76,7 +76,9 @@ class LDM4TSModel(nn.Module):
         
         # Conditioning modules
         self.freq_cond = FrequencyConditioner(
-            input_dim=100 * 5,  # Assume 100 candles, 5 features (OHLCV)
+            expected_seq_len=100,  # Expected sequence length (can handle variable lengths via adaptive projection)
+            num_features=5,  # OHLCV features
+            hidden_dim=256,
             output_dim=768
         ).to(self.device)
         

@@ -20,16 +20,28 @@ except ImportError:
 
 
 class FrequencyConditioner(nn.Module):
-    """FFT-based frequency domain conditioning."""
+    """FFT-based frequency domain conditioning with adaptive input projection."""
     
-    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = 768):
+    def __init__(self, expected_seq_len: int = 100, num_features: int = 5, hidden_dim: int = 256, output_dim: int = 768):
         super().__init__()
+        self.expected_seq_len = expected_seq_len
+        self.num_features = num_features
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        
+        # Calculate expected FFT output size
+        expected_fft_size = 2 * num_features * (expected_seq_len // 2 + 1)
+        
+        # Encoder network
         self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(expected_fft_size, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, output_dim)
         )
+        
+        # Adaptive projection layer (created dynamically if needed)
+        self.projection = None
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -38,6 +50,8 @@ class FrequencyConditioner(nn.Module):
         Returns:
             [B, output_dim] frequency embeddings
         """
+        B, L, D = x.shape
+        
         # FFT on each feature
         fft = torch.fft.rfft(x, dim=1)  # [B, L//2+1, D]
         
@@ -47,9 +61,24 @@ class FrequencyConditioner(nn.Module):
         
         # Flatten
         freq_features = torch.cat([
-            magnitude.reshape(x.shape[0], -1),
-            phase.reshape(x.shape[0], -1)
+            magnitude.reshape(B, -1),
+            phase.reshape(B, -1)
         ], dim=1)  # [B, 2*D*(L//2+1)]
+        
+        # If sequence length differs, use adaptive projection
+        expected_fft_size = 2 * self.num_features * (self.expected_seq_len // 2 + 1)
+        actual_fft_size = freq_features.shape[1]
+        
+        if actual_fft_size != expected_fft_size:
+            # Create projection layer if not exists or size changed
+            if self.projection is None or self.projection.in_features != actual_fft_size:
+                self.projection = nn.Linear(actual_fft_size, expected_fft_size).to(x.device)
+                # Initialize with small weights
+                nn.init.xavier_uniform_(self.projection.weight, gain=0.1)
+                nn.init.zeros_(self.projection.bias)
+            
+            # Project to expected size
+            freq_features = self.projection(freq_features)
         
         return self.encoder(freq_features)
 
