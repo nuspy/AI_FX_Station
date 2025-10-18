@@ -172,3 +172,76 @@ def format_horizon_spec(horizons: List[int]) -> str:
 
 # Aliases for backward compatibility
 parse_horizons = parse_horizon_spec
+
+
+def validate_inference_horizons(model_horizons: List[int], requested_horizons: List[int]) -> tuple[bool, str]:
+    """
+    Validate that requested inference horizons match model training horizons.
+    
+    Args:
+        model_horizons: Horizons the model was trained on
+        requested_horizons: Horizons requested for inference
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+        
+    Examples:
+        >>> validate_inference_horizons([15, 60, 240], [15, 60, 240])
+        (True, '')
+        >>> validate_inference_horizons([15, 60], [15, 60, 240])
+        (False, 'Model trained on [15, 60] but inference requested [15, 60, 240]...')
+    """
+    if sorted(model_horizons) == sorted(requested_horizons):
+        return True, ""
+    
+    error_msg = (
+        f"Horizon mismatch!\n"
+        f"Model trained on: {model_horizons}\n"
+        f"Inference requested: {requested_horizons}\n\n"
+        f"Options:\n"
+        f"1. Use same horizons as training: {model_horizons}\n"
+        f"2. Re-train model with desired horizons: {requested_horizons}\n"
+        f"3. Train separate models for different horizon scales"
+    )
+    
+    return False, error_msg
+
+
+def get_model_horizons_from_metadata(metadata: dict) -> List[int]:
+    """
+    Extract horizons from model metadata (handles legacy formats).
+    
+    Args:
+        metadata: Model metadata dictionary
+        
+    Returns:
+        List of horizons
+        
+    Examples:
+        >>> get_model_horizons_from_metadata({'horizons': [15, 60, 240]})
+        [15, 60, 240]
+        >>> get_model_horizons_from_metadata({'horizon_bars': 60})
+        [60]
+    """
+    # New format: 'horizons' key
+    if 'horizons' in metadata:
+        return metadata['horizons']
+    
+    # Legacy format: 'horizon_bars' (single or list)
+    if 'horizon_bars' in metadata:
+        horizon_bars = metadata['horizon_bars']
+        if isinstance(horizon_bars, list):
+            return horizon_bars
+        else:
+            return [horizon_bars]
+    
+    # Very old format: 'horizon' key
+    if 'horizon' in metadata:
+        horizon = metadata['horizon']
+        if isinstance(horizon, list):
+            return horizon
+        else:
+            return [horizon]
+    
+    # Fallback
+    raise ValueError("No horizon information found in model metadata")
