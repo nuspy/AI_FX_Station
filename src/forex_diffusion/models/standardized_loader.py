@@ -211,6 +211,13 @@ class StandardizedModelLoader:
                     }
 
             if isinstance(data, dict):
+                # Check if model_type is incorrectly set but model is actually Lightning
+                if 'model' in data and hasattr(data['model'], '__class__'):
+                    model_class_name = data['model'].__class__.__name__
+                    if 'Lightning' in model_class_name:
+                        logger.info(f"Detected Lightning model from class name: {model_class_name}, forcing model_type to 'lightning'")
+                        data['model_type'] = 'lightning'
+                
                 return data
             else:
                 # If it's just a model, wrap in standard format
