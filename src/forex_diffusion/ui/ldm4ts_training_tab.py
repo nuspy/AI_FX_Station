@@ -49,54 +49,72 @@ class LDM4TSTrainingTab(QWidget):
         Copy LDM4TS training UI element references from source dialog.
         
         This ensures that training methods (like _start_ldm4ts_training) work correctly.
+        Note: Only copies attributes that exist on source_dialog to avoid AttributeError.
         """
+        # Helper to safely copy attribute
+        def safe_copy(attr_name):
+            if hasattr(source_dialog, attr_name):
+                setattr(self, attr_name, getattr(source_dialog, attr_name))
+                return True
+            else:
+                logger.warning(f"Attribute {attr_name} not found on source_dialog, skipping")
+                return False
+        
         # Data settings
-        self.ldm4ts_train_symbol_combo = source_dialog.ldm4ts_train_symbol_combo
-        self.ldm4ts_train_timeframe_combo = source_dialog.ldm4ts_train_timeframe_combo
-        self.ldm4ts_train_window_spinbox = source_dialog.ldm4ts_train_window_spinbox
-        self.ldm4ts_train_horizons_edit = source_dialog.ldm4ts_train_horizons_edit
+        safe_copy('ldm4ts_train_symbol_combo')
+        safe_copy('ldm4ts_train_timeframe_combo')
+        safe_copy('ldm4ts_train_window_spinbox')
+        safe_copy('ldm4ts_train_horizons_edit')
         
         # Model settings
-        self.ldm4ts_train_diffusion_steps_spinbox = source_dialog.ldm4ts_train_diffusion_steps_spinbox
-        self.ldm4ts_train_image_size_combo = source_dialog.ldm4ts_train_image_size_combo
+        safe_copy('ldm4ts_train_diffusion_steps_spinbox')
+        safe_copy('ldm4ts_train_image_size_combo')
         
         # Training settings
-        self.ldm4ts_train_epochs_spinbox = source_dialog.ldm4ts_train_epochs_spinbox
-        self.ldm4ts_train_batch_size_spinbox = source_dialog.ldm4ts_train_batch_size_spinbox
-        self.ldm4ts_train_lr_spinbox = source_dialog.ldm4ts_train_lr_spinbox
-        self.ldm4ts_train_use_gpu_cb = source_dialog.ldm4ts_train_use_gpu_cb
+        safe_copy('ldm4ts_train_epochs_spinbox')
+        safe_copy('ldm4ts_train_batch_size_spinbox')
+        safe_copy('ldm4ts_train_lr_spinbox')
+        safe_copy('ldm4ts_train_use_gpu_cb')
         
         # Memory optimization
-        self.ldm4ts_train_attention_combo = source_dialog.ldm4ts_train_attention_combo
-        self.ldm4ts_train_grad_checkpoint_cb = source_dialog.ldm4ts_train_grad_checkpoint_cb
-        self.ldm4ts_vram_estimate_label = source_dialog.ldm4ts_vram_estimate_label
+        safe_copy('ldm4ts_train_attention_combo')
+        safe_copy('ldm4ts_train_grad_checkpoint_cb')
+        safe_copy('ldm4ts_vram_estimate_label')
         
         # Output
-        self.ldm4ts_train_output_edit = source_dialog.ldm4ts_train_output_edit
-        self.ldm4ts_train_browse_output_btn = source_dialog.ldm4ts_train_browse_output_btn
+        safe_copy('ldm4ts_train_output_edit')
+        # Note: browse button is local variable, not stored as attribute
         
         # Progress
-        self.ldm4ts_train_progress_bar = source_dialog.ldm4ts_train_progress_bar
-        self.ldm4ts_train_status_label = source_dialog.ldm4ts_train_status_label
+        safe_copy('ldm4ts_train_progress_bar')
+        safe_copy('ldm4ts_train_status_label')
         
         # Buttons
-        self.ldm4ts_start_training_btn = source_dialog.ldm4ts_start_training_btn
-        self.ldm4ts_stop_training_btn = source_dialog.ldm4ts_stop_training_btn
+        safe_copy('ldm4ts_start_training_btn')
+        safe_copy('ldm4ts_stop_training_btn')
         
-        # Copy methods (bind to this instance)
-        self._start_ldm4ts_training = source_dialog._start_ldm4ts_training.__get__(self, type(self))
-        self._stop_ldm4ts_training = source_dialog._stop_ldm4ts_training.__get__(self, type(self))
-        self._browse_ldm4ts_train_output = source_dialog._browse_ldm4ts_train_output.__get__(self, type(self))
-        self._update_vram_estimate = source_dialog._update_vram_estimate.__get__(self, type(self))
-        self._on_training_progress = source_dialog._on_training_progress.__get__(self, type(self))
-        self._on_training_status = source_dialog._on_training_status.__get__(self, type(self))
-        self._on_epoch_complete = source_dialog._on_epoch_complete.__get__(self, type(self))
-        self._on_training_complete = source_dialog._on_training_complete.__get__(self, type(self))
-        self._on_training_error = source_dialog._on_training_error.__get__(self, type(self))
+        # Copy methods (bind to this instance) - only if they exist
+        method_names = [
+            '_start_ldm4ts_training',
+            '_stop_ldm4ts_training',
+            '_browse_ldm4ts_train_output',
+            '_update_vram_estimate',
+            '_on_training_progress',
+            '_on_training_status',
+            '_on_epoch_complete',
+            '_on_training_complete',
+            '_on_training_error'
+        ]
+        
+        for method_name in method_names:
+            if hasattr(source_dialog, method_name):
+                method = getattr(source_dialog, method_name)
+                setattr(self, method_name, method.__get__(self, type(self)))
+            else:
+                logger.warning(f"Method {method_name} not found on source_dialog, skipping")
         
         # Copy worker reference placeholder
         self._training_worker = None
         
         # Copy checkpoint edit reference if exists (for setting path after training)
-        if hasattr(source_dialog, 'ldm4ts_checkpoint_edit'):
-            self.ldm4ts_checkpoint_edit = source_dialog.ldm4ts_checkpoint_edit
+        safe_copy('ldm4ts_checkpoint_edit')
