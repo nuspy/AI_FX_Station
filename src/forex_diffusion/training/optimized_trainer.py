@@ -97,9 +97,9 @@ class OptimizedTrainingCallback(Callback):
         # 5. Apply torch.compile (PyTorch 2.0+)
         if self.opt_config.compile_model:
             try:
-                import torch._dynamo
+                from torch import _dynamo
 
-                torch._dynamo.config.suppress_errors = True
+                _dynamo.config.suppress_errors = True
 
                 # Compile individual modules for better flexibility
                 if hasattr(pl_module, "vae"):
