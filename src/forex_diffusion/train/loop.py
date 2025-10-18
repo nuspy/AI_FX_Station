@@ -257,35 +257,66 @@ class ForexDiffusionLit(pl.LightningModule):
         # For CRPS: draw multiple samples from posterior q_phi(z|x) and decode
         # We'll sample num_samples from posterior by sampling eps ~ N(0,1) and computing z = mu + sigma * eps, then decode
         n_samples = min(self.crps_samples, 128)  # limit per-batch for memory reasons
-        samples = []
+        
+        # Determine number of horizons from target shape
+        num_horizons = 1
+        if y is not None:
+            y_target = y if y.dim() == 2 else y.unsqueeze(-1)  # (B, H) or (B, 1)
+            num_horizons = y_target.shape[1]
+        
+        # Multi-horizon prediction head
+        # If model has explicit multi-horizon decoder, use it; otherwise use single decoder
+        # For now, we implement a simple approach: use z0_hat to predict all horizons
+        # In future, could add a dedicated MLP head: z0 -> (H,) predictions
+        
+        samples_all_horizons = []  # Will be list of tensors (N, B, H)
+        
         with torch.no_grad():
             for i in range(n_samples):
                 eps_s = torch.randn_like(std)
                 z_s = mu + eps_s * std
                 x_rec = self.vae.decode(z_s)  # (B, C, L)
-                # choose target dimension: close at last timestep of patch (index -1)
-                # or other aggregator; here we take reconstructed close last element in channel order
-                # we assume input channels order includes 'close' at index 3 (common). If not, caller must provide mapping.
-                # For safety, try to take center channel as close
+                
+                # Extract close predictions
+                # Assume channel 3 is 'close' (common convention)
                 c_index = min(3, x_rec.shape[1] - 1)
-                close_pred = x_rec[:, c_index, -1].unsqueeze(-1)  # (B,1)
-                samples.append(close_pred)
-        samples = torch.stack(samples, dim=0)  # (N, B, 1)
+                close_pred = x_rec[:, c_index, -1]  # (B,) - last timestep
+                
+                if num_horizons > 1:
+                    # Multi-horizon: generate predictions for all horizons
+                    # Simple approach: use linear scaling based on horizon ratios
+                    # More sophisticated: train a dedicated head z0 -> (H,)
+                    
+                    # For now, replicate the same prediction for all horizons
+                    # This is a placeholder - proper implementation would train separate heads
+                    horizon_preds = close_pred.unsqueeze(-1).repeat(1, num_horizons)  # (B, H)
+                    samples_all_horizons.append(horizon_preds)
+                else:
+                    # Single horizon
+                    samples_all_horizons.append(close_pred.unsqueeze(-1))  # (B, 1)
+        
+        samples = torch.stack(samples_all_horizons, dim=0)  # (N, B, H)
 
         crps = torch.tensor(0.0, device=device)
         if y is not None:
-            # Handle multi-horizon targets
-            y_target = y if y.dim() == 2 else y.unsqueeze(-1)  # (B, H) or (B, 1)
-            
-            # If multi-horizon, compute CRPS for each horizon and average
-            if y_target.shape[1] > 1:
-                # Multi-horizon: y_target is (B, H)
-                # We need to predict multiple horizons from the same latent
-                # For now, use only the first horizon for CRPS (could extend to predict all)
-                crps = crps_sample_estimator(samples, y_target[:, 0:1])
-                # TODO: Extend model to predict all horizons from diffusion
+            # Compute CRPS for each horizon and average
+            if num_horizons > 1:
+                # Multi-horizon CRPS: average across all horizons
+                crps_per_horizon = []
+                for h in range(num_horizons):
+                    samples_h = samples[:, :, h:h+1]  # (N, B, 1)
+                    y_h = y_target[:, h:h+1]  # (B, 1)
+                    crps_h = crps_sample_estimator(samples_h, y_h)
+                    crps_per_horizon.append(crps_h)
+                
+                # Average CRPS across horizons
+                crps = torch.stack(crps_per_horizon).mean()
+                
+                # Log per-horizon CRPS for monitoring
+                for h, crps_h in enumerate(crps_per_horizon):
+                    self.log(f"train/crps_h{h}", crps_h, on_step=False, on_epoch=True, prog_bar=False)
             else:
-                # Single horizon: y_target is (B, 1)
+                # Single horizon
                 crps = crps_sample_estimator(samples, y_target)
 
         loss = self.lambda_v * loss_v + self.lambda_crps * crps + self.lambda_kl * loss_kl
