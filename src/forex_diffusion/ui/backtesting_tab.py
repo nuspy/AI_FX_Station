@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QCheckBox,
     QComboBox, QSpinBox, QTableWidget, QTableWidgetItem, QGroupBox, QFileDialog, QGridLayout,
-    QScrollArea
+    QScrollArea, QTabWidget
 )
 
 from .prediction_settings_dialog import PredictionSettingsDialog
@@ -45,6 +45,46 @@ BOOLEAN_PARAMS = ["apply_conformal", "auto_predict"]
 
 
 class BacktestingTab(QWidget):
+    """
+    Wrapper tab with sub-tabs for different backtesting types:
+    - Diffusion: Standard diffusion model backtesting
+    - LDM4TS: Vision-enhanced LDM4TS backtesting
+    """
+    startRequested = Signal(dict)
+    pauseRequested = Signal()
+    stopRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Create main layout with sub-tabs
+        main_layout = QVBoxLayout(self)
+        
+        # Create tab widget for sub-tabs
+        self.sub_tabs = QTabWidget()
+        
+        # Sub-tab 1: Diffusion Backtesting (existing content)
+        self.diffusion_tab = DiffusionBacktestingTab(parent=self)
+        self.sub_tabs.addTab(self.diffusion_tab, "Diffusion")
+        
+        # Sub-tab 2: LDM4TS Backtesting (new)
+        self.ldm4ts_tab = LDM4TSBacktestingTab(parent=self)
+        self.sub_tabs.addTab(self.ldm4ts_tab, "LDM4TS")
+        
+        main_layout.addWidget(self.sub_tabs)
+        
+        # Forward signals from sub-tabs
+        self.diffusion_tab.startRequested.connect(self.startRequested.emit)
+        self.diffusion_tab.pauseRequested.connect(self.pauseRequested.emit)
+        self.diffusion_tab.stopRequested.connect(self.stopRequested.emit)
+        
+        self.ldm4ts_tab.startRequested.connect(self.startRequested.emit)
+        self.ldm4ts_tab.pauseRequested.connect(self.pauseRequested.emit)
+        self.ldm4ts_tab.stopRequested.connect(self.stopRequested.emit)
+
+
+class DiffusionBacktestingTab(QWidget):
+    """Original backtesting tab for diffusion models"""
     startRequested = Signal(dict)
     pauseRequested = Signal()
     stopRequested = Signal()
@@ -833,5 +873,252 @@ class BacktestingTab(QWidget):
             self.lbl_status.setText("Job cancellato")
         except Exception as e:
             self.lbl_status.setText(f"Cancel exception: {e}")
+
+
+class LDM4TSBacktestingTab(QWidget):
+    """LDM4TS backtesting tab"""
+    startRequested = Signal(dict)
+    pauseRequested = Signal()
+    stopRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build LDM4TS backtesting UI"""
+        root = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        
+        # Header
+        header_box = QGroupBox("LDM4TS Backtesting")
+        header_layout = QVBoxLayout(header_box)
+        header_label = QLabel(
+            "<b>Backtest LDM4TS vision-enhanced forecasting</b><br><br>"
+            "Test LDM4TS predictions on historical data with Monte Carlo uncertainty quantification."
+        )
+        header_label.setWordWrap(True)
+        header_layout.addWidget(header_label)
+        layout.addWidget(header_box)
+        
+        # Model Settings
+        model_box = QGroupBox("Model Settings")
+        model_layout = QFormLayout(model_box)
+        
+        # Checkpoint
+        checkpoint_layout = QHBoxLayout()
+        self.ldm4ts_bt_checkpoint_edit = QLineEdit()
+        self.ldm4ts_bt_checkpoint_edit.setPlaceholderText("Path to LDM4TS checkpoint (.pt)")
+        
+        from pathlib import Path
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_checkpoint)
+        
+        checkpoint_layout.addWidget(self.ldm4ts_bt_checkpoint_edit)
+        checkpoint_layout.addWidget(browse_btn)
+        model_layout.addRow("Checkpoint:", checkpoint_layout)
+        
+        layout.addWidget(model_box)
+        
+        # Backtest Parameters
+        params_box = QGroupBox("Backtest Parameters")
+        params_layout = QFormLayout(params_box)
+        
+        # Symbol
+        self.ldm4ts_bt_symbol_combo = QComboBox()
+        self.ldm4ts_bt_symbol_combo.addItems(["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"])
+        params_layout.addRow("Symbol:", self.ldm4ts_bt_symbol_combo)
+        
+        # Timeframe
+        self.ldm4ts_bt_timeframe_combo = QComboBox()
+        self.ldm4ts_bt_timeframe_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h"])
+        self.ldm4ts_bt_timeframe_combo.setCurrentText("1m")
+        params_layout.addRow("Timeframe:", self.ldm4ts_bt_timeframe_combo)
+        
+        # Start date
+        self.ldm4ts_bt_start_edit = QLineEdit()
+        self.ldm4ts_bt_start_edit.setPlaceholderText("YYYY-MM-DD HH:MM:SS")
+        self.ldm4ts_bt_start_edit.setToolTip("Start date for backtest (UTC)")
+        params_layout.addRow("Start Date:", self.ldm4ts_bt_start_edit)
+        
+        # End date
+        self.ldm4ts_bt_end_edit = QLineEdit()
+        self.ldm4ts_bt_end_edit.setPlaceholderText("YYYY-MM-DD HH:MM:SS")
+        self.ldm4ts_bt_end_edit.setToolTip("End date for backtest (UTC)")
+        params_layout.addRow("End Date:", self.ldm4ts_bt_end_edit)
+        
+        # Window size
+        self.ldm4ts_bt_window_spinbox = QSpinBox()
+        self.ldm4ts_bt_window_spinbox.setRange(50, 200)
+        self.ldm4ts_bt_window_spinbox.setValue(100)
+        self.ldm4ts_bt_window_spinbox.setToolTip("OHLCV window size for vision encoding")
+        params_layout.addRow("Window Size:", self.ldm4ts_bt_window_spinbox)
+        
+        # Horizons
+        self.ldm4ts_bt_horizons_edit = QLineEdit("15, 60, 240")
+        self.ldm4ts_bt_horizons_edit.setToolTip("Forecast horizons in minutes")
+        params_layout.addRow("Horizons (min):", self.ldm4ts_bt_horizons_edit)
+        
+        # Monte Carlo samples
+        self.ldm4ts_bt_samples_spinbox = QSpinBox()
+        self.ldm4ts_bt_samples_spinbox.setRange(10, 200)
+        self.ldm4ts_bt_samples_spinbox.setValue(50)
+        self.ldm4ts_bt_samples_spinbox.setToolTip("Number of Monte Carlo samples")
+        params_layout.addRow("MC Samples:", self.ldm4ts_bt_samples_spinbox)
+        
+        # Step size (forecast frequency)
+        self.ldm4ts_bt_step_spinbox = QSpinBox()
+        self.ldm4ts_bt_step_spinbox.setRange(1, 1000)
+        self.ldm4ts_bt_step_spinbox.setValue(10)
+        self.ldm4ts_bt_step_spinbox.setToolTip("Step size between forecasts (in candles)")
+        params_layout.addRow("Step Size:", self.ldm4ts_bt_step_spinbox)
+        
+        layout.addWidget(params_box)
+        
+        # Control buttons
+        button_box = QGroupBox("Control")
+        button_layout = QHBoxLayout(button_box)
+        
+        self.ldm4ts_bt_start_btn = QPushButton("🚀 Start Backtest")
+        self.ldm4ts_bt_start_btn.clicked.connect(self._start_backtest)
+        
+        self.ldm4ts_bt_stop_btn = QPushButton("⏹️ Stop")
+        self.ldm4ts_bt_stop_btn.clicked.connect(self._stop_backtest)
+        self.ldm4ts_bt_stop_btn.setEnabled(False)
+        
+        button_layout.addWidget(self.ldm4ts_bt_start_btn)
+        button_layout.addWidget(self.ldm4ts_bt_stop_btn)
+        button_layout.addStretch()
+        
+        layout.addWidget(button_box)
+        
+        # Progress
+        progress_box = QGroupBox("Progress")
+        progress_layout = QVBoxLayout(progress_box)
+        
+        from PySide6.QtWidgets import QProgressBar
+        self.ldm4ts_bt_progress_bar = QProgressBar()
+        self.ldm4ts_bt_progress_bar.setValue(0)
+        progress_layout.addWidget(self.ldm4ts_bt_progress_bar)
+        
+        self.ldm4ts_bt_status_label = QLabel("Ready")
+        progress_layout.addWidget(self.ldm4ts_bt_status_label)
+        
+        layout.addWidget(progress_box)
+        
+        # Results table
+        results_box = QGroupBox("Results")
+        results_layout = QVBoxLayout(results_box)
+        
+        self.ldm4ts_bt_results_table = QTableWidget()
+        self.ldm4ts_bt_results_table.setColumnCount(7)
+        self.ldm4ts_bt_results_table.setHorizontalHeaderLabels([
+            "Timestamp", "Horizon", "True", "Predicted", "Uncertainty", "Error", "Coverage"
+        ])
+        results_layout.addWidget(self.ldm4ts_bt_results_table)
+        
+        # Metrics summary
+        self.ldm4ts_bt_metrics_label = QLabel("Metrics: -")
+        results_layout.addWidget(self.ldm4ts_bt_metrics_label)
+        
+        layout.addWidget(results_box)
+        
+        layout.addStretch()
+        
+        scroll.setWidget(content)
+        root.addWidget(scroll)
+    
+    def _browse_checkpoint(self):
+        """Browse for checkpoint"""
+        from pathlib import Path
+        from PySide6.QtWidgets import QFileDialog
+        
+        base_dir = Path(__file__).resolve().parents[3]
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select LDM4TS Checkpoint",
+            str(base_dir),
+            "PyTorch Models (*.pt *.pth);;All Files (*.*)"
+        )
+        
+        if file_path:
+            self.ldm4ts_bt_checkpoint_edit.setText(file_path)
+    
+    def _start_backtest(self):
+        """Start LDM4TS backtest"""
+        from PySide6.QtWidgets import QMessageBox
+        from loguru import logger
+        
+        try:
+            # Collect parameters
+            params = {
+                'backtest_type': 'ldm4ts',
+                'checkpoint': self.ldm4ts_bt_checkpoint_edit.text().strip(),
+                'symbol': self.ldm4ts_bt_symbol_combo.currentText(),
+                'timeframe': self.ldm4ts_bt_timeframe_combo.currentText(),
+                'start_date': self.ldm4ts_bt_start_edit.text().strip(),
+                'end_date': self.ldm4ts_bt_end_edit.text().strip(),
+                'window_size': self.ldm4ts_bt_window_spinbox.value(),
+                'horizons': self.ldm4ts_bt_horizons_edit.text().strip(),
+                'num_samples': self.ldm4ts_bt_samples_spinbox.value(),
+                'step_size': self.ldm4ts_bt_step_spinbox.value(),
+            }
+            
+            # Validate
+            from pathlib import Path
+            if not params['checkpoint'] or not Path(params['checkpoint']).exists():
+                QMessageBox.warning(self, "Missing Checkpoint", "Please select a valid LDM4TS checkpoint.")
+                return
+            
+            if not params['start_date'] or not params['end_date']:
+                QMessageBox.warning(self, "Missing Dates", "Please specify start and end dates.")
+                return
+            
+            logger.info(f"LDM4TS backtest requested: {params}")
+            
+            # Emit start signal
+            self.startRequested.emit(params)
+            
+            # Update UI
+            self.ldm4ts_bt_start_btn.setEnabled(False)
+            self.ldm4ts_bt_stop_btn.setEnabled(True)
+            self.ldm4ts_bt_status_label.setText("Backtest running...")
+            self.ldm4ts_bt_progress_bar.setValue(0)
+            
+            # TODO: Implement actual backtest worker
+            QMessageBox.information(
+                self,
+                "Backtest Started",
+                f"LDM4TS backtest started:\n\n"
+                f"Symbol: {params['symbol']}\n"
+                f"Period: {params['start_date']} → {params['end_date']}\n"
+                f"Horizons: {params['horizons']}\n\n"
+                f"Implementation pending."
+            )
+            
+        except Exception as e:
+            logger.exception(f"Failed to start LDM4TS backtest: {e}")
+            QMessageBox.critical(self, "Backtest Error", f"Failed to start backtest:\n{e}")
+    
+    def _stop_backtest(self):
+        """Stop backtest"""
+        from PySide6.QtWidgets import QMessageBox
+        from loguru import logger
+        
+        logger.info("LDM4TS backtest stop requested")
+        
+        # Emit stop signal
+        self.stopRequested.emit()
+        
+        # Update UI
+        self.ldm4ts_bt_start_btn.setEnabled(True)
+        self.ldm4ts_bt_stop_btn.setEnabled(False)
+        self.ldm4ts_bt_status_label.setText("Backtest stopped")
+        
+        QMessageBox.information(self, "Backtest Stopped", "LDM4TS backtest has been stopped.")
 
 
