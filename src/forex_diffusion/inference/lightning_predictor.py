@@ -154,8 +154,13 @@ class LightningMultiHorizonPredictor:
                 x_rec = self.model.vae.decode(z)  # (B, C, L)
                 
                 # Extract close predictions
-                # Assuming channel order has 'close' at index 3 (or use metadata)
-                close_idx = 3  # TODO: get from model metadata
+                # Get close channel index from hparams or metadata
+                close_idx = getattr(self.model.hparams, 'close_channel_idx', None)
+                if close_idx is None:
+                    # Try metadata or use default
+                    close_idx = 3  # Default: assume 'close' at channel 3
+                # Ensure within bounds
+                close_idx = min(close_idx, x_rec.shape[1] - 1)
                 close_rec = x_rec[0, close_idx, -1]  # Last timestep of close channel
                 
                 # For multi-horizon: we need a strategy

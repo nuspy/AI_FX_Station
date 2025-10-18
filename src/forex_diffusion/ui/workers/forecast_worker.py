@@ -95,6 +95,20 @@ class ForecastWorker(QRunnable):
         logger.debug(f"Using default {param_name}={default_value} (metadata not available)")
         return default_value
 
+    def _tf_to_milliseconds(self, tf: str) -> int:
+        """Convert timeframe string to milliseconds."""
+        tf = str(tf).strip().lower()
+        if tf.endswith("m"):
+            return int(tf[:-1]) * 60_000
+        elif tf.endswith("h"):
+            return int(tf[:-1]) * 3_600_000
+        elif tf.endswith("d"):
+            return int(tf[:-1]) * 86_400_000
+        elif tf.endswith("w"):
+            return int(tf[:-1]) * 7 * 86_400_000
+        else:
+            return 60_000  # Default: 1 minute
+    
     def _check_ldm4ts_enabled(self) -> bool:
         """Check if LDM4TS is enabled in settings."""
         try:
@@ -912,6 +926,28 @@ class ForecastWorker(QRunnable):
             last_ts_ms = int(df_candles["ts_utc"].iat[-1])
             future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
 
+            # Check if we have multi-horizon predictions
+            has_multi_horizon = False
+            predictions_dict = None
+            future_ts_dict = None
+            model_horizons = None
+            
+            # Try to extract multi-horizon data from individual results
+            if individual_results and len(individual_results) > 0:
+                first_result = individual_results[0]
+                if first_result.get('is_multi_horizon') and first_result.get('predictions_dict'):
+                    has_multi_horizon = True
+                    predictions_dict = first_result['predictions_dict']
+                    model_horizons = first_result.get('horizons', [])
+                    
+                    # Create future_ts_dict for each horizon
+                    future_ts_dict = {}
+                    for horizon in model_horizons:
+                        # Each horizon gets a single timestamp at that offset
+                        future_ts_dict[horizon] = [last_ts_ms + (horizon * self._tf_to_milliseconds(tf))]
+                    
+                    logger.info(f"Multi-horizon forecast detected: {len(model_horizons)} horizons")
+
             display_name = str(self.payload.get("name") or "Parallel Ensemble")
             quantiles = {
                 "q50": q50.tolist(),
@@ -929,7 +965,13 @@ class ForecastWorker(QRunnable):
                 },
                 "parallel_inference": True,
                 "requested_at_ms": self.payload.get("requested_at_ms"),  # For connecting forecast to price line
-                "anchor_price": self.payload.get("anchor_price")  # Pass through Alt+Click Y coordinate
+                "anchor_price": self.payload.get("anchor_price"),  # Pass through Alt+Click Y coordinate
+                
+                # Multi-horizon support
+                "is_multi_horizon": has_multi_horizon,
+                "predictions_dict": predictions_dict,
+                "future_ts_dict": future_ts_dict,
+                "horizons": model_horizons
             }
 
             logger.info(f"Parallel inference completed for {symbol} {tf}: "
