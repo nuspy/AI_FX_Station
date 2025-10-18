@@ -1577,16 +1577,18 @@ class DataService(ChartServiceBase):
             # Connect to range change signal
             viewbox.sigRangeChanged.connect(self._on_view_range_changed)
             
-            # Initialize buffer state
-            self._smart_buffer_state = {
-                'loading': False,
-                'last_load_time': 0,
-                'min_load_interval': 2.0,  # Minimum 2 seconds between loads
-                'buffer_threshold': 0.2,  # Load when within 20% of edge
-                'buffer_size': 200  # Load 200 candles at a time
-            }
-            
-            logger.info("✅ Smart buffer connected to view range changes")
+            # Initialize buffer state (only first time)
+            if not hasattr(self, '_smart_buffer_state'):
+                self._smart_buffer_state = {
+                    'loading': False,
+                    'last_load_time': 0,
+                    'min_load_interval': 2.0,  # Minimum 2 seconds between loads
+                    'buffer_threshold': 0.2,  # Load when within 20% of edge
+                    'buffer_size': 200  # Load 200 candles at a time
+                }
+                logger.info("✅ Smart buffer initialized and connected to view range changes")
+            else:
+                logger.debug("Smart buffer reconnected (state preserved)")
             
         except Exception as e:
             logger.error(f"Failed to setup smart buffer: {e}")

@@ -43,6 +43,8 @@ class ModelMetadata:
         self.base_timeframe = None
         self.horizon_bars = None
         self.horizon_minutes = None
+        self.horizons = None  # For multi-horizon models (list of horizon values)
+        self.is_multi_horizon = False  # Flag for multi-horizon support
         self.days_history = None
 
         # Feature engineering configuration
@@ -201,6 +203,8 @@ class ModelMetadata:
             'base_timeframe': self.base_timeframe,
             'horizon_bars': self.horizon_bars,
             'horizon_minutes': self.horizon_minutes,
+            'horizons': self.horizons,
+            'is_multi_horizon': self.is_multi_horizon,
             'days_history': self.days_history,
 
             # Feature engineering
@@ -242,6 +246,15 @@ class ModelMetadata:
             'required_packages': self.required_packages,
             'validation_hash': self.validation_hash
         }
+    
+    def get(self, key: str, default=None):
+        """
+        Dict-like get method for backward compatibility.
+        
+        Allows metadata to be accessed like a dictionary:
+        metadata.get('horizons') instead of metadata.horizons
+        """
+        return getattr(self, key, default)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], model_path: Optional[str] = None) -> 'ModelMetadata':
