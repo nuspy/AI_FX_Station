@@ -559,7 +559,20 @@ class ForecastWorker(QRunnable):
             if df_candles is None or df_candles.empty:
                 raise RuntimeError("No candles available for parallel inference")
 
-            # Normalize data
+            # Normalize data - handle both timestamp index and ts_utc column
+            if "ts_utc" not in df_candles.columns:
+                # If timestamp is in index, reset it to column and convert to ts_utc
+                if df_candles.index.name == 'timestamp' or isinstance(df_candles.index, pd.DatetimeIndex):
+                    df_candles = df_candles.reset_index()
+                    if 'timestamp' in df_candles.columns:
+                        # Convert timestamp to ts_utc (milliseconds)
+                        df_candles["ts_utc"] = pd.to_datetime(df_candles["timestamp"]).astype('int64') // 10**6
+                        df_candles = df_candles.drop(columns=['timestamp'])
+                    else:
+                        raise RuntimeError("DataFrame has no ts_utc or timestamp column")
+                else:
+                    raise RuntimeError("DataFrame has no ts_utc column and index is not timestamp")
+            
             df_candles = df_candles.sort_values("ts_utc").reset_index(drop=True)
             df_candles["ts_utc"] = pd.to_numeric(df_candles["ts_utc"], errors="coerce").astype("int64")
 
