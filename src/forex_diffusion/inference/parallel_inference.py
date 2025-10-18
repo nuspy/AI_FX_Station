@@ -205,6 +205,7 @@ class ModelExecutor:
             if predictions is None:
                 # Check if this is a Lightning predictor
                 model_type = self.model_data.get('model_type', 'unknown')
+                logger.debug(f"Model type: {model_type}, has predict: {hasattr(model, 'predict')}, model class: {type(model).__name__}")
                 
                 if model_type == 'lightning' and hasattr(model, 'predict'):
                     # Lightning predictor expects OHLCV patch (C, L) not features!
