@@ -39,6 +39,9 @@ pip install -e .
 # Install PyTorch with CUDA support (optional, for GPU training)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
+# Download pre-trained models for LDM4TS (~800 MB total)
+python download_models.py  # Downloads VAE + CLIP from Hugging Face
+
 # Install VectorBT Pro (if available)
 pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl
 
