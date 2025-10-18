@@ -241,15 +241,26 @@ class ModelExecutor:
                         else:
                             candles_patch = candles_df.iloc[-patch_len:]
                         
-                        # Build patch tensor (C, L) - channels: open, high, low, close, volume
+                        # Build patch tensor (C, L) - match model's expected channels
+                        # Get expected channels from model
+                        expected_channels = getattr(model, 'in_channels', 6)
+                        
+                        # Standard OHLCV channels
+                        available_cols = ['open', 'high', 'low', 'close', 'volume']
                         patch_data = []
-                        for col in ['open', 'high', 'low', 'close']:
-                            if col in candles_patch.columns:
+                        
+                        for col in available_cols:
+                            if col in candles_patch.columns and len(patch_data) < expected_channels:
                                 patch_data.append(candles_patch[col].values)
                         
-                        # Optional: add volume if available
-                        if 'volume' in candles_patch.columns and len(patch_data) < 5:
-                            patch_data.append(candles_patch['volume'].values)
+                        # If we need more channels, pad with zeros or repeat close price
+                        while len(patch_data) < expected_channels:
+                            # Repeat close price as padding
+                            if 'close' in candles_patch.columns:
+                                patch_data.append(candles_patch['close'].values)
+                            else:
+                                # Last resort: zeros
+                                patch_data.append(np.zeros(len(candles_patch)))
                         
                         # Convert to tensor (C, L)
                         patch_tensor = torch.tensor(patch_data, dtype=torch.float32)

@@ -74,6 +74,10 @@ class LightningMultiHorizonPredictor:
         try:
             hparams = self.model.hparams
             
+            # Extract in_channels for patch construction
+            self.in_channels = getattr(hparams, 'in_channels', 6)
+            logger.debug(f"Model expects {self.in_channels} input channels")
+            
             # Try new format first
             if hasattr(hparams, 'horizons'):
                 self.horizons = hparams.horizons
