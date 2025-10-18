@@ -102,12 +102,20 @@ class LDM4TSTrainingWorker(QRunnable):
             # Create model
             device = "cuda" if use_gpu and torch.cuda.is_available() else "cpu"
             
+            # Get memory optimization settings
+            attention_backend = self.params.get('attention_backend', 'default')
+            enable_gradient_checkpointing = self.params.get('enable_gradient_checkpointing', True)
+            
             model = LDM4TSModel(
                 image_size=(image_size, image_size),
                 horizons=horizons,
                 diffusion_steps=diffusion_steps,
-                device=device
+                device=device,
+                attention_backend=attention_backend,
+                enable_gradient_checkpointing=enable_gradient_checkpointing
             )
+            
+            logger.info(f"Memory optimization: backend={attention_backend}, gradient_checkpointing={enable_gradient_checkpointing}")
             
             # Optimizer
             optimizer = optim.AdamW(

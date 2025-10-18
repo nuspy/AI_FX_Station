@@ -49,7 +49,9 @@ class LDM4TSModel(nn.Module):
         text_model: str = "openai/clip-vit-base-patch32",
         diffusion_steps: int = 1000,
         sampling_steps: int = 50,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        attention_backend: str = "default",  # "default", "sage", "flash"
+        enable_gradient_checkpointing: bool = True
     ):
         super().__init__()
         
@@ -123,6 +125,19 @@ class LDM4TSModel(nn.Module):
             hidden_dim=256,
             horizons=horizons
         ).to(self.device)
+        
+        # Apply memory-efficient attention
+        if attention_backend != "default":
+            from .memory_efficient_attention import patch_unet_attention
+            self.unet = patch_unet_attention(
+                self.unet,
+                backend=attention_backend,
+                enable_gradient_checkpointing=enable_gradient_checkpointing
+            )
+            logger.info(f"Memory optimization enabled: {attention_backend} + gradient_checkpointing={enable_gradient_checkpointing}")
+        elif enable_gradient_checkpointing:
+            self.unet.enable_gradient_checkpointing()
+            logger.info("Gradient checkpointing enabled")
         
         logger.info(f"LDM4TS initialized: horizons={horizons}, device={device}")
     

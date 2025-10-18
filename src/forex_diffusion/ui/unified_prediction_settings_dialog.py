@@ -570,6 +570,46 @@ class UnifiedPredictionSettingsDialog(QDialog):
         
         layout.addWidget(training_box)
         
+        # Memory Optimization Settings
+        memory_box = QGroupBox("Memory Optimization (VRAM Reduction)")
+        memory_layout = QFormLayout(memory_box)
+        
+        # Attention backend
+        self.ldm4ts_train_attention_combo = QComboBox()
+        self.ldm4ts_train_attention_combo.addItems(["Default (No optimization)", "SageAttention 2 (~35% VRAM)", "FlashAttention 2 (~45% VRAM)"])
+        self.ldm4ts_train_attention_combo.setCurrentIndex(0)
+        self.ldm4ts_train_attention_combo.setToolTip(
+            "Attention backend for memory efficiency:\n"
+            "• Default: Standard PyTorch attention (highest VRAM)\n"
+            "• SageAttention 2: ~35% VRAM reduction, good accuracy\n"
+            "• FlashAttention 2: ~45% VRAM reduction, best efficiency\n\n"
+            "Requires: pip install sageattention (or) pip install flash-attn"
+        )
+        memory_layout.addRow("Attention Backend:", self.ldm4ts_train_attention_combo)
+        
+        # Gradient checkpointing
+        self.ldm4ts_train_grad_checkpoint_cb = QCheckBox("Enable Gradient Checkpointing")
+        self.ldm4ts_train_grad_checkpoint_cb.setChecked(True)
+        self.ldm4ts_train_grad_checkpoint_cb.setToolTip(
+            "Gradient checkpointing trades compute for memory:\n"
+            "• Reduces activation memory by ~50%\n"
+            "• Slightly slower training (~20% overhead)\n"
+            "• Highly recommended for large batch sizes"
+        )
+        memory_layout.addRow("", self.ldm4ts_train_grad_checkpoint_cb)
+        
+        # VRAM estimate label
+        self.ldm4ts_vram_estimate_label = QLabel("Estimated VRAM: ~8-12 GB (batch_size=4, default)")
+        self.ldm4ts_vram_estimate_label.setStyleSheet("color: #666; font-style: italic;")
+        memory_layout.addRow("", self.ldm4ts_vram_estimate_label)
+        
+        # Update estimate when settings change
+        self.ldm4ts_train_attention_combo.currentIndexChanged.connect(self._update_vram_estimate)
+        self.ldm4ts_train_grad_checkpoint_cb.toggled.connect(self._update_vram_estimate)
+        self.ldm4ts_train_batch_size_spinbox.valueChanged.connect(self._update_vram_estimate)
+        
+        layout.addWidget(memory_box)
+        
         # Output Settings
         output_box = QGroupBox("Output Settings")
         output_layout = QFormLayout(output_box)
@@ -932,10 +972,54 @@ class UnifiedPredictionSettingsDialog(QDialog):
             self.ldm4ts_train_output_edit.setText(directory)
             logger.info(f"Selected LDM4TS training output directory: {directory}")
     
+    def _update_vram_estimate(self):
+        """Update VRAM usage estimate based on settings"""
+        try:
+            from ..models.memory_efficient_attention import estimate_vram_usage
+            
+            # Get settings
+            batch_size = self.ldm4ts_train_batch_size_spinbox.value()
+            attention_idx = self.ldm4ts_train_attention_combo.currentIndex()
+            grad_checkpoint = self.ldm4ts_train_grad_checkpoint_cb.isChecked()
+            
+            # Map combo index to backend
+            backend_map = {0: "default", 1: "sage", 2: "flash"}
+            backend = backend_map.get(attention_idx, "default")
+            
+            # Estimate VRAM
+            estimate = estimate_vram_usage(
+                batch_size=batch_size,
+                backend=backend,
+                gradient_checkpointing=grad_checkpoint
+            )
+            
+            # Update label
+            total_gb = estimate['total_estimated_gb']
+            savings = estimate.get('savings_vs_default_pct', 0)
+            
+            if savings > 0:
+                self.ldm4ts_vram_estimate_label.setText(
+                    f"Estimated VRAM: ~{total_gb:.1f} GB (batch_size={batch_size}, {savings:.0f}% savings)"
+                )
+                self.ldm4ts_vram_estimate_label.setStyleSheet("color: #2ca02c; font-style: italic; font-weight: bold;")
+            else:
+                self.ldm4ts_vram_estimate_label.setText(
+                    f"Estimated VRAM: ~{total_gb:.1f} GB (batch_size={batch_size}, no optimization)"
+                )
+                self.ldm4ts_vram_estimate_label.setStyleSheet("color: #666; font-style: italic;")
+                
+        except Exception as e:
+            logger.warning(f"Failed to update VRAM estimate: {e}")
+    
     def _start_ldm4ts_training(self):
         """Start LDM4TS training"""
         try:
             # Collect training parameters
+            # Map attention combo to backend
+            attention_idx = self.ldm4ts_train_attention_combo.currentIndex()
+            backend_map = {0: "default", 1: "sage", 2: "flash"}
+            attention_backend = backend_map.get(attention_idx, "default")
+            
             params = {
                 'symbol': self.ldm4ts_train_symbol_combo.currentText(),
                 'timeframe': self.ldm4ts_train_timeframe_combo.currentText(),
@@ -948,6 +1032,8 @@ class UnifiedPredictionSettingsDialog(QDialog):
                 'learning_rate': self.ldm4ts_train_lr_spinbox.value(),
                 'use_gpu': self.ldm4ts_train_use_gpu_cb.isChecked(),
                 'output_dir': self.ldm4ts_train_output_edit.text().strip(),
+                'attention_backend': attention_backend,  # NEW
+                'enable_gradient_checkpointing': self.ldm4ts_train_grad_checkpoint_cb.isChecked(),  # NEW
             }
             
             # Validate params
