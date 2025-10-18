@@ -1822,7 +1822,10 @@ class TrainingTab(QWidget):
             # Generate run name
             tfs_flat = sorted({tf_sel for values in ind_tfs.values() for tf_sel in values})
             tfs_str = '-'.join(tfs_flat) if tfs_flat else 'none'
-            name = f"{sym.replace('/', '')}_{tf}_d{days}_h{horizon}_{model}_{encoder}_ind{len(ind_tfs)}_{tfs_str}"
+            # Use horizons list for name (formatted compactly)
+            from ..utils.horizon_parser import format_horizon_spec
+            horizon_compact = format_horizon_spec(horizons).replace(',', '-')
+            name = f"{sym.replace('/', '')}_{tf}_d{days}_h{horizon_compact}_{model}_{encoder}_ind{len(ind_tfs)}_{tfs_str}"
 
             # Resolve output directory
             out_dir = Path(self.out_dir.text()).resolve()
