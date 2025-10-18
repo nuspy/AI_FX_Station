@@ -175,8 +175,12 @@ class ModelExecutor:
             predictions = None
             predictions_dict = None  # For multi-horizon results
 
-            # Try UnifiedPredictor for multi-horizon support
-            if is_multi_horizon and predict_horizons:
+            # Check if this is already a Lightning predictor (loaded by standardized_loader)
+            model_type = self.model_data.get('model_type', 'unknown')
+            is_lightning_predictor = model_type == 'lightning' and hasattr(model, 'predict')
+
+            # Try UnifiedPredictor for multi-horizon support (but NOT for Lightning - already loaded!)
+            if is_multi_horizon and predict_horizons and not is_lightning_predictor:
                 try:
                     from ..inference.unified_predictor import UnifiedMultiHorizonPredictor
                     
@@ -203,11 +207,10 @@ class ModelExecutor:
 
             # Fallback to standard prediction if multi-horizon failed or not applicable
             if predictions is None:
-                # Check if this is a Lightning predictor
-                model_type = self.model_data.get('model_type', 'unknown')
-                logger.debug(f"Model type: {model_type}, has predict: {hasattr(model, 'predict')}, model class: {type(model).__name__}")
+                # Use Lightning predictor (already checked above)
+                logger.debug(f"Model type: {model_type}, is_lightning_predictor: {is_lightning_predictor}, model class: {type(model).__name__}")
                 
-                if model_type == 'lightning' and hasattr(model, 'predict'):
+                if is_lightning_predictor:
                     # Lightning predictor expects OHLCV patch (C, L) not features!
                     try:
                         import torch
