@@ -1600,14 +1600,21 @@ class DataService(ChartServiceBase):
             ranges: [[x_min, x_max], [y_min, y_max]]
         """
         try:
+            # Check if buffer state exists
+            if not hasattr(self, '_smart_buffer_state'):
+                logger.warning("Smart buffer: state not initialized, skipping")
+                return
+            
             # Check if we have data
             if not hasattr(self, '_last_df') or self._last_df is None or self._last_df.empty:
+                logger.debug("Smart buffer: no data available yet")
                 return
             
             # Throttle: don't load too frequently
             import time
             current_time = time.time()
             if self._smart_buffer_state['loading']:
+                logger.debug("Smart buffer: already loading, skipping")
                 return  # Already loading
             
             last_load = self._smart_buffer_state['last_load_time']
@@ -1635,20 +1642,32 @@ class DataService(ChartServiceBase):
             # Calculate visible width
             visible_width = x_max_visible - x_min_visible
             
-            # Check if scrolled near left edge (need older data)
+            # Check if scrolled near edges (need to load more data)
             threshold = self._smart_buffer_state['buffer_threshold']
+            
+            # Calculate distance from visible range to data boundaries as fraction of visible width
+            # Left edge: how far is the left visible edge from the left data edge
             left_distance = (x_min_visible - data_min) / visible_width
             
+            # Right edge: how far is the right visible edge from the right data edge  
+            right_distance = (data_max - x_max_visible) / visible_width
+            
+            # Debug: log distances
+            logger.debug(f"Smart buffer check: left_dist={left_distance:.2f}, right_dist={right_distance:.2f}, threshold={threshold}, visible=[{x_min_visible:.0f}, {x_max_visible:.0f}], data=[{data_min:.0f}, {data_max:.0f}]")
+            
+            # If scrolled close to left edge (or beyond it), load older data
+            # left_distance < threshold means we're within threshold of the data start
+            # left_distance < 0 means we've scrolled PAST the data start (need older data urgently!)
             if left_distance < threshold:
-                logger.info(f"📜 Smart buffer: scrolled near left edge (distance={left_distance:.2%}), loading older data...")
+                logger.info(f"📜 Smart buffer: near/past left edge (distance={left_distance:.2f}×visible_width), loading older data...")
                 self._load_more_data(direction='older', before_ts=data_min)
                 return
             
-            # Check if scrolled near right edge (need newer data)
-            right_distance = (data_max - x_max_visible) / visible_width
-            
+            # If scrolled close to right edge (or beyond it), load newer data
+            # right_distance < threshold means we're within threshold of the data end
+            # right_distance < 0 means we've scrolled PAST the data end (need newer data urgently!)
             if right_distance < threshold:
-                logger.info(f"📜 Smart buffer: scrolled near right edge (distance={right_distance:.2%}), loading newer data...")
+                logger.info(f"📜 Smart buffer: near/past right edge (distance={right_distance:.2f}×visible_width), loading newer data...")
                 self._load_more_data(direction='newer', after_ts=data_max)
                 return
                 
