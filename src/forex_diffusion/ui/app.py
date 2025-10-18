@@ -336,12 +336,25 @@ def setup_ui(
 
     # Create tabs for Generative Forecast
     forecast_settings_tab = ForecastSettingsTab(main_window)
-    training_tab = TrainingTab(main_window)
+    
+    # Training: Create container with sub-tabs for Diffusion and LDM4TS
+    training_container = QTabWidget()
+    training_container.setObjectName("level2_tabs_alt")
+    
+    # Sub-tab 1: Diffusion Training (original TrainingTab content)
+    diffusion_training_tab = TrainingTab(main_window)
+    training_container.addTab(diffusion_training_tab, "Diffusion")
+    
+    # Sub-tab 2: LDM4TS Training (will be moved from Forecast Settings)
+    from .ldm4ts_training_tab import LDM4TSTrainingTab
+    ldm4ts_training_tab = LDM4TSTrainingTab(main_window)
+    training_container.addTab(ldm4ts_training_tab, "LDM4TS")
+    
     backtesting_tab = BacktestingTab(main_window)
 
-    # Add tabs directly to Generative Forecast (no Training/Backtest container)
+    # Add tabs to Generative Forecast
     uno_tab.addTab(forecast_settings_tab, "Forecast Settings")
-    uno_tab.addTab(training_tab, "Training")
+    uno_tab.addTab(training_container, "Training")  # Now a container with sub-tabs
     uno_tab.addTab(backtesting_tab, "Backtesting")
 
     # Create Tab Patterns (simple widget, pattern controls are in Chart tab)

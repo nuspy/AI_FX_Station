@@ -111,7 +111,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         self.tabs.addTab(self.base_tab, "Base Settings")
         self.tabs.addTab(self.advanced_tab, "Advanced Settings")
-        self.tabs.addTab(self.generative_tab, "Generative Forecast")
+        self.tabs.addTab(self.generative_tab, "LDM4TS")  # Renamed from "Generative Forecast"
 
         main_layout.addWidget(self.tabs)
 
@@ -468,24 +468,11 @@ class UnifiedPredictionSettingsDialog(QDialog):
         return tab
     
     def _create_generative_forecast_tab(self) -> QWidget:
-        """Create Generative Forecast tab with Diffusion and LDM4TS Training sub-tabs"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # Create sub-tabs
-        sub_tabs = QTabWidget()
-        
-        # Sub-tab 1: Diffusion (current LDM4TS content)
-        diffusion_tab = self._create_ldm4ts_tab()
-        sub_tabs.addTab(diffusion_tab, "Diffusion")
-        
-        # Sub-tab 2: LDM4TS Training
-        training_tab = self._create_ldm4ts_training_tab()
-        sub_tabs.addTab(training_tab, "LDM4TS Training")
-        
-        layout.addWidget(sub_tabs)
-        
-        return tab
+        """Create LDM4TS tab (inference settings only, training moved to Training tab)"""
+        # NOTE: This tab was renamed from "Generative Forecast" to "LDM4TS"
+        # The "LDM4TS Training" sub-tab was moved to main Training tab
+        # Now this only contains LDM4TS inference settings
+        return self._create_ldm4ts_tab()
     
     def _create_ldm4ts_training_tab(self) -> QWidget:
         """Create LDM4TS Training tab"""
