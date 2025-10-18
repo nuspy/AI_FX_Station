@@ -161,20 +161,50 @@ class StandardizedModelLoader:
 
             # Check if this is a Lightning checkpoint
             if isinstance(data, dict) and 'state_dict' in data:
-                # This is a Lightning checkpoint - extract state_dict
-                # For now, return the checkpoint dict (inference will need to handle it)
-                logger.warning(f"Lightning checkpoint detected: {model_path.name}")
-                logger.warning("Lightning checkpoints require model architecture to load properly")
-                logger.warning("Please use a standard PyTorch .pt model or sklearn .pkl model for inference")
-                # Return the checkpoint data anyway (might be useful for inspection)
-                return {
-                    'model': None,  # No model instance yet
-                    'state_dict': data.get('state_dict'),
-                    'hyper_parameters': data.get('hyper_parameters', {}),
-                    'epoch': data.get('epoch'),
-                    'model_type': 'lightning',
-                    'checkpoint_path': str(model_path)
-                }
+                # This is a Lightning checkpoint - use LightningMultiHorizonPredictor
+                logger.info(f"Lightning checkpoint detected: {model_path.name}, loading with LightningMultiHorizonPredictor")
+                
+                try:
+                    from ..inference.lightning_predictor import LightningMultiHorizonPredictor
+                    
+                    # Create predictor instance (loads the model)
+                    predictor = LightningMultiHorizonPredictor(
+                        checkpoint_path=str(model_path),
+                        device='cpu'  # Will be moved to GPU if needed
+                    )
+                    
+                    # Return wrapped in standard format
+                    return {
+                        'model': predictor,  # The predictor has a predict() method!
+                        'model_type': 'lightning',
+                        'checkpoint_path': str(model_path),
+                        'horizons': predictor.horizons,
+                        'is_multi_horizon': predictor.is_multi_horizon,
+                        'hyper_parameters': data.get('hyper_parameters', {}),
+                        'epoch': data.get('epoch'),
+                    }
+                    
+                except ImportError as e:
+                    logger.error(f"Failed to import LightningMultiHorizonPredictor: {e}")
+                    logger.warning("Lightning checkpoints require lightning_predictor module")
+                    # Fallback to old behavior
+                    return {
+                        'model': None,
+                        'state_dict': data.get('state_dict'),
+                        'hyper_parameters': data.get('hyper_parameters', {}),
+                        'model_type': 'lightning',
+                        'checkpoint_path': str(model_path)
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to load Lightning model with predictor: {e}")
+                    # Fallback to old behavior
+                    return {
+                        'model': None,
+                        'state_dict': data.get('state_dict'),
+                        'hyper_parameters': data.get('hyper_parameters', {}),
+                        'model_type': 'lightning',
+                        'checkpoint_path': str(model_path)
+                    }
 
             if isinstance(data, dict):
                 return data

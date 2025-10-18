@@ -203,8 +203,35 @@ class ModelExecutor:
 
             # Fallback to standard prediction if multi-horizon failed or not applicable
             if predictions is None:
-                # Check if model has custom predict method that accepts candles_df
-                if hasattr(model, "predict"):
+                # Check if this is a Lightning predictor
+                model_type = self.model_data.get('model_type', 'unknown')
+                
+                if model_type == 'lightning' and hasattr(model, 'predict'):
+                    # Lightning predictor expects torch tensor and returns dict
+                    try:
+                        import torch
+                        X_tensor = torch.from_numpy(X_last).float() if isinstance(X_last, np.ndarray) else X_last
+                        
+                        # Lightning predictor returns dict {horizon: value}
+                        pred_dict = model.predict(
+                            X_tensor,
+                            num_samples=50,
+                            return_dict=True,
+                            return_distribution=False
+                        )
+                        
+                        # Convert dict to predictions array
+                        if pred_dict and isinstance(pred_dict, dict):
+                            predictions_dict = pred_dict
+                            predictions = np.array(list(pred_dict.values()))
+                            logger.debug(f"Lightning prediction: {len(pred_dict)} horizons")
+                        
+                    except Exception as e:
+                        logger.warning(f"Lightning predict failed: {e}")
+                        predictions = None
+                
+                # Standard sklearn/pytorch predict
+                elif hasattr(model, "predict"):
                     # Try to pass candles_df if model supports it (for diffusion models)
                     try:
                         import inspect
