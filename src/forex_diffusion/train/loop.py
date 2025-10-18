@@ -402,5 +402,5 @@ class ForexDiffusionLit(pl.LightningModule):
     def configure_optimizers(self):
         opt = optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         # optional LR scheduler
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode="min", factor=0.5, patience=4, verbose=True)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode="min", factor=0.5, patience=4)
         return {"optimizer": opt, "lr_scheduler": {"scheduler": scheduler, "monitor": "val/loss"}}
