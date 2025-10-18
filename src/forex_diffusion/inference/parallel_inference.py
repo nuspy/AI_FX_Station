@@ -207,14 +207,46 @@ class ModelExecutor:
                 model_type = self.model_data.get('model_type', 'unknown')
                 
                 if model_type == 'lightning' and hasattr(model, 'predict'):
-                    # Lightning predictor expects torch tensor and returns dict
+                    # Lightning predictor expects OHLCV patch (C, L) not features!
                     try:
                         import torch
-                        X_tensor = torch.from_numpy(X_last).float() if isinstance(X_last, np.ndarray) else X_last
+                        
+                        # Build OHLCV patch from candles_df
+                        if candles_df is None or candles_df.empty:
+                            raise ValueError("Lightning models require candles_df for prediction")
+                        
+                        # Get patch length from model
+                        patch_len = getattr(model, 'patch_len', 64)
+                        
+                        # Extract last patch_len candles
+                        if len(candles_df) < patch_len:
+                            logger.warning(f"Not enough candles ({len(candles_df)}) for patch length {patch_len}, padding...")
+                            # Pad with first candle repeated
+                            padding_needed = patch_len - len(candles_df)
+                            first_candle = candles_df.iloc[0:1]
+                            padding = pd.concat([first_candle] * padding_needed, ignore_index=True)
+                            candles_patch = pd.concat([padding, candles_df], ignore_index=True)
+                        else:
+                            candles_patch = candles_df.iloc[-patch_len:]
+                        
+                        # Build patch tensor (C, L) - channels: open, high, low, close, volume
+                        patch_data = []
+                        for col in ['open', 'high', 'low', 'close']:
+                            if col in candles_patch.columns:
+                                patch_data.append(candles_patch[col].values)
+                        
+                        # Optional: add volume if available
+                        if 'volume' in candles_patch.columns and len(patch_data) < 5:
+                            patch_data.append(candles_patch['volume'].values)
+                        
+                        # Convert to tensor (C, L)
+                        patch_tensor = torch.tensor(patch_data, dtype=torch.float32)
+                        
+                        logger.debug(f"Built Lightning patch: shape={patch_tensor.shape} (channels={patch_tensor.shape[0]}, length={patch_tensor.shape[1]})")
                         
                         # Lightning predictor returns dict {horizon: value}
                         pred_dict = model.predict(
-                            X_tensor,
+                            patch_tensor,
                             num_samples=50,
                             return_dict=True,
                             return_distribution=False
@@ -227,7 +259,9 @@ class ModelExecutor:
                             logger.debug(f"Lightning prediction: {len(pred_dict)} horizons")
                         
                     except Exception as e:
-                        logger.warning(f"Lightning predict failed: {e}")
+                        logger.error(f"Lightning predict failed: {e}")
+                        import traceback
+                        logger.debug(traceback.format_exc())
                         predictions = None
                 
                 # Standard sklearn/pytorch predict
