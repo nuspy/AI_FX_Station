@@ -165,6 +165,21 @@ fx-train-lightning = "forex_diffusion.training.train:main"
 # Optional dependency installation scripts
 # Run with: pip run <script-name>
 [project.optional-dependencies]
+# Memory-efficient attention for LDM4TS training (VRAM reduction 35-55%)
+# Install with: pip install -e ".[memory-opt]"
+# Recommended for GPUs with < 12 GB VRAM
+memory-opt = [
+  "sageattention>=2.0.0",  # SageAttention 2 (~35% VRAM reduction)
+                           # Requirements: CUDA 11.6+, RTX 20/30/40 series
+                           # Install: pip install sageattention
+  # Flash Attention 2 (~45% VRAM reduction)
+  # Requirements: CUDA 11.8+, RTX 30/40 series (Ampere+)
+  # Requires compilation (~10 minutes)
+  # Install separately: pip install flash-attn --no-build-isolation
+  # Note: flash-attn not included here due to long compilation time
+  #       Install manually if you have compatible GPU
+]
+
 # NVIDIA GPU acceleration stack (requires CUDA 13.0)
 # Install with: pip install -e ".[nvidia]"
 # Or use automated installer: python install_nvidia_stack.py --all
@@ -197,6 +212,16 @@ dev = [
   "autoflake>=2.3.0",  # Remove unused imports
 ]
 
+# Memory-optimized NVIDIA stack (nvidia + memory-opt)
+# Install with: pip install -e ".[nvidia-memory]"
+# Recommended for LDM4TS training on GPUs with < 12 GB VRAM
+nvidia-memory = [
+  "nvidia-ml-py>=12.0.0",
+  "xformers>=0.0.30",
+  "sageattention>=2.0.0",
+  # Flash Attention 2: pip install flash-attn --no-build-isolation
+]
+
 # Full NVIDIA stack (nvidia + compiled components via installer)
 # Install with: pip install -e ".[nvidia-full]" && python install_nvidia_stack.py --all
 # This installs: nvidia-ml-py, xformers, APEX, Flash Attention, DALI (WSL)
@@ -209,9 +234,11 @@ nvidia-full = [
 
 # Install everything (recommended for full development setup)
 # Install with: pip install -e ".[all]"
+# Note: Flash Attention 2 must be installed separately
 all = [
   "nvidia-ml-py>=12.0.0",
   "xformers>=0.0.30",
+  "sageattention>=2.0.0",  # Memory-efficient attention
   "pytest>=7.0.0",
   "pytest-asyncio>=0.21.0",
   "black>=23.0.0",
