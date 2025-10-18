@@ -1,13 +1,13 @@
 {
   "model_paths": [
-    "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=01-val/EURUSD-1m-best-1.pt"
+    "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=00-val/loss=1.7588.ckpt"
   ],
   "type_basic": true,
   "type_advanced": false,
   "type_rw": false,
   "combine_models": true,
   "use_gpu_inference": false,
-  "horizons": "1m, 5m, 15m",
+  "horizons": "10m",
   "n_samples": 100,
   "quantiles": "0.05, 0.50, 0.95",
   "indicators": {
@@ -111,12 +111,5 @@
   "override_returns_window": true,
   "override_min_coverage": true,
   "session_overlap": true,
-  "higher_tf": "15m",
-  "ldm4ts_enabled": true,
-  "ldm4ts_checkpoint_path": "D:\\Projects\\ForexGPT\\artifacts\\ldm4ts\\EURUSD_1m_20251018_035506\\model_final.pt",
-  "ldm4ts_horizons": "15, 60, 240",
-  "ldm4ts_num_samples": 46,
-  "ldm4ts_window_size": 100,
-  "ldm4ts_uncertainty_threshold": 50,
-  "ldm4ts_min_strength": 30
+  "higher_tf": "15m"
 }

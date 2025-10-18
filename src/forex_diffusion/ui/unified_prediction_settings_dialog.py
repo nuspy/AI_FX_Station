@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QTextEdit, QScrollArea, QWidget, QComboBox, QGridLayout, QMessageBox, QDoubleSpinBox, QProgressBar
 )
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QFont
 from loguru import logger
 
 from ..utils.user_settings import get_setting, set_setting
@@ -217,6 +218,28 @@ class UnifiedPredictionSettingsDialog(QDialog):
             "Se disattivo: genera forecast separati per ogni modello, visualizzati individualmente."
         )
         combination_layout.addWidget(self.combine_models_cb)
+        
+        # Aggregation method (only visible when ensemble is active)
+        aggregation_row = QHBoxLayout()
+        aggregation_label = QLabel("Aggregation Method:")
+        self.aggregation_combo = QComboBox()
+        self.aggregation_combo.addItems(["Mean", "Median", "Weighted Mean", "Best Model"])
+        self.aggregation_combo.setCurrentText("Mean")
+        self.aggregation_combo.setToolTip(
+            "Metodo di aggregazione per ensemble:\n\n"
+            "• Mean: Media semplice delle predizioni\n"
+            "• Median: Mediana (più robusta agli outlier)\n"
+            "• Weighted Mean: Media ponderata per accuratezza modello\n"
+            "• Best Model: Usa solo il modello con migliore performance"
+        )
+        aggregation_row.addWidget(aggregation_label)
+        aggregation_row.addWidget(self.aggregation_combo)
+        aggregation_row.addStretch()
+        combination_layout.addLayout(aggregation_row)
+        
+        # Connect ensemble checkbox to enable/disable aggregation
+        self.combine_models_cb.toggled.connect(lambda checked: self.aggregation_combo.setEnabled(checked))
+        self.combine_models_cb.toggled.connect(lambda checked: aggregation_label.setEnabled(checked))
 
         # GPU Inference Checkbox
         self.use_gpu_inference_cb = QCheckBox("Usa GPU per inference")
@@ -1138,7 +1161,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
             self,
             "Select Model Files",
             last_dir,
-            "Model Files (*.pkl *.pickle *.pt *.pth);;All Files (*.*)"
+            "Model Files (*.pkl *.pickle *.pt *.pth *.ckpt);;All Files (*.*)"
         )
 
         if files:
@@ -1215,46 +1238,95 @@ class UnifiedPredictionSettingsDialog(QDialog):
             # Silently fail - user can still configure manually
     
     def _show_model_info(self):
-        """Show information about selected models"""
+        """Show information about selected models (supports multi-model)"""
         models = self._get_model_paths()
 
         if not models:
             QMessageBox.warning(self, "No Models", "No model files selected.")
             return
 
-        from ..models.metadata_manager import MetadataManager
-
-        info_parts = []
-        manager = MetadataManager()
-
-        for model_path in models:
-            try:
-                metadata = manager.load_metadata(model_path)
-                if metadata:
-                    info_parts.append(f"=== {Path(model_path).name} ===")
-                    info_parts.append(f"Type: {metadata.model_type}")
-                    info_parts.append(f"Symbol: {metadata.symbol}")
-                    info_parts.append(f"Timeframe: {metadata.base_timeframe}")
-                    info_parts.append(f"Horizon: {metadata.horizon_bars} bars")
-                    info_parts.append(f"Features: {metadata.num_features}")
+        try:
+            from ..inference.model_metadata_loader import ModelMetadataLoader
+            
+            info_parts = []
+            info_parts.append("📊 MULTI-MODEL CONFIGURATION\n")
+            
+            sklearn_count = 0
+            lightning_count = 0
+            total_horizons = set()
+            
+            for i, model_path in enumerate(models, 1):
+                try:
+                    loader = ModelMetadataLoader(model_path)
+                    meta = loader.load_metadata()
+                    
+                    info_parts.append(f"═══ Model {i}/{len(models)}: {Path(model_path).name} ═══")
+                    info_parts.append(f"  Type: {meta['model_type'].upper()}")
+                    info_parts.append(f"  Symbol: {meta.get('symbol', 'N/A')}")
+                    info_parts.append(f"  Timeframe: {meta.get('timeframe', 'N/A')}")
+                    info_parts.append(f"  Horizons: {meta.get('horizons', [])} ({meta.get('num_horizons', 0)} total)")
+                    
+                    if meta['model_type'] == 'sklearn':
+                        sklearn_count += 1
+                        info_parts.append(f"  Algorithm: {meta.get('algorithm', 'Unknown')}")
+                        info_parts.append(f"  Features: {meta.get('num_features', 'N/A')}")
+                        if 'val_mae' in meta and meta['val_mae']:
+                            info_parts.append(f"  Validation MAE: {meta['val_mae']:.6f}")
+                    else:
+                        lightning_count += 1
+                        info_parts.append(f"  Patch Length: {meta.get('patch_len', 'N/A')}")
+                    
+                    # Collect unique horizons
+                    total_horizons.update(meta.get('horizons', []))
+                    
                     info_parts.append("")
-                else:
-                    info_parts.append(f"=== {Path(model_path).name} ===")
-                    info_parts.append("No metadata found (né sidecar, né embedded)")
+                    
+                except Exception as e:
+                    info_parts.append(f"═══ Model {i}: {Path(model_path).name} ═══")
+                    info_parts.append(f"  ⚠️ ERROR: {e}")
                     info_parts.append("")
-            except Exception as e:
-                info_parts.append(f"=== {Path(model_path).name} ===")
-                info_parts.append(f"Error loading metadata: {e}")
-                info_parts.append("")
-
-        info_text = "\n".join(info_parts)
-
-        # Show in dialog
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Model Information")
-        msg.setText(info_text)
-        msg.setIcon(QMessageBox.Information)
-        msg.exec()
+            
+            # Summary
+            info_parts.append("─" * 50)
+            info_parts.append("📈 SUMMARY:")
+            info_parts.append(f"  Total models: {len(models)}")
+            info_parts.append(f"  Sklearn models: {sklearn_count}")
+            info_parts.append(f"  Lightning models: {lightning_count}")
+            info_parts.append(f"  Unique horizons: {sorted(total_horizons)}")
+            info_parts.append("")
+            info_parts.append("💡 ENSEMBLE OPTIONS:")
+            if self.combine_models_cb.isChecked():
+                method = self.aggregation_combo.currentText()
+                info_parts.append(f"  Mode: ENSEMBLE ({method})")
+                info_parts.append(f"  All {len(models)} models will be combined")
+            else:
+                info_parts.append(f"  Mode: SEPARATE")
+                info_parts.append(f"  Each model will produce independent forecasts")
+            
+            info_text = "\n".join(info_parts)
+            
+            # Show in scrollable dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Model Information")
+            dialog.resize(600, 500)
+            
+            layout = QVBoxLayout(dialog)
+            
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            text_edit.setPlainText(info_text)
+            text_edit.setFont(QFont("Courier New", 9))
+            layout.addWidget(text_edit)
+            
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(dialog.accept)
+            layout.addWidget(close_btn)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            logger.exception(f"Failed to show model info: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load model information:\n{e}")
 
     def _load_model_defaults(self):
         """Load default settings from model metadata"""
