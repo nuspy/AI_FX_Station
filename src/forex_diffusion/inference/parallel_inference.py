@@ -98,13 +98,15 @@ class ModelExecutor:
             logger.error(f"Failed to load model {self.model_path}: {e}")
             raise
 
-    def predict(self, features_df: pd.DataFrame, candles_df: pd.DataFrame = None) -> Dict[str, Any]:
+    def predict(self, features_df: pd.DataFrame, candles_df: pd.DataFrame = None, 
+                requested_horizons: Optional[List[int]] = None) -> Dict[str, Any]:
         """
-        Make prediction using the loaded model.
+        Make prediction using the loaded model (multi-horizon aware).
 
         Args:
             features_df: Prepared features dataframe
             candles_df: Raw OHLCV candles dataframe (optional, required for diffusion models)
+            requested_horizons: Specific horizons to predict (None = use model's trained horizons)
 
         Returns:
             Dictionary with prediction results
@@ -117,6 +119,20 @@ class ModelExecutor:
 
             model = self.model_data['model']
             features_list = self.model_data.get('features', [])
+            metadata = self.model_data.get('metadata')
+
+            # Check if model supports multi-horizon
+            model_horizons = None
+            is_multi_horizon = False
+            
+            if metadata:
+                model_horizons = metadata.get('horizons') or metadata.get('horizon')
+                if model_horizons and not isinstance(model_horizons, list):
+                    model_horizons = [model_horizons]
+                is_multi_horizon = metadata.get('is_multi_horizon', False) or (model_horizons and len(model_horizons) > 1)
+            
+            # Determine which horizons to predict
+            predict_horizons = requested_horizons if requested_horizons is not None else model_horizons
 
             # Filter features to match model requirements
             if features_list:
@@ -157,50 +173,84 @@ class ModelExecutor:
             X_last = X[-1:] if len(X) > 0 else np.zeros((1, X.shape[1] if X.ndim > 1 else 1))
 
             predictions = None
+            predictions_dict = None  # For multi-horizon results
 
-            # Check if model has custom predict method that accepts candles_df
-            if hasattr(model, "predict"):
-                # Try to pass candles_df if model supports it (for diffusion models)
+            # Try UnifiedPredictor for multi-horizon support
+            if is_multi_horizon and predict_horizons:
                 try:
-                    import inspect
-                    sig = inspect.signature(model.predict)
-                    if 'candles_df' in sig.parameters:
-                        predictions = np.ravel(model.predict(X_last, candles_df=candles_df))
-                    else:
-                        predictions = np.ravel(model.predict(X_last))
+                    from ..inference.unified_predictor import UnifiedMultiHorizonPredictor
+                    
+                    predictor = UnifiedMultiHorizonPredictor(
+                        self.model_path,
+                        device=str(self.device)
+                    )
+                    
+                    predictions_dict = predictor.predict(
+                        X_last,
+                        horizons=predict_horizons,
+                        num_samples=50,
+                        return_distribution=False
+                    )
+                    
+                    # Convert dict to array for backward compatibility
+                    predictions = np.array([predictions_dict[h] for h in sorted(predictions_dict.keys())])
+                    
+                    logger.debug(f"Multi-horizon prediction: {len(predictions_dict)} horizons")
+                    
                 except Exception as e:
-                    logger.debug(f"Predict with signature inspection failed: {e}, trying direct call")
-                    predictions = np.ravel(model.predict(X_last))
+                    logger.warning(f"UnifiedPredictor failed, falling back to standard predict: {e}")
+                    predictions_dict = None
 
+            # Fallback to standard prediction if multi-horizon failed or not applicable
             if predictions is None:
-                try:
-                    # Try PyTorch forward pass
-                    import torch
-                    if hasattr(model, 'eval'):
-                        model = model.to(self.device)  # Move model to GPU if available
-                        model.eval()
-                    with torch.no_grad():
-                        t_in = torch.tensor(X_last, dtype=torch.float32).to(self.device)
-                        out = model(t_in)
-                        predictions = np.ravel(out.detach().cpu().numpy())
-                except Exception:
-                    pass
+                # Check if model has custom predict method that accepts candles_df
+                if hasattr(model, "predict"):
+                    # Try to pass candles_df if model supports it (for diffusion models)
+                    try:
+                        import inspect
+                        sig = inspect.signature(model.predict)
+                        if 'candles_df' in sig.parameters:
+                            predictions = np.ravel(model.predict(X_last, candles_df=candles_df))
+                        else:
+                            predictions = np.ravel(model.predict(X_last))
+                    except Exception as e:
+                        logger.debug(f"Predict with signature inspection failed: {e}, trying direct call")
+                        predictions = np.ravel(model.predict(X_last))
 
-            if predictions is None:
-                # NO FALLBACK! Model must have predict method or fail
-                raise RuntimeError(f"Model {Path(self.model_path).name} has no predict method")
+                if predictions is None:
+                    try:
+                        # Try PyTorch forward pass
+                        import torch
+                        if hasattr(model, 'eval'):
+                            model = model.to(self.device)  # Move model to GPU if available
+                            model.eval()
+                        with torch.no_grad():
+                            t_in = torch.tensor(X_last, dtype=torch.float32).to(self.device)
+                            out = model(t_in)
+                            predictions = np.ravel(out.detach().cpu().numpy())
+                    except Exception:
+                        pass
+
+                if predictions is None:
+                    # NO FALLBACK! Model must have predict method or fail
+                    raise RuntimeError(f"Model {Path(self.model_path).name} has no predict method")
 
             execution_time = time.time() - start_time
 
-            return {
+            result = {
                 'model_path': self.model_path,
                 'model_name': Path(self.model_path).stem,
                 'predictions': predictions,
+                'predictions_dict': predictions_dict,  # Multi-horizon predictions {horizon: value}
+                'horizons': model_horizons,  # Trained horizons
+                'is_multi_horizon': is_multi_horizon,
                 'features_used': available_features if features_list else list(range(X.shape[1])),
                 'execution_time': execution_time,
                 'model_type': self.model_data.get('model_type', 'unknown'),
                 'success': True
             }
+            
+            return result
 
         except Exception as e:
             logger.error(f"Prediction failed for {self.model_path}: {e}")
@@ -307,7 +357,9 @@ class ParallelInferenceEngine:
         def load_and_predict(executor):
             try:
                 executor.load_model()
-                result = executor.predict(features_df, candles_df)
+                # Extract requested horizons from executor config
+                requested_horizons = executor.model_config.get('horizon_bars')
+                result = executor.predict(features_df, candles_df, requested_horizons=requested_horizons)
                 return result
             except Exception as e:
                 return {
