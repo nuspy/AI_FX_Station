@@ -41,7 +41,28 @@
         </mxCell>
         
         <!-- Arrow Start to Step 1 -->
-        <mxCell id="arrow-start-to-step1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;" edge="1" parent="1" source="start" target="step1-title">
+        <mxCell id="arrow-start-to-step1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#0066CC;" edge="1" parent="1" source="start" target="step1-title">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrows Step 1 to Step 2 -->
+        <mxCell id="arrow-ohlcv-to-indicators" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="collect-ohlcv" target="compute-indicators">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-ohlcv-to-patterns" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="collect-ohlcv" target="detect-patterns">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-ohlcv-to-vision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#9C27B0;" edge="1" parent="1" source="collect-ohlcv" target="vision-encoding-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-orderbook-to-features" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="collect-orderbook" target="compute-features">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-sentiment-to-features" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="collect-sentiment" target="compute-features">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         
@@ -121,6 +142,32 @@
           <mxGeometry x="700" y="740" width="400" height="30" as="geometry" />
         </mxCell>
         
+        <!-- Arrows Step 2 to Step 3 -->
+        <mxCell id="arrow-indicators-to-diffusion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="compute-indicators" target="diffusion-base-forecast">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-patterns-to-diffusion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="detect-patterns" target="diffusion-adv-forecast">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-vision-to-ldm4ts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#9C27B0;" edge="1" parent="1" source="vision-encoding-step" target="ldm4ts-vae-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-features-to-sssd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="compute-features" target="sssd-forecast">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrows within LDM4TS pipeline -->
+        <mxCell id="arrow-vae-to-unet" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#9C27B0;" edge="1" parent="1" source="ldm4ts-vae-step" target="ldm4ts-unet-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-unet-to-temporal" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#9C27B0;" edge="1" parent="1" source="ldm4ts-unet-step" target="ldm4ts-temporal-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
         <!-- STEP 4: SIGNAL FUSION -->
         <mxCell id="step4-title" value="STEP 4: SIGNAL FUSION AND QUALITY CHECK" style="text;html=1;strokeColor=none;fillColor=#f8cecc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=14;fontStyle=1" vertex="1" parent="1">
           <mxGeometry x="50" y="820" width="1300" height="30" as="geometry" />
@@ -145,6 +192,25 @@
         
         <mxCell id="gate1-reject-label" value="NO" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#CC0000;" vertex="1" parent="1">
           <mxGeometry x="790" y="1080" width="40" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrows Step 3 to Step 4 -->
+        <mxCell id="arrow-diffusion-to-fusion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="diffusion-output" target="signal-aggregation">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-ldm4ts-to-quality" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#9C27B0;" edge="1" parent="1" source="ldm4ts-output" target="quality-check">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow Step 4 to Decision Gate 1 -->
+        <mxCell id="arrow-quality-to-gate1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#0066CC;" edge="1" parent="1" source="quality-check" target="decision-gate1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow Gate 1 Reject -->
+        <mxCell id="arrow-gate1-to-reject" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#CC0000;" edge="1" parent="1" source="decision-gate1" target="gate1-reject">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
         
         <!-- STEP 5: RISK MANAGEMENT -->
@@ -181,6 +247,25 @@
           <mxGeometry x="790" y="1480" width="40" height="20" as="geometry" />
         </mxCell>
         
+        <!-- Arrow Gate 1 Pass to Step 5 -->
+        <mxCell id="arrow-gate1-to-step5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#00CC00;" edge="1" parent="1" source="decision-gate1" target="step5-title">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrows Step 5 to Decision Gate 2 -->
+        <mxCell id="arrow-risk-to-gate2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="risk-checks" target="decision-gate2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="arrow-portfolio-to-gate2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0066CC;" edge="1" parent="1" source="portfolio-optimization" target="decision-gate2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow Gate 2 Reject -->
+        <mxCell id="arrow-gate2-to-reject" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#CC0000;" edge="1" parent="1" source="decision-gate2" target="gate2-reject">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
         <!-- STEP 6: TRADE DECISION -->
         <mxCell id="step6-title" value="STEP 6: TRADE DECISION" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=14;fontStyle=1" vertex="1" parent="1">
           <mxGeometry x="50" y="1580" width="1300" height="30" as="geometry" />
@@ -206,6 +291,31 @@
         <!-- END -->
         <mxCell id="end-monitoring" value="CONTINUOUS MONITORING&#xa;&#xa;Position Tracking (real-time P and L)&#xa;Trailing Stop Adjustments&#xa;Exit Signal Detection&#xa;Performance Metrics Logging&#xa;&#xa;LOOP BACK TO START FOR NEXT CANDLE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#a20025;strokeColor=#6F0000;fontSize=13;fontStyle=1;fontColor=#ffffff;" vertex="1" parent="1">
           <mxGeometry x="400" y="2320" width="500" height="140" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow Gate 2 Pass to Step 6 -->
+        <mxCell id="arrow-gate2-to-step6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#00CC00;" edge="1" parent="1" source="decision-gate2" target="step6-title">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow Step 6 to Step 7 -->
+        <mxCell id="arrow-decision-to-execution" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=4;strokeColor=#CC0000;" edge="1" parent="1" source="trade-decision" target="step7-title">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow Step 7 to End -->
+        <mxCell id="arrow-execution-to-end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#0066CC;" edge="1" parent="1" source="broker-execution-detail" target="end-monitoring">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Loop Back Arrow -->
+        <mxCell id="arrow-loop-back" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="end-monitoring" target="start">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="20" y="2390" />
+              <mxPoint x="20" y="110" />
+            </Array>
+          </mxGeometry>
         </mxCell>
         
         <!-- SIDE PANEL: KEY METRICS -->
