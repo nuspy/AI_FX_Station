@@ -525,7 +525,7 @@ def main() -> None:
         )
 
         # Detect hardware capabilities
-        hw_info = HardwareInfo.detect()
+        hw_info = HardwareInfo()  # __post_init__ calls detect_hardware() automatically
 
         # Map precision string to enum
         precision_map = {
