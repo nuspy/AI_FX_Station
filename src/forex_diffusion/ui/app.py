@@ -382,7 +382,9 @@ def setup_ui(
     result["signals_tab"] = signals_tab  # Signals tab under Trading Intelligence
     result["rl_config_tab"] = rl_config_tab  # RL Agent tab under Trading Intelligence
     result["e2e_optimization_tab"] = e2e_optimization_tab  # E2E Optimization tab under Trading Intelligence
-    result["training_tab"] = training_tab
+    result["training_container"] = training_container  # Training container (Diffusion + LDM4TS sub-tabs)
+    result["diffusion_training_tab"] = diffusion_training_tab  # Diffusion training tab
+    result["ldm4ts_training_tab"] = ldm4ts_training_tab  # LDM4TS training tab
     result["forecast_settings_tab"] = forecast_settings_tab
     result["backtesting_tab"] = backtesting_tab
     result["live_trading_tab"] = live_trading_tab  # Stored as window, opened via button
