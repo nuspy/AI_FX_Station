@@ -113,10 +113,15 @@ class LDM4TSBacktestWorker(QRunnable):
                 
                 # Run forecast
                 try:
+                    # Convert window to numpy array
+                    window_array = window_df[['open', 'high', 'low', 'close', 'volume']].values
+                    
+                    # Run prediction
                     prediction = service.predict(
-                        ohlcv_data=window_df,
+                        ohlcv=window_array,
                         horizons=horizons,
-                        num_samples=num_samples
+                        num_samples=num_samples,
+                        symbol=symbol
                     )
                     
                     # Extract predictions for each horizon
@@ -128,17 +133,17 @@ class LDM4TSBacktestWorker(QRunnable):
                         
                         true_value = df_hist.iloc[future_idx]['close']
                         
-                        # Get predicted value and uncertainty
-                        predicted_value = prediction['mean'][horizon_idx]
-                        uncertainty = prediction['std'][horizon_idx]
+                        # Get predicted value and uncertainty from prediction object
+                        predicted_value = prediction.mean[horizon_min]
+                        uncertainty = prediction.std[horizon_min]
+                        q05_value = prediction.q05[horizon_min]
+                        q95_value = prediction.q95[horizon_min]
                         
                         # Calculate error
                         error = abs(predicted_value - true_value)
                         
-                        # Calculate coverage (95% interval)
-                        lower_bound = prediction['quantile_0.025'][horizon_idx]
-                        upper_bound = prediction['quantile_0.975'][horizon_idx]
-                        coverage = 1.0 if lower_bound <= true_value <= upper_bound else 0.0
+                        # Calculate coverage (95% interval: q05 to q95)
+                        coverage = 1.0 if q05_value <= true_value <= q95_value else 0.0
                         
                         # Create result row
                         result = {

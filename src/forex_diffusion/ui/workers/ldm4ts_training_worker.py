@@ -91,24 +91,71 @@ class LDM4TSTrainingWorker(QRunnable):
             self.signals.status.emit(f"Data loaded: {len(df_train)} train, {len(df_val) if df_val is not None else 0} val")
             self.signals.progress.emit(10)
             
-            # Step 2: Initialize LDM4TS service
+            # Step 2: Initialize LDM4TS model
             self.signals.status.emit("Initializing LDM4TS model...")
             self.signals.progress.emit(15)
             
-            from ...services.ldm4ts_inference_service import LDM4TSInferenceService
+            import torch
+            import torch.optim as optim
+            from ...models.ldm4ts import LDM4TSModel
             
-            # For training, we need to initialize without checkpoint
-            # This will load base Stable Diffusion model
-            service = LDM4TSInferenceService(checkpoint_path=None)
+            # Create model
+            device = "cuda" if use_gpu and torch.cuda.is_available() else "cpu"
             
-            if not service._initialized:
-                raise RuntimeError("Failed to initialize LDM4TS service")
+            model = LDM4TSModel(
+                image_size=(image_size, image_size),
+                horizons=horizons,
+                diffusion_steps=diffusion_steps,
+                device=device
+            )
             
-            self.signals.status.emit("LDM4TS model initialized")
+            # Optimizer
+            optimizer = optim.AdamW(
+                model.parameters(),
+                lr=learning_rate,
+                weight_decay=1e-5
+            )
+            
+            # Loss function
+            criterion = torch.nn.MSELoss()
+            
+            logger.info(f"Model initialized on {device}")
+            self.signals.status.emit(f"Model initialized on {device}")
             self.signals.progress.emit(20)
             
             # Step 3: Training loop
             self.signals.status.emit("Starting training...")
+            
+            # Prepare data for batching
+            from torch.utils.data import TensorDataset, DataLoader
+            
+            # Create simple dataset (sliding windows)
+            train_windows = []
+            train_targets = []
+            
+            for i in range(len(df_train) - window_size - max(horizons)):
+                window = df_train.iloc[i:i+window_size][['open', 'high', 'low', 'close', 'volume']].values
+                
+                # Targets: future close prices at each horizon
+                targets = []
+                for h in horizons:
+                    future_idx = i + window_size + h - 1
+                    if future_idx < len(df_train):
+                        targets.append(df_train.iloc[future_idx]['close'])
+                
+                if len(targets) == len(horizons):
+                    train_windows.append(window)
+                    train_targets.append(targets)
+            
+            train_windows = torch.FloatTensor(np.array(train_windows))
+            train_targets = torch.FloatTensor(np.array(train_targets))
+            
+            train_dataset = TensorDataset(train_windows, train_targets)
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            
+            logger.info(f"Created {len(train_dataset)} training samples")
+            
+            best_val_loss = float('inf')
             
             for epoch in range(epochs):
                 if self._stop_requested:
@@ -117,33 +164,64 @@ class LDM4TSTrainingWorker(QRunnable):
                     return
                 
                 epoch_start = time.time()
+                model.train()
                 
-                # TODO: Implement actual training logic
-                # For now, simulate training with progress
+                epoch_loss = 0.0
+                num_batches = len(train_loader)
+                
                 self.signals.status.emit(f"Epoch {epoch + 1}/{epochs} - Training...")
                 
-                # Simulate training batches
-                num_batches = len(df_train) // batch_size
-                for batch_idx in range(num_batches):
+                for batch_idx, (batch_windows, batch_targets) in enumerate(train_loader):
                     if self._stop_requested:
                         break
                     
-                    # Simulate batch processing
-                    time.sleep(0.01)  # Small delay to simulate work
+                    batch_windows = batch_windows.to(device)
+                    batch_targets = batch_targets.to(device)
+                    
+                    # Forward pass
+                    optimizer.zero_grad()
+                    
+                    # Get predictions
+                    current_prices = batch_windows[:, -1, 3]  # Last close price
+                    
+                    try:
+                        outputs = model(
+                            batch_windows,
+                            current_price=current_prices,
+                            num_samples=1,  # Single sample for training
+                            return_all=False
+                        )
+                        
+                        predictions = outputs['mean']  # [B, num_horizons]
+                        
+                        # Compute loss
+                        loss = criterion(predictions, batch_targets)
+                        
+                        # Backward pass
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        optimizer.step()
+                        
+                        epoch_loss += loss.item()
+                        
+                    except Exception as e:
+                        logger.warning(f"Batch {batch_idx} failed: {e}")
+                        continue
                     
                     # Update progress within epoch
                     epoch_progress = 20 + int(((epoch + (batch_idx / num_batches)) / epochs) * 70)
                     self.signals.progress.emit(epoch_progress)
                 
+                avg_train_loss = epoch_loss / max(num_batches, 1)
+                
+                # Validation
+                val_loss = self._validate(model, df_val, window_size, horizons, criterion, device)
+                
                 epoch_time = time.time() - epoch_start
                 
-                # Simulate metrics
-                train_loss = 0.5 * (1 - epoch / epochs) + np.random.normal(0, 0.05)
-                val_loss = 0.6 * (1 - epoch / epochs) + np.random.normal(0, 0.05)
-                
                 metrics = {
-                    'train_loss': max(0.01, train_loss),
-                    'val_loss': max(0.01, val_loss),
+                    'train_loss': avg_train_loss,
+                    'val_loss': val_loss,
                     'epoch_time': epoch_time,
                     'learning_rate': learning_rate,
                 }
@@ -155,15 +233,24 @@ class LDM4TSTrainingWorker(QRunnable):
                 self.signals.status.emit(f"Epoch {epoch + 1}/{epochs} - Loss: {metrics['train_loss']:.4f}")
                 
                 # Save checkpoint every epoch
+                is_best = val_loss < best_val_loss
+                if is_best:
+                    best_val_loss = val_loss
+                
                 checkpoint_path = run_dir / f"checkpoint_epoch_{epoch + 1}.pt"
-                self._save_checkpoint(service, checkpoint_path, epoch + 1, metrics)
+                self._save_checkpoint(model, optimizer, checkpoint_path, epoch + 1, metrics, is_best)
             
             # Training complete
             self.signals.progress.emit(100)
             
             # Save final checkpoint
             final_checkpoint = run_dir / "model_final.pt"
-            self._save_checkpoint(service, final_checkpoint, epochs, metrics)
+            self._save_checkpoint(model, optimizer, final_checkpoint, epochs, metrics, is_best=False)
+            
+            # Also save best checkpoint reference
+            best_checkpoint = run_dir / "model_best.pt"
+            if best_checkpoint.exists():
+                logger.info(f"Best checkpoint: {best_checkpoint} (val_loss={best_val_loss:.4f})")
             
             logger.info(f"Training completed. Final checkpoint: {final_checkpoint}")
             self.signals.status.emit("Training completed successfully!")
@@ -224,24 +311,70 @@ class LDM4TSTrainingWorker(QRunnable):
             logger.exception(f"Failed to load data: {e}")
             return None, None
 
-    def _save_checkpoint(self, service, checkpoint_path: Path, epoch: int, metrics: dict):
+    def _validate(self, model, df_val, window_size, horizons, criterion, device):
+        """Run validation"""
+        if df_val is None or len(df_val) < window_size:
+            return 0.0
+        
+        model.eval()
+        val_loss = 0.0
+        num_samples = 0
+        
+        import torch
+        
+        with torch.no_grad():
+            for i in range(0, len(df_val) - window_size - max(horizons), 50):  # Sample every 50 steps
+                window = df_val.iloc[i:i+window_size][['open', 'high', 'low', 'close', 'volume']].values
+                
+                targets = []
+                for h in horizons:
+                    future_idx = i + window_size + h - 1
+                    if future_idx < len(df_val):
+                        targets.append(df_val.iloc[future_idx]['close'])
+                
+                if len(targets) == len(horizons):
+                    window_tensor = torch.FloatTensor(window).unsqueeze(0).to(device)
+                    targets_tensor = torch.FloatTensor(targets).unsqueeze(0).to(device)
+                    
+                    current_price = window[-1, 3]
+                    
+                    try:
+                        outputs = model(window_tensor, current_price=current_price, num_samples=1, return_all=False)
+                        predictions = outputs['mean']
+                        
+                        loss = criterion(predictions, targets_tensor)
+                        val_loss += loss.item()
+                        num_samples += 1
+                    except Exception:
+                        continue
+        
+        return val_loss / max(num_samples, 1)
+    
+    def _save_checkpoint(self, model, optimizer, checkpoint_path: Path, epoch: int, metrics: dict, is_best: bool = False):
         """Save training checkpoint"""
         try:
-            # TODO: Implement actual checkpoint saving
-            # For now, create a placeholder file
+            import torch
+            
+            # Create checkpoint data
             checkpoint_data = {
                 'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
                 'metrics': metrics,
                 'timestamp': datetime.now().isoformat(),
                 'params': self.params,
             }
             
-            # Save as JSON for now (placeholder)
-            import json
-            with open(checkpoint_path.with_suffix('.json'), 'w') as f:
-                json.dump(checkpoint_data, f, indent=2)
+            # Save PyTorch checkpoint
+            torch.save(checkpoint_data, checkpoint_path)
             
             logger.info(f"Checkpoint saved: {checkpoint_path}")
+            
+            # If best, also save as model_best.pt
+            if is_best:
+                best_path = checkpoint_path.parent / "model_best.pt"
+                torch.save(checkpoint_data, best_path)
+                logger.info(f"Best model saved: {best_path}")
             
         except Exception as e:
             logger.exception(f"Failed to save checkpoint: {e}")
