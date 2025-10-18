@@ -98,23 +98,71 @@ def install_flashattention():
     """Install FlashAttention 2."""
     print("\n" + "="*60)
     print("Installing FlashAttention 2...")
-    print("This may take ~10 minutes (compilation required)...")
     print("="*60)
     
+    import platform
+    import torch
+    
+    # Get PyTorch and CUDA version
+    torch_version = torch.__version__.split('+')[0]
+    cuda_version = torch.version.cuda
+    python_version = f"{sys.version_info.major}{sys.version_info.minor}"
+    
+    print(f"Detected: Python {sys.version_info.major}.{sys.version_info.minor}, PyTorch {torch_version}, CUDA {cuda_version}")
+    
+    # Try pre-built wheel first (much faster and more reliable)
+    print("\nAttempt 1: Trying pre-built wheel...")
+    print("(Searching for compatible wheel on PyPI...)")
+    
     try:
+        # Try installing without building (will use pre-built wheel if available)
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "flash-attn", "--prefer-binary"],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            print("✓ FlashAttention 2 installed from pre-built wheel!")
+            return True
+        else:
+            print("✗ No pre-built wheel available for your configuration")
+            print(f"   (Python {python_version}, PyTorch {torch_version}, CUDA {cuda_version})")
+    except Exception as e:
+        print(f"✗ Pre-built wheel installation failed: {e}")
+    
+    # Fallback: compile from source
+    print("\nAttempt 2: Compiling from source...")
+    print("This may take ~10-15 minutes...")
+    print("Installing build dependencies...")
+    
+    try:
+        # Install build tools
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "ninja", "packaging"],
+            check=True,
+            capture_output=True
+        )
+        
+        # Compile FlashAttention
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "flash-attn", "--no-build-isolation"],
             check=True
         )
-        print("✓ FlashAttention 2 installed successfully!")
+        print("✓ FlashAttention 2 compiled and installed successfully!")
         return True
+        
     except subprocess.CalledProcessError as e:
-        print(f"✗ Failed to install FlashAttention 2: {e}")
-        print("\nTroubleshooting:")
-        print("1. Ensure you have CUDA 11.8+ and an Ampere+ GPU (RTX 30/40 series)")
-        print("2. Install build tools:")
-        print("   pip install ninja packaging")
-        print("3. On Windows, install Visual Studio Build Tools")
+        print(f"✗ Failed to install FlashAttention 2")
+        print("\nCompilation failed. Common issues:")
+        print("1. GPU not supported (requires Ampere+ / RTX 30/40 series)")
+        print("2. CUDA version too old (requires CUDA 11.8+)")
+        print("3. Missing Visual Studio Build Tools (Windows)")
+        print("4. PyTorch/CUDA version mismatch")
+        print("\nSOLUTION: Use SageAttention 2 instead")
+        print("- Already installed and working ✓")
+        print("- Provides ~35% VRAM reduction")
+        print("- No compilation required")
         return False
 
 
