@@ -309,7 +309,7 @@ class TrainingTab(QWidget):
                 'symbol': self.symbol_combo.currentText(),
                 'timeframe': self.tf_combo.currentText(),
                 'days_history': self.days_spin.value(),
-                'horizon': self.horizon_spin.value(),
+                'horizon': self.horizon_spin.text(),
                 'model': self.model_combo.currentText(),
                 'encoder': self.encoder_combo.currentText(),
                 'use_gpu_training': self.use_gpu_training_check.isChecked(),
@@ -404,7 +404,7 @@ class TrainingTab(QWidget):
             if 'days_history' in settings:
                 self.days_spin.setValue(settings['days_history'])
             if 'horizon' in settings:
-                self.horizon_spin.setValue(settings['horizon'])
+                self.horizon_spin.setText(str(settings['horizon']))
             if 'model' in settings:
                 self.model_combo.setCurrentText(settings['model'])
             if 'encoder' in settings:
@@ -754,16 +754,23 @@ class TrainingTab(QWidget):
             "Best practice: horizon ≤ 20 per supervised models, 50-500 per diffusion models."
         )
         top.addWidget(lbl_h)
-        self.horizon_spin = QSpinBox()
-        self.horizon_spin.setRange(1, 500)
-        self.horizon_spin.setValue(5)
+        self.horizon_spin = QLineEdit()
+        self.horizon_spin.setText("5")
+        self.horizon_spin.setPlaceholderText("Single: 5 | Multi: 15,60,240")
         self.horizon_spin.setToolTip(
-            "Numero di candele future da prevedere.\n"
-            "1-5: ottimo per scalping/day trading, alta precisione.\n"
-            "10-20: swing intraday, accuratezza media.\n"
-            "50-100: swing multi-day, serve modello complesso (RF/diffusion).\n"
-            "200-500: lungo termine, solo per diffusion models.\n"
-            "Esempio: TF=1m, horizon=5 → predici prossimi 5 minuti."
+            "Numero di candele future da prevedere.\n\n"
+            "SINGLE HORIZON (Lightning & Sklearn):\n"
+            "  • 1-5: ottimo per scalping/day trading, alta precisione\n"
+            "  • 10-20: swing intraday, accuratezza media\n"
+            "  • 50-100: swing multi-day, serve modello complesso\n"
+            "  • 200-500: lungo termine, solo per diffusion models\n\n"
+            "MULTI-HORIZON (Solo Lightning):\n"
+            "  • Formato: '15,60,240' (comma-separated)\n"
+            "  • Esempio: '15,60,240' → predici a 15min, 1h, 4h\n"
+            "  • UN SOLO modello per tutti gli orizzonti\n"
+            "  • Migliore generalizzazione cross-timeframe\n\n"
+            "Esempio TF=1m, horizon=5 → predici prossimi 5 minuti\n"
+            "Esempio TF=1m, horizon=15,60,240 → predici 15m, 1h, 4h"
         )
         top.addWidget(self.horizon_spin)
 
@@ -1670,7 +1677,7 @@ class TrainingTab(QWidget):
             sym = self.symbol_combo.currentText()
             tf = self.tf_combo.currentText()
             days = int(self.days_spin.value())
-            horizon = int(self.horizon_spin.value())
+            horizon_str = self.horizon_spin.text().strip()
             model = self.model_combo.currentText()
             encoder = self.encoder_combo.currentText()
 
@@ -1709,7 +1716,7 @@ class TrainingTab(QWidget):
                     sys.executable, '-m', module,
                     '--symbol', sym,
                     '--timeframe', tf,
-                    '--horizon', str(horizon),
+                    '--horizon', horizon_str,
                     '--days_history', str(days),
                     '--patch_len', str(int(self.patch_len.value())),
                     '--epochs', str(int(self.light_epochs.value())),
@@ -1805,7 +1812,7 @@ class TrainingTab(QWidget):
                     sys.executable, '-m', module,
                     '--symbol', sym,
                     '--timeframe', tf,
-                    '--horizon', str(horizon),
+                    '--horizon', horizon_str,
                     '--algo', algo,
                     '--encoder', encoder,
                     '--latent_dim', str(int(self.latent_dim.value())),
@@ -2200,7 +2207,7 @@ class TrainingTab(QWidget):
                 'symbol': self.symbol_combo.currentText(),
                 'timeframe': self.tf_combo.currentText(),
                 'days_history': self.days_spin.value(),
-                'horizon': self.horizon_spin.value(),
+                'horizon': self.horizon_spin.text(),
                 'model': self.model_combo.currentText(),
                 'encoder': self.encoder_combo.currentText(),
                 'use_gpu_training': self.use_gpu_training_check.isChecked(),
