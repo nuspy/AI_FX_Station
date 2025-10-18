@@ -1872,7 +1872,6 @@ class TrainingTab(QWidget):
             self._pending_meta = meta
             self._pending_out_dir = pending_dir
             # Log meta in a more readable format
-            import json
             self._append_log("[meta] Training parameters prepared:")
             self._append_log(json.dumps(meta, indent=2, default=str))
 
