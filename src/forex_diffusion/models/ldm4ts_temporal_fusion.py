@@ -67,17 +67,20 @@ class TemporalFusionModule(nn.Module):
             nn.Sigmoid()
         )
     
-    def forward(self, latent: torch.Tensor, current_price: float = 1.0) -> torch.Tensor:
+    def forward(self, latent: torch.Tensor, current_price = 1.0) -> torch.Tensor:
         """
         Project latent to future prices.
         
         Args:
             latent: [B, C, H, W] latent features
-            current_price: Current price for denormalization
+            current_price: Current price for denormalization (float, list, numpy array, or tensor)
             
         Returns:
             [B, num_horizons] predicted prices
         """
+        import torch
+        import numpy as np
+        
         B = latent.shape[0]
         
         # Flatten latent
@@ -93,9 +96,34 @@ class TemporalFusionModule(nn.Module):
         # Fused output: gate * explicit + (1-gate) * implicit
         fused = gate_weights * explicit_out + (1 - gate_weights) * implicit_out
         
+        # Convert current_price to tensor for broadcasting
+        if isinstance(current_price, (int, float)):
+            # Single value for all batches
+            current_price_tensor = torch.tensor(current_price, dtype=latent.dtype, device=latent.device)
+        elif isinstance(current_price, np.ndarray):
+            # Numpy array [B] - convert to tensor
+            current_price_tensor = torch.from_numpy(current_price).float().to(latent.device)
+        elif isinstance(current_price, (list, tuple)):
+            # List/tuple - convert to tensor
+            current_price_tensor = torch.tensor(current_price, dtype=latent.dtype, device=latent.device)
+        elif isinstance(current_price, torch.Tensor):
+            # Already tensor
+            current_price_tensor = current_price.to(latent.device)
+        else:
+            # Fallback to 1.0
+            current_price_tensor = torch.tensor(1.0, dtype=latent.dtype, device=latent.device)
+        
+        # Ensure correct shape for broadcasting: [B, 1] or [B]
+        if current_price_tensor.ndim == 0:
+            # Scalar - broadcast to all batches and horizons
+            current_price_tensor = current_price_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1]
+        elif current_price_tensor.ndim == 1 and current_price_tensor.shape[0] == B:
+            # [B] - add horizon dimension
+            current_price_tensor = current_price_tensor.unsqueeze(1)  # [B, 1]
+        
         # Convert to prices (add current_price as baseline)
         # Assume fused is normalized price change [-1, 1]
-        predictions = current_price * (1.0 + fused * 0.1)  # Max ±10% change
+        predictions = current_price_tensor * (1.0 + fused * 0.1)  # Max ±10% change
         
         return predictions
 

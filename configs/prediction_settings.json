@@ -113,7 +113,7 @@
   "session_overlap": true,
   "higher_tf": "15m",
   "ldm4ts_enabled": true,
-  "ldm4ts_checkpoint_path": "D:/Projects/ForexGPT/artifacts/ldm4ts/test_checkpoint.pt",
+  "ldm4ts_checkpoint_path": "D:\\Projects\\ForexGPT\\artifacts\\ldm4ts\\EURUSD_1m_20251018_035506\\model_final.pt",
   "ldm4ts_horizons": "15, 60, 240",
   "ldm4ts_num_samples": 46,
   "ldm4ts_window_size": 100,

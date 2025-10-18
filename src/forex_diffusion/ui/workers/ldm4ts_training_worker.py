@@ -182,7 +182,8 @@ class LDM4TSTrainingWorker(QRunnable):
                     optimizer.zero_grad()
                     
                     # Get predictions
-                    current_prices = batch_windows[:, -1, 3]  # Last close price
+                    # Extract current_price as python float for each sample in batch
+                    current_prices = batch_windows[:, -1, 3].cpu().numpy()  # Convert to numpy first
                     
                     try:
                         outputs = model(
@@ -336,7 +337,8 @@ class LDM4TSTrainingWorker(QRunnable):
                     window_tensor = torch.FloatTensor(window).unsqueeze(0).to(device)
                     targets_tensor = torch.FloatTensor(targets).unsqueeze(0).to(device)
                     
-                    current_price = window[-1, 3]
+                    # Extract current_price from numpy array (not tensor) to avoid CUDA conversion issues
+                    current_price = float(window[-1, 3])
                     
                     try:
                         outputs = model(window_tensor, current_price=current_price, num_samples=1, return_all=False)
