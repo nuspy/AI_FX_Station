@@ -91,6 +91,14 @@ class ModelExecutor:
         try:
             loader = get_model_loader()
             self.model_data = loader.load_single_model(self.model_path)
+            
+            # Fix model_type if model is Lightning but type is wrong
+            if self.model_data and 'model' in self.model_data:
+                model_class_name = self.model_data['model'].__class__.__name__
+                if 'Lightning' in model_class_name and self.model_data.get('model_type') != 'lightning':
+                    logger.warning(f"Model class is {model_class_name} but model_type was {self.model_data.get('model_type')}, fixing to 'lightning'")
+                    self.model_data['model_type'] = 'lightning'
+            
             self.is_loaded = True
             logger.debug(f"Model loaded in executor: {Path(self.model_path).name}")
 
