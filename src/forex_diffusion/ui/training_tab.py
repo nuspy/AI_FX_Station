@@ -1871,6 +1871,41 @@ class TrainingTab(QWidget):
 
             self._pending_meta = meta
             self._pending_out_dir = pending_dir
+            
+            # Check for unsupported parameters
+            from .model_parameter_compatibility import get_model_type_from_model_name, get_unsupported_params
+            
+            model_type = get_model_type_from_model_name(model)
+            
+            # Extract parameter names from args
+            param_dict = {}
+            for i in range(len(args)):
+                if args[i].startswith('--'):
+                    param_name = args[i][2:].replace('-', '_')
+                    param_dict[param_name] = True
+            
+            unsupported = get_unsupported_params(model_type, param_dict)
+            
+            if unsupported:
+                # Show warning dialog
+                unsupported_list = "\n".join([f"• {desc} (--{param})" for param, desc in unsupported])
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Warning)
+                msg.setWindowTitle("Unsupported Parameters")
+                msg.setText(f"Some parameters are not supported by the '{model}' model:")
+                msg.setInformativeText(
+                    f"The following parameters will be ignored:\n\n{unsupported_list}\n\n"
+                    f"Training will proceed without these features."
+                )
+                msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+                msg.setDefaultButton(QMessageBox.Ok)
+                
+                if msg.exec() == QMessageBox.Cancel:
+                    self._append_log("[cancelled] Training cancelled by user due to unsupported parameters")
+                    return
+                
+                self._append_log(f"[warning] Proceeding with {len(unsupported)} unsupported parameter(s)")
+            
             # Log meta in a more readable format
             self._append_log("[meta] Training parameters prepared:")
             self._append_log(json.dumps(meta, indent=2, default=str))
