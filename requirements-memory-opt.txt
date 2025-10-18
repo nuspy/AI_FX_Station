@@ -1,0 +1,52 @@
+# Memory Optimization Dependencies for LDM4TS Training
+# Install with: pip install -r requirements-memory-opt.txt
+
+# SageAttention 2 (~35% VRAM reduction)
+# - Fast installation (~1 minute)
+# - Compatible with RTX 20/30/40 series
+# - Requires CUDA 11.6+
+sageattention>=2.0.0
+
+# FlashAttention 2 (~45% VRAM reduction)
+# - Installation note: Requires compilation (~10 minutes)
+# - Compatible with RTX 30/40 series (Ampere+)
+# - Requires CUDA 11.8+
+# - Install separately with:
+#   pip install flash-attn --no-build-isolation
+# - Uncomment below if you want to install via requirements file:
+# flash-attn>=2.0.0
+
+# Build tools (required for FlashAttention compilation on Windows)
+# Uncomment if FlashAttention installation fails:
+# ninja>=1.11.0
+# packaging>=23.0
+
+# Installation Instructions:
+# -------------------------
+#
+# 1. SageAttention only (recommended for most users):
+#    pip install sageattention>=2.0.0
+#
+# 2. SageAttention + FlashAttention (best performance):
+#    pip install sageattention>=2.0.0
+#    pip install flash-attn --no-build-isolation
+#
+# 3. Using the automated installer (recommended):
+#    python install_memory_optimization.py              # SageAttention only
+#    python install_memory_optimization.py --flash      # + FlashAttention
+#
+# 4. Check installation:
+#    python install_memory_optimization.py --check
+#
+# GPU Requirements:
+# -----------------
+# SageAttention:  RTX 20/30/40 series, CUDA 11.6+
+# FlashAttention: RTX 30/40 series (Ampere+), CUDA 11.8+
+#
+# VRAM Savings (batch_size=4):
+# -----------------------------
+# Default:                 ~8.0 GB VRAM
+# SageAttention + GC:      ~4.1 GB VRAM (49% savings)
+# FlashAttention + GC:     ~3.7 GB VRAM (54% savings)
+#
+# See docs/LDM4TS_MEMORY_OPTIMIZATION.md for full documentation.

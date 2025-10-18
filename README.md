@@ -43,10 +43,13 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install ./VectorBt_PRO/vectorbtpro-2025.7.27-py3-none-any.whl
 
 # Optional: Memory optimization for LDM4TS training (VRAM < 12 GB)
-# Install SageAttention 2 (~35% VRAM reduction)
-python install_memory_optimization.py
-# Or install with FlashAttention 2 (~45% VRAM reduction, requires RTX 30/40)
-python install_memory_optimization.py --flash
+# Option 1: Automated installer (recommended)
+python install_memory_optimization.py              # SageAttention only
+python install_memory_optimization.py --flash      # + FlashAttention
+
+# Option 2: Manual installation
+pip install -r requirements-memory-opt.txt         # SageAttention only
+pip install flash-attn --no-build-isolation        # FlashAttention (manual)
 
 # Run database migrations
 alembic upgrade head
