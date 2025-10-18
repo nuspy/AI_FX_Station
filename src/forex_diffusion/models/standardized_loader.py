@@ -149,7 +149,7 @@ class StandardizedModelLoader:
             raise ModelLoadError(f"Failed to load {model_path}: {e}") from e
 
     def _load_pytorch(self, model_path: Path) -> Dict[str, Any]:
-        """Load PyTorch model (.pt/.pth)."""
+        """Load PyTorch model (.pt/.pth/.ckpt)."""
         try:
             # Try GPU first, fallback to CPU
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -158,6 +158,23 @@ class StandardizedModelLoader:
             except Exception:
                 # Fallback to CPU if GPU loading fails
                 data = torch.load(model_path, map_location='cpu')
+
+            # Check if this is a Lightning checkpoint
+            if isinstance(data, dict) and 'state_dict' in data:
+                # This is a Lightning checkpoint - extract state_dict
+                # For now, return the checkpoint dict (inference will need to handle it)
+                logger.warning(f"Lightning checkpoint detected: {model_path.name}")
+                logger.warning("Lightning checkpoints require model architecture to load properly")
+                logger.warning("Please use a standard PyTorch .pt model or sklearn .pkl model for inference")
+                # Return the checkpoint data anyway (might be useful for inspection)
+                return {
+                    'model': None,  # No model instance yet
+                    'state_dict': data.get('state_dict'),
+                    'hyper_parameters': data.get('hyper_parameters', {}),
+                    'epoch': data.get('epoch'),
+                    'model_type': 'lightning',
+                    'checkpoint_path': str(model_path)
+                }
 
             if isinstance(data, dict):
                 return data
