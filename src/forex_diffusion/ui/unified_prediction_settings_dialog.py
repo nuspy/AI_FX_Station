@@ -1156,7 +1156,60 @@ class UnifiedPredictionSettingsDialog(QDialog):
             self._update_gpu_info_label()
 
             logger.info(f"Selected {len(files)} model file(s)")
+            
+            # Auto-load metadata and prompt user (if single model)
+            if len(files) == 1:
+                self._prompt_auto_configure_from_model(files[0])
 
+    def _prompt_auto_configure_from_model(self, model_path: str):
+        """
+        Load model metadata and prompt user to auto-configure settings.
+        
+        Args:
+            model_path: Path to model file
+        """
+        try:
+            from ..inference.model_metadata_loader import ModelMetadataLoader
+            from ..ui.dialogs.model_settings_dialog import ModelSettingsDialog
+            
+            # Load metadata
+            loader = ModelMetadataLoader(model_path)
+            metadata = loader.load_metadata()
+            
+            # Show dialog
+            dialog = ModelSettingsDialog(metadata, parent=self)
+            result = dialog.exec()
+            
+            if result == QDialog.Accepted and dialog.accepted_settings:
+                # User accepted auto-configuration
+                recommended = loader.get_recommended_settings()
+                
+                # Apply settings
+                # Note: symbol and timeframe are controlled by main UI, not here
+                # We only set horizons and samples
+                
+                from ..utils.horizon_parser import format_horizon_spec
+                self.horizons_edit.setText(recommended['horizon_str'])
+                
+                if metadata['model_type'] == 'lightning':
+                    self.samples_spinbox.setValue(recommended['num_samples'])
+                
+                logger.info(f"Auto-configured settings from model: {Path(model_path).name}")
+                QMessageBox.information(
+                    self,
+                    "Settings Applied",
+                    f"Inference settings have been configured based on model training parameters.\n\n"
+                    f"Horizons: {recommended['horizon_str']}\n"
+                    f"For best accuracy, also match symbol ({recommended['symbol']}) "
+                    f"and timeframe ({recommended['timeframe']}) in the main chart."
+                )
+            else:
+                logger.info(f"User chose manual configuration for {Path(model_path).name}")
+                
+        except Exception as e:
+            logger.exception(f"Failed to load model metadata: {e}")
+            # Silently fail - user can still configure manually
+    
     def _show_model_info(self):
         """Show information about selected models"""
         models = self._get_model_paths()
@@ -1302,8 +1355,86 @@ class UnifiedPredictionSettingsDialog(QDialog):
             self.set_settings({})
             QMessageBox.information(self, "Success", "Settings reset to defaults")
 
+    def _validate_inference_compatibility(self) -> bool:
+        """
+        Validate inference settings against model metadata.
+        Shows warnings/errors dialog if incompatibilities detected.
+        
+        Returns:
+            True if user wants to proceed, False if cancelled
+        """
+        models = self._get_model_paths()
+        if not models:
+            # No models selected - can't validate, allow proceed
+            return True
+        
+        # Get inference settings
+        horizon_str = self.horizons_edit.text().strip()
+        if not horizon_str:
+            QMessageBox.warning(self, "Missing Horizons", "Please specify horizons for inference.")
+            return False
+        
+        try:
+            from ..utils.horizon_parser import parse_horizon_spec
+            from ..inference.model_metadata_loader import ModelMetadataLoader
+            from ..ui.dialogs.model_settings_dialog import InferenceCompatibilityDialog
+            
+            inference_horizons = parse_horizon_spec(horizon_str)
+            
+            # Validate against first model (if multiple, assume they're compatible)
+            model_path = models[0]
+            loader = ModelMetadataLoader(model_path)
+            
+            # Get current symbol/timeframe from parent if available
+            # For now, use placeholder - these come from main chart
+            inference_symbol = "EUR/USD"  # TODO: get from parent
+            inference_timeframe = "1m"    # TODO: get from parent
+            
+            is_compatible, warnings, errors = loader.validate_inference_settings(
+                inference_horizons,
+                inference_symbol,
+                inference_timeframe
+            )
+            
+            if not is_compatible or warnings:
+                # Get interpolation plan if needed
+                interpolation_plan = None
+                if not errors:
+                    interpolation_plan = loader.get_interpolation_plan(inference_horizons)
+                
+                # Show compatibility dialog
+                compat_dialog = InferenceCompatibilityDialog(
+                    warnings=warnings,
+                    errors=errors,
+                    interpolation_plan=interpolation_plan,
+                    parent=self
+                )
+                
+                result = compat_dialog.exec()
+                
+                if result != QDialog.Accepted:
+                    # User cancelled
+                    logger.info("User cancelled inference due to compatibility issues")
+                    return False
+                else:
+                    # User accepted with warnings/interpolation
+                    logger.warning(f"User proceeding with {len(warnings)} warning(s)")
+                    return True
+            
+            # No issues - proceed
+            return True
+            
+        except Exception as e:
+            logger.exception(f"Error during compatibility validation: {e}")
+            # Allow proceed if validation fails
+            return True
+    
     def _on_accept(self):
-        """Handle OK button - save settings and emit signal"""
+        """Handle OK button - validate settings, save and emit signal"""
+        # Validate compatibility before accepting
+        if not self._validate_inference_compatibility():
+            return  # User cancelled due to incompatibility
+        
         self.save_settings()
         self.settingsChanged.emit()
         self.accept()
