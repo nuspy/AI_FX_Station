@@ -266,23 +266,26 @@ class StandardizedModelLoader:
             # Extract training parameters if available
             training_params = self._extract_training_params(model_data)
 
-            return ModelMetadata(
-                model_path=str(model_path),
-                model_type=model_type,
-                file_size=model_info.get('size_bytes', 0),
-                created_at=model_info.get('modified', 0),
-                features=model_data.get('features', []),
-                training_params=training_params
-            )
+            # Create metadata object and set attributes (ModelMetadata.__init__ takes no args)
+            metadata = ModelMetadata()
+            metadata.model_path = str(model_path)
+            metadata.model_type = model_type
+            metadata.file_size = model_info.get('size_bytes', 0)
+            metadata.created_at = model_info.get('modified', 0)
+            metadata.feature_names = model_data.get('features', [])
+            metadata.training_params = training_params
+            
+            return metadata
 
         except Exception as e:
             logger.warning(f"Failed to extract metadata for {model_path}: {e}")
             # Return minimal metadata
-            return ModelMetadata(
-                model_path=str(model_path),
-                model_type='unknown',
-                file_size=model_path.stat().st_size if model_path.exists() else 0
-            )
+            metadata = ModelMetadata()
+            metadata.model_path = str(model_path)
+            metadata.model_type = 'unknown'
+            metadata.file_size = model_path.stat().st_size if model_path.exists() else 0
+            
+            return metadata
 
     def _determine_model_type(self, model_data: Dict[str, Any]) -> str:
         """Determine the type of model from loaded data."""
