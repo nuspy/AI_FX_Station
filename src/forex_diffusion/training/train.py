@@ -357,6 +357,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--session_overlap", type=int, default=30)
     ap.add_argument("--higher_tf", type=str, default="15m")
     ap.add_argument("--vp_bins", type=int, default=50)
+    ap.add_argument("--vp_window", type=int, default=100)
+    ap.add_argument("--use_vsa", action="store_true", help="Enable VSA features")
+    ap.add_argument("--vsa_volume_ma", type=int, default=20)
+    ap.add_argument("--vsa_spread_ma", type=int, default=20)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fast_dev_run", action="store_true")
 
