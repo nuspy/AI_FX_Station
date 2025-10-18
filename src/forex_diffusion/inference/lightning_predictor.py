@@ -54,6 +54,12 @@ class LightningMultiHorizonPredictor:
         """Load Lightning model from checkpoint."""
         try:
             import torch
+            
+            # Disable torch dynamo/compile completely
+            torch._dynamo.reset()
+            import torch._dynamo
+            torch._dynamo.config.suppress_errors = True
+            
             from ..train.loop import ForexDiffusionLit
             
             # Load checkpoint

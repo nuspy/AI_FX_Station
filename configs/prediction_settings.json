@@ -5,7 +5,8 @@
   "type_basic": true,
   "type_advanced": false,
   "type_rw": false,
-  "combine_models": true,
+  "combine_models": false,
+  "aggregation_method": "Mean",
   "use_gpu_inference": false,
   "horizons": "10m",
   "n_samples": 100,
@@ -111,12 +112,5 @@
   "override_returns_window": true,
   "override_min_coverage": true,
   "session_overlap": true,
-  "higher_tf": "15m",
-  "ldm4ts_enabled": false,
-  "ldm4ts_checkpoint_path": "",
-  "ldm4ts_horizons": "15, 60, 240",
-  "ldm4ts_num_samples": 50,
-  "ldm4ts_window_size": 96,
-  "ldm4ts_uncertainty_threshold": 50,
-  "ldm4ts_min_strength": 30
+  "higher_tf": "15m"
 }
