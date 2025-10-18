@@ -764,11 +764,13 @@ class TrainingTab(QWidget):
             "  • 10-20: swing intraday, accuratezza media\n"
             "  • 50-100: swing multi-day, serve modello complesso\n"
             "  • 200-500: lungo termine, solo per diffusion models\n\n"
-            "MULTI-HORIZON (Solo Lightning):\n"
+            "MULTI-HORIZON (Lightning & Sklearn):\n"
             "  • Formato: '15,60,240' (comma-separated)\n"
             "  • Esempio: '15,60,240' → predici a 15min, 1h, 4h\n"
             "  • UN SOLO modello per tutti gli orizzonti\n"
-            "  • Migliore generalizzazione cross-timeframe\n\n"
+            "  • Migliore generalizzazione cross-timeframe\n"
+            "  • Sklearn: Ridge/Lasso/ElasticNet/RF supportano multi-output nativamente\n"
+            "  • Lightning: Transformer impara distribuzioni congiunte\n\n"
             "Esempio TF=1m, horizon=5 → predici prossimi 5 minuti\n"
             "Esempio TF=1m, horizon=15,60,240 → predici 15m, 1h, 4h"
         )
@@ -1680,20 +1682,6 @@ class TrainingTab(QWidget):
             horizon_str = self.horizon_spin.text().strip()
             model = self.model_combo.currentText()
             encoder = self.encoder_combo.currentText()
-            
-            # Validate horizon format
-            is_multi_horizon = ',' in horizon_str
-            if is_multi_horizon and model != 'latents':
-                QMessageBox.warning(
-                    self,
-                    "Multi-Horizon Not Supported",
-                    f"Multi-horizon ('{horizon_str}') is only supported by Lightning model.\n\n"
-                    f"Current model: {model}\n\n"
-                    f"Options:\n"
-                    f"1. Change model to 'latents' to use multi-horizon\n"
-                    f"2. Use single horizon (e.g., '15')"
-                )
-                return
 
             # Collect indicators
             ind_tfs = self._collect_indicator_tfs()

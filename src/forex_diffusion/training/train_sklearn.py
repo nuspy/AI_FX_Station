@@ -147,16 +147,47 @@ def _build_features(candles: pd.DataFrame, args):
     Build feature matrix from candles.
 
     CRITICAL (TASK 1.3): Validates ALL features are saved, no silent dropping.
+    
+    Multi-Horizon Support:
+    - If args.horizon is single int: returns (N, 1) target
+    - If args.horizon is comma-separated: returns (N, H) targets
     """
     from loguru import logger
 
-    H = int(args.horizon)
-    if H <= 0:
-        raise ValueError("horizon deve essere > 0")
+    # Parse horizon(s)
+    horizon_str = str(args.horizon).strip()
+    if ',' in horizon_str:
+        horizons = [int(h.strip()) for h in horizon_str.split(',')]
+        is_multi_horizon = True
+        logger.info(f"[Multi-Horizon] Building targets for horizons: {horizons}")
+    else:
+        horizons = [int(horizon_str)]
+        is_multi_horizon = False
+        logger.info(f"[Single-Horizon] Building target for horizon: {horizons[0]}")
+    
+    # Validate horizons
+    for H in horizons:
+        if H <= 0:
+            raise ValueError(f"horizon deve essere > 0, got {H}")
+    
     c = pd.to_numeric(candles["close"], errors="coerce").astype(float)
-    if len(c) <= H:
-        raise ValueError(f"Non abbastanza barre ({len(c)}) per orizzonte {H}")
-    y = (c.shift(-H) / c) - 1.0
+    max_horizon = max(horizons)
+    if len(c) <= max_horizon:
+        raise ValueError(f"Non abbastanza barre ({len(c)}) per orizzonte massimo {max_horizon}")
+    
+    # Build targets for all horizons
+    if is_multi_horizon:
+        # Multi-horizon: create (N, H) targets
+        y_list = []
+        for H in horizons:
+            y_h = (c.shift(-H) / c) - 1.0
+            y_list.append(y_h)
+        y = pd.concat(y_list, axis=1)
+        y.columns = [f"target_h{h}" for h in horizons]
+    else:
+        # Single horizon: create (N, 1) target (backward compatible)
+        H = horizons[0]
+        y = (c.shift(-H) / c) - 1.0
 
     # Track all feature groups for validation
     feature_groups = {}
@@ -862,7 +893,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", required=True)
     ap.add_argument("--timeframe", required=True)
-    ap.add_argument("--horizon", type=int, required=True)
+    ap.add_argument(
+        "--horizon",
+        type=str,
+        required=True,
+        help="Single horizon (int) or comma-separated list: '15' or '15,60,240'"
+    )
     ap.add_argument(
         "--algo", choices=["ridge", "lasso", "elasticnet", "rf"], required=True
     )
@@ -1189,7 +1225,18 @@ def main():
     elif encoder_type == "latents":
         encoder_suffix = "_latents"
 
-    run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{args.horizon}_{args.algo}{encoder_suffix}"
+    # Parse horizons for metadata
+    horizon_str = str(args.horizon).strip()
+    if ',' in horizon_str:
+        horizons_meta = [int(h.strip()) for h in horizon_str.split(',')]
+        num_horizons = len(horizons_meta)
+        horizon_display = ','.join(map(str, horizons_meta))
+    else:
+        horizons_meta = [int(horizon_str)]
+        num_horizons = 1
+        horizon_display = str(horizons_meta[0])
+    
+    run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{horizon_display}_{args.algo}{encoder_suffix}"
 
     # Save payload with encoder, optimization info, and scaler metadata
     payload = {
@@ -1211,6 +1258,9 @@ def main():
         "optimized_params": (
             optimized_params if optimization_strategy != "none" else None
         ),
+        "horizons": horizons_meta,  # List of horizons
+        "num_horizons": num_horizons,  # Number of horizons
+        "is_multi_horizon": num_horizons > 1,  # Flag for easy checking
     }
 
     out_path = out_dir / f"{run_name}.pkl"
