@@ -506,7 +506,7 @@ def main() -> None:
         monitor="val/loss",
         save_top_k=3,
         mode="min",
-        filename=f"{args.symbol.replace('/', '')}-{args.timeframe}-{{epoch:02d}}-{{val/loss:.4f}}",
+        filename=f"{args.symbol.replace('/', '')}-{args.timeframe}-{{epoch:02d}}-{{val_loss:.4f}}",  # Use underscore in filename
     )
     early = EarlyStopping(monitor="val/loss", patience=10, mode="min", verbose=True)
     lr_mon = LearningRateMonitor(logging_interval="epoch")
