@@ -9,129 +9,14 @@ patterns:
     enabled_default: true
     keys_enabled:
     - broadening_bottom
-    - broadening_top
     - right_angle_broadening_ascending
-    - right_angle_broadening_descending
-    - broadening_wedge_ascending
-    - broadening_wedge_descending
-    - wedge_ascending
-    - wedge_descending
-    - ascending_triangle
-    - descending_triangle
-    - symmetrical_triangle
-    - rectangle_range
-    - diamond_top
-    - diamond_bottom
-    - double_top
-    - double_bottom
-    - triple_bottom
-    - triple_top
-    - rising_channel
-    - falling_channel
-    - bull_flag
-    - bull_pennant
-    - bear_flag
-    - bear_pennant
-    - head_and_shoulders
-    - inverse_head_and_shoulders
-    - elliott_impulse_bull
-    - elliott_impulse_bear
-    - elliott_corrective_abc
-    - gartley_bull
-    - gartley_bear
-    - butterfly_bull
-    - butterfly_bear
-    - bat_bull
-    - bat_bear
-    - crab_bull
-    - crab_bear
-    - cypher_bull
-    - cypher_bear
-    - shark_bull
-    - shark_bear
-    - abcd_bull
-    - abcd_bear
-    - rounding_bottom
-    - rounding_top
-    - island_reversal_top
-    - measured_move
-    - island_reversal_bottom
-    - three_drives
     parameter_overrides:
       broadening_bottom: {}
-      broadening_top: {}
       right_angle_broadening_ascending: {}
-      right_angle_broadening_descending: {}
-      broadening_wedge_ascending: {}
-      broadening_wedge_descending: {}
-      wedge_ascending: {}
-      wedge_descending: {}
       ascending_triangle: {}
-      descending_triangle: {}
-      symmetrical_triangle: {}
-      rectangle_range: {}
-      diamond_top: {}
-      diamond_bottom: {}
-      double_top: {}
-      double_bottom: {}
-      triple_bottom: {}
-      triple_top: {}
-      rising_channel: {}
-      falling_channel: {}
-      bull_flag: {}
-      bull_pennant: {}
-      bear_flag: {}
-      bear_pennant: {}
-      head_and_shoulders: {}
-      inverse_head_and_shoulders: {}
-      elliott_impulse_bull: {}
-      elliott_impulse_bear: {}
-      elliott_corrective_abc: {}
-      gartley_bull: {}
-      gartley_bear: {}
-      butterfly_bull: {}
-      butterfly_bear: {}
-      bat_bull: {}
-      bat_bear: {}
-      crab_bull: {}
-      crab_bear: {}
-      cypher_bull: {}
-      cypher_bear: {}
-      shark_bull: {}
-      shark_bear: {}
-      abcd_bull: {}
-      abcd_bear: {}
-      rounding_bottom: {}
-      rounding_top: {}
-      island_reversal_top: {}
-      measured_move: {}
-      island_reversal_bottom: {}
-      three_drives: {}
   candle_patterns:
     enabled_default: true
-    keys_enabled:
-    - hammer
-    - shooting_star
-    - bullish_engulfing
-    - bearish_engulfing
-    - doji
-    - dragonfly_doji
-    - gravestone_doji
-    - three_white_soldiers
-    - three_black_crows
-    - morning_star
-    - evening_star
-    - abandoned_baby_bull
-    - abandoned_baby_bear
-    - three_line_strike_bull
-    - three_line_strike_bear
-    - three_inside_up
-    - three_inside_down
-    - three_outside_up
-    - three_outside_down
-    - unique_three_river_bottom
-    - unique_three_river_top
-    - concealing_baby_swallow
+    keys_enabled: []
     params:
       bearish_engulfing:
         confirm_with_volume: false
@@ -245,30 +130,7 @@ patterns:
         confirm_with_volume: false
       identical_three_crows:
         confirm_with_volume: false
-    parameter_overrides:
-      hammer: {}
-      identical_three_crows: {}
-      shooting_star: {}
-      bullish_engulfing: {}
-      bearish_engulfing: {}
-      doji: {}
-      dragonfly_doji: {}
-      gravestone_doji: {}
-      three_white_soldiers: {}
-      three_black_crows: {}
-      morning_star: {}
-      evening_star: {}
-      abandoned_baby_bull: {}
-      abandoned_baby_bear: {}
-      three_line_strike_bull: {}
-      three_line_strike_bear: {}
-      three_inside_up: {}
-      three_inside_down: {}
-      three_outside_up: {}
-      three_outside_down: {}
-      unique_three_river_bottom: {}
-      unique_three_river_top: {}
-      concealing_baby_swallow: {}
+    parameter_overrides: {}
   view:
     badge_info: true
     badge_font_pt: 8
@@ -280,7 +142,7 @@ patterns:
 dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
-  start_time: 5d
+  start_time: 15d
   end_time: 1d
 performance:
   detection_threads: 18

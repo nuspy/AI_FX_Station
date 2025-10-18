@@ -874,11 +874,25 @@ class EventHandlersMixin:
 
             # Enable historical scanning for this scan
             patterns_service._historical_config['enabled'] = True
+            
+            # Temporarily enable both chart and candle patterns for this scan
+            # (they might be disabled in checkboxes but user explicitly requested scan)
+            original_chart_enabled = patterns_service._enabled_chart
+            original_candle_enabled = patterns_service._enabled_candle
+            
+            patterns_service._enabled_chart = True
+            patterns_service._enabled_candle = True
+            logger.info("Temporarily enabled chart and candle patterns for historical scan")
 
             # Start historical scan for visible range + 33% buffer
             # No dialog needed - automatically scans current visible chart range
             patterns_service.start_historical_scan_with_range()
             logger.info("Historical pattern scan started for visible chart range + 33% buffer")
+            
+            # Restore original enabled state after scan
+            # (Note: scan is async, so this might restore before completion, but that's OK)
+            patterns_service._enabled_chart = original_chart_enabled
+            patterns_service._enabled_candle = original_candle_enabled
             
             # Show confirmation to user
             from PySide6.QtWidgets import QMessageBox

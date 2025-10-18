@@ -484,7 +484,7 @@ class OrderFlowPanel(QWidget):
             
             # Validate required fields
             if snapshot.get('best_bid') is None or snapshot.get('best_ask') is None:
-                logger.debug(f"Incomplete DOM snapshot for {self.current_symbol}: bid={snapshot.get('best_bid')}, ask={snapshot.get('best_ask')}")
+                # PlutoTouchlogger.debug(f"Incomplete DOM snapshot for {self.current_symbol}: bid={snapshot.get('best_bid')}, ask={snapshot.get('best_ask')}")
                 return
 
             # Compute order flow metrics using analyzer

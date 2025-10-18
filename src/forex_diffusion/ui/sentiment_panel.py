@@ -416,7 +416,7 @@ class SentimentPanel(QWidget):
                 logger.debug(f"No sentiment data available for {self.current_symbol}")
                 return
 
-            logger.debug(f"Sentiment refresh for {self.current_symbol}: long={metrics.get('long_pct')}%, contrarian={metrics.get('contrarian_signal')}")
+            # PlutoTouchlogger.debug(f"Sentiment refresh for {self.current_symbol}: long={metrics.get('long_pct')}%, contrarian={metrics.get('contrarian_signal')}")
             self.update_metrics(metrics)
 
         except Exception as e:
