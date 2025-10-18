@@ -1680,6 +1680,20 @@ class TrainingTab(QWidget):
             horizon_str = self.horizon_spin.text().strip()
             model = self.model_combo.currentText()
             encoder = self.encoder_combo.currentText()
+            
+            # Validate horizon format
+            is_multi_horizon = ',' in horizon_str
+            if is_multi_horizon and model != 'latents':
+                QMessageBox.warning(
+                    self,
+                    "Multi-Horizon Not Supported",
+                    f"Multi-horizon ('{horizon_str}') is only supported by Lightning model.\n\n"
+                    f"Current model: {model}\n\n"
+                    f"Options:\n"
+                    f"1. Change model to 'latents' to use multi-horizon\n"
+                    f"2. Use single horizon (e.g., '15')"
+                )
+                return
 
             # Collect indicators
             ind_tfs = self._collect_indicator_tfs()
