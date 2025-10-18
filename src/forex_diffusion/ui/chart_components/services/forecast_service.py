@@ -589,6 +589,163 @@ class ForecastService(ChartServiceBase):
         except Exception as e:
             logger.exception(f"Failed to plot forecast overlay: {e}")
 
+    def _plot_multi_horizon_forecast(self, quantiles: dict, source: str = "multi_horizon"):
+        """
+        Plot multi-horizon forecasts as separate lines on the chart.
+        
+        Args:
+            quantiles: Dict with multi-horizon predictions
+                Expected format:
+                {
+                    'horizons': [15, 60, 240],
+                    'predictions_dict': {15: {...}, 60: {...}, 240: {...}},
+                    'future_ts_dict': {15: [...], 60: [...], 240: [...]},  # optional
+                    'model_path_used': 'path/to/model.pkl',
+                    'label': 'Model Name'
+                }
+            source: Source identifier
+        """
+        try:
+            horizons = quantiles.get('horizons', [])
+            predictions_dict = quantiles.get('predictions_dict', {})
+            future_ts_dict = quantiles.get('future_ts_dict', {})
+            
+            if not horizons or not predictions_dict:
+                # Not a multi-horizon forecast, use standard plotting
+                self._plot_forecast_overlay(quantiles, source)
+                return
+            
+            # Get model info for coloring
+            model_path = quantiles.get("model_path_used", quantiles.get("model_path", source))
+            model_name = str(quantiles.get("label") or quantiles.get("source") or source)
+            
+            # Get base color for model
+            base_color = self._get_color_for_model(model_path)
+            
+            # Color palette for different horizons (lighter to darker)
+            # Short horizons = lighter, long horizons = darker
+            import colorsys
+            import pyqtgraph as pg
+            
+            def lighten_color(hex_color, factor=0.3):
+                """Lighten a hex color by factor (0-1)."""
+                hex_color = hex_color.lstrip('#')
+                r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+                h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
+                v = min(1.0, v + (1 - v) * factor)
+                r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                return '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
+            
+            logger.info(f"Plotting multi-horizon forecast: {len(horizons)} horizons from {model_name}")
+            
+            # Plot each horizon as a separate line
+            for i, horizon in enumerate(sorted(horizons)):
+                pred_data = predictions_dict.get(horizon)
+                if pred_data is None:
+                    continue
+                
+                # Extract prediction values
+                if isinstance(pred_data, dict):
+                    q50 = pred_data.get('mean') or pred_data.get('q50')
+                    q05 = pred_data.get('q05')
+                    q95 = pred_data.get('q95')
+                else:
+                    q50 = [float(pred_data)]
+                    q05 = None
+                    q95 = None
+                
+                if q50 is None:
+                    continue
+                
+                # Convert to array
+                q50_arr = np.asarray(q50, dtype=float).flatten()
+                
+                # Get timestamps for this horizon
+                future_ts = future_ts_dict.get(horizon) if future_ts_dict else None
+                
+                if future_ts is not None:
+                    try:
+                        x_vals = pd.to_datetime(future_ts, unit="ms", utc=True)
+                    except Exception:
+                        x_vals = pd.to_datetime(future_ts, utc=True)
+                else:
+                    # Create timestamps based on horizon
+                    if self._last_df is None or self._last_df.empty:
+                        continue
+                    try:
+                        last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
+                    except Exception:
+                        last_ts = pd.Timestamp.utcnow().tz_localize("UTC")
+                    td = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
+                    # Single point at horizon bars ahead
+                    x_vals = [last_ts + td * horizon]
+                
+                # Normalize to naive datetime
+                try:
+                    x_vals = pd.to_datetime(x_vals, utc=True).tz_localize(None)
+                except Exception:
+                    x_vals = pd.to_datetime(x_vals).tz_localize(None)
+                
+                # Align lengths
+                n = min(len(x_vals), len(q50_arr))
+                if n == 0:
+                    continue
+                q50_arr = q50_arr[:n]
+                x_vals = x_vals[:n]
+                
+                # Prepend anchor point
+                try:
+                    req_ms = quantiles.get("requested_at_ms")
+                    if req_ms is not None:
+                        t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
+                        anchor_price = quantiles.get("anchor_price")
+                        if anchor_price is not None:
+                            last_close = float(anchor_price)
+                        else:
+                            last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                        x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
+                        q50_arr = np.insert(q50_arr, 0, last_close)
+                except Exception as e:
+                    logger.debug(f"Failed to prepend anchor for horizon {horizon}: {e}")
+                
+                # Convert to numeric
+                if isinstance(x_vals, pd.DatetimeIndex):
+                    x_numeric = x_vals.astype('int64') // 10**9
+                else:
+                    x_numeric = np.array([pd.Timestamp(x).timestamp() for x in x_vals])
+                
+                # Color gradient: short horizons lighter, long horizons darker
+                color_factor = i / max(len(horizons) - 1, 1)
+                if color_factor < 0.5:
+                    # Lighten for short horizons
+                    horizon_color = lighten_color(base_color, 0.4 * (1 - color_factor * 2))
+                else:
+                    # Use base or darken slightly for long horizons
+                    horizon_color = base_color
+                
+                # Line width: thinner for short, thicker for long
+                line_width = 1.5 + i * 0.3
+                
+                # Label with horizon
+                horizon_label = f"{model_name} @ {horizon}bars"
+                
+                # Plot line
+                line = self.ax.plot(
+                    x_numeric, q50_arr,
+                    pen=pg.mkPen(horizon_color, width=line_width),
+                    symbol='o', symbolSize=3,
+                    symbolBrush=pg.mkBrush(horizon_color),
+                    symbolPen=pg.mkPen(horizon_color),
+                    name=horizon_label
+                )
+                
+                logger.debug(f"Plotted horizon {horizon}: {len(x_numeric)} points, color={horizon_color}")
+            
+        except Exception as e:
+            logger.exception(f"Failed to plot multi-horizon forecast: {e}")
+            # Fallback to standard plotting
+            self._plot_forecast_overlay(quantiles, source)
+    
     def _open_forecast_settings(self):
         from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
         dialog = PredictionSettingsDialog(self.view)
@@ -691,7 +848,13 @@ class ForecastService(ChartServiceBase):
             # Plot forecast overlay without redrawing the chart (which would clear previous forecasts)
             # The chart is already displayed, we just add the overlay on top
             source = quantiles.get("source", "basic") if isinstance(quantiles, dict) else "basic"
-            self._plot_forecast_overlay(quantiles, source=source)
+            
+            # Check if multi-horizon forecast
+            if quantiles.get('is_multi_horizon') or quantiles.get('predictions_dict'):
+                logger.info("Plotting multi-horizon forecast")
+                self._plot_multi_horizon_forecast(quantiles, source=source)
+            else:
+                self._plot_forecast_overlay(quantiles, source=source)
         except Exception as e:
             logger.exception(f"Error handling forecast result: {e}")
 
