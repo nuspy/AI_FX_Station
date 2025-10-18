@@ -805,8 +805,13 @@ class ForecastWorker(QRunnable):
                 parallel_settings["model_paths"] = [model_paths[0]]
                 max_workers = 1
 
+            # Get aggregation method from payload
+            aggregation_method = self.payload.get("aggregation_method", "Mean")
+            
             parallel_results = parallel_engine.run_parallel_inference(
-                parallel_settings, feats_df, symbol, tf, horizons_raw, use_gpu=use_gpu, candles_df=df_candles_full
+                parallel_settings, feats_df, symbol, tf, horizons_raw, 
+                use_gpu=use_gpu, candles_df=df_candles_full,
+                aggregation_method=aggregation_method
             )
 
             # Check if we should combine models or keep them separate

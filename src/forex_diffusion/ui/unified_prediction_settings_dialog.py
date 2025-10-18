@@ -1570,6 +1570,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
             # Model combination
             'combine_models': self.combine_models_cb.isChecked(),
+            'aggregation_method': self.aggregation_combo.currentText(),  # NEW
             'use_gpu_inference': self.use_gpu_inference_cb.isChecked(),
 
             # Core settings
@@ -1645,6 +1646,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         # Model combination
         self.combine_models_cb.setChecked(settings.get('combine_models', True))
+        self.aggregation_combo.setCurrentText(settings.get('aggregation_method', 'Mean'))  # NEW
         self.use_gpu_inference_cb.setChecked(settings.get('use_gpu_inference', False))
 
         # Core settings (handle both string and list formats)

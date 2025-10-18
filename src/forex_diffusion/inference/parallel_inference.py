@@ -287,7 +287,8 @@ class ParallelInferenceEngine:
         timeframe: str,
         horizons: List[str],
         use_gpu: bool = False,
-        candles_df: pd.DataFrame = None
+        candles_df: pd.DataFrame = None,
+        aggregation_method: str = 'mean'  # NEW: 'mean', 'median', 'weighted', 'best'
     ) -> Dict[str, Any]:
         """
         Run parallel inference with multiple models.
@@ -495,11 +496,37 @@ class ParallelInferenceEngine:
         model_weights = np.array(model_weights)
         model_weights = model_weights / model_weights.sum()  # Normalize
 
-        # Weighted average
-        ensemble_mean = np.average(all_predictions, axis=0, weights=model_weights)
-
-        # Prediction uncertainty (weighted standard deviation)
-        ensemble_std = np.sqrt(np.average((all_predictions - ensemble_mean)**2, axis=0, weights=model_weights))
+        # Aggregate based on method
+        aggregation_method_lower = aggregation_method.lower()
+        
+        if aggregation_method_lower == 'mean':
+            # Simple average
+            ensemble_mean = np.mean(all_predictions, axis=0)
+            ensemble_std = np.std(all_predictions, axis=0)
+        
+        elif aggregation_method_lower == 'median':
+            # Median (robust to outliers)
+            ensemble_mean = np.median(all_predictions, axis=0)
+            # Use MAD (Median Absolute Deviation) for uncertainty
+            ensemble_std = np.median(np.abs(all_predictions - ensemble_mean), axis=0) * 1.4826
+        
+        elif aggregation_method_lower == 'weighted mean' or aggregation_method_lower == 'weighted':
+            # Weighted average (by execution time - faster = better)
+            ensemble_mean = np.average(all_predictions, axis=0, weights=model_weights)
+            ensemble_std = np.sqrt(np.average((all_predictions - ensemble_mean)**2, axis=0, weights=model_weights))
+        
+        elif aggregation_method_lower == 'best model' or aggregation_method_lower == 'best':
+            # Use prediction from best model (fastest execution time as proxy for quality)
+            best_idx = np.argmax(model_weights)  # Highest weight = fastest = best
+            ensemble_mean = all_predictions[best_idx]
+            ensemble_std = np.zeros_like(ensemble_mean)  # No uncertainty from ensemble
+            logger.info(f"Using best model (index {best_idx}) for predictions")
+        
+        else:
+            # Default to mean
+            logger.warning(f"Unknown aggregation method '{aggregation_method}', defaulting to mean")
+            ensemble_mean = np.mean(all_predictions, axis=0)
+            ensemble_std = np.std(all_predictions, axis=0)
 
         # Create confidence intervals
         confidence_level = 1.645  # 90% confidence
@@ -519,6 +546,7 @@ class ParallelInferenceEngine:
                 'individual': all_predictions.tolist()
             },
             'model_weights': model_weights.tolist(),
+            'aggregation_method': aggregation_method,  # NEW
             'individual_results': results,
             'successful_models': len(successful_results),
             'total_models': len(results)
