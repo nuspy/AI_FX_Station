@@ -553,7 +553,8 @@ def main() -> None:
         callbacks.append(opt_callback)
 
         logger.info("🚀 NVIDIA Optimization Stack ENABLED")
-        logger.info(f"   - GPU: {hw_info.gpu_name if hw_info.has_cuda else 'None'}")
+        gpu_info = f"{hw_info.num_gpus}x {hw_info.gpu_names[0]}" if hw_info.has_cuda and hw_info.gpu_names else 'None'
+        logger.info(f"   - GPU: {gpu_info}")
         logger.info(f"   - AMP: {opt_config.use_amp} ({opt_config.precision.value})")
         logger.info(f"   - torch.compile: {opt_config.compile_model}")
         logger.info(f"   - Fused optimizer: {opt_config.use_fused_optimizer}")
