@@ -7,13 +7,9 @@ patterns:
     past_extra_bars: 2000
   chart_patterns:
     enabled_default: true
-    keys_enabled:
-    - broadening_bottom
-    - right_angle_broadening_ascending
+    keys_enabled: []
     parameter_overrides:
       broadening_bottom: {}
-      right_angle_broadening_ascending: {}
-      ascending_triangle: {}
   candle_patterns:
     enabled_default: true
     keys_enabled: []
@@ -142,7 +138,7 @@ patterns:
 dataset_strategy: profittabilità
 historical_patterns:
   enabled: true
-  start_time: 15d
+  start_time: 30d
   end_time: 1d
 performance:
   detection_threads: 18
