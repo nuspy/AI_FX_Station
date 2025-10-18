@@ -754,6 +754,9 @@ class TrainingTab(QWidget):
             "Best practice: horizon ≤ 20 per supervised models, 50-500 per diffusion models."
         )
         top.addWidget(lbl_h)
+        
+        # Horizon input with suggestions button
+        horizon_row = QHBoxLayout()
         self.horizon_spin = QLineEdit()
         self.horizon_spin.setText("5")
         self.horizon_spin.setPlaceholderText("5 | 1-7/2 | 15,60,240")
@@ -783,7 +786,16 @@ class TrainingTab(QWidget):
             "TF=1m, horizon='5-10' → predici da 5 a 10 minuti\n"
             "TF=1h, horizon='1-24/6,48,72' → predici 1h,7h,13h,19h,48h,72h"
         )
-        top.addWidget(self.horizon_spin)
+        
+        # Add suggest button
+        horizon_suggest_btn = QPushButton("💡 Suggest")
+        horizon_suggest_btn.setMaximumWidth(80)
+        horizon_suggest_btn.setToolTip("Get smart horizon suggestions based on timeframe and style")
+        horizon_suggest_btn.clicked.connect(self._suggest_horizons)
+        
+        horizon_row.addWidget(self.horizon_spin)
+        horizon_row.addWidget(horizon_suggest_btn)
+        top.addLayout(horizon_row)
 
         # Model
         lbl_m = QLabel("Model:")
@@ -1676,6 +1688,92 @@ class TrainingTab(QWidget):
              for ind in INDICATORS}
         set_setting("training_indicator_tfs", m)
 
+    def _suggest_horizons(self):
+        """Show horizon suggestions dialog."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QComboBox, QPushButton, QTextEdit, QHBoxLayout
+        
+        try:
+            from ..utils.horizon_suggestions import suggest_horizons, describe_horizons, get_styles
+            
+            # Create dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Horizon Suggestions")
+            dialog.resize(500, 400)
+            layout = QVBoxLayout(dialog)
+            
+            # Current timeframe
+            tf = self.tf_combo.currentText()
+            layout.addWidget(QLabel(f"<b>Timeframe:</b> {tf}"))
+            layout.addSpacing(10)
+            
+            # Style selector
+            style_layout = QHBoxLayout()
+            style_layout.addWidget(QLabel("Trading Style:"))
+            style_combo = QComboBox()
+            styles = get_styles()
+            style_combo.addItems([s.capitalize() for s in styles])
+            style_combo.setCurrentText("Balanced")
+            style_layout.addWidget(style_combo)
+            style_layout.addStretch()
+            layout.addLayout(style_layout)
+            
+            # Suggestions display
+            suggestions_text = QTextEdit()
+            suggestions_text.setReadOnly(True)
+            suggestions_text.setMaximumHeight(200)
+            layout.addWidget(QLabel("<b>Suggestions:</b>"))
+            layout.addWidget(suggestions_text)
+            
+            def update_suggestions():
+                style = style_combo.currentText().lower()
+                try:
+                    horizons = suggest_horizons(tf, style)
+                    from ..utils.horizon_parser import format_horizon_spec
+                    horizons_str = format_horizon_spec(horizons)
+                    description = describe_horizons(horizons, tf)
+                    
+                    text = f"<b>Recommended Horizons:</b> {horizons_str}\n\n"
+                    text += f"<b>Description:</b> {description}\n\n"
+                    text += f"<b>Style:</b> {style.capitalize()}\n"
+                    text += f"<b>Timeframe:</b> {tf}\n\n"
+                    text += f"<i>These horizons are optimized for {style} trading on {tf} timeframe.</i>"
+                    
+                    suggestions_text.setHtml(text)
+                except Exception as e:
+                    suggestions_text.setPlainText(f"Error: {e}")
+            
+            # Update on style change
+            style_combo.currentTextChanged.connect(lambda: update_suggestions())
+            update_suggestions()
+            
+            # Buttons
+            button_layout = QHBoxLayout()
+            apply_btn = QPushButton("✓ Apply")
+            cancel_btn = QPushButton("✗ Cancel")
+            
+            def apply_suggestion():
+                style = style_combo.currentText().lower()
+                horizons = suggest_horizons(tf, style)
+                from ..utils.horizon_parser import format_horizon_spec
+                horizons_str = format_horizon_spec(horizons)
+                self.horizon_spin.setText(horizons_str)
+                dialog.accept()
+            
+            apply_btn.clicked.connect(apply_suggestion)
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            button_layout.addStretch()
+            button_layout.addWidget(apply_btn)
+            button_layout.addWidget(cancel_btn)
+            layout.addLayout(button_layout)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            from loguru import logger
+            logger.exception(f"Failed to show horizon suggestions: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to show suggestions:\n{e}")
+    
     def _start_training(self):
         """Start training process"""
         try:

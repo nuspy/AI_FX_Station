@@ -138,6 +138,25 @@ class ForexDiffusionLit(pl.LightningModule):
         self.diffusion_model = DiffusionModel(z_dim=z_dim, time_emb_dim=time_emb_dim, cond_dim=cond_dim, hidden_dim=512)
 
         logger.debug(f"[ForexDiffusionLit] DiffusionModel input_dim: z_dim={z_dim} + time_emb={time_emb_dim} + cond={0 if cond_dim is None else time_emb_dim} = {z_dim + time_emb_dim + (0 if cond_dim is None else time_emb_dim)}")
+        
+        # Multi-Horizon Prediction Head
+        # Predicts different values for each horizon from latent z
+        # Architecture: z_dim -> hidden -> num_horizons
+        num_horizons = int(safe_get(model_cfg, "num_horizons", default=1))
+        if num_horizons > 1:
+            self.multi_horizon_head = torch.nn.Sequential(
+                torch.nn.Linear(z_dim, 256),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(0.1),
+                torch.nn.Linear(256, 128),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(0.1),
+                torch.nn.Linear(128, num_horizons)
+            )
+            logger.info(f"[ForexDiffusionLit] Multi-horizon head initialized: z_dim={z_dim} -> {num_horizons} horizons")
+        else:
+            self.multi_horizon_head = None
+            logger.debug(f"[ForexDiffusionLit] Single-horizon mode (no prediction head)")
 
         # schedule
         T = int(safe_get(diff_cfg, "T", default=1000))
@@ -277,23 +296,24 @@ class ForexDiffusionLit(pl.LightningModule):
                 z_s = mu + eps_s * std
                 x_rec = self.vae.decode(z_s)  # (B, C, L)
                 
-                # Extract close predictions
-                # Assume channel 3 is 'close' (common convention)
-                c_index = min(3, x_rec.shape[1] - 1)
-                close_pred = x_rec[:, c_index, -1]  # (B,) - last timestep
-                
-                if num_horizons > 1:
-                    # Multi-horizon: generate predictions for all horizons
-                    # Simple approach: use linear scaling based on horizon ratios
-                    # More sophisticated: train a dedicated head z0 -> (H,)
-                    
-                    # For now, replicate the same prediction for all horizons
-                    # This is a placeholder - proper implementation would train separate heads
-                    horizon_preds = close_pred.unsqueeze(-1).repeat(1, num_horizons)  # (B, H)
+                # Multi-horizon prediction
+                if num_horizons > 1 and self.multi_horizon_head is not None:
+                    # Use dedicated MLP head to predict all horizons from latent
+                    horizon_preds = self.multi_horizon_head(z_s)  # (B, H)
                     samples_all_horizons.append(horizon_preds)
                 else:
-                    # Single horizon
-                    samples_all_horizons.append(close_pred.unsqueeze(-1))  # (B, 1)
+                    # Fallback: extract close from reconstruction
+                    # Assume channel 3 is 'close' (common convention)
+                    c_index = min(3, x_rec.shape[1] - 1)
+                    close_pred = x_rec[:, c_index, -1]  # (B,) - last timestep
+                    
+                    if num_horizons > 1:
+                        # Replicate for multi-horizon (legacy fallback)
+                        horizon_preds = close_pred.unsqueeze(-1).repeat(1, num_horizons)  # (B, H)
+                        samples_all_horizons.append(horizon_preds)
+                    else:
+                        # Single horizon
+                        samples_all_horizons.append(close_pred.unsqueeze(-1))  # (B, 1)
         
         samples = torch.stack(samples_all_horizons, dim=0)  # (N, B, H)
 
