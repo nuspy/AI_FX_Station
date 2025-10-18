@@ -47,6 +47,7 @@ class StandardizedModelLoader:
         self._loaders = {
             '.pt': self._load_pytorch,
             '.pth': self._load_pytorch,
+            '.ckpt': self._load_pytorch,  # Lightning checkpoints
             '.pkl': self._load_pickle,
             '.pickle': self._load_pickle,
             '.joblib': self._load_joblib

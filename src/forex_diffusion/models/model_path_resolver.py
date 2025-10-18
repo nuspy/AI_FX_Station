@@ -29,7 +29,7 @@ class ModelPathResolver:
     """
 
     def __init__(self):
-        self.supported_extensions = {'.pt', '.pth', '.pkl', '.pickle', '.joblib'}
+        self.supported_extensions = {'.pt', '.pth', '.ckpt', '.pkl', '.pickle', '.joblib'}
 
     def resolve_model_paths(self, settings: Dict[str, Any]) -> List[str]:
         """
