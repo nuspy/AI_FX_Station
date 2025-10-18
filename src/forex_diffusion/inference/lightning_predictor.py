@@ -150,31 +150,27 @@ class LightningMultiHorizonPredictor:
                 eps = torch.randn_like(std)
                 z = mu + eps * std
                 
-                # Decode to reconstructed patch
-                x_rec = self.model.vae.decode(z)  # (B, C, L)
-                
-                # Extract close predictions
-                # Get close channel index from hparams or metadata
-                close_idx = getattr(self.model.hparams, 'close_channel_idx', None)
-                if close_idx is None:
-                    # Try metadata or use default
-                    close_idx = 3  # Default: assume 'close' at channel 3
-                # Ensure within bounds
-                close_idx = min(close_idx, x_rec.shape[1] - 1)
-                close_rec = x_rec[0, close_idx, -1]  # Last timestep of close channel
-                
-                # For multi-horizon: we need a strategy
-                # Option 1: Decode predicts CURRENT close, use diffusion for future
-                # Option 2: Train model to output (H,) predictions directly
-                # For now, use simple approach: same prediction for all horizons
-                # (This is a simplification - proper implementation needs model changes)
-                
-                if self.is_multi_horizon:
-                    # TEMPORARY: Return same prediction for all horizons
-                    # TODO: Implement proper multi-horizon decoding
-                    pred_horizons = [close_rec.item()] * self.num_horizons
+                # Multi-horizon prediction
+                if self.is_multi_horizon and hasattr(self.model, 'multi_horizon_head') and self.model.multi_horizon_head is not None:
+                    # Use dedicated MLP head for proper multi-horizon predictions
+                    horizon_preds = self.model.multi_horizon_head(z)  # (B, H)
+                    pred_horizons = horizon_preds[0].tolist()  # First batch item, convert to list
                 else:
-                    pred_horizons = [close_rec.item()]
+                    # Fallback: decode and extract close from reconstruction
+                    x_rec = self.model.vae.decode(z)  # (B, C, L)
+                    
+                    # Get close channel index
+                    close_idx = getattr(self.model.hparams, 'close_channel_idx', None)
+                    if close_idx is None:
+                        close_idx = 3  # Default: assume 'close' at channel 3
+                    close_idx = min(close_idx, x_rec.shape[1] - 1)
+                    close_rec = x_rec[0, close_idx, -1]  # Last timestep
+                    
+                    if self.is_multi_horizon:
+                        # Replicate for legacy models without prediction head
+                        pred_horizons = [close_rec.item()] * self.num_horizons
+                    else:
+                        pred_horizons = [close_rec.item()]
                 
                 predictions_all.append(pred_horizons)
             
