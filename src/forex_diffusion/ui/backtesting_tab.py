@@ -302,11 +302,15 @@ class DiffusionBacktestingTab(QWidget):
         row_exec = QHBoxLayout()
         self.chk_cache = QCheckBox("Evita ricalcoli (cache DB)"); self.chk_cache.setChecked(True)
         self.btn_start = QPushButton("Avvia"); self.btn_pause = QPushButton("Pausa"); self.btn_stop = QPushButton("Ferma")
+        self.btn_validate_mh = QPushButton("📊 Validate Multi-Horizon")
         self.btn_start.clicked.connect(self._on_start)
         self.btn_pause.clicked.connect(self.pauseRequested.emit)
         self.btn_stop.clicked.connect(self.stopRequested.emit)
+        self.btn_validate_mh.clicked.connect(self._validate_multi_horizon)
+        self.btn_validate_mh.setToolTip("Validate model predictions for each horizon separately")
         row_exec.addWidget(self.chk_cache); row_exec.addStretch(1)
         row_exec.addWidget(self.btn_start); row_exec.addWidget(self.btn_pause); row_exec.addWidget(self.btn_stop)
+        row_exec.addWidget(self.btn_validate_mh)
         lay.addLayout(row_exec)
 
         # Results table (expanded) + actions
@@ -656,6 +660,109 @@ class DiffusionBacktestingTab(QWidget):
         except Exception:
             pass
 
+    def _validate_multi_horizon(self):
+        """Validate multi-horizon model predictions."""
+        from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QVBoxLayout, QTextEdit
+        from pathlib import Path
+        
+        try:
+            # Select model file
+            model_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Model for Validation",
+                str(Path.home()),
+                "Model Files (*.pkl *.pickle *.pt *.pth);;All Files (*.*)"
+            )
+            
+            if not model_path:
+                return
+            
+            # Get test data path
+            test_data_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Test Data (CSV with close prices)",
+                str(Path.home()),
+                "CSV Files (*.csv);;All Files (*.*)"
+            )
+            
+            if not test_data_path:
+                return
+            
+            # Load test data
+            import pandas as pd
+            test_data = pd.read_csv(test_data_path)
+            
+            if 'close' not in test_data.columns:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Data",
+                    "Test data must have a 'close' column with prices."
+                )
+                return
+            
+            # Run validation
+            from ...backtesting.multi_horizon_validator import MultiHorizonValidator
+            from ...inference.unified_predictor import UnifiedMultiHorizonPredictor
+            
+            self.lbl_status.setText("Running multi-horizon validation...")
+            
+            # Create validator
+            validator = MultiHorizonValidator(model_path)
+            
+            # Create predictor
+            predictor = UnifiedMultiHorizonPredictor(model_path)
+            
+            # Generate predictions for test data
+            # (This is simplified - real implementation needs proper feature engineering)
+            predictions_dict = {}
+            for horizon in predictor.horizons:
+                # Placeholder: use last N features
+                # Real implementation would use proper feature pipeline
+                preds = []
+                for i in range(len(test_data) - horizon):
+                    # Simple demo: predict based on last close
+                    features = test_data['close'].iloc[i:i+1].values
+                    pred = predictor.predict(features, horizons=[horizon])
+                    preds.append(pred[horizon])
+                
+                predictions_dict[horizon] = preds
+            
+            # Validate
+            result = validator.validate(test_data, predictions_dict)
+            
+            # Generate report
+            report = validator.generate_report(result)
+            
+            # Show report in dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Multi-Horizon Validation Report")
+            dialog.resize(800, 600)
+            layout = QVBoxLayout(dialog)
+            
+            text_edit = QTextEdit()
+            text_edit.setPlainText(report)
+            text_edit.setReadOnly(True)
+            text_edit.setStyleSheet("font-family: monospace;")
+            layout.addWidget(text_edit)
+            
+            dialog.exec()
+            
+            # Save report
+            report_path = Path(model_path).parent / f"{Path(model_path).stem}_validation_report.txt"
+            validator.save_report(result, str(report_path))
+            
+            self.lbl_status.setText(f"Validation complete! Report saved to {report_path}")
+            
+        except Exception as e:
+            from loguru import logger
+            logger.exception(f"Multi-horizon validation failed: {e}")
+            QMessageBox.critical(
+                self,
+                "Validation Error",
+                f"Failed to validate multi-horizon model:\n{e}"
+            )
+            self.lbl_status.setText("Validation failed")
+    
     def _on_start(self):
         self._persist()
         payload = {

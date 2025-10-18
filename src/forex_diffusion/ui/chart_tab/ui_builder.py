@@ -328,7 +328,7 @@ class UIBuilderMixin:
         )
         analysis_splitter.addWidget(self.order_flow_panel)
 
-        # Sentiment Panel (bottom of analysis panel)
+        # Sentiment Panel (middle of analysis panel)
         from ..sentiment_panel import SentimentPanel
         self.sentiment_panel = SentimentPanel(
             parent=self,
@@ -336,8 +336,14 @@ class UIBuilderMixin:
         )
         analysis_splitter.addWidget(self.sentiment_panel)
         
-        # Set initial sizes for analysis panels (50/50 split)
-        analysis_splitter.setSizes([300, 300])
+        # Multi-Horizon Display Widget (bottom of analysis panel)
+        from ..widgets.multi_horizon_display import MultiHorizonDisplayWidget
+        self.multi_horizon_display = MultiHorizonDisplayWidget(parent=self)
+        self.multi_horizon_display.setMinimumHeight(200)
+        analysis_splitter.addWidget(self.multi_horizon_display)
+        
+        # Set initial sizes for analysis panels (33/33/33 split)
+        analysis_splitter.setSizes([250, 250, 250])
         analysis_splitter.setHandleWidth(4)
         
         # Set minimum width for analysis panel

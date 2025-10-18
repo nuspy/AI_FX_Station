@@ -1691,6 +1691,30 @@ class TrainingTab(QWidget):
             horizon_str = self.horizon_spin.text().strip()
             model = self.model_combo.currentText()
             encoder = self.encoder_combo.currentText()
+            
+            # Validate horizon format
+            if not horizon_str:
+                QMessageBox.warning(self, "Invalid Horizon", "Please specify a horizon value.")
+                return
+            
+            try:
+                from ..utils.horizon_parser import parse_horizon_spec
+                horizons = parse_horizon_spec(horizon_str)
+                logger.info(f"Training with horizons: {horizons}")
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Horizon Format",
+                    f"Could not parse horizon '{horizon_str}'.\n\n"
+                    f"Error: {e}\n\n"
+                    f"Supported formats:\n"
+                    f"  - Single: 5\n"
+                    f"  - List: 15,60,240\n"
+                    f"  - Range: 1-7\n"
+                    f"  - Range with step: 1-7/2\n"
+                    f"  - Mixed: 1-7/2,60,100-200/50"
+                )
+                return
 
             # Collect indicators
             ind_tfs = self._collect_indicator_tfs()

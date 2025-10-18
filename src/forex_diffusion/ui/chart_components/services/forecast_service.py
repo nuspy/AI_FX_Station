@@ -853,11 +853,59 @@ class ForecastService(ChartServiceBase):
             if quantiles.get('is_multi_horizon') or quantiles.get('predictions_dict'):
                 logger.info("Plotting multi-horizon forecast")
                 self._plot_multi_horizon_forecast(quantiles, source=source)
+                
+                # Update multi-horizon display widget
+                self._update_multi_horizon_widget(quantiles)
             else:
                 self._plot_forecast_overlay(quantiles, source=source)
         except Exception as e:
             logger.exception(f"Error handling forecast result: {e}")
 
+    def _update_multi_horizon_widget(self, quantiles: dict):
+        """
+        Update multi-horizon display widget with predictions.
+        
+        Args:
+            quantiles: Quantiles dict with multi-horizon data
+        """
+        try:
+            # Check if widget exists
+            if not hasattr(self.view, 'multi_horizon_display'):
+                logger.debug("Multi-horizon display widget not available")
+                return
+            
+            # Extract data
+            predictions_dict = quantiles.get('predictions_dict')
+            horizons = quantiles.get('horizons', [])
+            
+            if not predictions_dict or not horizons:
+                logger.debug("No multi-horizon data to display")
+                return
+            
+            # Get current price from last df
+            current_price = 0.0
+            if self._last_df is not None and not self._last_df.empty:
+                try:
+                    current_price = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                except Exception:
+                    pass
+            
+            # Get timeframe
+            timeframe = getattr(self, 'timeframe', '1m')
+            
+            # Update widget
+            self.view.multi_horizon_display.set_predictions(
+                predictions=predictions_dict,
+                current_price=current_price,
+                timeframe=timeframe,
+                trained_horizons=horizons
+            )
+            
+            logger.debug(f"Updated multi-horizon display widget with {len(predictions_dict)} predictions")
+            
+        except Exception as e:
+            logger.exception(f"Failed to update multi-horizon widget: {e}")
+    
     def clear_all_forecasts(self):
         """Remove all forecast artists from axes and clear internal list.
         Also clears all drawings on the chart."""

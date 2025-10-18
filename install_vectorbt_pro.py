@@ -14,7 +14,7 @@ def install_vectorbt_pro():
 
     # Get the project root directory
     project_root = Path(__file__).parent
-    wheel_path = project_root / "VectorBt_PRO" / "vectorbtpro-2025.7.27-py3-none-any.whl"
+    wheel_path = project_root / "VectorBt_PRO" / "vectorbtpro-2025.10.15-py3-none-any.whl"
 
     # Check if wheel file exists
     if not wheel_path.exists():

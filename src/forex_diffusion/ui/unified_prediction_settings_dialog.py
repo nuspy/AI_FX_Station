@@ -1359,6 +1359,38 @@ class UnifiedPredictionSettingsDialog(QDialog):
             self.set_settings({})
             QMessageBox.information(self, "Success", "Settings reset to defaults")
 
+    def _get_chart_symbol(self) -> str:
+        """Get current symbol from chart tab."""
+        try:
+            # Try to get from parent (main window)
+            if hasattr(self.parent(), 'chart_tab'):
+                chart_tab = self.parent().chart_tab
+                if hasattr(chart_tab, 'symbol_combo'):
+                    return chart_tab.symbol_combo.currentText()
+                elif hasattr(chart_tab, 'symbol'):
+                    return chart_tab.symbol
+        except Exception as e:
+            logger.debug(f"Could not get symbol from chart: {e}")
+        
+        # Fallback to default
+        return "EUR/USD"
+    
+    def _get_chart_timeframe(self) -> str:
+        """Get current timeframe from chart tab."""
+        try:
+            # Try to get from parent (main window)
+            if hasattr(self.parent(), 'chart_tab'):
+                chart_tab = self.parent().chart_tab
+                if hasattr(chart_tab, 'tf_combo'):
+                    return chart_tab.tf_combo.currentText()
+                elif hasattr(chart_tab, 'timeframe'):
+                    return chart_tab.timeframe
+        except Exception as e:
+            logger.debug(f"Could not get timeframe from chart: {e}")
+        
+        # Fallback to default
+        return "1m"
+    
     def _validate_inference_compatibility(self) -> bool:
         """
         Validate inference settings against model metadata.
@@ -1383,8 +1415,9 @@ class UnifiedPredictionSettingsDialog(QDialog):
             from ..inference.model_metadata_loader import ModelMetadataLoader
             from ..ui.dialogs.model_settings_dialog import InferenceCompatibilityDialog
             
-            # Get timeframe (placeholder - should come from chart)
-            inference_timeframe = "1m"  # TODO: get from parent/chart
+            # Get symbol/timeframe from parent (chart tab) if available
+            inference_symbol = self._get_chart_symbol()
+            inference_timeframe = self._get_chart_timeframe()
             
             # Convert to bars for validation
             inference_horizons = get_inference_horizons_as_bars(horizon_str, inference_timeframe)
@@ -1392,11 +1425,6 @@ class UnifiedPredictionSettingsDialog(QDialog):
             # Validate against first model (if multiple, assume they're compatible)
             model_path = models[0]
             loader = ModelMetadataLoader(model_path)
-            
-            # Get current symbol/timeframe from parent if available
-            # For now, use placeholder - these come from main chart
-            inference_symbol = "EUR/USD"  # TODO: get from parent
-            inference_timeframe = "1m"    # TODO: get from parent
             
             is_compatible, warnings, errors = loader.validate_inference_settings(
                 inference_horizons,
