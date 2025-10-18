@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QPushButton,
     QFileDialog, QDialogButtonBox, QSpinBox, QCheckBox, QLabel, QTabWidget,
-    QGroupBox, QTextEdit, QScrollArea, QWidget, QComboBox, QGridLayout, QMessageBox
+    QGroupBox, QTextEdit, QScrollArea, QWidget, QComboBox, QGridLayout, QMessageBox, QDoubleSpinBox, QProgressBar
 )
 from PySide6.QtCore import Signal
 from loguru import logger

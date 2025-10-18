@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QCheckBox,
     QComboBox, QSpinBox, QTableWidget, QTableWidgetItem, QGroupBox, QFileDialog, QGridLayout,
-    QScrollArea, QTabWidget
+    QScrollArea, QTabWidget, QFormLayout
 )
 
 from .prediction_settings_dialog import PredictionSettingsDialog

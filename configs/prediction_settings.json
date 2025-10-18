@@ -111,5 +111,12 @@
   "override_returns_window": true,
   "override_min_coverage": true,
   "session_overlap": true,
-  "higher_tf": "15m"
+  "higher_tf": "15m",
+  "ldm4ts_enabled": true,
+  "ldm4ts_checkpoint_path": "D:/Projects/ForexGPT/artifacts/ldm4ts/test_checkpoint.pt",
+  "ldm4ts_horizons": "15, 60, 240",
+  "ldm4ts_num_samples": 46,
+  "ldm4ts_window_size": 100,
+  "ldm4ts_uncertainty_threshold": 50,
+  "ldm4ts_min_strength": 30
 }
