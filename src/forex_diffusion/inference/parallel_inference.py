@@ -95,9 +95,13 @@ class ModelExecutor:
             # Fix model_type if model is Lightning but type is wrong
             if self.model_data and 'model' in self.model_data:
                 model_class_name = self.model_data['model'].__class__.__name__
-                if 'Lightning' in model_class_name and self.model_data.get('model_type') != 'lightning':
-                    logger.warning(f"Model class is {model_class_name} but model_type was {self.model_data.get('model_type')}, fixing to 'lightning'")
+                current_type = self.model_data.get('model_type', 'unknown')
+                logger.debug(f"Loaded model class: {model_class_name}, current model_type: {current_type}")
+                
+                if 'Lightning' in model_class_name and current_type != 'lightning':
+                    logger.warning(f"Model class is {model_class_name} but model_type was {current_type}, fixing to 'lightning'")
                     self.model_data['model_type'] = 'lightning'
+                    logger.debug(f"Fixed model_type to: {self.model_data['model_type']}")
             
             self.is_loaded = True
             logger.debug(f"Model loaded in executor: {Path(self.model_path).name}")
