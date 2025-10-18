@@ -198,7 +198,8 @@ class LDM4TSTrainingWorker(QRunnable):
                             batch_windows,
                             current_price=current_prices,
                             num_samples=1,  # Single sample for training
-                            return_all=False
+                            return_all=False,
+                            training_mode=True  # Fast single-step denoising
                         )
                         
                         predictions = outputs['mean']  # [B, num_horizons]

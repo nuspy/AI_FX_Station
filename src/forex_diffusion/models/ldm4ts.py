@@ -168,7 +168,8 @@ class LDM4TSModel(nn.Module):
         ohlcv: torch.Tensor,
         current_price: float,
         num_samples: int = 1,
-        return_all: bool = False
+        return_all: bool = False,
+        training_mode: bool = False
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass: OHLCV → Predictions.
@@ -178,6 +179,7 @@ class LDM4TSModel(nn.Module):
             current_price: Current price for denormalization
             num_samples: Number of Monte Carlo samples for uncertainty
             return_all: If True, return intermediate outputs
+            training_mode: If True, use fast single-step denoising for training (much faster)
             
         Returns:
             Dict with predictions and optionally intermediate outputs
@@ -210,33 +212,57 @@ class LDM4TSModel(nn.Module):
         
         # 4. Diffusion sampling (Monte Carlo for uncertainty)
         all_predictions = []
-        for _ in range(num_samples):
-            # Add noise
+        
+        if training_mode:
+            # FAST PATH FOR TRAINING: Single-step denoising (100x faster)
+            # During training we only need gradients, not perfect denoising
             noise = torch.randn_like(latent)
-            noisy_latent = latent + noise * 0.1  # Small noise for sampling
+            noisy_latent = latent + noise * 0.1
             
-            # Denoise (simplified - in training, use full scheduler)
-            self.scheduler.set_timesteps(self.sampling_steps, device=self.device)
+            # Single U-Net pass at mid-timestep
+            t = torch.tensor([self.diffusion_steps // 2], device=self.device)
+            noise_pred = self.unet(
+                noisy_latent,
+                t,
+                encoder_hidden_states=conditioning.unsqueeze(1)
+            ).sample
             
-            denoised_latent = noisy_latent.clone()
-            for t in self.scheduler.timesteps:
-                # Predict noise
-                noise_pred = self.unet(
-                    denoised_latent,
-                    t,
-                    encoder_hidden_states=conditioning.unsqueeze(1)
-                ).sample
-                
-                # Denoise step
-                denoised_latent = self.scheduler.step(
-                    noise_pred,
-                    t,
-                    denoised_latent
-                ).prev_sample
+            # Simple denoising (single step)
+            denoised_latent = noisy_latent - noise_pred * 0.1
             
-            # 5. Temporal fusion
-            predictions = self.temporal_fusion(denoised_latent, current_price)  # [B, num_horizons]
+            # Temporal fusion
+            predictions = self.temporal_fusion(denoised_latent, current_price)
             all_predictions.append(predictions)
+            
+        else:
+            # FULL PATH FOR INFERENCE: Multi-step denoising (accurate but slow)
+            for _ in range(num_samples):
+                # Add noise
+                noise = torch.randn_like(latent)
+                noisy_latent = latent + noise * 0.1  # Small noise for sampling
+                
+                # Denoise with full scheduler
+                self.scheduler.set_timesteps(self.sampling_steps, device=self.device)
+                
+                denoised_latent = noisy_latent.clone()
+                for t in self.scheduler.timesteps:
+                    # Predict noise
+                    noise_pred = self.unet(
+                        denoised_latent,
+                        t,
+                        encoder_hidden_states=conditioning.unsqueeze(1)
+                    ).sample
+                    
+                    # Denoise step
+                    denoised_latent = self.scheduler.step(
+                        noise_pred,
+                        t,
+                        denoised_latent
+                    ).prev_sample
+                
+                # 5. Temporal fusion
+                predictions = self.temporal_fusion(denoised_latent, current_price)  # [B, num_horizons]
+                all_predictions.append(predictions)
         
         # Stack predictions
         all_predictions = torch.stack(all_predictions, dim=0)  # [num_samples, B, num_horizons]
