@@ -73,7 +73,9 @@ class LightningMultiHorizonPredictor:
             logger.info(f"Loaded ForexDiffusionLit model")
             
         except Exception as e:
+            import traceback
             logger.error(f"Failed to load Lightning model: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise
     
     def _extract_horizons(self):
