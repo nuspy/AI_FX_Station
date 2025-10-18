@@ -1900,7 +1900,8 @@ class TrainingTab(QWidget):
                     'symbol': sym,
                     'base_timeframe': tf,
                     'days_history': int(days),
-                    'horizon_bars': int(horizon),
+                    'horizon_bars': horizons,  # Store as list for multi-horizon
+                    'num_horizons': len(horizons),
                     'trainer': 'lightning',
                     'lightning_params': {
                         'epochs': int(self.light_epochs.value()),
@@ -1984,7 +1985,8 @@ class TrainingTab(QWidget):
                     'symbol': sym,
                     'base_timeframe': tf,
                     'days_history': int(days),
-                    'horizon_bars': int(horizon),
+                    'horizon_bars': horizons,  # Store as list for multi-horizon
+                    'num_horizons': len(horizons),
                     'model_type': model,
                     'encoder': encoder,
                     'indicator_tfs': ind_tfs,
