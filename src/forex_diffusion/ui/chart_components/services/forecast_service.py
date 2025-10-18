@@ -91,10 +91,15 @@ class ForecastService(ChartServiceBase):
         self._model_color_mapping[model_path] = fallback_idx
         return self._COLOR_PALETTE[fallback_idx]
 
-    def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic"):
+    def _plot_forecast_overlay(self, quantiles: dict, source: str = "basic", color_override: str = None):
         """
         Plot quantiles on the chart. quantiles expected to have keys 'q50','q05','q95'
         Each value can be a list/array of floats. Optionally 'future_ts' can provide UTC ms or datetimes.
+        
+        Args:
+            quantiles: Forecast data dictionary
+            source: Forecast source label
+            color_override: Optional color hex string to override default color (for separate models)
         """
         try:
             # extract and coerce to arrays
@@ -185,7 +190,11 @@ class ForecastService(ChartServiceBase):
                 line_width = 3
                 fill_alpha = 0.25
             else:
-                color = self._get_color_for_model(model_path)
+                # Use color_override if provided (for separate model forecasts)
+                if color_override:
+                    color = color_override
+                else:
+                    color = self._get_color_for_model(model_path)
                 line_width = 2
                 fill_alpha = 0.15
 
@@ -843,21 +852,35 @@ class ForecastService(ChartServiceBase):
         """
         Slot to receive forecast results from controller/worker.
         Adds the forecast overlay without removing existing ones (trimming oldest if needed).
+        Supports:
+        - Single model forecasts
+        - Multi-horizon forecasts
+        - Separate model forecasts (individual display)
         """
         try:
             # Plot forecast overlay without redrawing the chart (which would clear previous forecasts)
             # The chart is already displayed, we just add the overlay on top
             source = quantiles.get("source", "basic") if isinstance(quantiles, dict) else "basic"
+            model_path = quantiles.get("model_path_used", "")
+            
+            # Check if this is a separate model forecast (not ensemble)
+            is_separate_forecast = "Model_" in source or ("Ensemble" not in source and model_path)
             
             # Check if multi-horizon forecast
             if quantiles.get('is_multi_horizon') or quantiles.get('predictions_dict'):
-                logger.info("Plotting multi-horizon forecast")
+                logger.info(f"Plotting multi-horizon forecast: {source}")
                 self._plot_multi_horizon_forecast(quantiles, source=source)
                 
                 # Update multi-horizon display widget
                 self._update_multi_horizon_widget(quantiles)
             else:
-                self._plot_forecast_overlay(quantiles, source=source)
+                # Plot with model-specific color if separate forecast
+                if is_separate_forecast and model_path:
+                    color = self._get_color_for_model(model_path)
+                    logger.info(f"Plotting separate forecast for {Path(model_path).name} with color {color}")
+                    self._plot_forecast_overlay(quantiles, source=source, color_override=color)
+                else:
+                    self._plot_forecast_overlay(quantiles, source=source)
         except Exception as e:
             logger.exception(f"Error handling forecast result: {e}")
 
