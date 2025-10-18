@@ -249,7 +249,7 @@ class ModelExecutor:
                         # Get expected channels from model
                         expected_channels = getattr(model, 'in_channels', 6)
                         
-                        # Standard OHLCV channels
+                        # Standard channels (same as training)
                         available_cols = ['open', 'high', 'low', 'close', 'volume']
                         patch_data = []
                         
@@ -257,14 +257,24 @@ class ModelExecutor:
                             if col in candles_patch.columns and len(patch_data) < expected_channels:
                                 patch_data.append(candles_patch[col].values)
                         
-                        # If we need more channels, pad with zeros or repeat close price
+                        # Add temporal features if needed (hour_sin, hour_cos)
+                        if len(patch_data) < expected_channels and 'timestamp' in candles_patch.columns:
+                            # Convert timestamp to hour and compute sin/cos encoding
+                            import pandas as pd
+                            timestamps = pd.to_datetime(candles_patch['timestamp'])
+                            hours = timestamps.dt.hour + timestamps.dt.minute / 60.0
+                            
+                            if len(patch_data) < expected_channels:
+                                hour_sin = np.sin(2 * np.pi * hours / 24.0)
+                                patch_data.append(hour_sin.values)
+                            
+                            if len(patch_data) < expected_channels:
+                                hour_cos = np.cos(2 * np.pi * hours / 24.0)
+                                patch_data.append(hour_cos.values)
+                        
+                        # If we still need more channels, pad with zeros
                         while len(patch_data) < expected_channels:
-                            # Repeat close price as padding
-                            if 'close' in candles_patch.columns:
-                                patch_data.append(candles_patch['close'].values)
-                            else:
-                                # Last resort: zeros
-                                patch_data.append(np.zeros(len(candles_patch)))
+                            patch_data.append(np.zeros(len(candles_patch)))
                         
                         # Convert to tensor (C, L)
                         patch_tensor = torch.tensor(patch_data, dtype=torch.float32)
