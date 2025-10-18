@@ -55,14 +55,21 @@ class TimeSeriesVisionEncoder:
         Encode time series into RGB image.
         
         Args:
-            X: Time series [B, L, D] or [L, D] or [L]
+            X: Time series [B, L, D] or [L, D] or [L] (numpy array or torch.Tensor)
             return_tensor: Return torch.Tensor if True
             
         Returns:
             RGB image [B, 3, H, W] or [3, H, W]
         """
-        # Handle input shapes
-        X = np.asarray(X)
+        # Handle input shapes and convert CUDA tensors to numpy
+        if isinstance(X, torch.Tensor):
+            # If CUDA tensor, move to CPU first
+            if X.is_cuda:
+                X = X.cpu().numpy()
+            else:
+                X = X.numpy()
+        else:
+            X = np.asarray(X)
         if X.ndim == 1:
             X = X.reshape(-1, 1)  # [L] → [L, 1]
         if X.ndim == 2:
