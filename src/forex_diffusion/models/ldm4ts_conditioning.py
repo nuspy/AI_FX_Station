@@ -89,12 +89,15 @@ class TextConditioner(nn.Module):
     def __init__(
         self,
         model_name: str = "openai/clip-vit-base-patch32",
-        freeze: bool = True
+        freeze: bool = True,
+        output_dim: int = 768
     ):
         super().__init__()
         
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError("transformers required")
+        
+        self.output_dim = output_dim
         
         # Load from local model files
         from pathlib import Path
@@ -108,6 +111,17 @@ class TextConditioner(nn.Module):
             self.tokenizer = CLIPTokenizer.from_pretrained(model_name)
             self.text_encoder = CLIPTextModel.from_pretrained(model_name)
         
+        # Get CLIP embedding dimension (512 for clip-vit-base-patch32)
+        clip_dim = self.text_encoder.config.hidden_size
+        
+        # Add projection layer if output_dim differs from CLIP dimension
+        if clip_dim != output_dim:
+            self.projection = nn.Linear(clip_dim, output_dim)
+            nn.init.xavier_uniform_(self.projection.weight)
+            nn.init.zeros_(self.projection.bias)
+        else:
+            self.projection = None
+        
         if freeze:
             for param in self.text_encoder.parameters():
                 param.requires_grad = False
@@ -119,7 +133,7 @@ class TextConditioner(nn.Module):
             descriptions: List of text descriptions
             device: Target device
         Returns:
-            [B, 768] text embeddings
+            [B, output_dim] text embeddings (default 768)
         """
         tokens = self.tokenizer(
             descriptions,
@@ -130,7 +144,11 @@ class TextConditioner(nn.Module):
         
         with torch.no_grad():
             outputs = self.text_encoder(**tokens)
-            embeddings = outputs.pooler_output  # [B, 768]
+            embeddings = outputs.pooler_output  # [B, clip_dim] (512 for base CLIP)
+        
+        # Project to output_dim if needed
+        if self.projection is not None:
+            embeddings = self.projection(embeddings)  # [B, 512] -> [B, 768]
         
         return embeddings
     

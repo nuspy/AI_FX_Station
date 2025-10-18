@@ -84,7 +84,8 @@ class LDM4TSModel(nn.Module):
         
         self.text_cond = TextConditioner(
             model_name=text_model,
-            freeze=True
+            freeze=True,
+            output_dim=768  # Match FrequencyConditioner output
         ).to(self.device)
         
         # U-Net for diffusion (trainable)
