@@ -981,6 +981,17 @@ class PlotService(ChartServiceBase):
 
             # Apply theme colors to PyQtGraph elements
             self.apply_theme_to_pyqtgraph()
+            
+            # Setup smart buffer for automatic data loading on scroll (first time only)
+            if not hasattr(self, '_smart_buffer_setup'):
+                try:
+                    data_service = self.controller.data_service
+                    if hasattr(data_service, 'setup_smart_buffer'):
+                        data_service.setup_smart_buffer()
+                        self._smart_buffer_setup = True
+                        logger.info("✅ Smart buffer initialized for automatic scroll loading")
+                except Exception as e:
+                    logger.debug(f"Smart buffer setup skipped: {e}")
 
             # PlutoTouch logger.info(f"Chart updated: {len(df2)} candles, {len(enabled_indicator_names)} indicators, {needed_rows} subplots")
 
