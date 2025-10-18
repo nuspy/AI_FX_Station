@@ -274,9 +274,19 @@ class ForexDiffusionLit(pl.LightningModule):
 
         crps = torch.tensor(0.0, device=device)
         if y is not None:
-            # ensure y shape matches (B,1)
-            y_target = y if y.dim() == 2 else y.unsqueeze(-1)
-            crps = crps_sample_estimator(samples, y_target)
+            # Handle multi-horizon targets
+            y_target = y if y.dim() == 2 else y.unsqueeze(-1)  # (B, H) or (B, 1)
+            
+            # If multi-horizon, compute CRPS for each horizon and average
+            if y_target.shape[1] > 1:
+                # Multi-horizon: y_target is (B, H)
+                # We need to predict multiple horizons from the same latent
+                # For now, use only the first horizon for CRPS (could extend to predict all)
+                crps = crps_sample_estimator(samples, y_target[:, 0:1])
+                # TODO: Extend model to predict all horizons from diffusion
+            else:
+                # Single horizon: y_target is (B, 1)
+                crps = crps_sample_estimator(samples, y_target)
 
         loss = self.lambda_v * loss_v + self.lambda_crps * crps + self.lambda_kl * loss_kl
 

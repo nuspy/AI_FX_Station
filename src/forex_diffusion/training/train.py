@@ -58,32 +58,91 @@ def _add_time_features(df):
 
 
 def _build_arrays(
-    df: pd.DataFrame, patch_len: int, horizon: int, warmup: int
+    df: pd.DataFrame, patch_len: int, horizon: int | List[int], warmup: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build patches and targets for training.
+    
+    Args:
+        df: OHLCV dataframe with time features
+        patch_len: Length of input patch
+        horizon: Single horizon (int) or multiple horizons (List[int])
+        warmup: Number of warmup bars
+        
+    Returns:
+        Tuple of (patches, targets, conditions)
+        - patches: (N, C, L) input sequences
+        - targets: (N, 1) or (N, H) targets (single or multi-horizon)
+        - conditions: (N, cond_dim) conditioning features
+    """
     values = df[CHANNEL_ORDER].astype(float).to_numpy()
     closes = df["close"].astype(float).to_numpy()
     cond_cols = [col for col in df.columns if col.startswith("cond_")]
     cond_values = df[cond_cols].astype(float).to_numpy() if cond_cols else None
 
+    # Parse horizons
+    if isinstance(horizon, int):
+        horizons = [horizon]
+        is_multi_horizon = False
+    else:
+        horizons = sorted(horizon)  # Sort for consistency
+        is_multi_horizon = True
+    
+    max_horizon = max(horizons)
+    
     start_idx = max(0, warmup)
-    end_idx = len(df) - horizon
+    end_idx = len(df) - max_horizon
     windows: List[np.ndarray] = []
-    targets: List[float] = []
+    targets: List[np.ndarray | float] = []
     cond_list: List[np.ndarray] = []
+    
     for start in range(start_idx, end_idx - patch_len + 1):
         stop = start + patch_len
-        target_idx = stop + horizon - 1
-        if target_idx >= len(df):
-            break
-        patch = values[start:stop]
-        windows.append(patch.T)  # (C, L)
-        targets.append(float(closes[target_idx]))
-        if cond_values is not None:
-            cond_list.append(cond_values[target_idx])
+        
+        # Collect targets for all horizons
+        if is_multi_horizon:
+            multi_targets = []
+            for h in horizons:
+                target_idx = stop + h - 1
+                if target_idx >= len(df):
+                    break
+                multi_targets.append(float(closes[target_idx]))
+            
+            if len(multi_targets) != len(horizons):
+                # Skip if not all horizons available
+                continue
+            
+            patch = values[start:stop]
+            windows.append(patch.T)  # (C, L)
+            targets.append(multi_targets)  # List of targets
+            
+            if cond_values is not None:
+                # Use conditioning at the furthest horizon
+                cond_list.append(cond_values[stop + max_horizon - 1])
+        else:
+            # Single horizon (backward compatible)
+            target_idx = stop + horizons[0] - 1
+            if target_idx >= len(df):
+                break
+            
+            patch = values[start:stop]
+            windows.append(patch.T)  # (C, L)
+            targets.append(float(closes[target_idx]))
+            
+            if cond_values is not None:
+                cond_list.append(cond_values[target_idx])
+    
     if not windows:
         raise RuntimeError("Nessun patch generato: riduci warmup o aumenta history.")
+    
     patches = np.stack(windows, axis=0)
-    y = np.asarray(targets, dtype=np.float32).reshape(-1, 1)
+    
+    # Stack targets
+    if is_multi_horizon:
+        y = np.array(targets, dtype=np.float32)  # (N, H)
+    else:
+        y = np.asarray(targets, dtype=np.float32).reshape(-1, 1)  # (N, 1)
+    
     cond = np.stack(cond_list, axis=0) if cond_list else None
     return patches, y, cond
 
@@ -273,7 +332,12 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", required=True)
     ap.add_argument("--timeframe", required=True)
-    ap.add_argument("--horizon", type=int, required=True)
+    ap.add_argument(
+        "--horizon", 
+        type=str, 
+        required=True,
+        help="Single horizon (int) or comma-separated list: '15' or '15,60,240'"
+    )
     ap.add_argument("--days_history", type=int, default=90)
     ap.add_argument("--patch_len", type=int, default=64)
     ap.add_argument("--warmup_bars", type=int, default=64)
@@ -345,8 +409,17 @@ def main() -> None:
     candles = fetch_candles_from_db(args.symbol, args.timeframe, args.days_history)
     candles = _add_time_features(candles)
 
+    # Parse horizon(s)
+    horizon_str = args.horizon.strip()
+    if ',' in horizon_str:
+        horizons = [int(h.strip()) for h in horizon_str.split(',')]
+        logger.info(f"[Multi-Horizon] Training with horizons: {horizons}")
+    else:
+        horizons = int(horizon_str)
+        logger.info(f"[Single-Horizon] Training with horizon: {horizons}")
+    
     patches, targets, cond = _build_arrays(
-        candles, args.patch_len, int(args.horizon), args.warmup_bars
+        candles, args.patch_len, horizons, args.warmup_bars
     )
     train_x, val_x, mu, sigma, scaler_metadata = _standardize_train_val(
         patches, args.val_frac
@@ -394,11 +467,21 @@ def main() -> None:
         "scaler_metadata": scaler_metadata,  # NEW: metadata for bias verification
     }
     try:
+        # Save horizons info
+        if isinstance(horizons, int):
+            horizon_meta = horizons
+            num_horizons = 1
+        else:
+            horizon_meta = horizons
+            num_horizons = len(horizons)
+        
         model.save_hyperparameters(
             {
                 "symbol": args.symbol,
                 "timeframe": args.timeframe,
-                "horizon": int(args.horizon),
+                "horizon": horizon_meta,  # Can be int or list
+                "horizons": horizons if isinstance(horizons, list) else [horizons],
+                "num_horizons": num_horizons,
                 "patch_len": args.patch_len,
             }
         )
@@ -491,7 +574,9 @@ def main() -> None:
     payload = {
         "symbol": args.symbol,
         "timeframe": args.timeframe,
-        "horizon_bars": int(args.horizon),
+        "horizon_bars": horizons if isinstance(horizons, list) else horizons,
+        "horizons": horizons if isinstance(horizons, list) else [horizons],
+        "num_horizons": len(horizons) if isinstance(horizons, list) else 1,
         "patch_len": args.patch_len,
         "channel_order": CHANNEL_ORDER,
         "mu": model.dataset_stats["mu"],
