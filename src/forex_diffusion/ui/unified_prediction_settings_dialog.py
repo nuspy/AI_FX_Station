@@ -1188,8 +1188,12 @@ class UnifiedPredictionSettingsDialog(QDialog):
                 # Note: symbol and timeframe are controlled by main UI, not here
                 # We only set horizons and samples
                 
-                from ..utils.horizon_parser import format_horizon_spec
-                self.horizons_edit.setText(recommended['horizon_str'])
+                from ..utils.horizon_format_adapter import adapt_horizons_for_inference
+                
+                # Convert bars format to time format for GUI
+                timeframe = recommended.get('timeframe', '1m')
+                horizons_time = adapt_horizons_for_inference(recommended['horizon_str'], timeframe)
+                self.horizons_edit.setText(horizons_time)
                 
                 if metadata['model_type'] == 'lightning':
                     self.samples_spinbox.setValue(recommended['num_samples'])
@@ -1375,11 +1379,15 @@ class UnifiedPredictionSettingsDialog(QDialog):
             return False
         
         try:
-            from ..utils.horizon_parser import parse_horizon_spec
+            from ..utils.horizon_format_adapter import get_inference_horizons_as_bars
             from ..inference.model_metadata_loader import ModelMetadataLoader
             from ..ui.dialogs.model_settings_dialog import InferenceCompatibilityDialog
             
-            inference_horizons = parse_horizon_spec(horizon_str)
+            # Get timeframe (placeholder - should come from chart)
+            inference_timeframe = "1m"  # TODO: get from parent/chart
+            
+            # Convert to bars for validation
+            inference_horizons = get_inference_horizons_as_bars(horizon_str, inference_timeframe)
             
             # Validate against first model (if multiple, assume they're compatible)
             model_path = models[0]
