@@ -423,14 +423,16 @@ class ForecastWorker(QRunnable):
                 return pd.DataFrame()
             with engine.connect() as conn:
                 q = text(
-                    "SELECT ts_utc, open, high, low, close, volume FROM market_data_candles "
+                    "SELECT ts_utc, timestamp, open, high, low, close, volume FROM market_data_candles "
                     "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc <= :end_ts "
                     "ORDER BY ts_utc DESC LIMIT :limit"
                 )
                 rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "end_ts": int(end_ts), "limit": int(n_bars)}).fetchall()
                 if not rows:
                     return pd.DataFrame()
-                df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
+                df = pd.DataFrame(rows, columns=["ts_utc", "timestamp", "open", "high", "low", "close", "volume"])
+                if "timestamp" in df.columns and df["timestamp"].notna().any():
+                    df["ts_utc"] = pd.to_datetime(df["timestamp"]).astype("int64") // 10**6
                 logger.debug(f"[OPT-003 Lazy Loading] Fetched {len(df)} bars up to ts={end_ts} for {symbol} {timeframe}")
                 return df.sort_values("ts_utc").reset_index(drop=True)
         except Exception as e:
@@ -566,7 +568,11 @@ class ForecastWorker(QRunnable):
                     df_candles = df_candles.reset_index()
                     if 'timestamp' in df_candles.columns:
                         # Convert timestamp to ts_utc (milliseconds)
-                        df_candles["ts_utc"] = pd.to_datetime(df_candles["timestamp"]).astype('int64') // 10**6
+                        # Convert without pandas chaining warnings
+                        if df_candles["timestamp"].dtype == 'int64':
+                            df_candles["ts_utc"] = df_candles["timestamp"].astype('int64')
+                        else:
+                            df_candles["ts_utc"] = pd.to_datetime(df_candles["timestamp"]).astype('int64') // 10**6
                         df_candles = df_candles.drop(columns=['timestamp'])
                     else:
                         raise RuntimeError("DataFrame has no ts_utc or timestamp column")

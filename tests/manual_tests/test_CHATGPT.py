@@ -1,5 +1,12 @@
 import pickle, sys, hashlib, pathlib
+import pytest
+
 p = pathlib.Path(r"D:\Projects\ForexGPT\artifacts\models\weighted_forecast_EURUSD_1m_h5_ridge_none.pkl")
+
+if not p.exists():
+    print("missing artifact, skipping")
+    pytest.skip("required artifact missing", allow_module_level=True)
+
 obj = pickle.load(open(p, "rb"))
 print("keys:", sorted(obj.keys()))
 print("name:", obj.get("name"))

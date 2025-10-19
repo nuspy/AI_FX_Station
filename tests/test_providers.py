@@ -298,9 +298,9 @@ class TestAggregators:
 
     def test_dom_aggregator_init(self, mock_engine):
         """Test DOM aggregator initialization."""
-        from forex_diffusion.services.dom_aggregator import DOMAggreg atorService
+        from forex_diffusion.services.dom_aggregator import DOMAggregatorService
 
-        dom_agg = DOMAggreg atorService(mock_engine, symbols=["EUR/USD"], interval_seconds=5)
+        dom_agg = DOMAggregatorService(mock_engine, symbols=["EUR/USD"], interval_seconds=5)
 
         assert dom_agg.engine == mock_engine
         assert dom_agg._interval == 5

@@ -26,7 +26,7 @@ class LightningMultiHorizonPredictor:
     - Supports interpolation for missing horizons
     """
     
-    def __init__(self, checkpoint_path: str | Path, device: str = 'cpu'):
+    def __init__(self, checkpoint_path: str | Path, device: str = 'cpu', metadata: Optional[Dict[str, Any]] = None):
         """
         Initialize predictor from checkpoint.
         
@@ -39,6 +39,13 @@ class LightningMultiHorizonPredictor:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
         
         self.device = device
+        # Normalize metadata to plain dict for simpler access
+        if metadata is None:
+            self.metadata = {}
+        elif isinstance(metadata, dict):
+            self.metadata = metadata
+        else:
+            self.metadata = getattr(metadata, '__dict__', {})
         
         # Load model
         logger.info(f"Loading Lightning model from {self.checkpoint_path}")
@@ -54,14 +61,8 @@ class LightningMultiHorizonPredictor:
         """Load Lightning model from checkpoint."""
         try:
             import torch
-            
-            # Disable torch dynamo/compile completely
-            torch._dynamo.reset()
-            import torch._dynamo
-            torch._dynamo.config.suppress_errors = True
-            
             from ..train.loop import ForexDiffusionLit
-            
+
             # Load checkpoint
             self.model = ForexDiffusionLit.load_from_checkpoint(
                 str(self.checkpoint_path),
@@ -81,30 +82,66 @@ class LightningMultiHorizonPredictor:
     def _extract_horizons(self):
         """Extract horizons from model hyperparameters."""
         try:
-            hparams = self.model.hparams
-            
-            # Extract in_channels for patch construction
-            self.in_channels = getattr(hparams, 'in_channels', 6)
+            hparams = getattr(self.model, 'hparams', None)
+
+            sidecar = self.metadata or {}
+
+            # Channel order / normalization / patch length prefer sidecar
+            channel_order = sidecar.get('channel_order') or self.metadata.get('channel_order')
+            if channel_order:
+                self.channel_order = channel_order
+                self.in_channels = len(channel_order)
+            elif hparams is not None:
+                if hasattr(hparams, 'channel_order'):
+                    self.channel_order = list(getattr(hparams, 'channel_order'))
+                    self.in_channels = len(self.channel_order)
+                elif hasattr(hparams, 'in_channels'):
+                    self.in_channels = getattr(hparams, 'in_channels', self.in_channels)
+                else:
+                    self.in_channels = getattr(hparams, 'in_channels', self.in_channels)
+
+            mu = sidecar.get('mu')
+            sigma = sidecar.get('sigma')
+            if mu and sigma:
+                self.channel_mu = mu
+                self.channel_sigma = sigma
+
+            patch_len = sidecar.get('patch_len')
+            if patch_len:
+                self.patch_len = patch_len
+            elif hparams is not None and hasattr(hparams, 'patch_len'):
+                self.patch_len = getattr(hparams, 'patch_len', self.patch_len)
+
+            symbol = sidecar.get('symbol')
+            if symbol:
+                self.symbol = symbol
+            elif hparams is not None and hasattr(hparams, 'symbol'):
+                self.symbol = getattr(hparams, 'symbol', self.symbol)
+
+            timeframe = sidecar.get('timeframe')
+            if timeframe:
+                self.timeframe = timeframe
+            elif hparams is not None and hasattr(hparams, 'timeframe'):
+                self.timeframe = getattr(hparams, 'timeframe', self.timeframe)
+
             logger.debug(f"Model expects {self.in_channels} input channels")
-            
-            # Try new format first
-            if hasattr(hparams, 'horizons'):
-                self.horizons = hparams.horizons
-            elif hasattr(hparams, 'horizon'):
-                horizon = hparams.horizon
-                self.horizons = horizon if isinstance(horizon, list) else [horizon]
+
+            horizons = sidecar.get('horizons')
+            if horizons:
+                self.horizons = horizons
+            elif hparams is not None:
+                if hasattr(hparams, 'horizons'):
+                    self.horizons = getattr(hparams, 'horizons')
+                elif hasattr(hparams, 'horizon'):
+                    horizon_val = getattr(hparams, 'horizon')
+                    self.horizons = horizon_val if isinstance(horizon_val, list) else [horizon_val]
+                else:
+                    self.horizons = [60]
             else:
-                # Fallback
-                logger.warning("No horizon info in hparams, using default [60]")
                 self.horizons = [60]
-            
+
             self.is_multi_horizon = len(self.horizons) > 1
             self.num_horizons = len(self.horizons)
-            
-            # Store other useful metadata
-            self.patch_len = getattr(hparams, 'patch_len', 64)
-            self.symbol = getattr(hparams, 'symbol', 'EUR/USD')
-            self.timeframe = getattr(hparams, 'timeframe', '1m')
             
         except Exception as e:
             logger.error(f"Failed to extract horizons: {e}")

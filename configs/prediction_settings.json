@@ -1,5 +1,6 @@
 {
   "model_paths": [
+    "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=01-val_loss=1.7535.ckpt",
     "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=03-val_loss=1.7519.ckpt"
   ],
   "type_basic": true,

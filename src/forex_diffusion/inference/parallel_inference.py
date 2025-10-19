@@ -231,7 +231,7 @@ class ModelExecutor:
                         if candles_df is None or candles_df.empty:
                             raise ValueError("Lightning models require candles_df for prediction")
                         
-                        # Get patch length from model
+                        # Get patch length from model metadata (Lightning sidecar)
                         patch_len = getattr(model, 'patch_len', 64)
                         
                         # Extract last patch_len candles
@@ -245,39 +245,65 @@ class ModelExecutor:
                         else:
                             candles_patch = candles_df.iloc[-patch_len:]
                         
-                        # Build patch tensor (C, L) - match model's expected channels
-                        # Get expected channels from model
-                        expected_channels = getattr(model, 'in_channels', 6)
-                        
-                        # Standard channels (same as training)
-                        available_cols = ['open', 'high', 'low', 'close', 'volume']
-                        patch_data = []
-                        
-                        for col in available_cols:
-                            if col in candles_patch.columns and len(patch_data) < expected_channels:
-                                patch_data.append(candles_patch[col].values)
-                        
-                        # Add temporal features if needed (hour_sin, hour_cos)
-                        if len(patch_data) < expected_channels and 'timestamp' in candles_patch.columns:
-                            # Convert timestamp to hour and compute sin/cos encoding
-                            import pandas as pd
-                            timestamps = pd.to_datetime(candles_patch['timestamp'])
-                            hours = timestamps.dt.hour + timestamps.dt.minute / 60.0
-                            
-                            if len(patch_data) < expected_channels:
-                                hour_sin = np.sin(2 * np.pi * hours / 24.0)
-                                patch_data.append(hour_sin.values)
-                            
-                            if len(patch_data) < expected_channels:
-                                hour_cos = np.cos(2 * np.pi * hours / 24.0)
-                                patch_data.append(hour_cos.values)
-                        
-                        # If we still need more channels, pad with zeros
-                        while len(patch_data) < expected_channels:
-                            patch_data.append(np.zeros(len(candles_patch)))
-                        
+                        # Build patch tensor (C, L) - match model's expected channels/order
+                        channel_order = getattr(model, 'channel_order', None)
+                        if not channel_order:
+                            channel_order = ['open', 'high', 'low', 'close', 'volume', 'hour_sin', 'hour_cos']
+
+                        expected_channels = len(channel_order)
+
+                        # Prepare temporal features if requested but missing
+                        if any(col in ('hour_sin', 'hour_cos') for col in channel_order):
+                            if 'hour_sin' not in candles_patch.columns or 'hour_cos' not in candles_patch.columns:
+                                timestamp_col = None
+                                for candidate in ('timestamp', 'ts', 'ts_utc'):
+                                    if candidate in candles_patch.columns:
+                                        timestamp_col = candidate
+                                        break
+
+                                if timestamp_col:
+                                    import pandas as pd
+                                    timestamps = pd.to_datetime(candles_patch[timestamp_col], unit='ms', utc=True, errors='coerce')
+                                    if timestamps.isna().any():
+                                        timestamps = pd.to_datetime(candles_patch[timestamp_col], errors='coerce')
+                                    hours = timestamps.dt.hour + timestamps.dt.minute / 60.0
+                                    candles_patch = candles_patch.copy()
+                                    candles_patch['hour_sin'] = np.sin(2 * np.pi * hours / 24.0)
+                                    candles_patch['hour_cos'] = np.cos(2 * np.pi * hours / 24.0)
+                                else:
+                                    logger.warning("Lightning predictor expects hour_sin/hour_cos but no timestamp column available; using zeros")
+                                    candles_patch = candles_patch.copy()
+                                    candles_patch['hour_sin'] = 0.0
+                                    candles_patch['hour_cos'] = 0.0
+
+                        patch_values = []
+                        missing_channels = []
+                        for col in channel_order:
+                            if col in candles_patch.columns:
+                                patch_values.append(candles_patch[col].astype(float).values)
+                            else:
+                                missing_channels.append(col)
+                                patch_values.append(np.zeros(len(candles_patch)))
+
+                        if missing_channels:
+                            logger.warning(f"Missing channels in candles_df for Lightning model: {missing_channels} - filled with zeros")
+
+                        patch_array = np.stack(patch_values, axis=0)
+
+                        # Apply normalization if available
+                        channel_mu = getattr(model, 'channel_mu', None)
+                        channel_sigma = getattr(model, 'channel_sigma', None)
+                        if channel_mu and channel_sigma and len(channel_mu) == expected_channels:
+                            mu_arr = np.asarray(channel_mu, dtype=np.float32).reshape(expected_channels, 1)
+                            sigma_arr = np.asarray(channel_sigma, dtype=np.float32).reshape(expected_channels, 1)
+                            sigma_arr[sigma_arr == 0] = 1.0
+                            patch_array = (patch_array - mu_arr) / sigma_arr
+                        else:
+                            if not (channel_mu and channel_sigma):
+                                logger.debug("Lightning predictor missing normalization stats; using raw values")
+
                         # Convert to tensor (C, L)
-                        patch_tensor = torch.tensor(patch_data, dtype=torch.float32)
+                        patch_tensor = torch.tensor(patch_array, dtype=torch.float32)
                         
                         logger.debug(f"Built Lightning patch: shape={patch_tensor.shape} (channels={patch_tensor.shape[0]}, length={patch_tensor.shape[1]})")
                         
@@ -299,6 +325,44 @@ class ModelExecutor:
                         logger.error(f"Lightning predict failed: {e}")
                         import traceback
                         logger.debug(traceback.format_exc())
+
+                        # Retry once with torch.compile disabled
+                    retry_enabled = self.model_data.get('metadata') and getattr(self.model_data['metadata'], 'model_type', '') == 'lightning'
+                    try:
+                        import torch
+                        prev = torch._dynamo.config.suppress_errors
+                        torch._dynamo.config.suppress_errors = True
+                        torch._dynamo.reset()
+
+                        def _run_eager(fn):
+                            try:
+                                return torch._dynamo.optimize("eager")(fn)(
+                                    patch_tensor,
+                                    num_samples=50,
+                                    return_dict=True,
+                                    return_distribution=False
+                                )
+                            except Exception:
+                                torch._dynamo.config.suppress_errors = prev
+                                return torch._dynamo.disable(fn)(
+                                    patch_tensor,
+                                    num_samples=50,
+                                    return_dict=True,
+                                    return_distribution=False
+                                )
+
+                        pred_dict = _run_eager(model.predict)
+                        torch._dynamo.config.suppress_errors = prev
+
+                        if pred_dict and isinstance(pred_dict, dict):
+                            predictions_dict = pred_dict
+                            predictions = np.array(list(pred_dict.values()))
+                            logger.debug("Lightning prediction succeeded after suppressing torch.compile")
+                    except Exception as e2:
+                        if retry_enabled:
+                            logger.error(f"Lightning predict retry failed: {e2}")
+                            import traceback as tb2
+                            logger.debug(tb2.format_exc())
                         predictions = None
                 
                 # Standard sklearn/pytorch predict
@@ -433,7 +497,14 @@ class ParallelInferenceEngine:
         total_time = time.time() - start_time
 
         # Aggregate results
-        aggregated = self._aggregate_results(results, symbol, timeframe, time_labels, horizon_bars)
+        aggregated = self._aggregate_results(
+            results,
+            symbol,
+            timeframe,
+            time_labels,
+            horizon_bars,
+            aggregation_method
+        )
         aggregated['execution_summary'] = {
             'total_models': len(model_paths),
             'successful_models': len([r for r in results if r['success']]),
@@ -537,7 +608,8 @@ class ParallelInferenceEngine:
         symbol: str,
         timeframe: str,
         time_labels: List[str],
-        horizon_bars: List[int]
+        horizon_bars: List[int],
+        aggregation_method: str
     ) -> Dict[str, Any]:
         """
         Aggregate results from multiple models into ensemble predictions.

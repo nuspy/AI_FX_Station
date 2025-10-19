@@ -8,7 +8,7 @@ Implements the external loop (model training) and coordinates the internal loop
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
 import logging
 from sqlalchemy.orm import Session

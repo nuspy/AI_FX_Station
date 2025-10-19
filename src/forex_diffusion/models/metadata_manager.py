@@ -86,6 +86,12 @@ class ModelMetadata:
         self.required_packages = {}
         self.validation_hash = None
 
+        # Lightning-specific fields
+        self.channel_order = None
+        self.patch_len = None
+        self.mu = None
+        self.sigma = None
+
     def set_model_info(self, model: Any, model_type: str):
         """Set model information and generate hash."""
         self.model_type = model_type
@@ -242,6 +248,12 @@ class ModelMetadata:
             # Inference
             'inference_config': self.inference_config,
 
+            # Lightning-specific fields
+            'channel_order': self.channel_order,
+            'patch_len': self.patch_len,
+            'mu': self.mu,
+            'sigma': self.sigma,
+
             # Validation
             'required_packages': self.required_packages,
             'validation_hash': self.validation_hash
@@ -274,6 +286,11 @@ class ModelMetadata:
         if not hasattr(metadata, 'model_path') or not metadata.model_path:
             if model_path:
                 metadata.model_path = model_path
+
+        # Custom fields that may not exist on older metadata versions
+        for key in ('channel_order', 'patch_len', 'mu', 'sigma'):
+            if key in data:
+                setattr(metadata, key, data[key])
 
         return metadata
 

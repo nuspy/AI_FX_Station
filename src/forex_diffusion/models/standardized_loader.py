@@ -10,6 +10,7 @@ Consolidates all model loading logic and provides consistent interface for:
 from __future__ import annotations
 
 import os
+import json
 import pickle
 import joblib
 from typing import Dict, Any, Optional, Tuple, Union
@@ -126,6 +127,28 @@ class StandardizedModelLoader:
             # Extract and validate metadata
             metadata = self._extract_metadata(model_data, model_path)
 
+            model_obj = model_data.get('model') if isinstance(model_data, dict) else None
+            if metadata and model_obj is not None and model_obj.__class__.__name__ == 'LightningMultiHorizonPredictor':
+                channel_order = getattr(metadata, 'channel_order', None)
+                if channel_order:
+                    setattr(model_obj, 'channel_order', channel_order)
+                    setattr(model_obj, 'in_channels', len(channel_order))
+                elif hasattr(model_obj, 'metadata') and isinstance(model_obj.metadata, dict):
+                    order_cached = model_obj.metadata.get('channel_order')
+                    if order_cached:
+                        setattr(model_obj, 'channel_order', order_cached)
+                        setattr(model_obj, 'in_channels', len(order_cached))
+
+                patch_len_meta = getattr(metadata, 'patch_len', None)
+                if patch_len_meta:
+                    setattr(model_obj, 'patch_len', patch_len_meta)
+
+                mu_meta = getattr(metadata, 'mu', None)
+                sigma_meta = getattr(metadata, 'sigma', None)
+                if mu_meta and sigma_meta:
+                    setattr(model_obj, 'channel_mu', mu_meta)
+                    setattr(model_obj, 'channel_sigma', sigma_meta)
+
             # Validate model compatibility
             validation_result = self._validate_model(model_data, metadata)
 
@@ -170,13 +193,67 @@ class StandardizedModelLoader:
                 
                 try:
                     from ..inference.lightning_predictor import LightningMultiHorizonPredictor
-                    
+
+                    # Load sidecar metadata before instantiating predictor
+                    sidecar_data = None
+                    sidecar_path = model_path.with_suffix(model_path.suffix + ".meta.json") if model_path.suffix else Path(str(model_path) + ".meta.json")
+
+                    if sidecar_path.exists():
+                        try:
+                            with open(sidecar_path, 'r', encoding='utf-8') as f:
+                                sidecar_data = json.load(f)
+                        except Exception as meta_err:
+                            logger.warning(f"Failed to load Lightning sidecar metadata: {meta_err}")
+                    else:
+                        candidate = None
+                        if model_path.is_file():
+                            stem = model_path.stem
+
+                            # Handle Lightning naming quirk where '=' creates directories (e.g., epoch=03-val\loss=1.75)
+                            if '=' in stem:
+                                parts = stem.split('=')
+                                base_dir = model_path.parent
+                                candidate_path = base_dir
+                                for part in parts[:-1]:
+                                    candidate_path = candidate_path / part
+                                candidate_path = candidate_path / (parts[-1] + model_path.suffix + ".meta.json")
+                                if candidate_path.exists():
+                                    candidate = candidate_path
+
+                            if candidate is None:
+                                # Fallback: search for .meta.json in subdirectories
+                                pattern = '*.meta.json'
+                                for path in model_path.parent.rglob(pattern):
+                                    if path.is_file() and path.name.endswith(model_path.name + '.meta.json'):
+                                        candidate = path
+                                        break
+
+                        if candidate:
+                            logger.warning(
+                                "Metadata for %s found at %s due to checkpoint naming; consider renaming the file.",
+                                model_path.name,
+                                candidate
+                            )
+                            try:
+                                with open(candidate, 'r', encoding='utf-8') as f:
+                                    sidecar_data = json.load(f)
+                            except Exception as meta_err:
+                                logger.warning(f"Failed to load Lightning sidecar metadata from recovery path: {meta_err}")
+
+                    if sidecar_data is None:
+                        logger.warning(
+                            "No metadata found for Lightning checkpoint: %s."
+                            " Please ensure the corresponding .meta.json is exported.",
+                            model_path
+                        )
+
                     # Create predictor instance (loads the model)
                     predictor = LightningMultiHorizonPredictor(
                         checkpoint_path=str(model_path),
-                        device='cpu'  # Will be moved to GPU if needed
+                        device='cpu',  # Will be moved to GPU if needed
+                        metadata=sidecar_data
                     )
-                    
+
                     # Return wrapped in standard format
                     return {
                         'model': predictor,  # The predictor has a predict() method!
