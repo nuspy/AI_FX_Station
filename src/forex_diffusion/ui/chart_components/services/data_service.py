@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import time
 from loguru import logger
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem, QListWidgetItem
 
 from .base import ChartServiceBase
@@ -55,7 +55,7 @@ class DataService(ChartServiceBase):
                             "close": float(last_row["close"]),
                             "volume": float(last_row.get("volume", 0))
                         })
-                        logger.debug(f"Persisted {timeframe} candle for {symbol} at {ts_utc}")
+                        # logger.debug(f"Persisted {timeframe} candle for {symbol} at {ts_utc}")
         except Exception as e:
             logger.error(f"Failed to persist candle: {e}")
     
@@ -804,7 +804,7 @@ class DataService(ChartServiceBase):
             
             logger.info(f"Updating plot with {len(df)} candles for {timeframe}")
             self.update_plot(df)
-            logger.info(f"Plot updated successfully")
+            logger.info("Plot updated successfully")
             
             # Start backfill in background
             try:
@@ -1028,7 +1028,7 @@ class DataService(ChartServiceBase):
                             except Exception:
                                 pass
                         self.svc.backfill_symbol_timeframe(self.symbol, tf, force_full=False, progress_cb=_cb, start_ms_override=self.start_override)
-                except Exception as e:
+                except Exception:
                     ok = False
                 finally:
                     # restore REST flag and emit completion
@@ -1257,7 +1257,7 @@ class DataService(ChartServiceBase):
         """
         try:
             if not hasattr(self, 'market_watch') or self.market_watch is None:
-                logger.warning(f"⚠️ Market watch widget not available")
+                logger.warning("⚠️ Market watch widget not available")
                 return
 
             if bid is None or ask is None:
@@ -1586,9 +1586,9 @@ class DataService(ChartServiceBase):
                     'buffer_threshold': 0.2,  # Load when within 20% of edge
                     'buffer_size': 200  # Load 200 candles at a time
                 }
-                logger.info("✅ Smart buffer initialized and connected to view range changes")
-            else:
-                logger.debug("Smart buffer reconnected (state preserved)")
+                #logger.info("✅ Smart buffer initialized and connected to view range changes")
+            # else:
+            #    logger.debug("Smart buffer reconnected (state preserved)")
             
         except Exception as e:
             logger.error(f"Failed to setup smart buffer: {e}")
@@ -1616,7 +1616,7 @@ class DataService(ChartServiceBase):
             import time
             current_time = time.time()
             if self._smart_buffer_state['loading']:
-                logger.debug("Smart buffer: already loading, skipping")
+                # PlutoTouch logger.debug("Smart buffer: already loading, skipping")
                 return  # Already loading
             
             last_load = self._smart_buffer_state['last_load_time']

@@ -11,7 +11,6 @@ import warnings
 from typing import Any, Dict, List
 
 import pandas as pd
-import numpy as np
 
 
 def ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:

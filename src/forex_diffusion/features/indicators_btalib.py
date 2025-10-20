@@ -6,9 +6,8 @@ Replaces custom implementations with professional-grade indicators
 from __future__ import annotations
 
 import pandas as pd
-import numpy as np
 import btalib
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 

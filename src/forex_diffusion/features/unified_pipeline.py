@@ -18,7 +18,7 @@ from .pipeline import (
     log_returns, rolling_std, bollinger, macd, rsi_wilder,
     donchian, hurst_feature, time_cyclic_and_session, Standardizer
 )
-from .indicators import ema, sma
+from .indicators import ema
 from .consolidated_indicators import atr
 
 

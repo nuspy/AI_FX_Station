@@ -9,14 +9,15 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import time
-from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
-import pandas as pd
+from typing import Any, Dict, List, Optional
+
 import numpy as np
+import pandas as pd
 from loguru import logger
 
-from ..models.standardized_loader import get_model_loader
 from ..models.model_path_resolver import ModelPathResolver
+from ..models.standardized_loader import get_model_loader
 from ..utils.horizon_converter import convert_horizons_for_inference
 
 # Import DeviceManager for GPU support
@@ -245,6 +246,13 @@ class ModelExecutor:
                         else:
                             candles_patch = candles_df.iloc[-patch_len:]
                         
+                        last_close_value = None
+                        if 'close' in candles_patch.columns:
+                            try:
+                                last_close_value = float(candles_patch['close'].astype(float).iloc[-1])
+                            except Exception:
+                                last_close_value = None
+
                         # Build patch tensor (C, L) - match model's expected channels/order
                         channel_order = getattr(model, 'channel_order', None)
                         if not channel_order:
@@ -316,54 +324,32 @@ class ModelExecutor:
                         )
                         
                         # Convert dict to predictions array
+                        raw_pred_dict = None
                         if pred_dict and isinstance(pred_dict, dict):
-                            predictions_dict = pred_dict
-                            predictions = np.array(list(pred_dict.values()))
-                            logger.debug(f"Lightning prediction: {len(pred_dict)} horizons")
+                            raw_pred_dict = {h: float(v) for h, v in pred_dict.items()}
+                            if last_close_value is None or last_close_value == 0.0 or np.isnan(last_close_value):
+                                logger.warning("Lightning predictor missing valid last_close reference; using absolute outputs")
+                                predictions_dict = raw_pred_dict
+                            else:
+                                predictions_dict = {
+                                    h: (float(v) - last_close_value) / last_close_value for h, v in pred_dict.items()
+                                }
+                            predictions = np.array([predictions_dict[h] for h in sorted(predictions_dict.keys())])
+                            logger.debug(
+                                "[Lightning] %s raw=%s returns=%s last_close=%.6f",
+                                Path(self.model_path).name,
+                                raw_pred_dict,
+                                predictions_dict,
+                                last_close_value if last_close_value is not None else float('nan')
+                            )
                         
                     except Exception as e:
                         logger.error(f"Lightning predict failed: {e}")
                         import traceback
                         logger.debug(traceback.format_exc())
-
-                        # Retry once with torch.compile disabled
-                    retry_enabled = self.model_data.get('metadata') and getattr(self.model_data['metadata'], 'model_type', '') == 'lightning'
-                    try:
-                        import torch
-                        prev = torch._dynamo.config.suppress_errors
-                        torch._dynamo.config.suppress_errors = True
-                        torch._dynamo.reset()
-
-                        def _run_eager(fn):
-                            try:
-                                return torch._dynamo.optimize("eager")(fn)(
-                                    patch_tensor,
-                                    num_samples=50,
-                                    return_dict=True,
-                                    return_distribution=False
-                                )
-                            except Exception:
-                                torch._dynamo.config.suppress_errors = prev
-                                return torch._dynamo.disable(fn)(
-                                    patch_tensor,
-                                    num_samples=50,
-                                    return_dict=True,
-                                    return_distribution=False
-                                )
-
-                        pred_dict = _run_eager(model.predict)
-                        torch._dynamo.config.suppress_errors = prev
-
-                        if pred_dict and isinstance(pred_dict, dict):
-                            predictions_dict = pred_dict
-                            predictions = np.array(list(pred_dict.values()))
-                            logger.debug("Lightning prediction succeeded after suppressing torch.compile")
-                    except Exception as e2:
-                        if retry_enabled:
-                            logger.error(f"Lightning predict retry failed: {e2}")
-                            import traceback as tb2
-                            logger.debug(tb2.format_exc())
                         predictions = None
+                        predictions_dict = None
+
                 
                 # Standard sklearn/pytorch predict
                 elif hasattr(model, "predict"):
@@ -404,6 +390,8 @@ class ModelExecutor:
                 'model_name': Path(self.model_path).stem,
                 'predictions': predictions,
                 'predictions_dict': predictions_dict,  # Multi-horizon predictions {horizon: value}
+                'predictions_absolute': raw_pred_dict,
+                'last_close': last_close_value,
                 'horizons': model_horizons,  # Trained horizons
                 'is_multi_horizon': is_multi_horizon,
                 'features_used': available_features if features_list else list(range(X.shape[1])),

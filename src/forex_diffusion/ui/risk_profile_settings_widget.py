@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QLineEdit, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QBrush, QColor
 from loguru import logger
 
 

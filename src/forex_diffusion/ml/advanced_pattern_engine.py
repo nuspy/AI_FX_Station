@@ -6,10 +6,9 @@ Combines multiple ML models for comprehensive pattern analysis and prediction
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional, Any
-from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Any
+from datetime import datetime
 import logging
-import json
 
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -629,7 +628,7 @@ def test_advanced_pattern_engine():
 
     # Engine status
     status = engine.get_engine_status()
-    print(f"\nEngine Status:")
+    print("\nEngine Status:")
     print(f"  Models trained: {status['is_trained']}")
     print(f"  Predictions made: {status['predictions_made']}")
     print(f"  ML available: {status['ml_available']}")

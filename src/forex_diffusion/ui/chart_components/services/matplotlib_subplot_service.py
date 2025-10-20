@@ -6,7 +6,6 @@ Manages two separate subplots: one for normalized (0-1) indicators, one for pric
 from __future__ import annotations
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes

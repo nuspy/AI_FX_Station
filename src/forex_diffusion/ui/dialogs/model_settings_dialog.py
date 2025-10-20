@@ -6,9 +6,8 @@ Shows model metadata and prompts user to auto-apply inference settings.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QGroupBox, QMessageBox
+    QTextEdit, QGroupBox
 )
-from PySide6.QtCore import Qt
 from typing import Dict, Any
 
 
@@ -114,7 +113,7 @@ class ModelSettingsDialog(QDialog):
         lines.append(f"  - Multi-horizon: {'Yes' if len(horizons) > 1 else 'No'}")
         
         if len(horizons) > 1:
-            lines.append(f"\n  Horizon Details:")
+            lines.append("\n  Horizon Details:")
             tf = self.metadata.get('timeframe', '1m')
             for h in horizons:
                 time_str = self._bars_to_time(h, tf)
@@ -136,7 +135,7 @@ class ModelSettingsDialog(QDialog):
         lines.append(f"Horizons: {horizon_str}")
         
         if self.metadata.get('model_type') == 'lightning':
-            lines.append(f"Samples: 50 (recommended for diffusion models)")
+            lines.append("Samples: 50 (recommended for diffusion models)")
         
         lines.append("")
         lines.append("⚠️ Using different settings may reduce accuracy or fail.")

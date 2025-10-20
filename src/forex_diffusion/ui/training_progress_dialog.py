@@ -11,16 +11,16 @@ Provides live visualization of training progress including:
 from __future__ import annotations
 
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 from collections import deque
 from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QProgressBar, QTextEdit, QTabWidget, QWidget,
-    QTableWidget, QTableWidgetItem, QGridLayout, QSplitter
+    QTableWidget, QTableWidgetItem, QGridLayout
 )
-from PySide6.QtCore import Qt, Signal, QTimer, Slot
+from PySide6.QtCore import Signal, QTimer, Slot
 from PySide6.QtGui import QFont
 from loguru import logger
 

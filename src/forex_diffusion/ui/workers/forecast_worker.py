@@ -20,20 +20,11 @@ import numpy as np
 from PySide6.QtCore import QRunnable
 from loguru import logger
 
-import pickle
-import hashlib
 
 from ...services.marketdata import MarketDataService
 from ...inference.parallel_inference import get_parallel_engine
 from ...utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
 
-from ...utils.horizon_converter import (
-    convert_horizons_for_inference,
-    create_future_timestamps,
-    convert_single_to_multi_horizon,
-    get_trading_scenarios
-)
-from ...services.performance_registry import get_performance_registry
 
 # Ensure features helper
 _ensure_features_for_prediction: Optional[Callable] = None
@@ -415,7 +406,7 @@ class ForecastWorker(QRunnable):
                 return df
 
             # For historical point (end_ts specified), use custom query
-            from sqlalchemy import MetaData, select, text
+            from sqlalchemy import MetaData, text
             meta = MetaData()
             meta.reflect(bind=engine, only=["market_data_candles"])
             tbl = meta.tables.get("market_data_candles")
@@ -839,7 +830,10 @@ class ForecastWorker(QRunnable):
             # Extract ensemble predictions
             ensemble_preds = parallel_results.get("ensemble_predictions")
             if ensemble_preds is None:
-                raise RuntimeError("Parallel inference failed to produce ensemble predictions")
+                individual_results = parallel_results.get("individual_results", [])
+                errors = [r.get("error") or r.get("exception") for r in individual_results if r.get("error") or r.get("exception")]
+                error_msg = ", ".join(errors) if errors else parallel_results.get("error", "Unknown parallel inference failure")
+                raise RuntimeError(f"Parallel inference failed to produce ensemble predictions: {error_msg}")
 
             # Get individual results for separate forecasts
             individual_results = parallel_results.get("individual_results", [])
@@ -848,6 +842,14 @@ class ForecastWorker(QRunnable):
             last_close = float(df_candles["close"].iat[-1])
             mean_returns = np.array(ensemble_preds["mean"])
             std_returns = np.array(ensemble_preds["std"])
+
+            # Log diagnostics for scaling
+            logger.debug(
+                "Ensemble returns summary: last_close=%.6f, mean=%s, std=%s",
+                last_close,
+                np.array2string(mean_returns, precision=6, suppress_small=True),
+                np.array2string(std_returns, precision=6, suppress_small=True)
+            )
 
             # === ENHANCED MULTI-HORIZON SYSTEM (Ripristinato) ===
             use_enhanced_scaling = self.payload.get("use_enhanced_scaling", True)

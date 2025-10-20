@@ -1,13 +1,12 @@
 # src/forex_diffusion/utils/event_bus.py
 from __future__ import annotations
+from typing import Any, Callable, Dict, List
+import threading
+from loguru import logger
 
 """
 Thread-safe, in-process event bus using a direct callback model.
 """
-
-from typing import Any, Callable, Dict, List
-import threading
-from loguru import logger
 
 _registry: Dict[str, List[Callable[[Any], None]]] = {}
 _registry_lock = threading.RLock()

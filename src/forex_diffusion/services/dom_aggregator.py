@@ -12,9 +12,7 @@ Refactored to use ThreadedBackgroundService base class.
 from __future__ import annotations
 
 from typing import List, Dict, Optional
-from datetime import datetime, timezone
 
-import pandas as pd
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.engine import Engine

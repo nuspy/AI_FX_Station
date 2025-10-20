@@ -586,7 +586,7 @@ def main():
 
     args = ap.parse_args()
 
-    print(f"🚀 Starting enhanced training with bta-lib indicators...")
+    print("🚀 Starting enhanced training with bta-lib indicators...")
     print(
         f"Symbol: {args.symbol}, Timeframe: {args.timeframe}, Horizon: {args.horizon}"
     )
@@ -609,7 +609,7 @@ def main():
 
     # Print indicators summary
     summary = trainer.get_indicators_summary()
-    print(f"📈 Indicators Summary:")
+    print("📈 Indicators Summary:")
     print(f"   Total available: {summary.get('total_indicators', 0)}")
     print(f"   Enabled: {summary.get('enabled_indicators', 0)}")
     print(f"   Available data: {trainer.available_data}")
@@ -620,13 +620,13 @@ def main():
     print(f"✅ Loaded {len(candles)} candles")
 
     # Build features
-    print(f"🔧 Building features with enhanced indicators...")
+    print("🔧 Building features with enhanced indicators...")
     X, y, meta = trainer.build_features(candles, args)
     print(f"✅ Created {X.shape[1]} features from {len(candles)} candles")
     print(f"   Final dataset: {len(X)} samples")
 
     # Standardize and split (PROC-001: 60/20/20 train/val/test split)
-    print(f"📊 Splitting and standardizing data (60% train / 20% val / 20% test)...")
+    print("📊 Splitting and standardizing data (60% train / 20% val / 20% test)...")
     test_frac = getattr(args, "test_frac", 0.2)  # Default 20% test
     (Xtr, ytr), (Xva, yva), (Xte, yte), (mu, sigma, scaler_metadata) = (
         _standardize_train_val_test(X, y, val_frac=args.val_frac, test_frac=test_frac)
@@ -673,7 +673,7 @@ def main():
     yte_pred = model.predict(Xte)
     mae_te = mean_absolute_error(yte, yte_pred)
 
-    print(f"📊 Training Results:")
+    print("📊 Training Results:")
     print(f"   Training MAE: {mae_tr:.6f}")
     print(f"   Validation MAE: {mae_va:.6f} (for model selection)")
     print(f"   Test MAE: {mae_te:.6f} (final evaluation)")
@@ -720,7 +720,7 @@ def main():
         json.dump(meta, f, indent=2, default=str)
     print(f"✅ Enhanced metadata saved to {meta_path}")
 
-    print(f"🎉 Training completed successfully!")
+    print("🎉 Training completed successfully!")
     print(f"   Enhanced with {summary.get('enabled_indicators', 0)} bta-lib indicators")
     print(f"   Validation performance: {mae_va:.6f} MAE")
     print(f"   Test performance: {mae_te:.6f} MAE (final evaluation)")

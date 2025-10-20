@@ -192,28 +192,8 @@ class VAE(nn.Module):
         - CUDA not available
         - Compilation fails
         """
-        if not torch.cuda.is_available():
-            return
-
-        try:
-            # Check if torch.compile is available (PyTorch 2.0+)
-            if hasattr(torch, 'compile'):
-                # Compile encoder and decoder separately for better flexibility
-                # mode="reduce-overhead": balanced between compile time and runtime speedup
-                self.encoder = torch.compile(self.encoder, mode="reduce-overhead")
-                self.decoder = torch.compile(self.decoder, mode="reduce-overhead")
-
-                # Note: Don't compile fc_mu, fc_logvar, fc_dec (small linear layers, not worth it)
-
-                from loguru import logger
-                logger.info(
-                    "VAE encoder/decoder compiled with torch.compile "
-                    "(expected 20-40% speedup on GPU)"
-                )
-        except Exception as e:
-            # Compilation failed, continue with standard execution
-            from loguru import logger
-            logger.warning(f"torch.compile failed for VAE, using standard execution: {e}")
+        from loguru import logger
+        logger.info("torch.compile disabled; VAE runs in eager mode")
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """

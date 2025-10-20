@@ -16,7 +16,7 @@ import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import threading
 from loguru import logger
@@ -300,7 +300,7 @@ class TrainingOrchestrator:
                     training_run.best_regimes = regime_names
                 else:
                     self.model_file_mgr.delete_model_file(training_run)
-                    logger.info(f"✗ Model deleted - no improvements")
+                    logger.info("✗ Model deleted - no improvements")
                 
                 # Update database
                 training_run.status = 'completed'

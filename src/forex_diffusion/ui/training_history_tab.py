@@ -6,8 +6,7 @@ Provides interface for searching, filtering, and viewing historical training run
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
-    QComboBox, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QMessageBox, QSpinBox
+    QComboBox, QTableWidget, QTableWidgetItem, QAbstractItemView, QMessageBox, QSpinBox
 )
 from PySide6.QtCore import Qt
 from typing import Optional, List, Dict, Any
@@ -400,11 +399,11 @@ class TrainingHistoryTab(QWidget):
             f"Are you sure you want to delete {len(selected_ids)} training run(s)?\n\n"
             f"Runs to delete:\n" + "\n".join(f"- {name}" for name in selected_names[:5]) +
             (f"\n... and {len(selected_names) - 5} more" if len(selected_names) > 5 else "") + "\n\n"
-            f"This will delete:\n"
-            f"- Training run records\n"
-            f"- Associated inference backtests\n"
-            f"- Model files (if kept)\n\n"
-            f"This action cannot be undone.",
+            "This will delete:\n"
+            "- Training run records\n"
+            "- Associated inference backtests\n"
+            "- Model files (if kept)\n\n"
+            "This action cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 

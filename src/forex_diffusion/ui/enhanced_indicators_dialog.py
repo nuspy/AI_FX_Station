@@ -5,26 +5,23 @@ Supports 200+ indicators with advanced categorization, scrollable interface, and
 from __future__ import annotations
 
 import json
-from typing import Dict, Any, Optional, List, Set
-from pathlib import Path
+from typing import Dict, List
 
 from loguru import logger
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QCheckBox, QLabel, QSpinBox, QDoubleSpinBox, QPushButton, QWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
+    QLabel, QPushButton, QWidget,
     QComboBox, QLineEdit, QMessageBox, QColorDialog, QScrollArea,
-    QTabWidget, QTreeWidget, QTreeWidgetItem, QSplitter, QFrame,
-    QSlider, QSpacerItem, QSizePolicy, QGridLayout, QProgressBar,
-    QTextEdit, QHeaderView
+    QTreeWidget, QTreeWidgetItem, QSplitter, QTextEdit
 )
-from PySide6.QtGui import QColor, QFont, QIcon
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import Qt, Signal
 
 from ..features.indicators_talib import (
-    TALibIndicators as BTALibIndicators, IndicatorConfig, IndicatorCategories, DataRequirement
+    TALibIndicators as BTALibIndicators, IndicatorConfig, IndicatorCategories
 )
 from ..features.indicator_ranges import (
-    IndicatorRangeClassifier, IndicatorRange, indicator_range_classifier
+    indicator_range_classifier
 )
 
 # Persistenza settings

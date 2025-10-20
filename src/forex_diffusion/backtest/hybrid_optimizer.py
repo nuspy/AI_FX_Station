@@ -8,7 +8,7 @@ Strategy:
 """
 from __future__ import annotations
 
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -16,8 +16,8 @@ from loguru import logger
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 
-from .genetic_optimizer import ParameterSpace, GeneticOptimizer, create_parameter_space_from_ranges
-from .kernc_integration import run_backtest, optimize_strategy, BACKTESTING_AVAILABLE
+from .genetic_optimizer import ParameterSpace, GeneticOptimizer
+from .kernc_integration import run_backtest, BACKTESTING_AVAILABLE
 
 
 @dataclass

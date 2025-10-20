@@ -1,6 +1,6 @@
 """Pattern Parameter Integrator - Load from DB"""
 from __future__ import annotations
-from typing import Dict, Optional
+from typing import Dict
 from loguru import logger
 
 class PatternIntegrator:

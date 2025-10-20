@@ -7,7 +7,7 @@ Part of PROC-002 implementation.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import List, Optional, Tuple, Literal
+from typing import List, Optional, Literal
 from dataclasses import dataclass
 from loguru import logger
 

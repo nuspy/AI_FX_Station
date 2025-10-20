@@ -15,7 +15,6 @@ import torch
 from loguru import logger
 
 from ..postproc.conformal import SplitConformalPredictor, evaluate_coverage
-from ..backtest.engine import BacktestEngine
 
 
 @dataclass

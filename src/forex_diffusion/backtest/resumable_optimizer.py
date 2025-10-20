@@ -21,7 +21,7 @@ from loguru import logger
 
 from .genetic_optimizer import GeneticOptimizer, ParameterSpace
 from .kernc_integration import run_backtest
-from ..training.checkpoint_manager import CheckpointManager, resume_or_create_workflow
+from ..training.checkpoint_manager import resume_or_create_workflow
 from ..validation.multi_horizon import MultiHorizonValidator
 
 

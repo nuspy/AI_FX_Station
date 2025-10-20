@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import time
-import math
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict
 
@@ -316,7 +315,7 @@ class MarketDataService:
                         self.provider_name = "Tiingo"
                         self.fallback_occurred = True
                         self.fallback_reason = f"Primary provider '{primary_provider}' failed: {str(e)}"
-                        logger.info(f"Successfully initialized fallback provider: Tiingo")
+                        logger.info("Successfully initialized fallback provider: Tiingo")
                     elif fallback_provider == "ctrader":
                         from .ctrader_client import CTraderClient
                         client = CTraderClient()
@@ -325,13 +324,13 @@ class MarketDataService:
                         self.provider_name = "cTrader"
                         self.fallback_occurred = True
                         self.fallback_reason = f"Primary provider '{primary_provider}' failed: {str(e)}"
-                        logger.info(f"Successfully initialized fallback provider: cTrader")
+                        logger.info("Successfully initialized fallback provider: cTrader")
                     else:
                         raise ValueError(f"Unsupported fallback provider: {fallback_provider}")
                 except Exception as fallback_error:
                     logger.error(f"Fallback provider '{fallback_provider}' also failed: {fallback_error}")
                     self.fallback_occurred = True
-                    self.fallback_reason = f"Both primary and fallback providers failed"
+                    self.fallback_reason = "Both primary and fallback providers failed"
                     raise
             else:
                 # No fallback configured or same as primary

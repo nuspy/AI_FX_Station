@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
     QComboBox, QSpinBox, QCheckBox, QTableWidget, QTableWidgetItem,
     QProgressBar, QTextEdit, QSplitter, QListWidget, QMessageBox,
-    QHeaderView, QAbstractItemView
+    QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal
 from typing import Optional, Dict, Any, List

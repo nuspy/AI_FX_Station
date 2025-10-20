@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -8,7 +8,7 @@ from loguru import logger
 
 from ..backtest.schemas import BacktestConfigPayload
 from ..backtest.horizons import parse_horizons
-from ..backtest.worker import Worker, TrialConfig
+from ..backtest.worker import TrialConfig
 from ..backtest.db import BacktestDB
 from ..backtest.queue import BacktestQueue
 from ..ui.prediction_settings_dialog import PredictionSettingsDialog

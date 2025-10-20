@@ -4,7 +4,6 @@ Event Handlers Mixin for ChartTab - handles all event-related methods.
 from __future__ import annotations
 
 import time
-from typing import Optional, Dict
 import numpy as np
 import pandas as pd
 # import matplotlib.dates as mdates  # matplotlib removed
@@ -259,7 +258,7 @@ class EventHandlersMixin:
             logger.info(f"Delegating timeframe change to chart_controller.data_service: {value}")
             try:
                 chart_controller.data_service._on_timeframe_changed(value)
-                logger.info(f"Timeframe change delegated successfully")
+                logger.info("Timeframe change delegated successfully")
             except Exception as e:
                 logger.error(f"Error in data_service timeframe change: {e}", exc_info=True)
         else:

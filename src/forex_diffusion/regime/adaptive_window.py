@@ -11,7 +11,7 @@ Reference: "Adaptive Filtering" by Haykin (2002)
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd

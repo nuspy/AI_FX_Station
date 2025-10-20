@@ -3,7 +3,7 @@ Overlay Manager Mixin for ChartTab - handles overlay and drawing functionality.
 """
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 import pandas as pd
 import numpy as np
 # import matplotlib.dates as mdates  # matplotlib removed

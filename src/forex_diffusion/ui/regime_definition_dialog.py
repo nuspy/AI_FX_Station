@@ -7,7 +7,7 @@ Allows users to create, edit, and delete regime definitions via GUI.
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QMessageBox, QLineEdit,
-    QTextEdit, QCheckBox, QHeaderView, QAbstractItemView,
+    QTextEdit, QCheckBox, QAbstractItemView,
     QGroupBox, QFormLayout
 )
 from PySide6.QtCore import Qt

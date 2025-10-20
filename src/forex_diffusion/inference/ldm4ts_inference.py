@@ -133,9 +133,8 @@ class LDM4TSInferenceService:
             
             self.model.eval()
             
-            if compile_model and hasattr(torch, 'compile'):
-                self.model = torch.compile(self.model)
-                logger.info("Model compiled with torch.compile")
+            if compile_model:
+                logger.info("torch.compile disabled on this platform; using eager execution")
             
             self._initialized = True
             

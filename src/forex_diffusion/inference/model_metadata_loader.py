@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import json
 from loguru import logger
 
-from ..utils.horizon_parser import get_model_horizons_from_metadata, parse_horizon_spec
+from ..utils.horizon_parser import get_model_horizons_from_metadata
 
 
 class ModelMetadataLoader:

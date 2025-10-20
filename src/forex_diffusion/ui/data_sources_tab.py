@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox
 )
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 from loguru import logger
 

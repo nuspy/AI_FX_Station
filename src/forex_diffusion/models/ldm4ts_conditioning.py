@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import numpy as np
-from typing import Optional
 from loguru import logger
 
 try:

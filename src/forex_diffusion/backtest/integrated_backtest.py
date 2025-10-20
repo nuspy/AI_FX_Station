@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from loguru import logger
 import json
@@ -753,18 +753,18 @@ class IntegratedBacktester:
         logger.info("BACKTEST RESULTS")
         logger.info("=" * 80)
 
-        logger.info(f"\n💰 CAPITAL:")
+        logger.info("\n💰 CAPITAL:")
         logger.info(f"  Initial: ${result.initial_capital:,.2f}")
         logger.info(f"  Final: ${result.final_capital:,.2f}")
         logger.info(f"  Return: ${result.total_return:,.2f} ({result.total_return_pct:+.2f}%)")
 
-        logger.info(f"\n📊 TRADES:")
+        logger.info("\n📊 TRADES:")
         logger.info(f"  Total: {result.total_trades}")
         logger.info(f"  Wins: {result.winning_trades} ({result.win_rate:.2%})")
         logger.info(f"  Losses: {result.losing_trades}")
         logger.info(f"  Avg holding time: {result.avg_holding_time_hours:.1f} hours")
 
-        logger.info(f"\n📈 PERFORMANCE:")
+        logger.info("\n📈 PERFORMANCE:")
         logger.info(f"  Sharpe Ratio: {result.sharpe_ratio:.2f}")
         logger.info(f"  Sortino Ratio: {result.sortino_ratio:.2f}")
         logger.info(f"  Profit Factor: {result.profit_factor:.2f}")
@@ -772,16 +772,16 @@ class IntegratedBacktester:
         logger.info(f"  Avg Win: ${result.avg_win:.2f}")
         logger.info(f"  Avg Loss: ${result.avg_loss:.2f}")
 
-        logger.info(f"\n⚠️ RISK:")
+        logger.info("\n⚠️ RISK:")
         logger.info(f"  Max Drawdown: ${result.max_drawdown:,.2f} ({result.max_drawdown_pct:.2f}%)")
         logger.info(f"  Calmar Ratio: {result.calmar_ratio:.2f}")
 
-        logger.info(f"\n💵 COSTS:")
+        logger.info("\n💵 COSTS:")
         logger.info(f"  Total: ${result.total_costs:,.2f}")
         logger.info(f"  Avg per trade: ${result.avg_cost_per_trade:.2f}")
 
         if result.regime_performance:
-            logger.info(f"\n🔄 REGIME PERFORMANCE:")
+            logger.info("\n🔄 REGIME PERFORMANCE:")
             for regime, perf in result.regime_performance.items():
                 logger.info(f"  {regime}:")
                 logger.info(f"    Trades: {perf['trades']}")

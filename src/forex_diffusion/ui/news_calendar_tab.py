@@ -5,8 +5,7 @@ Displays news events and economic calendar from providers.
 """
 from __future__ import annotations
 
-from typing import List, Dict, Optional
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (

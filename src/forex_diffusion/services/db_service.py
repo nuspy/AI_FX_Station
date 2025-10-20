@@ -3,13 +3,12 @@ DBService: simple persistence helpers for various data models.
 """
 from __future__ import annotations
 
-import json
 import time
 from typing import Any, Dict
 
 from loguru import logger
 from sqlalchemy import (
-    Column, Float, Integer, MetaData, String, Table, Text, UniqueConstraint, create_engine
+    Column, Float, Integer, MetaData, String, Table, UniqueConstraint, create_engine
 )
 from sqlalchemy.engine import Engine
 

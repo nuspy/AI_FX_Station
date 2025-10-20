@@ -3,21 +3,17 @@ UI Builder Mixin for ChartTab - handles all UI construction methods.
 """
 from __future__ import annotations
 
-from typing import Optional, List
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout,
     QSplitter, QListWidget, QTableWidget, QComboBox,
-    QToolButton, QCheckBox, QProgressBar, QScrollArea, QGroupBox,
-    QTabWidget, QSpinBox, QDoubleSpinBox, QTextEdit, QFormLayout, QGridLayout,
-    QSlider, QFrame, QButtonGroup, QRadioButton, QDateEdit
+    QToolButton, QCheckBox, QProgressBar, QTabWidget
 )
-from PySide6.QtCore import QTimer, Qt, QDate
+from PySide6.QtCore import QTimer, Qt
 from loguru import logger
 
 from ...utils.user_settings import get_setting, set_setting
 
 # Import finplot (required)
-import finplot as fplt
 from datetime import datetime
 import pyqtgraph as pg
 
@@ -210,7 +206,6 @@ class UIBuilderMixin:
         
         # Save/restore splitter state
         self.left_splitter = left_splitter
-        from ...utils.user_settings import get_setting, set_setting
         saved_state = get_setting('chart.left_splitter_state')
         if saved_state:
             try:
@@ -243,7 +238,7 @@ class UIBuilderMixin:
         chart_container_layout.setContentsMargins(0,0,0,0)
 
         # Use PyQtGraph PlotWidget directly for embedding
-        from pyqtgraph import PlotWidget, GraphicsLayoutWidget
+        from pyqtgraph import GraphicsLayoutWidget
         self.graphics_layout = GraphicsLayoutWidget()
         self.canvas = self.graphics_layout  # Keep canvas reference
         self.use_finplot = True  # Flag to use PyQtGraph-based plotting

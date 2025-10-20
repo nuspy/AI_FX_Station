@@ -6,14 +6,12 @@ Monitors systemic risk and provides portfolio correlation safety scores.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from scipy import stats
-import json
 
 
 class CorrelationSignalType(Enum):

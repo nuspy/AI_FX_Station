@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
-from sqlalchemy import JSON, Boolean, Column, Float, Integer, MetaData, String, Table, Text, create_engine
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.engine import Engine
 
 from ..utils.config import get_config

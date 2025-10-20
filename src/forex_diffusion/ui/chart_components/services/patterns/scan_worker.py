@@ -2,7 +2,7 @@
 # Worker for running pattern scans with dynamic interval adjustment
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, List
+from typing import TYPE_CHECKING, Optional
 from PySide6.QtCore import QObject, Signal, Slot, QTimer
 from loguru import logger
 

@@ -11,12 +11,10 @@ Reference: ICT (Inner Circle Trader) concepts + institutional order flow analysi
 """
 from __future__ import annotations
 
-from typing import Tuple, List, Optional, Dict
+from typing import Tuple, Dict
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
-from scipy.stats import zscore
-from loguru import logger
 
 
 @dataclass

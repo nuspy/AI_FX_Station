@@ -10,7 +10,7 @@ Supports:
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 import numpy as np
 from loguru import logger
 

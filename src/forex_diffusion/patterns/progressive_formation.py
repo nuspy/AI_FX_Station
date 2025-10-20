@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from loguru import logger
 
-from ..cache import cache_decorator, get_pattern_cache
+from ..cache import get_pattern_cache
 
 
 class FormationStage(Enum):

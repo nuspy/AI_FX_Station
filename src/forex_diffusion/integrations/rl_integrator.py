@@ -1,6 +1,6 @@
 """RL Actor-Critic Integrator"""
 from __future__ import annotations
-from typing import Dict, Optional
+from typing import Dict
 import numpy as np
 from loguru import logger
 

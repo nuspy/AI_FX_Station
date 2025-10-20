@@ -7,10 +7,10 @@ correlation breakdown alerts, and divergence opportunity detection.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QGroupBox, QPushButton, QComboBox, QSpinBox, QCheckBox
+    QLabel, QGroupBox, QPushButton, QSpinBox, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal as QtSignal, QTimer
-from PySide6.QtGui import QColor, QBrush, QFont
+from PySide6.QtGui import QColor, QBrush
 from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 

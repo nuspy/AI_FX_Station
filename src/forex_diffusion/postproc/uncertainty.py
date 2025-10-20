@@ -13,7 +13,7 @@ Provides:
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Dict, Iterable, Optional, Union
 
 import numpy as np
 from scipy import stats

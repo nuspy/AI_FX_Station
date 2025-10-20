@@ -5,10 +5,9 @@ Comprehensive benchmarking system for pattern detection accuracy and performance
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Union, Set
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from pathlib import Path
 import logging
 from enum import Enum
@@ -18,12 +17,7 @@ from collections import defaultdict
 from abc import ABC, abstractmethod
 
 # Statistical imports
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, classification_report, roc_auc_score
-)
 from scipy import stats
-from scipy.stats import chi2_contingency
 
 logger = logging.getLogger(__name__)
 

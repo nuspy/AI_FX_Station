@@ -6,7 +6,7 @@ Optionally saves token into user settings.
 from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QMessageBox, QCheckBox
-from ..utils.user_settings import set_setting, get_setting
+from ..utils.user_settings import get_setting
 
 class AdminLoginDialog(QDialog):
     def __init__(self, parent=None):

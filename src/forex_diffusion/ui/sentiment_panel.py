@@ -6,13 +6,10 @@ sentiment strength, contrarian signals, and sentiment-based trading alerts.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QGroupBox, QProgressBar, QComboBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QProgressBar, QComboBox
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont
-from typing import Dict, List, Optional, Any
-import numpy as np
+from PySide6.QtCore import QTimer
+from typing import Dict, Any
 from loguru import logger
 
 

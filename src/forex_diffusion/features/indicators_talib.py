@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 import talib
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 

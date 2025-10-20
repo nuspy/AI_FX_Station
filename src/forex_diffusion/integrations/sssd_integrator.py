@@ -1,6 +1,6 @@
 """SSSD Integrator - Quantile-based Position Sizing"""
 from __future__ import annotations
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 from loguru import logger

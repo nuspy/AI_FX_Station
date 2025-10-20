@@ -11,16 +11,14 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from loguru import logger
 
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score
 
-from ..cache import cache_decorator, get_pattern_cache
+from ..cache import cache_decorator
 
 
 @dataclass

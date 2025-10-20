@@ -10,7 +10,7 @@ Reference: "Regime Switching Models" by Hamilton (1989)
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 import numpy as np
@@ -144,7 +144,7 @@ class HMMRegimeDetector:
         X_clean = X[mask]
 
         if len(X_clean) < self.min_history:
-            raise ValueError(f"Not enough valid data after cleaning")
+            raise ValueError("Not enough valid data after cleaning")
 
         # Initialize HMM
         self.model = hmm.GaussianHMM(

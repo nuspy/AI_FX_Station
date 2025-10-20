@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -238,7 +237,6 @@ def plot_adherence_shading(
     dict
         Metrics dict from adherence_metrics. .
     """
-    import matplotlib.pyplot as plt  # local import to avoid hard dep if headless
 
     # Align
     dfp = pd.DataFrame({"ts": list(fut_ts), "m": list(m), "q05": list(q05), "q95": list(q95)})

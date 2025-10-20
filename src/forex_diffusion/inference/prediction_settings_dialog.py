@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Dict, Any
 
-from PySide6.QtWidgets import QDialog
 
 
 class PredictionSettings:

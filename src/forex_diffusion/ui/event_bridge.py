@@ -22,7 +22,7 @@ class EventBridge(QObject):
         which safely queues the payload for processing on the main UI thread.
         """
         try:
-            logger.debug(f"EventBridge received event, emitting tickReceived signal...")
+            logger.debug("EventBridge received event, emitting tickReceived signal...")
             self.tickReceived.emit(payload)
         except Exception as e:
             logger.exception(f"EventBridge failed to emit tick: {e}")

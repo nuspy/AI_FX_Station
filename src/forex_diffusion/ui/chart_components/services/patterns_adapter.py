@@ -249,7 +249,7 @@ def enrich_events(df: pd.DataFrame, events: List[Any], default_lookback: int = 5
                     setattr(e, 'dom_confirmation', confirmation)
                     setattr(e, 'dom_aligned', confirmation['dom_aligned'])
 
-                except Exception as dom_err:
+                except Exception:
                     # Silently continue if DOM confirmation fails
                     pass
 

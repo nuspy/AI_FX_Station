@@ -26,9 +26,8 @@ Status: ALPHA - Under active development
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import List, Optional, Tuple
 import pandas as pd
-import numpy as np
 from loguru import logger
 
 # Import from consolidated modules
@@ -238,11 +237,5 @@ def validate_input_data(df: pd.DataFrame) -> None:
 
 
 # Convenience aliases for backward compatibility
-from .pipeline import (
-    log_returns,
-    rolling_std,
-    hurst_feature,
-    donchian
-)
 
 __all__.extend(['log_returns', 'rolling_std', 'hurst_feature', 'donchian'])

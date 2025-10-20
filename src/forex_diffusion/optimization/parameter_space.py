@@ -14,7 +14,7 @@ Defines all 100+ optimizable parameters across 8 component groups:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Any, Callable, Optional
+from typing import Dict, List, Tuple, Any, Callable
 import numpy as np
 
 

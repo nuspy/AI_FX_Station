@@ -5,12 +5,11 @@ Comprehensive backtesting with Monte Carlo, walk-forward analysis, and professio
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Callable
-from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
+from datetime import datetime
 import logging
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import statistics
 from abc import ABC, abstractmethod
 
 # Setup logging
@@ -503,7 +502,7 @@ if __name__ == "__main__":
     # Run comprehensive backtest
     results = backtest_engine.run_backtest(sample_data, strategy, "EURUSD")
 
-    print(f"\n=== BACKTEST RESULTS ===")
+    print("\n=== BACKTEST RESULTS ===")
     print(f"Total Return: {results.total_return:.2f}%")
     print(f"Annualized Return: {results.annualized_return:.2f}%")
     print(f"Sharpe Ratio: {results.sharpe_ratio:.2f}")
@@ -513,7 +512,7 @@ if __name__ == "__main__":
     print(f"Profit Factor: {results.profit_factor:.2f}")
 
     # Run Monte Carlo simulation (smaller sample for testing)
-    print(f"\n=== MONTE CARLO SIMULATION ===")
+    print("\n=== MONTE CARLO SIMULATION ===")
     mc_results = backtest_engine.run_monte_carlo_simulation(sample_data, strategy, num_simulations=50)
 
     if 'total_return' in mc_results:
@@ -523,7 +522,7 @@ if __name__ == "__main__":
         print(f"95th Percentile: {mc_results['total_return']['percentiles']['95%']:.2f}%")
 
     # Risk management suite
-    print(f"\n=== RISK ANALYSIS ===")
+    print("\n=== RISK ANALYSIS ===")
     risk_suite = RiskManagementSuite()
 
     if len(results.returns_series) > 10:
@@ -533,6 +532,6 @@ if __name__ == "__main__":
         print(f"95% VaR: {var_95:.4f} ({var_95*100:.2f}%)")
         print(f"95% CVaR: {cvar_95:.4f} ({cvar_95*100:.2f}%)")
 
-    print(f"\n+ Advanced Backtesting Engine Successfully Implemented!")
-    print(f"+ Professional-grade risk analytics and Monte Carlo simulation ready")
-    print(f"+ Walk-forward analysis and portfolio optimization available")
+    print("\n+ Advanced Backtesting Engine Successfully Implemented!")
+    print("+ Professional-grade risk analytics and Monte Carlo simulation ready")
+    print("+ Walk-forward analysis and portfolio optimization available")

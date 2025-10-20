@@ -6,14 +6,12 @@ Monitors multiple currency pairs simultaneously and generates intelligent alerts
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional, Any, Callable
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import logging
-import asyncio
 import threading
 import queue
-import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 try:
     import websockets
@@ -675,7 +673,7 @@ def test_market_scanner():
     status = scanner.get_scanner_status()
     alerts = scanner.get_active_alerts()
 
-    print(f"Scanner status after 15 seconds:")
+    print("Scanner status after 15 seconds:")
     print(f"  Active alerts: {status['active_alerts_count']}")
     print(f"  Total alerts generated: {status['total_alerts_generated']}")
     print(f"  Last scan: {status['last_scan_time']}")

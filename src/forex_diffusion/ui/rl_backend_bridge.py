@@ -17,12 +17,11 @@ from pathlib import Path
 from typing import Dict, Optional
 from loguru import logger
 from PySide6.QtCore import QObject, Signal, QThread, Slot
-from datetime import datetime
 
 from ..rl import (
     RLPortfolioManager, RLPortfolioConfig,
-    RLTrainer, TrainerConfig,
-    PortfolioEnvironment, PortfolioEnvConfig,
+    TrainerConfig,
+    PortfolioEnvConfig,
     RewardConfig
 )
 from ..services.db_service import DBService

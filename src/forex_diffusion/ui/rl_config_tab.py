@@ -13,17 +13,15 @@ RL Agent Configuration Tab
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QGroupBox, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QPushButton, QLineEdit, QTextEdit, QTableWidget,
-    QTableWidgetItem, QProgressBar, QFormLayout, QGridLayout,
-    QSlider, QFileDialog, QMessageBox
+    QCheckBox, QPushButton, QLineEdit, QTableWidget,
+    QProgressBar, QFormLayout, QGridLayout,
+    QFileDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Signal, QTimer
 from PySide6.QtGui import QFont
 from loguru import logger
 import pandas as pd
-import numpy as np
-from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict
 
 try:
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -1214,7 +1212,6 @@ class RLConfigTab(QWidget):
     def _apply_i18n_tooltips(self):
         """Apply i18n tooltips to all widgets (51 tooltips for 4 tabs)."""
         from ..i18n.widget_helper import apply_tooltip
-        from ..i18n import tr
         
         logger.info("Applying i18n tooltips to RL Agent tab widgets...")
         

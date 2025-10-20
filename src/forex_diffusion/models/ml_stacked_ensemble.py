@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Any, List
+from typing import Dict, Any, List
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
@@ -181,12 +181,12 @@ class StackedMLEnsemble:
 
         # 2. Train meta-learner on OOF predictions
         if verbose:
-            print(f"\n[2/3] Training meta-learner...")
+            print("\n[2/3] Training meta-learner...")
         self.meta_learner.fit(oof_predictions, y)
 
         # 3. Retrain base models on full data
         if verbose:
-            print(f"\n[3/3] Retraining base models on full data...")
+            print("\n[3/3] Retraining base models on full data...")
         for name, model in self.base_models.items():
             if verbose:
                 print(f"  • Training {name}...")

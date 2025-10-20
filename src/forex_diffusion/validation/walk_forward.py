@@ -11,8 +11,7 @@ Reference: "Advances in Financial Machine Learning" by Marcos López de Prado
 """
 from __future__ import annotations
 
-import warnings
-from typing import Iterator, Tuple, Optional, Dict, Any, List
+from typing import Iterator, Tuple, Optional, Dict, Any
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -158,7 +157,7 @@ class WalkForwardValidator:
         # Calculate test size for each split
         test_samples = int(n_samples * self.test_size)
         if test_samples < 1:
-            raise ValueError(f"test_size too small, results in 0 test samples")
+            raise ValueError("test_size too small, results in 0 test samples")
 
         # Calculate purge/embargo sizes
         purge_samples = int(n_samples * self.purge_pct)

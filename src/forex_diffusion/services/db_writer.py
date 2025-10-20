@@ -1,6 +1,6 @@
 import queue
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from loguru import logger
 

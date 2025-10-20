@@ -12,11 +12,9 @@ from __future__ import annotations
 from typing import Optional, Dict, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
-    QLabel, QFormLayout, QDoubleSpinBox, QSpinBox, QLineEdit,
-    QFrame, QMessageBox
+    QLabel, QFormLayout, QDoubleSpinBox, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QColor, QPalette
 from loguru import logger
 
 

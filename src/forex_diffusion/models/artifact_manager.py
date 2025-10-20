@@ -5,13 +5,12 @@ Handles checkpoints, metadata, preprocessing stats, and configuration.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
 import json
 import shutil
 
-import torch
 import numpy as np
 from loguru import logger
 

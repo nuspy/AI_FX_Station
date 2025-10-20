@@ -384,7 +384,7 @@ class RiskProfileLoader:
             # Prevent deleting active profile
             if profile.is_active:
                 logger.error(f"Cannot delete active profile '{profile_name}'")
-                raise ValueError(f"Cannot delete active profile. Please activate another profile first.")
+                raise ValueError("Cannot delete active profile. Please activate another profile first.")
 
             session.delete(profile)
             session.commit()

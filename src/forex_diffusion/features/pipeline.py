@@ -45,7 +45,6 @@ from typing import Dict, List, Optional, Tuple
 import math
 import numpy as np
 import pandas as pd
-from scipy import stats
 from loguru import logger
 
 from forex_diffusion.utils.config import get_config

@@ -57,7 +57,6 @@ def backfill_data(args):
     """Backfill historical data."""
     try:
         import asyncio
-        import pandas as pd
 
         manager = get_provider_manager()
         creds_manager = get_credentials_manager()
@@ -141,7 +140,7 @@ def vacuum_database():
         config = get_config()
         db_path = config.database.path if hasattr(config, 'database') else "./data/forex_diffusion.db"
 
-        print(f"\n=== Vacuuming Database ===\n")
+        print("\n=== Vacuuming Database ===\n")
         print(f"Database: {db_path}")
 
         engine = create_engine(f"sqlite:///{db_path}")
@@ -164,7 +163,7 @@ def show_stats(symbol: str = None):
         config = get_config()
         db_path = config.database.path if hasattr(config, 'database') else "./data/forex_diffusion.db"
 
-        print(f"\n=== Database Statistics ===\n")
+        print("\n=== Database Statistics ===\n")
         print(f"Database: {db_path}")
 
         engine = create_engine(f"sqlite:///{db_path}")

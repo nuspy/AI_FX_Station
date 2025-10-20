@@ -7,11 +7,9 @@ optimal combinations for maximum profit and minimum risk.
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Set
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from loguru import logger
 

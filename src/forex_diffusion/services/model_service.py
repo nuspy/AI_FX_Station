@@ -1,6 +1,4 @@
 from __future__ import annotations
-from _ast import If
-from pyexpat import model
 
 """
 ModelService: load model artifacts (VAE + Diffusion) and provide forecast sampling API.
@@ -14,7 +12,6 @@ ModelService: load model artifacts (VAE + Diffusion) and provide forecast sampli
 
 import os
 import glob
-import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np

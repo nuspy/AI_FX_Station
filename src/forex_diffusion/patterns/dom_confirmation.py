@@ -7,7 +7,7 @@ For bearish patterns, checks if ask depth > bid depth (selling pressure).
 """
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 from loguru import logger
 
 

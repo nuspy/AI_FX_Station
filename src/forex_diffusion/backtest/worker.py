@@ -9,9 +9,7 @@ import statistics as stats
 
 import numpy as np
 import pandas as pd
-from loguru import logger
 
-from .schemas import BacktestConfigPayload
 from .db import BacktestDB
 from .horizons import bars_ahead_for_timeframe
 
@@ -96,8 +94,7 @@ class Worker:
     def make_slices(self, interval_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Implement basic walk-forward based on strings like '90d','7d','7d','0d'
         import datetime as _dt
-        import pandas as _pd
-        from sqlalchemy import MetaData, select, create_engine
+        from sqlalchemy import MetaData, create_engine
         from ..utils.config import get_config
 
         # parse durations
@@ -172,12 +169,10 @@ class Worker:
         # TODO: compute adherence on slice using merge_asof alignment
         # Placeholder: query last candles for symbol/timeframe and synthesize trivial metrics
         try:
-            from sqlalchemy import MetaData, select
             from sqlalchemy import create_engine
             from ..utils.config import get_config
             from .data_access import fetch_candles
             from ..postproc.adherence import adherence_metrics, atr_sigma_from_df
-            import pandas as pd
 
             cfg_env = get_config()
             db_url = getattr(cfg_env.db, "database_url", None) or (cfg_env.db.get("database_url") if isinstance(cfg_env.db, dict) else None)

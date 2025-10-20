@@ -13,14 +13,14 @@ import torch
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 from loguru import logger
 from dataclasses import dataclass
 import time
 import json
 
 from ..models.sssd import SSSDModel
-from ..config.sssd_config import load_sssd_config, SSSDConfig
+from ..config.sssd_config import load_sssd_config
 from ..features.unified_pipeline import unified_feature_pipeline, FeatureConfig, Standardizer
 
 
@@ -113,13 +113,9 @@ class SSSDInferenceService:
         self.model = self.model.to(self.device)
         self.model.eval()
 
-        # Compile model for faster inference
+        # Compile model for faster inference (disabled for compatibility)
         if compile_model:
-            try:
-                self.model = torch.compile(self.model, mode="reduce-overhead")
-                logger.info("Model compiled with torch.compile")
-            except Exception as e:
-                logger.warning(f"Failed to compile model: {e}")
+            logger.info("torch.compile disabled on this platform; using eager execution")
 
         # Load standardizer
         standardizer_path = checkpoint_path.parent / "standardizer.json"

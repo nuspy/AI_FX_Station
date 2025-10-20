@@ -7,9 +7,9 @@ Shows when parameters were adapted, validation results, and deployment status.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QPushButton, QGroupBox, QComboBox, QSpinBox, QDoubleSpinBox
+    QLabel, QPushButton, QGroupBox, QComboBox
 )
-from PySide6.QtCore import Qt, Signal as QtSignal, QTimer
+from PySide6.QtCore import Signal as QtSignal, QTimer
 from PySide6.QtGui import QColor
 from typing import Dict, List, Optional, Any
 import numpy as np

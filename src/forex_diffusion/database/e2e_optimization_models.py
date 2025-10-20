@@ -7,7 +7,7 @@ Stores optimization runs, parameters, results, regime-specific configurations, a
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 import json
 
 from sqlalchemy import (

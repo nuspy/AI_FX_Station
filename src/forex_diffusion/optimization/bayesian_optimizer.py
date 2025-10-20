@@ -1,8 +1,7 @@
 """Bayesian Optimization using Optuna"""
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Callable, Tuple, List, Any
-import json
+from typing import Dict, Callable, List
 from loguru import logger
 
 try:

@@ -5,13 +5,10 @@ Integrates matplotlib-based charts with advanced finplot subplot system
 from __future__ import annotations
 
 import pandas as pd
-import numpy as np
-from typing import Dict, Any, List, Optional, Tuple
-from pathlib import Path
+from typing import Dict, Any, Optional
 from loguru import logger
 
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QMessageBox
-from PySide6.QtCore import QTimer
 
 from forex_diffusion.utils.user_settings import get_setting, set_setting
 from .base import ChartServiceBase

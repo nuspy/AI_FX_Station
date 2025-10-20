@@ -4,8 +4,7 @@ Positioned relative to screen, not graph coordinates.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
-from pathlib import Path
+from typing import Dict
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt, QPoint

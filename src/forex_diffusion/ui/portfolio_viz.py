@@ -5,7 +5,6 @@ Displays risk-return tradeoff with interactive plotting.
 """
 
 from typing import Optional, Dict
-import numpy as np
 import pandas as pd
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtCore import Signal

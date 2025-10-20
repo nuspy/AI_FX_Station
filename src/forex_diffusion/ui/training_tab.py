@@ -534,7 +534,6 @@ class TrainingTab(QWidget):
     def _apply_i18n_tooltips(self):
         """Apply i18n tooltips to all widgets"""
         from ..i18n.widget_helper import apply_tooltip
-        from ..i18n import tr
         
         logger.info("Applying i18n tooltips to Training Tab widgets...")
         
@@ -2057,7 +2056,7 @@ class TrainingTab(QWidget):
 
             self.progress.setRange(0, 100)
             self.progress.setValue(0)
-            self._append_log(f"\n[command] Starting training process...")
+            self._append_log("\n[command] Starting training process...")
             self._append_log(f"[command] {' '.join(args)}")
             self._append_log(f"[command] Working directory: {root}\n")
             self.controller.start_training(args, cwd=str(root))
@@ -2453,7 +2452,7 @@ class TrainingTab(QWidget):
 
             # Clear log
             self.log_view.clear()
-            self._append_log(f"[validation] Starting multi-horizon validation")
+            self._append_log("[validation] Starting multi-horizon validation")
             self._append_log(f"[validation] Checkpoint: {checkpoint_path.name}")
             self._append_log(f"[validation] Horizons: {horizons}")
             self._append_log(f"[validation] Symbol: {sym}, Timeframe: {tf}, Days: {days}")

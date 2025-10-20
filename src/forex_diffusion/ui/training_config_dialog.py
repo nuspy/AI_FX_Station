@@ -7,15 +7,12 @@ GPU optimizations, and distributed training options.
 from __future__ import annotations
 
 from typing import Dict, Any, Optional
-from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox,
-    QTabWidget, QWidget, QFormLayout, QTextEdit, QMessageBox
+    QPushButton, QComboBox, QCheckBox, QSpinBox, QTabWidget, QWidget, QFormLayout, QTextEdit, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal
-from loguru import logger
+from PySide6.QtCore import Signal
 
 try:
     import torch

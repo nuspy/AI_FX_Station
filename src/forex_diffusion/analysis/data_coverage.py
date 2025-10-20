@@ -6,9 +6,8 @@ Generates reports on symbols, timeframes, volume quality, and data gaps.
 """
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 import pandas as pd
-import numpy as np
 from datetime import datetime, timezone
 from sqlalchemy import text
 
@@ -367,7 +366,7 @@ class DataCoverageAnalyzer:
 
         # Summary
         summary = report['summary']
-        print(f"\n📊 SUMMARY")
+        print("\n📊 SUMMARY")
         print("-" * 80)
         print(f"Total Symbols: {summary['total_symbols']}")
         print(f"Total Symbol-Timeframe Pairs: {summary['total_symbol_timeframe_pairs']}")
@@ -379,7 +378,7 @@ class DataCoverageAnalyzer:
 
         if 'data_sufficiency' in summary:
             suff = summary['data_sufficiency']
-            print(f"\nData Sufficiency:")
+            print("\nData Sufficiency:")
             print(f"  ✅ Sufficient: {suff['sufficient']}")
             print(f"  ⚠️  Marginal: {suff['marginal']}")
             print(f"  ❌ Insufficient: {suff['insufficient']}")
@@ -387,14 +386,14 @@ class DataCoverageAnalyzer:
         # Symbols
         symbols_df = report['symbols']
         if len(symbols_df) > 0:
-            print(f"\n📈 SYMBOLS COVERAGE")
+            print("\n📈 SYMBOLS COVERAGE")
             print("-" * 80)
             print(symbols_df.to_string(index=False))
 
         # Timeframes
         timeframes_df = report['timeframes']
         if len(timeframes_df) > 0:
-            print(f"\n⏰ TIMEFRAMES COVERAGE")
+            print("\n⏰ TIMEFRAMES COVERAGE")
             print("-" * 80)
             # Show only key columns
             display_cols = ['symbol', 'timeframe', 'total_candles', 'months_coverage', 'coverage_pct', 'status']
@@ -403,23 +402,23 @@ class DataCoverageAnalyzer:
         # Volume Quality
         volume_df = report['volume_quality']
         if len(volume_df) > 0:
-            print(f"\n📦 VOLUME QUALITY")
+            print("\n📦 VOLUME QUALITY")
             print("-" * 80)
             display_cols = ['symbol', 'timeframe', 'volume_coverage_pct', 'quality_score', 'quality']
             print(volume_df[display_cols].to_string(index=False))
 
         # Features
         features_info = report['features']
-        print(f"\n🔧 FEATURES")
+        print("\n🔧 FEATURES")
         print("-" * 80)
         print(f"Unique Features: {features_info['unique_features']}")
         if features_info['feature_breakdown']:
-            print(f"\nTop 10 Most Common Features:")
+            print("\nTop 10 Most Common Features:")
             for i, (feat, count) in enumerate(list(features_info['feature_breakdown'].items())[:10], 1):
                 print(f"  {i}. {feat}: {count:,} occurrences")
 
         # Recommendations
-        print(f"\n💡 RECOMMENDATIONS")
+        print("\n💡 RECOMMENDATIONS")
         print("-" * 80)
 
         if len(timeframes_df) > 0:
@@ -440,7 +439,7 @@ class DataCoverageAnalyzer:
 
             sufficient = timeframes_df[timeframes_df['status'].str.contains('SUFFICIENT')]
             if len(sufficient) > 0:
-                print(f"\n✅ READY FOR TRAINING:")
+                print("\n✅ READY FOR TRAINING:")
                 for _, row in sufficient.iterrows():
                     print(f"  • {row['symbol']} {row['timeframe']}: {row['total_candles']:,} candles "
                           f"({row['months_coverage']:.1f} months)")
@@ -449,7 +448,7 @@ class DataCoverageAnalyzer:
         if len(volume_df) > 0:
             poor_volume = volume_df[volume_df['quality'].str.contains('POOR')]
             if len(poor_volume) > 0:
-                print(f"\n⚠️  POOR VOLUME QUALITY:")
+                print("\n⚠️  POOR VOLUME QUALITY:")
                 for _, row in poor_volume.iterrows():
                     print(f"  • {row['symbol']} {row['timeframe']}: {row['volume_coverage_pct']:.1f}% coverage")
 

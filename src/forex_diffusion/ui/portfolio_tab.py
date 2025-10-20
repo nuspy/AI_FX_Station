@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QTableWidget,
     QTableWidgetItem, QCheckBox, QTabWidget, QTextEdit,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from loguru import logger
 
 try:

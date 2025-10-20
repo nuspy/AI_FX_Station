@@ -5,7 +5,7 @@ Uses Riskfolio-Lib optimization to dynamically adjust position sizes based on
 diffusion model predictions and current market conditions.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import pandas as pd
 import numpy as np
 from loguru import logger

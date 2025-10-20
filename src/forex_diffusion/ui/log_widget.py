@@ -5,14 +5,14 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict
 import re
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QComboBox,
     QLineEdit, QPushButton, QLabel, QCheckBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer, Slot
+from PySide6.QtCore import Signal, QTimer, Slot
 from PySide6.QtGui import QTextCursor, QColor, QTextCharFormat
 from loguru import logger
 
@@ -460,7 +460,7 @@ class QtLogHandler:
             # Send to LogWidget
             LogWidget.capture_log(log_entry)
 
-        except Exception as e:
+        except Exception:
             # Don't break logging if parsing fails
             pass
 

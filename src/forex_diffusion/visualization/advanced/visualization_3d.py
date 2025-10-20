@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ class Advanced3DVisualizer:
             return {
                 'success': True,
                 'html_file': str(filepath),
-                'message': f"3D Market Surface created successfully"
+                'message': "3D Market Surface created successfully"
             }
 
         except Exception as e:
@@ -196,7 +196,7 @@ class Advanced3DVisualizer:
             return {
                 'success': True,
                 'html_file': str(filepath),
-                'message': f"Correlation Sphere created successfully"
+                'message': "Correlation Sphere created successfully"
             }
 
         except Exception as e:
@@ -256,7 +256,7 @@ class Advanced3DVisualizer:
             return {
                 'success': True,
                 'html_file': str(filepath),
-                'message': f"Volatility Landscape created successfully"
+                'message': "Volatility Landscape created successfully"
             }
 
         except Exception as e:

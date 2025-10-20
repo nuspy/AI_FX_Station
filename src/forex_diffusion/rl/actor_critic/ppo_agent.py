@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
 from loguru import logger
 
 from .base_agent import BaseAgent

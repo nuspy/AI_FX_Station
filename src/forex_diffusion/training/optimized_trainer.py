@@ -96,35 +96,7 @@ class OptimizedTrainingCallback(Callback):
 
         # 5. Apply torch.compile (PyTorch 2.0+)
         if self.opt_config.compile_model:
-            try:
-                from torch import _dynamo
-
-                _dynamo.config.suppress_errors = True
-
-                # Compile individual modules for better flexibility
-                if hasattr(pl_module, "vae"):
-                    pl_module.vae.encoder = torch.compile(
-                        pl_module.vae.encoder, mode=self.opt_config.compile_mode.value
-                    )
-                    pl_module.vae.decoder = torch.compile(
-                        pl_module.vae.decoder, mode=self.opt_config.compile_mode.value
-                    )
-                    logger.info(
-                        f"Compiled VAE with mode: {self.opt_config.compile_mode.value}"
-                    )
-
-                if hasattr(pl_module, "diffusion_model"):
-                    pl_module.diffusion_model = torch.compile(
-                        pl_module.diffusion_model,
-                        mode=self.opt_config.compile_mode.value,
-                    )
-                    logger.info(
-                        f"Compiled diffusion model with mode: {self.opt_config.compile_mode.value}"
-                    )
-
-            except Exception as e:
-                logger.warning(f"torch.compile failed: {e}")
-                logger.warning("Continuing without compilation")
+            logger.info("torch.compile disabled in optimized trainer; using eager execution")
 
         # 6. Replace optimizer with fused version (APEX)
         if (

@@ -7,10 +7,10 @@ and recent regime history. Provides visual alerts for regime changes.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
-    QGroupBox, QTableWidget, QTableWidgetItem, QFrame
+    QGroupBox, QTableWidget, QTableWidgetItem
 )
-from PySide6.QtCore import Qt, Signal as QtSignal, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPalette, QFont
+from PySide6.QtCore import Qt, Signal as QtSignal, QTimer, QPropertyAnimation
+from PySide6.QtGui import QColor, QFont
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 

@@ -1,17 +1,13 @@
 """E2E Optimization Tab - Complete GUI Implementation"""
 from __future__ import annotations
-from datetime import datetime, timedelta
-from typing import Dict, Optional
-import json
 
 from PySide6.QtWidgets import (
     QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QCheckBox,
-    QLineEdit, QTableWidget, QTableWidgetItem, QTextEdit, QProgressBar,
+    QPushButton, QComboBox, QSpinBox, QDateEdit, QCheckBox,
+    QTableWidget, QTextEdit, QProgressBar,
     QHeaderView, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal, QThread, QDate
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Signal, QDate
 from loguru import logger
 
 class E2EOptimizationTab(QWidget):

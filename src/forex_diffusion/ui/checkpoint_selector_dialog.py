@@ -6,11 +6,10 @@ Allows users to select and load checkpoints for resuming training queues.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView,
-    QAbstractItemView, QGroupBox
+    QTableWidget, QTableWidgetItem, QMessageBox, QAbstractItemView, QGroupBox
 )
 from PySide6.QtCore import Qt
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from loguru import logger
 from pathlib import Path
 import json

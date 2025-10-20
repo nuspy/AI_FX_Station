@@ -207,7 +207,7 @@ class RegimeService:
         if self.index is None:
             try:
                 self.load_index()
-            except Exception as e:
+            except Exception:
                 return {"found": False, "reason": "index_not_loaded"}
         q = np.asarray(query_vec, dtype=np.float32)
         labels, distances = self.index.knn_query(q, k=k)

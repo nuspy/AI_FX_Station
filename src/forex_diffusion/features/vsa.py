@@ -11,12 +11,10 @@ Reference: "Master the Markets" by Tom Williams
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict
 from dataclasses import dataclass
 from enum import Enum
-import numpy as np
 import pandas as pd
-from loguru import logger
 
 
 class VSASignal(Enum):

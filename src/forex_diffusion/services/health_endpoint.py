@@ -38,7 +38,7 @@ Usage standalone:
 """
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from datetime import datetime
 
 from loguru import logger

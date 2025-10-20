@@ -5,19 +5,15 @@ Supports 80+ indicators with data requirement filtering and configuration manage
 """
 from __future__ import annotations
 
-import json
-from typing import Dict, Any, Optional, List, Set
-from pathlib import Path
+from typing import Dict, Any, Optional, List
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QCheckBox, QLabel, QSpinBox, QDoubleSpinBox, QPushButton, QWidget,
-    QComboBox, QLineEdit, QMessageBox, QColorDialog, QScrollArea,
-    QTabWidget, QTreeWidget, QTreeWidgetItem, QSplitter, QFrame,
-    QSlider, QSpacerItem, QSizePolicy, QGridLayout, QProgressBar
+    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
+    QCheckBox, QLabel, QPushButton, QWidget,
+    QComboBox, QLineEdit, QMessageBox, QTreeWidget, QTreeWidgetItem, QSplitter, QSlider
 )
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt
 
 from ..features.indicators_btalib import (
     BTALibIndicators, IndicatorConfig, IndicatorCategories, DataRequirement
@@ -567,7 +563,7 @@ class ModernIndicatorsDialog(QDialog):
             return
 
         # Create a simple test
-        msg = f"Configuration Test Results:\n\n"
+        msg = "Configuration Test Results:\n\n"
         msg += f"✅ Data Available: {', '.join(self.indicators_system.available_data)}\n"
         msg += f"✅ Enabled Indicators: {len(enabled)}\n\n"
 
@@ -581,7 +577,7 @@ class ModernIndicatorsDialog(QDialog):
         for category, count in categories.items():
             msg += f"  • {category}: {count} indicators\n"
 
-        msg += f"\nConfiguration appears valid! ✅"
+        msg += "\nConfiguration appears valid! ✅"
 
         QMessageBox.information(self, "Test Results", msg)
 

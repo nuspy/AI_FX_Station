@@ -17,11 +17,11 @@ Integrates with backtest engine and stores results in advanced_metrics table.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Any
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from scipy import stats
 from loguru import logger
 

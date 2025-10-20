@@ -16,7 +16,6 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple
 import pandas as pd
-import numpy as np
 
 
 class StopLossType(Enum):

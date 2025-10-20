@@ -6,8 +6,7 @@ Shows best models per regime, performance comparisons, and regime definitions.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QSplitter, QHeaderView,
-    QAbstractItemView, QMessageBox
+    QTableWidget, QTableWidgetItem, QSplitter, QAbstractItemView, QMessageBox
 )
 from PySide6.QtCore import Qt
 from typing import Optional, Dict, Any

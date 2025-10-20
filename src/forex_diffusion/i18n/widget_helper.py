@@ -4,8 +4,8 @@ i18n Widget Helper
 Automatically applies i18n labels and tooltips to Qt widgets.
 """
 
-from typing import Optional, Dict
-from PySide6.QtWidgets import QWidget, QLabel, QCheckBox, QPushButton, QGroupBox, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit
+from typing import Dict
+from PySide6.QtWidgets import QWidget, QLabel, QCheckBox, QPushButton, QGroupBox
 from PySide6.QtCore import QObject
 from . import tr
 

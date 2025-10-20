@@ -9,8 +9,8 @@ Automatically checks and refreshes optimized parameters based on:
 Triggers re-optimization when refresh is needed.
 """
 from __future__ import annotations
-from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+from datetime import datetime
 from dataclasses import dataclass
 from loguru import logger
 

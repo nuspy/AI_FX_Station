@@ -7,15 +7,14 @@ from __future__ import annotations
 
 import webbrowser
 from typing import Optional
-from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QLineEdit, QTextEdit, QMessageBox, QFormLayout,
     QTabWidget, QWidget, QCheckBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QFont
 from loguru import logger
 
 try:

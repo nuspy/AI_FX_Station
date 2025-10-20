@@ -11,7 +11,7 @@ Reference: "Mind Over Markets" by James Dalton
 """
 from __future__ import annotations
 
-from typing import Tuple, Dict, Optional, List
+from typing import Tuple, List
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd

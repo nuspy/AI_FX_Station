@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import yaml
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 from loguru import logger
 
@@ -465,8 +465,8 @@ def _validate_config(config: SSSDConfig):
             import torch
             if not torch.cuda.is_available():
                 logger.warning(
-                    f"CUDA device specified but not available. "
-                    f"Falling back to CPU."
+                    "CUDA device specified but not available. "
+                    "Falling back to CPU."
                 )
                 config.system.device = "cpu"
         except ImportError:

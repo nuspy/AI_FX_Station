@@ -9,15 +9,12 @@ Restored from commit 11d3627: Training parametri patterns
 """
 from __future__ import annotations
 
-from typing import Dict, List, Any, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
-    QGroupBox, QScrollArea, QTextEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QRadioButton, QButtonGroup, QComboBox, QProgressBar, QTabWidget,
-    QDateEdit, QFrame, QSlider, QMessageBox, QGridLayout
+    QGroupBox, QScrollArea, QTextEdit, QRadioButton, QButtonGroup, QProgressBar, QTabWidget,
+    QDateEdit, QFrame, QMessageBox
 )
 from PySide6.QtCore import Qt, QDate, QTimer
-from PySide6.QtGui import QTextCursor
 from loguru import logger
 
 

@@ -9,7 +9,6 @@ Usage:
 """
 import sys
 import asyncio
-from typing import Optional
 
 from loguru import logger
 
@@ -110,7 +109,7 @@ def list_providers():
                     caps = [cap.name for cap in provider.capabilities]
                     print(f"  Capabilities: {', '.join(caps)}")
                 else:
-                    print(f"  Capabilities: (configure to view)")
+                    print("  Capabilities: (configure to view)")
             except Exception as e:
                 print(f"  Error: {e}")
 

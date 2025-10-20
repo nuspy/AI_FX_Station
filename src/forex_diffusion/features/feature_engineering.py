@@ -9,7 +9,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .feature_utils import ensure_dt_index
 
 
 def relative_ohlc(df: pd.DataFrame, eps: float = 1e-12) -> pd.DataFrame:

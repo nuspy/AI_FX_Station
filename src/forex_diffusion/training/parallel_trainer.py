@@ -16,7 +16,6 @@ from typing import Dict, List, Optional
 import numpy as np
 from loguru import logger
 
-from .train_sklearn import train_single_model  # Existing function
 
 
 @dataclass

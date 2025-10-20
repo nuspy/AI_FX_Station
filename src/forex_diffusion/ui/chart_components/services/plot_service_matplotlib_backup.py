@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 # Using finplot exclusively - matplotlib removed
 import numpy as np
@@ -8,13 +8,10 @@ import pandas as pd
 from loguru import logger
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
-from forex_diffusion.utils.time_utils import split_range_avoid_weekend
-from .patterns_hook import call_patterns_detection
-from forex_diffusion.utils.user_settings import get_setting, set_setting
+from forex_diffusion.utils.user_settings import get_setting
 from .base import ChartServiceBase
 
 # Import finplot
-import finplot as fplt
 
 # Enhanced indicators support
 try:
@@ -627,16 +624,16 @@ class PlotService(ChartServiceBase):
 
         # EMA fast/slow
         if cfg.get('use_ema', False):
-            nf = int(cfg.get('ema_fast', 12));
+            nf = int(cfg.get('ema_fast', 12))
             ns = int(cfg.get('ema_slow', 26))
             cf = cfg.get('color_ema', '#bcbd22')
-            ema_f = self._ema(close, nf);
+            ema_f = self._ema(close, nf)
             ema_s = self._ema(close, ns)
-            linef = _get_art('EMA_fast', cf, '-');
+            linef = _get_art('EMA_fast', cf, '-')
             lines = _get_art('EMA_slow', cf, '--')
-            linef.set_data(x_dt, ema_f.values);
+            linef.set_data(x_dt, ema_f.values)
             linef.set_visible(True)
-            lines.set_data(x_dt, ema_s.values);
+            lines.set_data(x_dt, ema_s.values)
             lines.set_visible(True)
         else:
             for k in ['EMA_fast', 'EMA_slow']:
@@ -644,15 +641,15 @@ class PlotService(ChartServiceBase):
 
         # Bollinger (upper/lower)
         if cfg.get('use_bollinger', False):
-            n = int(cfg.get('bb_n', 20));
+            n = int(cfg.get('bb_n', 20))
             k = float(cfg.get('bb_k', 2.0))
             c = cfg.get('color_bollinger', '#2ca02c')
             mid, up, lo = self._bollinger(close, n, k)
-            upline = _get_art('BB_upper', c, ':');
+            upline = _get_art('BB_upper', c, ':')
             loline = _get_art('BB_lower', c, ':')
-            upline.set_data(x_dt, up.values);
+            upline.set_data(x_dt, up.values)
             upline.set_visible(True)
-            loline.set_data(x_dt, lo.values);
+            loline.set_data(x_dt, lo.values)
             loline.set_visible(True)
         else:
             for k in ['BB_upper', 'BB_lower']:
@@ -660,14 +657,14 @@ class PlotService(ChartServiceBase):
 
         # Donchian (upper/lower)
         if cfg.get('use_don', False):
-            n = int(cfg.get('don_n', 20));
+            n = int(cfg.get('don_n', 20))
             c = cfg.get('color_don', '#8c564b')
             up, lo = self._donchian(high, low, n)
-            upline = _get_art('DON_upper', c, '-.');
+            upline = _get_art('DON_upper', c, '-.')
             loline = _get_art('DON_lower', c, '-.')
-            upline.set_data(x_dt, up.values);
+            upline.set_data(x_dt, up.values)
             upline.set_visible(True)
-            loline.set_data(x_dt, lo.values);
+            loline.set_data(x_dt, lo.values)
             loline.set_visible(True)
         else:
             for k in ['DON_upper', 'DON_lower']:
@@ -675,15 +672,15 @@ class PlotService(ChartServiceBase):
 
         # Keltner (upper/lower) – usa bb_n come finestra base
         if cfg.get('use_keltner', False):
-            n = int(cfg.get('bb_n', 20));
+            n = int(cfg.get('bb_n', 20))
             k = float(cfg.get('keltner_k', 1.5))
             c = cfg.get('color_keltner', '#17becf')
             up, lo = self._keltner(high, low, close, n, k)
-            upline = _get_art('KELT_upper', c, '--');
+            upline = _get_art('KELT_upper', c, '--')
             loline = _get_art('KELT_lower', c, '--')
-            upline.set_data(x_dt, up.values);
+            upline.set_data(x_dt, up.values)
             upline.set_visible(True)
-            loline.set_data(x_dt, lo.values);
+            loline.set_data(x_dt, lo.values)
             loline.set_visible(True)
         else:
             for k in ['KELT_upper', 'KELT_lower']:
@@ -760,7 +757,7 @@ class PlotService(ChartServiceBase):
 
             # RSI
             if cfg.get('use_rsi', False):
-                n = int(cfg.get('rsi_n', 14));
+                n = int(cfg.get('rsi_n', 14))
                 c = cfg.get('color_rsi', '#1f77b4')
                 rsi = self._rsi(close, n)
                 axo.plot(x_dt, rsi.values, color=c, linewidth=1.0, label='RSI')
@@ -770,8 +767,8 @@ class PlotService(ChartServiceBase):
 
             # MACD
             if cfg.get('use_macd', False):
-                f = int(cfg.get('macd_fast', 12));
-                s = int(cfg.get('macd_slow', 26));
+                f = int(cfg.get('macd_fast', 12))
+                s = int(cfg.get('macd_slow', 26))
                 sig = int(cfg.get('macd_signal', 9))
                 c = cfg.get('color_macd', '#ff7f0e')
                 macd, signal, hist = self._macd(close, f, s, sig)
@@ -784,14 +781,14 @@ class PlotService(ChartServiceBase):
 
             # ATR
             if cfg.get('use_atr', False):
-                n = int(cfg.get('atr_n', 14));
+                n = int(cfg.get('atr_n', 14))
                 c = cfg.get('color_atr', '#d62728')
                 atr = self._atr(high, low, close, n)
                 axo.plot(x_dt, atr.values, color=c, linewidth=0.9, label='ATR', alpha=0.9)
 
             # Hurst
             if cfg.get('use_hurst', False):
-                win = int(cfg.get('hurst_window', 64));
+                win = int(cfg.get('hurst_window', 64))
                 c = cfg.get('color_hurst', '#9467bd')
                 h = self._hurst_roll(close, win)
                 axo.plot(x_dt, h.values, color=c, linewidth=0.9, label='H', alpha=0.9)
@@ -1070,8 +1067,6 @@ class PlotService(ChartServiceBase):
             logger.debug('Price mode toggle failed: {}', exc)
 
     def _apply_theme(self, theme: str):
-        from PySide6.QtGui import QPalette
-        from PySide6.QtWidgets import QApplication
 
         # Normalize preset
         t = (theme or "Dark").strip().lower()
@@ -1341,7 +1336,7 @@ class PlotService(ChartServiceBase):
         Returns compressed time series, values, weekend boundary markers, and compressed DataFrame.
         """
         try:
-            from forex_diffusion.utils.time_utils import is_in_weekend_range, WEEKEND_START_HOUR, WEEKEND_END_HOUR
+            from forex_diffusion.utils.time_utils import is_in_weekend_range
 
             # Convert to timezone-aware UTC if not already
             if x_dt.dt.tz is None:

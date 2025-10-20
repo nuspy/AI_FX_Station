@@ -10,7 +10,6 @@ Validates optimized parameters before storage to ensure:
 from __future__ import annotations
 from typing import Dict, Any, Optional, Tuple
 import pandas as pd
-import numpy as np
 from loguru import logger
 
 

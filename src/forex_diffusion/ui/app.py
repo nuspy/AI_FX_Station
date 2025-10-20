@@ -295,7 +295,6 @@ def setup_ui(
 
     # Create Portfolio, Signals, and RL Agent tabs
     portfolio_tab = PortfolioOptimizationTab(main_window)
-    from .signals_tab import SignalsTab
     signals_tab = SignalsTab(main_window, db_service=db_service)
     rl_config_tab = RLConfigTab(main_window)
     from .e2e_optimization import E2EOptimizationTab
@@ -475,7 +474,6 @@ def setup_ui(
             ctrader_enabled = get_setting("ctrader_enabled", True)  # Default to True when cTrader is primary
             if ctrader_enabled:
                 try:
-                    from ..services.ctrader_websocket import CTraderWebSocketService
                     
                     # Get cTrader credentials - try both prefixed and non-prefixed keys
                     client_id = (get_setting("provider.ctrader.client_id", "") or

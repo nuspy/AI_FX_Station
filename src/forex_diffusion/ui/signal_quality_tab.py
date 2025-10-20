@@ -7,11 +7,11 @@ and historical quality vs outcome tracking.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QPushButton, QGroupBox, QSpinBox, QDoubleSpinBox, QComboBox
+    QLabel, QPushButton, QGroupBox, QDoubleSpinBox, QComboBox
 )
-from PySide6.QtCore import Qt, Signal as QtSignal, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 import numpy as np
 
 

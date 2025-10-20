@@ -9,9 +9,8 @@ PyTorch-Lightning training loop for MagicForex.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -156,7 +155,7 @@ class ForexDiffusionLit(pl.LightningModule):
             logger.info(f"[ForexDiffusionLit] Multi-horizon head initialized: z_dim={z_dim} -> {num_horizons} horizons")
         else:
             self.multi_horizon_head = None
-            logger.debug(f"[ForexDiffusionLit] Single-horizon mode (no prediction head)")
+            logger.debug("[ForexDiffusionLit] Single-horizon mode (no prediction head)")
 
         # schedule
         T = int(safe_get(diff_cfg, "T", default=1000))

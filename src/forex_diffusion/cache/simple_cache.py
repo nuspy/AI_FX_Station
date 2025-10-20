@@ -7,14 +7,9 @@ without external dependencies.
 
 from __future__ import annotations
 
-import json
-import pickle
-import hashlib
 import threading
-import weakref
-from typing import Any, Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from loguru import logger
 
 

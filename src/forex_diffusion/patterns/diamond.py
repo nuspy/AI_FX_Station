@@ -1,6 +1,4 @@
 from __future__ import annotations
-from typing import List
-import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
 from .primitives import time_array
@@ -12,7 +10,6 @@ class DiamondDetector(DetectorBase):
         self.key=key; self.top=top; self.window=window; self.max_events=max_events
     def detect(self, df: pd.DataFrame):
         # Heuristica: fase di allargamento (volatilità in aumento) seguita da contrazione (in calo)
-        import numpy as np
         ts = time_array(df)
         h = df["high"].astype(float).to_numpy()
         l = df["low"].astype(float).to_numpy()

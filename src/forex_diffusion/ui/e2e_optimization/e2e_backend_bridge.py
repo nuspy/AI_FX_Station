@@ -1,7 +1,6 @@
 """E2E Backend Bridge - UI ↔ Backend Connector"""
 from __future__ import annotations
 from typing import Dict, Optional
-from datetime import datetime
 
 from PySide6.QtCore import QObject, Signal, QThread
 from loguru import logger

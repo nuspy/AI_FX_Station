@@ -22,9 +22,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:
-    from .engine import BacktestEngine as QuantileBacktestEngine
-    from ..backtesting.forecast_backtest_engine import ForecastBacktestEngine
-    from .integrated_backtest import IntegratedBacktest
+    pass
 
 
 class BacktestType(Enum):
@@ -240,8 +238,8 @@ if __name__ == "__main__":
     try:
         engine3 = create_integrated_backtest()
         print(f"   Created: {type(engine3).__name__}")
-    except ImportError as e:
-        print(f"   Not available (missing dependencies)")
+    except ImportError:
+        print("   Not available (missing dependencies)")
     
     # Auto-detect
     print("\n4. Auto-detect:")

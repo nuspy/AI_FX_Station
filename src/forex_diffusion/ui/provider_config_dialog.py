@@ -278,7 +278,7 @@ class ProviderConfigDialog(QDialog):
 
         # Show progress dialog
         from PySide6.QtWidgets import QProgressDialog
-        from PySide6.QtCore import Qt, QThread, Signal
+        from PySide6.QtCore import QThread, Signal
 
         progress = QProgressDialog(
             f"Testing connection to {provider}...",

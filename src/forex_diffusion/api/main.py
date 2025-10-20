@@ -11,15 +11,13 @@ Run with: uvicorn forex_diffusion.api.main:app --reload --port 8000
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
-import json
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import pandas as pd
 from loguru import logger
 
 # Import services

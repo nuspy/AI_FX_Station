@@ -6,13 +6,13 @@ Handles inference for sklearn models trained with multi-horizon support.
 
 from __future__ import annotations
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 import numpy as np
 import pandas as pd
 from joblib import load
 from loguru import logger
 
-from ..utils.horizon_parser import get_model_horizons_from_metadata, validate_inference_horizons
+from ..utils.horizon_parser import get_model_horizons_from_metadata
 
 
 class SklearnMultiHorizonPredictor:

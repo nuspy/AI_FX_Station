@@ -19,7 +19,7 @@ Usage:
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Dict, List, Tuple, Union, Any
 import pandas as pd
 import numpy as np
 from loguru import logger

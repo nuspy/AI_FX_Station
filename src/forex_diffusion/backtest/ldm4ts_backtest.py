@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
 from loguru import logger
 
 from .integrated_backtest import IntegratedBacktester, BacktestConfig, BacktestResult, Trade
-from ..inference.ldm4ts_inference import LDM4TSInferenceService, LDM4TSPrediction
+from ..inference.ldm4ts_inference import LDM4TSInferenceService
 from ..intelligence.unified_signal_fusion import UnifiedSignalFusion, FusedSignal
 from ..intelligence.signal_quality_scorer import SignalQualityScorer, SignalSource
 

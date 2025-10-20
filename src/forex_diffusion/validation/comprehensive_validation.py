@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -427,19 +427,19 @@ class ComprehensiveValidator:
         print("\n" + "=" * 80)
         print("VALIDATION RESULTS")
         print("=" * 80)
-        print(f"\n📊 TRADING METRICS:")
+        print("\n📊 TRADING METRICS:")
         print(f"  Total Trades: {result.total_trades}")
         print(f"  Winning Trades: {result.winning_trades}")
         print(f"  Losing Trades: {result.losing_trades}")
         print(f"  Win Rate: {result.win_rate:.2%}")
-        print(f"\n💰 PERFORMANCE:")
+        print("\n💰 PERFORMANCE:")
         print(f"  Total P&L: ${result.total_pnl:,.2f}")
         print(f"  Avg Trade P&L: ${result.avg_trade_pnl:,.2f}")
         print(f"  Sharpe Ratio: {result.sharpe_ratio:.2f}")
         print(f"  Max Drawdown: ${result.max_drawdown:,.2f}")
 
         if result.regime_performance:
-            print(f"\n🔄 REGIME PERFORMANCE:")
+            print("\n🔄 REGIME PERFORMANCE:")
             for regime, perf in result.regime_performance.items():
                 print(f"  {regime}:")
                 print(f"    Trades: {perf['trades']}")

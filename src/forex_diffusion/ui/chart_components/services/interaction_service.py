@@ -4,13 +4,11 @@ from typing import Optional
 import time
 
 # matplotlib removed - using finplot for all charting
-import numpy as np
 import pandas as pd
 from loguru import logger
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
-from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
 
 from .base import ChartServiceBase
 

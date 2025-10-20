@@ -1287,8 +1287,8 @@ class UnifiedPredictionSettingsDialog(QDialog):
                 info_parts.append(f"  Mode: ENSEMBLE ({method})")
                 info_parts.append(f"  All {len(models)} models will be combined")
             else:
-                info_parts.append(f"  Mode: SEPARATE")
-                info_parts.append(f"  Each model will produce independent forecasts")
+                info_parts.append("  Mode: SEPARATE")
+                info_parts.append("  Each model will produce independent forecasts")
             
             info_text = "\n".join(info_parts)
             
@@ -1624,7 +1624,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
             path = settings['model_path']
             self.models_edit.setPlainText(path)
             self._model_paths = [path]
-            logger.debug(f"Loaded 1 legacy model path from settings")
+            logger.debug("Loaded 1 legacy model path from settings")
 
         # Forecast types
         self.type_basic_cb.setChecked(settings.get('type_basic', True))
@@ -1699,7 +1699,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
             logger.info(f"Settings saved: {len(self._model_paths)} model(s), horizons={settings.get('horizons')}")
 
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to save settings")
 
     def load_settings(self):
@@ -1716,7 +1716,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
             if last_dir:
                 self.__class__._last_browse_dir = last_dir
 
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to load settings")
 
     def _update_gpu_info_label(self):
@@ -1776,6 +1776,6 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
                 return settings
             return {}
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to load settings statically")
             return {}

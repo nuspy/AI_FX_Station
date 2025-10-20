@@ -67,7 +67,7 @@ class BacktestQueue:
                 if configs:
                     # ensure market services do not trigger REST backfill during job
                     try:
-                        from ..services.marketdata import MarketDataService
+                        pass
                         # not strictly needed here; worker reads directly from DB
                     except Exception:
                         pass

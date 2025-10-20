@@ -6,13 +6,12 @@ performance on high-core systems (up to 32+ threads).
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Callable
-import threading
+from typing import List, Dict, Any, Optional
 import queue
 import time
 import concurrent.futures
 from dataclasses import dataclass
-from PySide6.QtCore import QObject, Signal, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, Slot
 from loguru import logger
 import pandas as pd
 

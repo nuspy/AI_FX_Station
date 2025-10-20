@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QSizePolicy
+    QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor
 from loguru import logger
 
 

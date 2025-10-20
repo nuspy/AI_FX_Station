@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Iterable, List, Tuple, Optional, Dict, Any
+from typing import Iterable, List, Tuple, Optional, Dict
 import numpy as np
 import pandas as pd
 # matplotlib removed - pattern overlay will be reimplemented with finplot

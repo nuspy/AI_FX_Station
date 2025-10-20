@@ -13,7 +13,7 @@ Reference: "Evidence-Based Technical Analysis" by Aronson (2007)
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd

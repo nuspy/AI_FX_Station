@@ -17,7 +17,6 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from ..postproc import uncertainty as unc
 from ..utils.config import get_config
 
 

@@ -12,11 +12,11 @@ Implements complex chart formations including:
 """
 
 from __future__ import annotations
-from typing import List, Optional, Tuple
+from typing import List
 import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
-from .primitives import time_array, fit_line_indices, atr, safe_tz_convert
+from .primitives import time_array, atr, safe_tz_convert
 
 
 class RoundingPatternDetector(DetectorBase):

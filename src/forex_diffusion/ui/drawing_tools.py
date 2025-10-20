@@ -11,10 +11,10 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
-    QColorDialog, QDialog, QGridLayout, QLabel, QButtonGroup
+    QColorDialog, QDialog, QGridLayout, QButtonGroup
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtGui import QColor
 from loguru import logger
 
 
@@ -330,9 +330,7 @@ class DrawingManager:
 
     def _draw_object(self, ax, drawing: DrawingObject) -> list:
         """Draw a single DrawingObject on the axis, return list of artists"""
-        import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle, Polygon, FancyArrowPatch
-        import numpy as np
         from scipy.stats import norm
 
         artists = []
@@ -460,9 +458,7 @@ class DrawingManager:
     def _draw_object_pyqtgraph(self, plot, drawing: DrawingObject) -> list:
         """Draw a single DrawingObject using PyQtGraph, return list of items"""
         import pyqtgraph as pg
-        import numpy as np
         from PySide6.QtGui import QColor, QPen, QBrush
-        from PySide6.QtCore import Qt
 
         items = []
         points = drawing.points

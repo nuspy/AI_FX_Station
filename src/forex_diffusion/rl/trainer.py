@@ -13,7 +13,7 @@ import torch
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Dict, Optional, Callable, List
+from typing import Dict, Optional, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from loguru import logger

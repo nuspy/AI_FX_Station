@@ -7,13 +7,12 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple, Union, Callable
-from pathlib import Path
+from typing import Dict, Any, List, Optional
 import logging
 
 # Qt imports
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
-from PySide6.QtCore import QObject, Signal, QTimer, Slot
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PySide6.QtCore import QObject, Signal
 
 # Import finplot
 try:

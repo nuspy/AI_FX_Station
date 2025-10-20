@@ -8,10 +8,9 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
-import json
 
 import pandas as pd
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from loguru import logger

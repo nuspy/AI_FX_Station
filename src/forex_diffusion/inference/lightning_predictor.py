@@ -6,12 +6,11 @@ Handles inference for Lightning models trained with multi-horizon support.
 
 from __future__ import annotations
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import numpy as np
 import torch
 from loguru import logger
 
-from ..utils.horizon_parser import get_model_horizons_from_metadata
 
 
 class LightningMultiHorizonPredictor:
@@ -46,6 +45,18 @@ class LightningMultiHorizonPredictor:
             self.metadata = metadata
         else:
             self.metadata = getattr(metadata, '__dict__', {})
+
+        # Initialize predictor attributes with safe defaults before extraction
+        self.channel_order: Optional[List[str]] = None
+        self.in_channels: int = 0
+        self.channel_mu: Optional[List[float]] = None
+        self.channel_sigma: Optional[List[float]] = None
+        self.patch_len: Optional[int] = None
+        self.symbol: Optional[str] = None
+        self.timeframe: Optional[str] = None
+        self.horizons: List[int] = []
+        self.is_multi_horizon: bool = False
+        self.num_horizons: int = 0
         
         # Load model
         logger.info(f"Loading Lightning model from {self.checkpoint_path}")
@@ -60,18 +71,53 @@ class LightningMultiHorizonPredictor:
     def _load_model(self):
         """Load Lightning model from checkpoint."""
         try:
-            import torch
             from ..train.loop import ForexDiffusionLit
+            import torch
+            from types import SimpleNamespace
 
-            # Load checkpoint
-            self.model = ForexDiffusionLit.load_from_checkpoint(
-                str(self.checkpoint_path),
-                map_location=self.device
-            )
-            self.model.eval()
-            self.model.to(self.device)
+            checkpoint = torch.load(str(self.checkpoint_path), map_location=self.device)
+            state_dict = checkpoint.get('state_dict', {})
+
+            if not state_dict:
+                raise RuntimeError("Checkpoint is missing state_dict")
+
+            sanitized_state_dict = {}
+            renamed_keys = []
+            for key, value in state_dict.items():
+                sanitized_key = key
+                if '._orig_mod.' in sanitized_key:
+                    sanitized_key = sanitized_key.replace('._orig_mod.', '.')
+                    renamed_keys.append((key, sanitized_key))
+                sanitized_state_dict[sanitized_key] = value
+
+            model = ForexDiffusionLit()
+
+            hyper_parameters = checkpoint.get('hyper_parameters')
+            if hyper_parameters:
+                try:
+                    model.save_hyperparameters(hyper_parameters)
+                except Exception:
+                    try:
+                        model.hparams = SimpleNamespace(**hyper_parameters)
+                    except Exception:
+                        logger.warning("Failed to attach hyperparameters from checkpoint")
+
+            missing, unexpected = model.load_state_dict(sanitized_state_dict, strict=False)
+            if renamed_keys:
+                rename_msg = ", ".join([f"{old}->{new}" for old, new in renamed_keys[:5]])
+                if len(renamed_keys) > 5:
+                    rename_msg += ", ..."
+                logger.info(f"Sanitized {len(renamed_keys)} state_dict keys for torch.compile artifacts: {rename_msg}")
+            if missing:
+                logger.warning(f"Missing keys when loading Lightning model: {missing}")
+            if unexpected:
+                logger.warning(f"Unexpected keys when loading Lightning model: {unexpected}")
+
+            model.eval()
+            model.to(self.device)
+            self.model = model
             
-            logger.info(f"Loaded ForexDiffusionLit model")
+            logger.info("Loaded ForexDiffusionLit model")
             
         except Exception as e:
             import traceback
@@ -124,6 +170,21 @@ class LightningMultiHorizonPredictor:
             elif hparams is not None and hasattr(hparams, 'timeframe'):
                 self.timeframe = getattr(hparams, 'timeframe', self.timeframe)
 
+            if not self.in_channels:
+                if self.channel_order:
+                    self.in_channels = len(self.channel_order)
+                elif hparams is not None and hasattr(hparams, 'in_channels') and getattr(hparams, 'in_channels'):
+                    try:
+                        self.in_channels = int(getattr(hparams, 'in_channels'))
+                    except (TypeError, ValueError):
+                        self.in_channels = 0
+                else:
+                    fallback_in_channels = getattr(self.model, 'in_channels', None)
+                    if isinstance(fallback_in_channels, int) and fallback_in_channels > 0:
+                        self.in_channels = fallback_in_channels
+                    else:
+                        self.in_channels = 6  # Default OHLCV + time encodings
+
             logger.debug(f"Model expects {self.in_channels} input channels")
 
             horizons = sidecar.get('horizons')
@@ -142,12 +203,21 @@ class LightningMultiHorizonPredictor:
 
             self.is_multi_horizon = len(self.horizons) > 1
             self.num_horizons = len(self.horizons)
+
+            if not self.patch_len:
+                fallback_patch_len = getattr(self.model, 'patch_len', None)
+                if isinstance(fallback_patch_len, int) and fallback_patch_len > 0:
+                    self.patch_len = fallback_patch_len
+                else:
+                    self.patch_len = 64
             
         except Exception as e:
             logger.error(f"Failed to extract horizons: {e}")
             self.horizons = [60]
             self.is_multi_horizon = False
             self.num_horizons = 1
+            if not self.patch_len:
+                self.patch_len = 64
     
     def predict(
         self,

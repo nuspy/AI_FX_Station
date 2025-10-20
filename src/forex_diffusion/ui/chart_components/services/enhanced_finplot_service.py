@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple, Union
-from pathlib import Path
+from typing import Dict, Any, List
 import logging
-import asyncio
 
 # Import finplot
 try:
@@ -22,7 +20,6 @@ except ImportError:
 
 # Qt imports
 from PySide6.QtCore import QObject, Signal, QTimer
-from PySide6.QtWidgets import QWidget
 
 # ForexGPT imports
 try:

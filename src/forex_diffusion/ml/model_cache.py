@@ -3,7 +3,6 @@ ML Model Cache and Performance Optimization
 Implements singleton pattern for model caching and lazy loading to improve performance
 """
 
-import pickle
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -508,7 +507,7 @@ if __name__ == "__main__":
 
     # Cache info
     info = cache.get_cache_info()
-    print(f"\nCache Info:")
+    print("\nCache Info:")
     print(f"Models in memory: {info['total_models_in_memory']}")
     print(f"Models on disk: {info['total_models_on_disk']}")
     print(f"Disk cache size: {info['disk_cache_size_mb']:.2f} MB")

@@ -12,8 +12,6 @@ from __future__ import annotations
 
 # CRITICAL: Disable Twisted's default error logging for Deferred
 # This prevents "Unhandled error in Deferred" spam from ctrader-open-api library
-import sys
-import warnings
 
 # Monkey-patch Deferred.__del__ to NOT log errors (we handle them in callbacks)
 def _silent_deferred_del(self):
@@ -27,13 +25,12 @@ import twisted.internet.defer as _defer_module
 _defer_module.Deferred.__del__ = _silent_deferred_del
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import AsyncIterator, Dict, List, Optional, Any
 from collections import deque
 import time
 
 import pandas as pd
-import numpy as np
 from loguru import logger
 
 from .base import BaseProvider, ProviderCapability
@@ -314,7 +311,6 @@ class CTraderProvider(BaseProvider):
             try:
                 # Redirect stderr in THIS thread to suppress Twisted's Deferred error spam
                 import sys
-                from io import StringIO
                 
                 class SilentDeferredStderr:
                     def __init__(self, original):
@@ -1363,7 +1359,7 @@ class CTraderProvider(BaseProvider):
             response = await self._send_and_wait(request, Messages.ProtoOASymbolsListRes)
 
             if not response or not hasattr(response, 'symbol'):
-                raise ValueError(f"Could not retrieve symbols list from cTrader")
+                raise ValueError("Could not retrieve symbols list from cTrader")
 
             # Build cache from response
             for sym in response.symbol:

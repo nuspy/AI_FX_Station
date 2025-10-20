@@ -3,7 +3,7 @@ Controller Proxy Mixin for ChartTab - handles all controller passthrough methods
 """
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
+from typing import Optional
 import pandas as pd
 from PySide6.QtCore import QSignalBlocker
 from loguru import logger

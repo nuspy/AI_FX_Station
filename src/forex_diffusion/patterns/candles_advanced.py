@@ -8,7 +8,6 @@ All patterns are designed to work without volume data.
 
 from __future__ import annotations
 from typing import List
-import numpy as np
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
 from .primitives import time_array, safe_tz_convert

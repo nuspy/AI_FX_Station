@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pathlib import Path
 from loguru import logger
 

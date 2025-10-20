@@ -1,5 +1,4 @@
 import argparse
-import json
 import warnings
 from pathlib import Path
 from typing import Dict, Any, List
@@ -35,8 +34,6 @@ except ImportError:
     # Fallback for relative imports
     from ..data.data_loader import fetch_candles_from_db
     from ..features.feature_utils import (
-        ensure_dt_index as _ensure_dt_index,
-        timeframe_to_timedelta as _timeframe_to_timedelta,
         coerce_indicator_tfs as _coerce_indicator_tfs,
     )
 
@@ -50,7 +47,6 @@ except ImportError:
 # This ensures consistency across all training scripts and reduces maintenance burden.
 
 try:
-    import ta
 
     _HAS_TA = True
 except Exception:
@@ -1196,12 +1192,12 @@ def main():
     optimized_params = {}
 
     if optimization_strategy == "genetic-basic":
-        print(f"[Training] Using genetic-basic optimization")
+        print("[Training] Using genetic-basic optimization")
         model, optimized_params, mae = _optimize_genetic_basic(
             args.algo, Xtr, ytr, Xva, yva, args
         )
     elif optimization_strategy == "nsga2":
-        print(f"[Training] Using NSGA-II multi-objective optimization")
+        print("[Training] Using NSGA-II multi-objective optimization")
         model, optimized_params, mae = _optimize_nsga2(
             args.algo, Xtr, ytr, Xva, yva, args
         )

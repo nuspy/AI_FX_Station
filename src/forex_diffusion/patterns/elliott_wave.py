@@ -12,11 +12,10 @@ without complex wave counting algorithms.
 """
 
 from __future__ import annotations
-from typing import List, Optional, Tuple
-import numpy as np
+from typing import List
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
-from .primitives import time_array, safe_tz_convert, fit_line_indices, atr
+from .primitives import time_array, safe_tz_convert, atr
 
 
 class ElliottWaveDetector(DetectorBase):

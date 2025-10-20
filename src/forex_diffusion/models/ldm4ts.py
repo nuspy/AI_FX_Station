@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 from loguru import logger
 
 from .vision_transforms import TimeSeriesVisionEncoder

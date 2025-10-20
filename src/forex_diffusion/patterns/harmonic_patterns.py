@@ -13,8 +13,7 @@ All patterns use Fibonacci ratios for validation and work without volume data.
 """
 
 from __future__ import annotations
-from typing import List, Optional, Tuple, Dict
-import numpy as np
+from typing import List, Optional, Tuple
 import pandas as pd
 from .engine import PatternEvent, DetectorBase
 from .primitives import time_array, atr, safe_tz_convert

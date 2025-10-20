@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import torch
-from pathlib import Path
 from typing import Optional, Dict, Any
 from sklearn.base import BaseEstimator, RegressorMixin
 from loguru import logger
 
 from ..inference.sssd_inference import SSSDInferenceService, load_sssd_inference_service
-from ..config.sssd_config import SSSDConfig
 
 
 class SSSDWrapper(BaseEstimator, RegressorMixin):

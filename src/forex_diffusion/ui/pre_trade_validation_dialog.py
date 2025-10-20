@@ -9,13 +9,10 @@ Validates trade parameters against real-time DOM data before execution:
 """
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QFormLayout, QProgressBar, QTextEdit
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
 from loguru import logger
 
 
@@ -259,7 +256,6 @@ class PreTradeValidationDialog(QDialog):
 
         try:
             # Import SmartExecutionOptimizer
-            from ..execution.smart_execution import SmartExecutionOptimizer
 
             # Estimate execution cost with DOM data
             cost_estimate = self.execution_optimizer.estimate_execution_cost(
@@ -292,7 +288,7 @@ class PreTradeValidationDialog(QDialog):
                 )
                 self.validation_results['execution_risk'] = 'HIGH'
             else:
-                self._add_info(f"✅ Execution impact is within acceptable range")
+                self._add_info("✅ Execution impact is within acceptable range")
                 self.validation_results['execution_risk'] = 'LOW'
 
         except Exception as e:
@@ -320,7 +316,7 @@ class PreTradeValidationDialog(QDialog):
         )
 
         if has_critical:
-            self.status_label.setText(f"❌ Validation complete with CRITICAL warnings - Proceed with caution!")
+            self.status_label.setText("❌ Validation complete with CRITICAL warnings - Proceed with caution!")
             self.status_label.setStyleSheet(
                 "font-size: 12px; padding: 5px; background-color: #f44336; "
                 "color: white; font-weight: bold;"

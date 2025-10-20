@@ -6,9 +6,8 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple, List, Dict, Optional
+from typing import Dict
 
-import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.metrics import r2_score, mean_absolute_error

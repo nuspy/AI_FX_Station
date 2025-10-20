@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QWidget, QHBoxL
     QCheckBox, QLabel, QComboBox, QLineEdit, QSplitter, QScrollArea, QFrame, QApplication,
     QGroupBox, QGridLayout)
 from PySide6.QtCore import Qt
-import yaml, os
+import yaml
+import os
 import inspect
 from loguru import logger
 from ..patterns.registry import PatternRegistry
@@ -853,7 +854,6 @@ class PatternsConfigDialog(QDialog):
         self.thread_count_spinbox.setRange(1, 64)  # Support up to 64 threads
 
         # Auto-detect optimal thread count (use 75% of available cores)
-        import os
         cpu_count = os.cpu_count() or 8
         optimal_threads = max(1, min(32, int(cpu_count * 0.75)))
 

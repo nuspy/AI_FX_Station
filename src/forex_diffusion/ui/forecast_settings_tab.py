@@ -4,7 +4,7 @@ This is the embedded version of UnifiedPredictionSettingsDialog for use as a mai
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 from PySide6.QtCore import Signal
 from loguru import logger
 

@@ -7,8 +7,7 @@ train time vs performance, etc.)
 """
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional, Tuple
-from pathlib import Path
+from typing import Dict, Any, List, Optional
 import json
 
 from PySide6.QtWidgets import (
@@ -568,7 +567,7 @@ class ParetoVisualizationDialog(QDialog):
         if self.selected_solution:
             self.solution_selected.emit(self.selected_solution)
             QMessageBox.information(self, "Solution Applied",
-                                  f"Selected solution has been applied to training configuration.")
+                                  "Selected solution has been applied to training configuration.")
 
     def _export_results(self):
         """Export optimization results to file"""

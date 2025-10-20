@@ -10,17 +10,16 @@ Provides interface for live trading with FxPro cTrader broker:
 """
 from __future__ import annotations
 
-from typing import Optional, Dict, List
-from pathlib import Path
+from typing import Optional, Dict
 from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
+    QPushButton, QLabel, QLineEdit, QComboBox, QDoubleSpinBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QTextEdit,
-    QCheckBox, QTabWidget, QDialog
+    QCheckBox, QDialog
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 from loguru import logger
 
@@ -370,7 +369,7 @@ class LiveTradingTab(QWidget):
             result = validation_dialog.exec()
 
             if result != QDialog.Accepted:
-                self._append_log(f"Order cancelled by user after validation check")
+                self._append_log("Order cancelled by user after validation check")
                 return
 
             # Log validation results

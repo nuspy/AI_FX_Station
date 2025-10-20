@@ -17,8 +17,6 @@ import numpy as np
 import pandas as pd
 
 from forex_diffusion.features.pipeline import pipeline_process, Standardizer
-from forex_diffusion.inference.prediction_config import ensure_features_for_prediction
-from loguru import logger
 
 try:
     import torch
@@ -28,7 +26,8 @@ except Exception:
 
 
 def _pickle_load(path: Path):
-    import pickle, json
+    import pickle
+    import json
     b = path.read_bytes()
     try:
         return pickle.loads(b)

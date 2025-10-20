@@ -6,7 +6,7 @@ Provides:
  - ensure_features_for_prediction(df, timeframe, features_list, adv_cfg): compute missing cols in-place (returns df)
 """
 from __future__ import annotations
-from typing import List, Sequence, Optional, Dict, Any
+from typing import Sequence, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 

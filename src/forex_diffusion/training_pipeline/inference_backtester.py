@@ -6,7 +6,7 @@ Full implementation will be added in future sprint.
 """
 
 from __future__ import annotations
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from loguru import logger
 
 

@@ -6,7 +6,7 @@ unsupervised learning of latent representations.
 """
 from __future__ import annotations
 
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, List
 from dataclasses import dataclass
 import numpy as np
 import torch

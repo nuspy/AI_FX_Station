@@ -5,21 +5,17 @@ Displays interactive 3D visualization reports with file management and descripti
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-import json
+from datetime import datetime
+from typing import Dict
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QPushButton, QLabel,
-    QTextEdit, QGroupBox, QComboBox, QSpinBox,
-    QCheckBox, QProgressBar, QMessageBox, QFileDialog
+    QTextEdit, QGroupBox, QComboBox, QCheckBox, QProgressBar, QMessageBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, Slot, QUrl
-from PySide6.QtGui import QIcon, QFont, QDesktopServices
+from PySide6.QtGui import QFont, QDesktopServices
 
 import pandas as pd
 import numpy as np
@@ -207,7 +203,7 @@ class ReportGeneratorThread(QThread):
                         source_file.rename(dest_file)
                         result['html_file'] = str(dest_file)
 
-                self.status.emit(f"Report generated successfully!")
+                self.status.emit("Report generated successfully!")
                 self.progress.emit(100)
                 self.finished.emit(result)
             else:
@@ -556,7 +552,7 @@ class Reports3DTab(QWidget):
 
             print(f"[3D REPORTS] Displaying report info for: {file_path}")
             self.display_report_info(file_path)
-            print(f"[3D REPORTS] Report info displayed")
+            print("[3D REPORTS] Report info displayed")
 
         except Exception as e:
             print(f"[3D REPORTS] EXCEPTION in on_report_selected: {e}")
@@ -599,7 +595,7 @@ class Reports3DTab(QWidget):
             self.preview_label.setText(info_text)
             self.open_browser_btn.setEnabled(True)
 
-            print(f"[3D REPORTS] Report info displayed successfully")
+            print("[3D REPORTS] Report info displayed successfully")
             logger.info(f"Report info displayed: {path.name}")
 
         except Exception as e:

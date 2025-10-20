@@ -13,14 +13,14 @@ Reference: "Multiple Time Frame Analysis" by Aronson (2011)
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import numpy as np
 import pandas as pd
 from loguru import logger
 
-from .hmm_detector import HMMRegimeDetector, RegimeType, RegimeState
+from .hmm_detector import HMMRegimeDetector, RegimeType
 
 
 class CoherenceLevel(Enum):

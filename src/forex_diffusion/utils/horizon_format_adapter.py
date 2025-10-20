@@ -9,7 +9,7 @@ Ensures compatibility between training and inference systems.
 """
 
 from __future__ import annotations
-from typing import List, Union, Tuple
+from typing import List, Union
 from loguru import logger
 
 from .horizon_converter import (

@@ -10,10 +10,10 @@ from PySide6.QtCore import Signal, Qt, QTimer
 from loguru import logger
 from matplotlib.lines import Line2D
 
-from ...utils.user_settings import get_setting, set_setting
+from ...utils.user_settings import get_setting
 from ...services.brokers import get_broker_service
 from ..chart_components.controllers.chart_controller import ChartTabController
-from ..drawing_tools import DrawingManager, IconSelectorDialog
+from ..drawing_tools import DrawingManager
 
 # Mixins for different functionality areas
 from .ui_builder import UIBuilderMixin

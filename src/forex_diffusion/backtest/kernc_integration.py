@@ -6,7 +6,7 @@ This is complementary to the existing custom BacktestEngine.
 """
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 from pathlib import Path
 import json
 

@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Callable, Dict, Any
 from collections import deque
-from pathlib import Path
 
 from loguru import logger
 from sqlalchemy.engine import Engine

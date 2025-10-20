@@ -6,7 +6,7 @@ Unified interface for multiple broker integrations.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum

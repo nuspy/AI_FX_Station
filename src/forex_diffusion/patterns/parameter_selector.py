@@ -8,13 +8,12 @@ fallback strategy when specific parameters are not available.
 
 from __future__ import annotations
 
-import json
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from loguru import logger
 
-from ..cache import cache_decorator, get_pattern_cache
+from ..cache import cache_decorator
 
 
 @dataclass

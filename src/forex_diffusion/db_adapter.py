@@ -1,6 +1,7 @@
 # src/forex_diffusion/db_adapter.py
 from __future__ import annotations
-import os, time
+import os
+import time
 from pathlib import Path
 from typing import Optional
 import pandas as pd

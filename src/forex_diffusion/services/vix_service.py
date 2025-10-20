@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Optional, Dict
 from datetime import datetime, timezone
-import asyncio
 
 from loguru import logger
 from sqlalchemy import text
@@ -78,7 +77,6 @@ class VIXService(ThreadedBackgroundService):
             
             # Fetch VIX synchronously using requests
             import requests
-            from requests.exceptions import HTTPError
             
             params = {
                 'symbols': '^VIX',

@@ -5,13 +5,10 @@ Advanced portfolio risk analytics, position sizing, and risk monitoring.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
 import logging
 from dataclasses import dataclass
 from scipy import stats
-from scipy.optimize import minimize
-import warnings
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -504,7 +501,7 @@ if __name__ == "__main__":
     # Test risk analyzer
     risk_analyzer = PortfolioRiskAnalyzer()
 
-    print(f"\n=== PORTFOLIO RISK ANALYSIS ===")
+    print("\n=== PORTFOLIO RISK ANALYSIS ===")
     for asset in portfolio_data.columns:
         metrics = risk_analyzer.calculate_comprehensive_metrics(
             portfolio_data[asset], benchmark
@@ -518,20 +515,20 @@ if __name__ == "__main__":
         print(f"  Beta: {metrics.beta:.2f}")
 
     # Portfolio VaR
-    print(f"\n=== PORTFOLIO VALUE AT RISK ===")
+    print("\n=== PORTFOLIO VALUE AT RISK ===")
     portfolio_var = risk_analyzer.calculate_portfolio_var(portfolio_data)
     print(f"Parametric VaR (95%): {portfolio_var['parametric_var']:.4f}")
     print(f"Historical VaR (95%): {portfolio_var['historical_var']:.4f}")
     print(f"Monte Carlo VaR (95%): {portfolio_var['monte_carlo_var']:.4f}")
 
     # Stress testing
-    print(f"\n=== STRESS TEST RESULTS ===")
+    print("\n=== STRESS TEST RESULTS ===")
     stress_results = risk_analyzer.stress_test_portfolio(portfolio_data)
     for scenario, result in stress_results.items():
         print(f"{scenario}: {result['percentage_impact']:.1f}% impact ({result['severity']})")
 
     # Position sizing
-    print(f"\n=== POSITION SIZING ===")
+    print("\n=== POSITION SIZING ===")
     position_engine = PositionSizingEngine()
 
     position_result = position_engine.calculate_position_size(
@@ -558,7 +555,7 @@ if __name__ == "__main__":
     ]
 
     heat_check = position_engine.portfolio_heat_check(sample_positions, 100000)
-    print(f"\n=== PORTFOLIO HEAT CHECK ===")
+    print("\n=== PORTFOLIO HEAT CHECK ===")
     print(f"Total Portfolio Risk: {heat_check['total_portfolio_risk']:.2f}%")
     print(f"Risk Level: {heat_check['risk_level']}")
     print(f"Diversification Score: {heat_check['diversification_score']:.1f}/100")
@@ -566,6 +563,6 @@ if __name__ == "__main__":
     for rec in heat_check['recommendations']:
         print(f"- {rec}")
 
-    print(f"\n+ Professional Risk Management Suite Successfully Implemented!")
-    print(f"+ Comprehensive risk metrics, VaR, stress testing ready")
-    print(f"+ Advanced position sizing and portfolio heat monitoring available")
+    print("\n+ Professional Risk Management Suite Successfully Implemented!")
+    print("+ Comprehensive risk metrics, VaR, stress testing ready")
+    print("+ Advanced position sizing and portfolio heat monitoring available")

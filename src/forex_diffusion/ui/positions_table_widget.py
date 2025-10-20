@@ -6,7 +6,7 @@ color coding, and position management capabilities.
 """
 
 from __future__ import annotations
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, Any
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,

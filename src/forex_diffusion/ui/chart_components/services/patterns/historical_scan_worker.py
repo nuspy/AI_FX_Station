@@ -2,7 +2,7 @@
 # Worker for running historical pattern scans across multiple timeframes
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot
 
 
 class HistoricalScanWorker(QObject):

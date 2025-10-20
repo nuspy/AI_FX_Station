@@ -26,8 +26,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 
 import numpy as np
@@ -535,7 +534,7 @@ def main():
     val_data = data.iloc[train_size:train_size + val_size]
     test_data = data.iloc[train_size + val_size:]
     
-    logger.info(f"\nData splits:")
+    logger.info("\nData splits:")
     logger.info(f"  Train: {len(train_data)} samples")
     logger.info(f"  Val: {len(val_data)} samples")
     logger.info(f"  Test: {len(test_data)} samples")

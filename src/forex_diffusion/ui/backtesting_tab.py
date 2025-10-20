@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -481,7 +481,7 @@ class DiffusionBacktestingTab(QWidget):
         for ind, params in self.indicator_param_ranges.items():
             inner: Dict[str, Tuple[int, int, int]] = {}
             for pkey, (sp_from, sp_to, sp_step) in params.items():
-                a = int(sp_from.value()); b = int(sp_to.value());
+                a = int(sp_from.value()); b = int(sp_to.value())
                 if a > b: a, b = b, a
                 s = max(1, int(sp_step.value()))
                 inner[pkey] = (a, b, s)
@@ -1020,7 +1020,6 @@ class LDM4TSBacktestingTab(QWidget):
         self.ldm4ts_bt_checkpoint_edit = QLineEdit()
         self.ldm4ts_bt_checkpoint_edit.setPlaceholderText("Path to LDM4TS checkpoint (.pt)")
         
-        from pathlib import Path
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_checkpoint)
         

@@ -1,6 +1,6 @@
 """Riskfolio-Lib Integrator - Portfolio Optimization"""
 from __future__ import annotations
-from typing import Dict, Optional
+from typing import Dict
 import pandas as pd
 import numpy as np
 from loguru import logger

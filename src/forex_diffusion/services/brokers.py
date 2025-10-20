@@ -1,9 +1,10 @@
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional, Any
-import time, json, os
+import time
+import json
 from pathlib import Path
 from loguru import logger
-from ..utils.user_settings import get_setting, set_setting, SETTINGS_DIR
+from ..utils.user_settings import get_setting, SETTINGS_DIR
 
 ACCOUNTS_FILE = SETTINGS_DIR / "trading_accounts.json"
 ORDERS_FILE = SETTINGS_DIR / "trading_orders.json"

@@ -5,9 +5,7 @@ Implements intelligent subplot organization for different indicator ranges
 from __future__ import annotations
 
 import pandas as pd
-import numpy as np
-from typing import Dict, Any, List, Optional, Tuple, Union
-from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
 import logging
 from dataclasses import dataclass
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
 import time
 from pathlib import Path
 
@@ -14,7 +13,6 @@ from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDial
 from forex_diffusion.utils.user_settings import get_setting
 
 from .base import ChartServiceBase
-from .draggable_legend import DraggableLegend
 
 
 def get_forecast_service(controller, view, create=True):
@@ -177,7 +175,7 @@ class ForecastService(ChartServiceBase):
                     if q95_arr is not None: q95_arr = _np.insert(q95_arr, 0, last_close)
                     logger.debug(f"After prepend: x_vals len={len(x_vals)}, q50 len={len(q50_arr)}")
                 else:
-                    logger.warning(f"No requested_at_ms in quantiles - forecast won't connect to price line")
+                    logger.warning("No requested_at_ms in quantiles - forecast won't connect to price line")
             except Exception as e:
                 logger.warning(f"Failed to prepend anchor point: {e}")
 
@@ -756,7 +754,6 @@ class ForecastService(ChartServiceBase):
             self._plot_forecast_overlay(quantiles, source)
     
     def _open_forecast_settings(self):
-        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
         dialog = PredictionSettingsDialog(self.view)
         # execute and then apply relevant runtime settings (max_forecasts, auto)
         dialog.exec()
@@ -774,7 +771,6 @@ class ForecastService(ChartServiceBase):
             pass
 
     def _on_forecast_clicked(self):
-        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
         settings = PredictionSettingsDialog.get_settings_from_file()
         logger.info(f"Forecast clicked. Settings loaded: model_paths={settings.get('model_paths')}, horizons={settings.get('horizons')}")
         if not settings.get("model_paths") and not settings.get("model_path"):
@@ -793,13 +789,11 @@ class ForecastService(ChartServiceBase):
 
     def _open_adv_forecast_settings(self):
         # Reuse same dialog which now contains advanced options
-        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
         dialog = PredictionSettingsDialog(self.view)
         dialog.exec()
 
     def _on_advanced_forecast_clicked(self):
         # advanced forecast: use same settings but tag source
-        from forex_diffusion.ui.prediction_settings_dialog import PredictionSettingsDialog
         settings = PredictionSettingsDialog.get_settings_from_file()
         if not settings.get("model_paths") and not settings.get("model_path"):
             QMessageBox.warning(self.view, "Missing Model", "Please select a model file.")

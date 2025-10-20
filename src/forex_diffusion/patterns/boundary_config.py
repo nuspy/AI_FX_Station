@@ -5,7 +5,7 @@ Defines intelligent boundaries between 'actual' and 'historical' patterns
 based on pattern characteristics and timeframe-specific durations.
 """
 
-from typing import Dict, Any
+from typing import Dict
 import json
 import os
 

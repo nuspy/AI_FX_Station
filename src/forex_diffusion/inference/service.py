@@ -19,11 +19,10 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from loguru import logger
-from sqlalchemy import create_engine, select, Table, MetaData
+from sqlalchemy import create_engine, select, MetaData
 
 from ..utils.config import get_config
 from ..postproc import uncertainty as unc
-from ..data import io as data_io
 
 from contextlib import asynccontextmanager
 
@@ -221,7 +220,6 @@ class ModelService:
         # Build conditioning vector h from recent candles using pipeline.build_conditioning
         cond_vec = None
         try:
-            from ..data import io as data_io_local
             from ..features.pipeline import build_conditioning
             from ..services.nn_service import NearestNeighborService
             # query recent candles as DataFrame via engine
@@ -338,8 +336,6 @@ _engine = _get_engine()
 from ..services.model_service import ModelService
 from ..services.db_service import DBService
 from ..services.calibration import CalibrationService
-from ..services.db_writer import DBWriter
-from ..services.db_writer import DBWriter
 from ..services.db_writer import DBWriter
 
 db_service = DBService(engine=_engine)

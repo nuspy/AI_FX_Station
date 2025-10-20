@@ -807,7 +807,6 @@ def _get_accounts_with_oauth(client_id: str, client_secret: str, access_token: s
     from ctrader_open_api import Client, EndPoints
     from ctrader_open_api.messages.OpenApiMessages_pb2 import (
         ProtoOAApplicationAuthReq,
-        ProtoOAAccountAuthReq,
         ProtoOAGetAccountListReq
     )
 

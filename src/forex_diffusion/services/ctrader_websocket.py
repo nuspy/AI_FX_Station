@@ -16,7 +16,6 @@ import time
 import threading
 from typing import Dict, List, Optional, Any, Callable
 from collections import deque
-from datetime import datetime
 
 from loguru import logger
 from sqlalchemy import text
@@ -417,7 +416,7 @@ class CTraderWebSocketService:
                 if deferred:
                     deferred.addErrback(lambda err: logger.warning(f"Symbols list timeout after 30s: {err}"))
 
-            logger.info(f"Requested symbols list for subscription")
+            logger.info("Requested symbols list for subscription")
 
         except Exception as e:
             logger.error(f"Subscription error: {e}")
@@ -482,7 +481,6 @@ class CTraderWebSocketService:
             on_success: Callback(response) when response received
             on_error: Callback(error) when timeout or error occurs
         """
-        from twisted.internet import defer
 
         try:
             # Generate unique message ID

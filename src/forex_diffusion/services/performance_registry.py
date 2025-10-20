@@ -19,13 +19,10 @@ import sqlite3
 from pathlib import Path
 import threading
 from collections import defaultdict, deque
-import statistics
 
 import numpy as np
-import pandas as pd
 from loguru import logger
 
-from ..utils.horizon_converter import MarketRegime, timeframe_to_minutes
 
 
 class PerformanceMetric(Enum):
@@ -598,7 +595,7 @@ class PerformanceRegistry:
                 model_name=model_name,
                 current_value=stats.accuracy,
                 threshold=0.0,
-                message=f"Performance is degrading - investigate model drift"
+                message="Performance is degrading - investigate model drift"
             )
 
     def _create_alert(
