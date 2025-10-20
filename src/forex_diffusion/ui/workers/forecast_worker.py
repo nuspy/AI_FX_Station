@@ -23,6 +23,7 @@ from loguru import logger
 
 from ...services.marketdata import MarketDataService
 from ...inference.parallel_inference import get_parallel_engine
+from ...inference.converters import build_price_path
 from ...utils.horizon_converter import convert_horizons_for_inference, create_future_timestamps
 
 
@@ -840,13 +841,22 @@ class ForecastWorker(QRunnable):
 
             # Convert ensemble predictions to price forecasts
             last_close = float(df_candles["close"].iat[-1])
-            mean_returns = np.array(ensemble_preds["mean"])
-            std_returns = np.array(ensemble_preds["std"])
+            anchor_price = self.payload.get("anchor_price")
+            try:
+                anchor_price = float(anchor_price) if anchor_price is not None else None
+            except (TypeError, ValueError):
+                anchor_price = None
+
+            base_price = last_close
+
+            mean_returns = np.array(ensemble_preds["mean"], dtype=float)
+            std_returns = np.array(ensemble_preds["std"], dtype=float)
 
             # Log diagnostics for scaling
             logger.debug(
-                "Ensemble returns summary: last_close=%.6f, mean=%s, std=%s",
-                last_close,
+                "Ensemble returns summary: base=%.6f, anchor=%s, mean=%s, std=%s",
+                base_price,
+                anchor_price,
                 np.array2string(mean_returns, precision=6, suppress_small=True),
                 np.array2string(std_returns, precision=6, suppress_small=True)
             )
@@ -933,20 +943,15 @@ class ForecastWorker(QRunnable):
                     mean_returns = np.pad(mean_returns, (0, max(0, target_len - len(mean_returns))), mode='edge')[:target_len]
                     std_returns = np.pad(std_returns, (0, max(0, target_len - len(std_returns))), mode='edge')[:target_len]
 
-            # Convert to prices
-            prices = []
-            p = last_close
-            for r in mean_returns:
-                p *= (1.0 + float(r))
-                prices.append(p)
-            q50 = np.asarray(prices, dtype=float)
+            # Convert to prices relative to base price using shared converter
+            q50 = build_price_path(mean_returns, base_price, len(horizons_bars))
 
             # Calculate bands using ensemble uncertainty
             z = 1.645 if bool(self.payload.get("apply_conformal", True)) else 1.0
-            band_rel = np.clip(z * std_returns, 1e-6, 0.2)
-
-            q05 = np.maximum(1e-12, q50 * (1.0 - band_rel))
-            q95 = np.maximum(1e-12, q50 * (1.0 + band_rel))
+            lower_returns = mean_returns - z * std_returns
+            upper_returns = mean_returns + z * std_returns
+            q05 = build_price_path(lower_returns, base_price, len(horizons_bars))
+            q95 = build_price_path(upper_returns, base_price, len(horizons_bars))
 
             # Create future timestamps
             last_ts_ms = int(df_candles["ts_utc"].iat[-1])
@@ -975,6 +980,18 @@ class ForecastWorker(QRunnable):
                     logger.info(f"Multi-horizon forecast detected: {len(model_horizons)} horizons")
 
             display_name = str(self.payload.get("name") or "Parallel Ensemble")
+            logger.info(
+                "Ensemble horizon diagnostics: base=%.6f returns=%s prices=%s",
+                base_price,
+                np.array2string(mean_returns, precision=6, suppress_small=True),
+                np.array2string(q50, precision=6, suppress_small=True)
+            )
+
+            # Prepend anchor point for continuous plotting
+            q50 = np.insert(q50, 0, last_close)
+            q05 = np.insert(q05, 0, last_close)
+            q95 = np.insert(q95, 0, last_close)
+            future_ts = [last_ts_ms] + future_ts
             quantiles = {
                 "q50": q50.tolist(),
                 "q05": q05.tolist(),
@@ -991,7 +1008,7 @@ class ForecastWorker(QRunnable):
                 },
                 "parallel_inference": True,
                 "requested_at_ms": self.payload.get("requested_at_ms"),  # For connecting forecast to price line
-                "anchor_price": self.payload.get("anchor_price"),  # Pass through Alt+Click Y coordinate
+                "anchor_price": last_close,
                 
                 # Multi-horizon support
                 "is_multi_horizon": has_multi_horizon,
@@ -1018,17 +1035,28 @@ class ForecastWorker(QRunnable):
                     if predictions is None or len(predictions) == 0:
                         continue
 
+                    last_close_ref = last_close
+                    horizon_list = result.get('horizons') or list(range(1, len(predictions) + 1))
+
+                    logger.info(
+                        "Model %s horizon diagnostics: last_close=%.6f returns=%s",
+                        model_name,
+                        float(last_close_ref),
+                        predictions
+                    )
+
                     # Convert returns to prices for this model
-                    model_prices = []
-                    p = last_close
-                    for r in predictions:
-                        p *= (1.0 + float(r))
-                        model_prices.append(p)
+                    pred_array = np.asarray(predictions, dtype=float)
+                    model_prices = build_price_path(pred_array, last_close_ref, len(horizons_bars))
 
                     # Pad to match horizons if needed
                     if len(model_prices) < len(horizons_bars):
-                        model_prices.extend([model_prices[-1]] * (len(horizons_bars) - len(model_prices)))
-                    model_prices = model_prices[:len(horizons_bars)]
+                        model_prices = np.pad(model_prices, (0, len(horizons_bars) - len(model_prices)), mode='edge')
+                    model_prices = np.asarray(model_prices[:len(horizons_bars)], dtype=float)
+
+                    # Prepend last close for plotting anchor
+                    model_prices = np.insert(model_prices, 0, last_close_ref)
+                    model_future_ts = [last_ts_ms] + future_ts
 
                     q50_model = np.asarray(model_prices, dtype=float)
 
@@ -1041,7 +1069,7 @@ class ForecastWorker(QRunnable):
                         "q50": q50_model.tolist(),
                         "q05": q05_model.tolist(),
                         "q95": q95_model.tolist(),
-                        "future_ts": future_ts,
+                        "future_ts": model_future_ts,
                         "source": model_name,
                         "label": model_name,
                         "model_path_used": Path(model_path).name if model_path else model_name,
@@ -1049,7 +1077,7 @@ class ForecastWorker(QRunnable):
                         "parallel_inference": True,
                         "separate_model": True,  # Mark as individual model forecast
                         "requested_at_ms": self.payload.get("requested_at_ms"),  # For connecting forecast to price line
-                        "anchor_price": self.payload.get("anchor_price")
+                        "anchor_price": last_close
                     }
 
                     # Emit individual forecast
@@ -1058,6 +1086,7 @@ class ForecastWorker(QRunnable):
                 # Return the ensemble as well (but it was already emitted individually)
                 return df_candles, quantiles
 
+            # Default: return combined ensemble
             # Default: return combined ensemble
             return df_candles, quantiles
 

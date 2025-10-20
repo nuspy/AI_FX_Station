@@ -57,6 +57,8 @@ class LightningMultiHorizonPredictor:
         self.horizons: List[int] = []
         self.is_multi_horizon: bool = False
         self.num_horizons: int = 0
+        self.price_mu: Optional[float] = None
+        self.price_sigma: Optional[float] = None
         
         # Load model
         logger.info(f"Loading Lightning model from {self.checkpoint_path}")
@@ -64,6 +66,23 @@ class LightningMultiHorizonPredictor:
         
         # Extract horizons from metadata
         self._extract_horizons()
+
+        # Infer de-normalization stats for price outputs
+        if self.channel_mu and self.channel_sigma:
+            try:
+                mu_idx = self.channel_order.index('close') if self.channel_order else 3
+            except ValueError:
+                mu_idx = 3
+            try:
+                self.price_mu = float(self.channel_mu[mu_idx])
+                self.price_sigma = float(self.channel_sigma[mu_idx])
+            except Exception:
+                self.price_mu = None
+                self.price_sigma = None
+
+        if hasattr(self, 'model') and self.model is not None:
+            setattr(self.model, 'price_mu', self.price_mu)
+            setattr(self.model, 'price_sigma', self.price_sigma)
         
         logger.info(f"Model horizons: {self.horizons} ({'multi' if self.is_multi_horizon else 'single'})")
         logger.info(f"Device: {self.device}")
@@ -260,42 +279,28 @@ class LightningMultiHorizonPredictor:
         with torch.no_grad():
             # Encode to latent space
             mu, logvar = self.model.vae.encode(x)
-            
-            # Sample multiple trajectories from posterior
-            predictions_all = []  # List of (num_samples, num_horizons)
-            
+
+            predictions_all = []  # (num_samples, num_horizons)
+
             for _ in range(num_samples):
-                # Sample from q(z|x)
                 std = torch.exp(0.5 * logvar)
                 eps = torch.randn_like(std)
                 z = mu + eps * std
-                
-                # Multi-horizon prediction
+
                 if self.is_multi_horizon and hasattr(self.model, 'multi_horizon_head') and self.model.multi_horizon_head is not None:
-                    # Use dedicated MLP head for proper multi-horizon predictions
-                    horizon_preds = self.model.multi_horizon_head(z)  # (B, H)
-                    pred_horizons = horizon_preds[0].tolist()  # First batch item, convert to list
+                    horizon_preds = self.model.multi_horizon_head(z)[0]  # (H,)
                 else:
-                    # Fallback: decode and extract close from reconstruction
-                    x_rec = self.model.vae.decode(z)  # (B, C, L)
-                    
-                    # Get close channel index
+                    x_rec = self.model.vae.decode(z)
                     close_idx = getattr(self.model.hparams, 'close_channel_idx', None)
-                    if close_idx is None:
-                        close_idx = 3  # Default: assume 'close' at channel 3
-                    close_idx = min(close_idx, x_rec.shape[1] - 1)
-                    close_rec = x_rec[0, close_idx, -1]  # Last timestep
-                    
-                    if self.is_multi_horizon:
-                        # Replicate for legacy models without prediction head
-                        pred_horizons = [close_rec.item()] * self.num_horizons
-                    else:
-                        pred_horizons = [close_rec.item()]
-                
-                predictions_all.append(pred_horizons)
-            
-            # Convert to numpy for stats
-            predictions_all = np.array(predictions_all)  # (num_samples, num_horizons)
+                    close_idx = 3 if close_idx is None else min(close_idx, x_rec.shape[1] - 1)
+                    close_val = x_rec[0, close_idx, -1]
+                    horizon_preds = torch.full((self.num_horizons,), close_val, device=z.device)
+
+                predictions_all.append(horizon_preds.detach().cpu().numpy())
+
+            predictions_all = np.array(predictions_all, dtype=float)
+            raw_mean = predictions_all.mean(axis=0)
+            raw_std = predictions_all.std(axis=0)
         
         # Compute statistics
         if return_dict:
@@ -317,6 +322,13 @@ class LightningMultiHorizonPredictor:
                     }
                 else:
                     result[horizon] = float(np.mean(samples))
+
+                logger.debug(
+                    "[LightningPredictor] horizon=%s raw_mean=%.6f raw_std=%.6f",
+                    horizon,
+                    raw_mean[i],
+                    raw_std[i]
+                )
             
             return result
         else:

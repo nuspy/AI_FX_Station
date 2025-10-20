@@ -19,6 +19,7 @@ from loguru import logger
 from ..models.model_path_resolver import ModelPathResolver
 from ..models.standardized_loader import get_model_loader
 from ..utils.horizon_converter import convert_horizons_for_inference
+from .converters import denormalize_lightning_outputs, returns_from_prices
 
 # Import DeviceManager for GPU support
 try:
@@ -327,20 +328,24 @@ class ModelExecutor:
                         raw_pred_dict = None
                         if pred_dict and isinstance(pred_dict, dict):
                             raw_pred_dict = {h: float(v) for h, v in pred_dict.items()}
-                            if last_close_value is None or last_close_value == 0.0 or np.isnan(last_close_value):
-                                logger.warning("Lightning predictor missing valid last_close reference; using absolute outputs")
-                                predictions_dict = raw_pred_dict
-                            else:
-                                predictions_dict = {
-                                    h: (float(v) - last_close_value) / last_close_value for h, v in pred_dict.items()
-                                }
-                            predictions = np.array([predictions_dict[h] for h in sorted(predictions_dict.keys())])
-                            logger.debug(
-                                "[Lightning] %s raw=%s returns=%s last_close=%.6f",
-                                Path(self.model_path).name,
+                            price_pred_dict = denormalize_lightning_outputs(
                                 raw_pred_dict,
-                                predictions_dict,
-                                last_close_value if last_close_value is not None else float('nan')
+                                getattr(model, 'price_mu', None),
+                                getattr(model, 'price_sigma', None)
+                            )
+                            predictions_dict = returns_from_prices(price_pred_dict, last_close_value)
+                            predictions = np.array([
+                                predictions_dict[h] for h in sorted(predictions_dict.keys())
+                            ])
+                            logger.debug(
+                                "[Lightning] %s last_close=%.6f price_mu=%s price_sigma=%s raw=%s price=%s returns=%s",
+                                Path(self.model_path).name,
+                                last_close_value,
+                                getattr(model, 'price_mu', None),
+                                getattr(model, 'price_sigma', None),
+                                raw_pred_dict,
+                                price_pred_dict,
+                                predictions_dict
                             )
                         
                     except Exception as e:
@@ -390,8 +395,6 @@ class ModelExecutor:
                 'model_name': Path(self.model_path).stem,
                 'predictions': predictions,
                 'predictions_dict': predictions_dict,  # Multi-horizon predictions {horizon: value}
-                'predictions_absolute': raw_pred_dict,
-                'last_close': last_close_value,
                 'horizons': model_horizons,  # Trained horizons
                 'is_multi_horizon': is_multi_horizon,
                 'features_used': available_features if features_list else list(range(X.shape[1])),
