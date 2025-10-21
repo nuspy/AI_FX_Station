@@ -1795,8 +1795,8 @@ class TrainingTab(QWidget):
                 return
             
             try:
-                from ..utils.horizon_parser import parse_horizon_spec
-                horizons = parse_horizon_spec(horizon_str)
+                from ..utils.horizon_format_adapter import get_inference_horizons_as_bars
+                horizons = get_inference_horizons_as_bars(horizon_str, tf)
                 logger.info(f"Training with horizons: {horizons}")
             except Exception as e:
                 QMessageBox.warning(
@@ -1851,7 +1851,7 @@ class TrainingTab(QWidget):
                     sys.executable, '-m', module,
                     '--symbol', sym,
                     '--timeframe', tf,
-                    '--horizon', horizon_str,
+                    '--horizon', ','.join(map(str, horizons)),
                     '--days_history', str(days),
                     '--patch_len', str(int(self.patch_len.value())),
                     '--epochs', str(int(self.light_epochs.value())),
@@ -1948,7 +1948,7 @@ class TrainingTab(QWidget):
                     sys.executable, '-m', module,
                     '--symbol', sym,
                     '--timeframe', tf,
-                    '--horizon', horizon_str,
+                    '--horizon', ','.join(map(str, horizons)),
                     '--algo', algo,
                     '--encoder', encoder,
                     '--latent_dim', str(int(self.latent_dim.value())),

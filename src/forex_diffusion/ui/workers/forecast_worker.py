@@ -10,6 +10,7 @@ Handles:
 """
 from __future__ import annotations
 
+import time
 import os
 import sys
 from typing import Optional, Callable, List, Dict, Tuple
@@ -220,6 +221,9 @@ class ForecastWorker(QRunnable):
 
     def run(self):
         try:
+            # Inject execution start time for UI anchoring
+            self.payload['requested_at_ms'] = int(time.time() * 1000)
+
             self.signals.status.emit("Forecast: running inference...")
             
             # Check forecast type from payload
@@ -415,16 +419,14 @@ class ForecastWorker(QRunnable):
                 return pd.DataFrame()
             with engine.connect() as conn:
                 q = text(
-                    "SELECT ts_utc, timestamp, open, high, low, close, volume FROM market_data_candles "
+                    "SELECT ts_utc, open, high, low, close, volume FROM market_data_candles "
                     "WHERE symbol = :symbol AND timeframe = :timeframe AND ts_utc <= :end_ts "
                     "ORDER BY ts_utc DESC LIMIT :limit"
                 )
                 rows = conn.execute(q, {"symbol": symbol, "timeframe": timeframe, "end_ts": int(end_ts), "limit": int(n_bars)}).fetchall()
                 if not rows:
                     return pd.DataFrame()
-                df = pd.DataFrame(rows, columns=["ts_utc", "timestamp", "open", "high", "low", "close", "volume"])
-                if "timestamp" in df.columns and df["timestamp"].notna().any():
-                    df["ts_utc"] = pd.to_datetime(df["timestamp"]).astype("int64") // 10**6
+                df = pd.DataFrame(rows, columns=["ts_utc", "open", "high", "low", "close", "volume"])
                 logger.debug(f"[OPT-003 Lazy Loading] Fetched {len(df)} bars up to ts={end_ts} for {symbol} {timeframe}")
                 return df.sort_values("ts_utc").reset_index(drop=True)
         except Exception as e:
@@ -956,6 +958,7 @@ class ForecastWorker(QRunnable):
             # Create future timestamps
             last_ts_ms = int(df_candles["ts_utc"].iat[-1])
             future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
+            future_ts_with_anchor = [last_ts_ms] + future_ts
 
             # Check if we have multi-horizon predictions
             has_multi_horizon = False
@@ -980,18 +983,18 @@ class ForecastWorker(QRunnable):
                     logger.info(f"Multi-horizon forecast detected: {len(model_horizons)} horizons")
 
             display_name = str(self.payload.get("name") or "Parallel Ensemble")
+            ensemble_points = list(zip(future_ts_with_anchor, q50.tolist(), q05.tolist(), q95.tolist()))
             logger.info(
-                "Ensemble horizon diagnostics: base=%.6f returns=%s prices=%s",
+                "Ensemble horizon diagnostics: base=%.6f points=%s",
                 base_price,
-                np.array2string(mean_returns, precision=6, suppress_small=True),
-                np.array2string(q50, precision=6, suppress_small=True)
+                ensemble_points
             )
 
             # Prepend anchor point for continuous plotting
             q50 = np.insert(q50, 0, last_close)
             q05 = np.insert(q05, 0, last_close)
             q95 = np.insert(q95, 0, last_close)
-            future_ts = [last_ts_ms] + future_ts
+            future_ts = future_ts_with_anchor
             quantiles = {
                 "q50": q50.tolist(),
                 "q05": q05.tolist(),
@@ -1038,13 +1041,6 @@ class ForecastWorker(QRunnable):
                     last_close_ref = last_close
                     horizon_list = result.get('horizons') or list(range(1, len(predictions) + 1))
 
-                    logger.info(
-                        "Model %s horizon diagnostics: last_close=%.6f returns=%s",
-                        model_name,
-                        float(last_close_ref),
-                        predictions
-                    )
-
                     # Convert returns to prices for this model
                     pred_array = np.asarray(predictions, dtype=float)
                     model_prices = build_price_path(pred_array, last_close_ref, len(horizons_bars))
@@ -1056,7 +1052,14 @@ class ForecastWorker(QRunnable):
 
                     # Prepend last close for plotting anchor
                     model_prices = np.insert(model_prices, 0, last_close_ref)
-                    model_future_ts = [last_ts_ms] + future_ts
+                    model_future_ts = future_ts[:len(model_prices)]
+
+                    logger.info(
+                        "Model %s horizon diagnostics: last_close=%.6f points=%s",
+                        model_name,
+                        float(last_close_ref),
+                        list(zip(model_future_ts, model_prices.tolist()))
+                    )
 
                     q50_model = np.asarray(model_prices, dtype=float)
 

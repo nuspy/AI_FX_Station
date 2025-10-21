@@ -328,25 +328,39 @@ class ModelExecutor:
                         raw_pred_dict = None
                         if pred_dict and isinstance(pred_dict, dict):
                             raw_pred_dict = {h: float(v) for h, v in pred_dict.items()}
-                            price_pred_dict = denormalize_lightning_outputs(
-                                raw_pred_dict,
-                                getattr(model, 'price_mu', None),
-                                getattr(model, 'price_sigma', None)
-                            )
-                            predictions_dict = returns_from_prices(price_pred_dict, last_close_value)
+                            price_mu = getattr(model, 'price_mu', None)
+                            price_sigma = getattr(model, 'price_sigma', None)
+
+                            if price_mu is None or price_sigma is None:
+                                predictions_dict = raw_pred_dict
+                                price_pred_dict = None
+                                logger.warning(
+                                    "Lightning model %s missing normalization stats; treating outputs as returns",
+                                    Path(self.model_path).name
+                                )
+                            else:
+                                price_pred_dict = denormalize_lightning_outputs(
+                                    raw_pred_dict,
+                                    price_mu,
+                                    price_sigma
+                                )
+                                predictions_dict = returns_from_prices(price_pred_dict, last_close_value)
+
+                            sorted_horizons = sorted(predictions_dict.keys())
                             predictions = np.array([
-                                predictions_dict[h] for h in sorted(predictions_dict.keys())
+                                predictions_dict[h] for h in sorted_horizons
                             ])
-                            logger.debug(
-                                "[Lightning] %s last_close=%.6f price_mu=%s price_sigma=%s raw=%s price=%s returns=%s",
-                                Path(self.model_path).name,
-                                last_close_value,
-                                getattr(model, 'price_mu', None),
-                                getattr(model, 'price_sigma', None),
-                                raw_pred_dict,
-                                price_pred_dict,
-                                predictions_dict
-                            )
+
+                            lightning_points = [
+                                (
+                                    h,
+                                    raw_pred_dict[h],
+                                    price_pred_dict[h] if price_pred_dict else None,
+                                    predictions_dict[h]
+                                )
+                                for h in sorted_horizons
+                            ]
+                            logger.info("XXX: LIGHTNING VALUES: {}", lightning_points)
                         
                     except Exception as e:
                         logger.error(f"Lightning predict failed: {e}")

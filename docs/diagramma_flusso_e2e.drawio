@@ -1,0 +1,197 @@
+<mxfile host="app.diagrams.net" modified="2025-10-20T18:00:00.000Z" agent="Gemini" etag="1" version="21.0.0" type="device">
+  <diagram name="End-to-End Flow" id="diagram-1">
+    <mxGraphModel dx="3000" dy="2000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4000" pageHeight="2500" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- STYLES -->
+        <style name="process" value="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" />
+        <style name="data" value="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#f8cecc;strokeColor=#b85450;" />
+        <style name="service" value="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" />
+        <style name="decision" value="rhombus;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" />
+        <style name="model" value="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;size=0.25;fillColor=#fff2cc;strokeColor=#d6b656;" />
+        <style name="arrow" value="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;strokeWidth=1;" />
+        <style name="feedbackArrow" value="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#ff0000;" />
+        <style name="title" value="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" />
+
+        <!-- TITLES -->
+        <mxCell id="title-offline" value="FASE 1: Processi Offline (Addestramento e Ottimizzazione)" style="title" parent="1" vertex="1">
+          <mxGeometry x="450" y="20" width="600" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="title-realtime" value="FASE 2: Processi Real-Time (Inferenza e Trading)" style="title" parent="1" vertex="1">
+          <mxGeometry x="1600" y="20" width="600" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- COLUMN 1: OFFLINE - DATA -->
+        <mxCell id="data-hist" value="Dati Storici&#xa;(OHLCV, News, Sentiment)" style="data" parent="1" vertex="1">
+          <mxGeometry x="50" y="100" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="data-trades" value="Storico Trade&#xa;(Win/Loss, PnL)" style="data" parent="1" vertex="1">
+          <mxGeometry x="50" y="800" width="160" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- COLUMN 2: OFFLINE - TRAINING -->
+        <mxCell id="train-pattern" value="Ottimizzazione Parametri Pattern" style="process" parent="1" vertex="1">
+          <mxGeometry x="300" y="100" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="train-diffusion" value="Addestramento Modello&#xa;Diffusion Base (VAE)" style="process" parent="1" vertex="1">
+          <mxGeometry x="300" y="250" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="train-sssd" value="Addestramento Modello SSSD" style="process" parent="1" vertex="1">
+          <mxGeometry x="300" y="400" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="train-ldm4ts" value="Addestramento Modello LDM4TS" style="process" parent="1" vertex="1">
+          <mxGeometry x="300" y="550" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="train-risk" value="Ottimizzazione Adattiva Parametri&#xa;(AdaptiveParameterSystem)" style="process" parent="1" vertex="1">
+          <mxGeometry x="300" y="800" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- COLUMN 3: OFFLINE - ARTIFACTS -->
+        <mxCell id="artifact-pattern" value="Parametri Pattern Ottimizzati" style="service" parent="1" vertex="1">
+          <mxGeometry x="600" y="100" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="artifact-diffusion" value="Checkpoint Modello&#xa;Diffusion (.ckpt)" style="model" parent="1" vertex="1">
+          <mxGeometry x="600" y="250" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="artifact-sssd" value="Checkpoint Modello&#xa;SSSD (.pt)" style="model" parent="1" vertex="1">
+          <mxGeometry x="600" y="400" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="artifact-ldm4ts" value="Checkpoint Modello&#xa;LDM4TS (.ckpt)" style="model" parent="1" vertex="1">
+          <mxGeometry x="600" y="550" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="artifact-risk" value="Parametri di Rischio e Qualità Ottimizzati" style="service" parent="1" vertex="1">
+          <mxGeometry x="600" y="800" width="160" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- OFFLINE ARROWS -->
+        <mxCell id="arrow-1" value="Usa dati per ottimizzare" style="arrow" parent="1" source="data-hist" target="train-pattern" edge="1" />
+        <mxCell id="arrow-2" value="Salva parametri" style="arrow" parent="1" source="train-pattern" target="artifact-pattern" edge="1" />
+        <mxCell id="arrow-3" value="" style="arrow" parent="1" source="data-hist" target="train-diffusion" edge="1" />
+        <mxCell id="arrow-4" value="" style="arrow" parent="1" source="train-diffusion" target="artifact-diffusion" edge="1" />
+        <mxCell id="arrow-5" value="" style="arrow" parent="1" source="data-hist" target="train-sssd" edge="1" />
+        <mxCell id="arrow-6" value="" style="arrow" parent="1" source="train-sssd" target="artifact-sssd" edge="1" />
+        <mxCell id="arrow-7" value="" style="arrow" parent="1" source="data-hist" target="train-ldm4ts" edge="1" />
+        <mxCell id="arrow-8" value="" style="arrow" parent="1" source="train-ldm4ts" target="artifact-ldm4ts" edge="1" />
+        <mxCell id="arrow-9" value="Usa storico per adattare parametri" style="arrow" parent="1" source="data-trades" target="train-risk" edge="1" />
+        <mxCell id="arrow-10" value="Salva parametri" style="arrow" parent="1" source="train-risk" target="artifact-risk" edge="1" />
+
+        <!-- SEPARATOR -->
+        <mxCell id="separator" value="" style="line;strokeWidth=2;direction=south;" parent="1" vertex="1">
+            <mxGeometry x="1000" y="50" width="10" height="1200" as="geometry"/>
+        </mxCell>
+
+        <!-- COLUMN 4: REAL-TIME - DATA & SERVICES -->
+        <mxCell id="live-data" value="Dati di Mercato Real-Time&#xa;(Quotes, Order Book, News)" style="data" parent="1" vertex="1">
+          <mxGeometry x="1100" y="100" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="service-sentiment" value="SentimentAggregatorService" style="service" parent="1" vertex="1">
+          <mxGeometry x="1100" y="250" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="service-vix" value="VIXService" style="service" parent="1" vertex="1">
+          <mxGeometry x="1100" y="360" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- COLUMN 5: REAL-TIME - SIGNAL GENERATION -->
+        <mxCell id="gen-pattern" value="Pattern Detection Engine" style="process" parent="1" vertex="1">
+          <mxGeometry x="1400" y="100" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="gen-sssd" value="SSSD Inference Service" style="process" parent="1" vertex="1">
+          <mxGeometry x="1400" y="400" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="gen-ldm4ts" value="LDM4TS Inference Service" style="process" parent="1" vertex="1">
+          <mxGeometry x="1400" y="550" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="gen-orderflow" value="Order Flow Analyzer" style="process" parent="1" vertex="1">
+          <mxGeometry x="1400" y="700" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="gen-event" value="Event Signal Processor" style="process" parent="1" vertex="1">
+          <mxGeometry x="1400" y="820" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ARROWS to Signal Generation -->
+        <mxCell id="arrow-11" value="Carica parametri" style="arrow" parent="1" source="artifact-pattern" target="gen-pattern" edge="1" />
+        <mxCell id="arrow-12" value="Analizza dati live" style="arrow" parent="1" source="live-data" target="gen-pattern" edge="1" />
+        <mxCell id="arrow-13" value="Carica modello" style="arrow" parent="1" source="artifact-sssd" target="gen-sssd" edge="1" />
+        <mxCell id="arrow-14" value="Analizza dati live" style="arrow" parent="1" source="live-data" target="gen-sssd" edge="1" />
+        <mxCell id="arrow-15" value="Carica modello" style="arrow" parent="1" source="artifact-ldm4ts" target="gen-ldm4ts" edge="1" />
+        <mxCell id="arrow-16" value="Analizza dati live" style="arrow" parent="1" source="live-data" target="gen-ldm4ts" edge="1" />
+        <mxCell id="arrow-17" value="Analizza order book" style="arrow" parent="1" source="live-data" target="gen-orderflow" edge="1" />
+        <mxCell id="arrow-18" value="Analizza news feed" style="arrow" parent="1" source="live-data" target="gen-event" edge="1" />
+
+        <!-- COLUMN 6: REAL-TIME - FUSION -->
+        <mxCell id="fusion" value="UnifiedSignalFusion" style="decision" parent="1" vertex="1">
+          <mxGeometry x="1800" y="400" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="scorer" value="SignalQualityScorer&#xa;(Interno a Fusion)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="1820" y="450" width="160" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ARROWS to Fusion -->
+        <mxCell id="arrow-19" value="Segnali Pattern" style="arrow" parent="1" source="gen-pattern" target="fusion" edge="1" />
+        <mxCell id="arrow-20" value="Previsione SSSD" style="arrow" parent="1" source="gen-sssd" target="fusion" edge="1" />
+        <mxCell id="arrow-21" value="Previsione LDM4TS" style="arrow" parent="1" source="gen-ldm4ts" target="fusion" edge="1" />
+        <mxCell id="arrow-22" value="Segnali Order Flow" style="arrow" parent="1" source="gen-orderflow" target="fusion" edge="1" />
+        <mxCell id="arrow-23" value="Segnali Eventi" style="arrow" parent="1" source="gen-event" target="fusion" edge="1" />
+        <mxCell id="arrow-24" value="Dati Sentiment" style="arrow" parent="1" source="service-sentiment" target="fusion" edge="1" />
+        <mxCell id="arrow-25" value="Parametri Qualità" style="arrow" parent="1" source="artifact-risk" target="fusion" edge="1" />
+
+        <!-- COLUMN 7: REAL-TIME - PORTFOLIO & RISK -->
+        <mxCell id="portfolio-manager" value="IntelligentPortfolioManager" style="decision" parent="1" vertex="1">
+          <mxGeometry x="2150" y="400" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="riskfolio" value="Riskfolio Optimizer&#xa;(Ottimizzatore Analitico)" style="process" parent="1" vertex="1">
+          <mxGeometry x="2170" y="250" width="160" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ARROWS to Portfolio Manager -->
+        <mxCell id="arrow-26" value="Miglior Segnale&#xa;Classificato" style="arrow" parent="1" source="fusion" target="portfolio-manager" edge="1" />
+        <mxCell id="arrow-27" value="Input Dati Live" style="arrow" parent="1" source="live-data" target="riskfolio" edge="1" />
+        <mxCell id="arrow-28" value="Output Analitico" style="arrow" parent="1" source="riskfolio" target="portfolio-manager" edge="1" />
+
+        <!-- COLUMN 8: REAL-TIME - TRADING ENGINE -->
+        <mxCell id="trading-engine" value="AutomatedTradingEngine" style="process" parent="1" vertex="1">
+          <mxGeometry x="2500" y="400" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="sizing-filtering" value="Position Sizing &amp; Filtering&#xa;- Filtro Sentiment&#xa;- Filtro VIX&#xa;- Constraint Liquidità" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="2520" y="450" width="160" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ARROWS to Trading Engine -->
+        <mxCell id="arrow-29" value="Pesi Target Finali&#xa;del Portafoglio" style="arrow" parent="1" source="portfolio-manager" target="trading-engine" edge="1" />
+        <mxCell id="arrow-30" value="Input VIX" style="arrow" parent="1" source="service-vix" target="trading-engine" edge="1" />
+
+        <!-- COLUMN 9: REAL-TIME - EXECUTION -->
+        <mxCell id="broker" value="Broker API" style="service" parent="1" vertex="1">
+          <mxGeometry x="2850" y="420" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="live-pos" value="Gestione Posizione Live" style="process" parent="1" vertex="1">
+          <mxGeometry x="2850" y="600" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="sl-manager" value="AdaptiveStopLossManager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="2870" y="650" width="120" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ARROWS to Execution -->
+        <mxCell id="arrow-31" value="Ordine di Esecuzione" style="arrow" parent="1" source="trading-engine" target="broker" edge="1" />
+        <mxCell id="arrow-32" value="Posizione Aperta" style="arrow" parent="1" source="broker" target="live-pos" edge="1" />
+        <mxCell id="arrow-33" value="Monitora Prezzo Live" style="arrow" parent="1" source="live-data" target="live-pos" edge="1" />
+        <mxCell id="arrow-34" value="Chiudi Posizione&#xa;(SL/TP/Segnale)" style="arrow" parent="1" source="live-pos" target="broker" edge="1" />
+
+        <!-- FEEDBACK LOOP -->
+        <mxCell id="feedback-arrow-1" value="Risultato Trade" style="feedbackArrow" parent="1" source="broker" target="data-trades" edge="1">
+            <mxGeometry relative="1" as="geometry">
+                <mxPoint as="sourcePoint" x="2930" y="500" />
+                <mxPoint as="targetPoint" x="210" y="840" />
+                <Array as="points">
+                    <mxPoint x="2930" y="1000" />
+                    <mxPoint x="130" y="1000" />
+                </Array>
+            </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
