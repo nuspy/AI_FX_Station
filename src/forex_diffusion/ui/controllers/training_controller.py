@@ -45,7 +45,7 @@ class TrainingController(QObject):
                         stderr=subprocess.STDOUT,
                         text=True,
                         encoding="utf-8",
-                        errors="replace",  # Replace problematic bytes with � to avoid crash
+                        errors="replace",  # Replace problematic bytes with  to avoid crash
                         bufsize=1,
                         env=env,
                     )

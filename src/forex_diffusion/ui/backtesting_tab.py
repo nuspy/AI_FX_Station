@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QCheckBox,
     QComboBox, QSpinBox, QTableWidget, QTableWidgetItem, QGroupBox, QFileDialog, QGridLayout,
-    QScrollArea, QTabWidget, QFormLayout
+    QScrollArea, QTabWidget, QFormLayout, QProgressBar
 )
 
 from .prediction_settings_dialog import PredictionSettingsDialog
@@ -67,9 +67,13 @@ class BacktestingTab(QWidget):
         self.diffusion_tab = DiffusionBacktestingTab(parent=self)
         self.sub_tabs.addTab(self.diffusion_tab, "Diffusion")
         
-        # Sub-tab 2: LDM4TS Backtesting (new)
+        # Sub-tab 2: LDM4TS Backtesting
         self.ldm4ts_tab = LDM4TSBacktestingTab(parent=self)
         self.sub_tabs.addTab(self.ldm4ts_tab, "LDM4TS")
+        
+        # Sub-tab 3: SSSD Backtesting
+        self.sssd_tab = SSSDBacktestingTab(parent=self)
+        self.sub_tabs.addTab(self.sssd_tab, "SSSD")
         
         main_layout.addWidget(self.sub_tabs)
         
@@ -81,6 +85,10 @@ class BacktestingTab(QWidget):
         self.ldm4ts_tab.startRequested.connect(self.startRequested.emit)
         self.ldm4ts_tab.pauseRequested.connect(self.pauseRequested.emit)
         self.ldm4ts_tab.stopRequested.connect(self.stopRequested.emit)
+        
+        self.sssd_tab.startRequested.connect(self.startRequested.emit)
+        self.sssd_tab.pauseRequested.connect(self.pauseRequested.emit)
+        self.sssd_tab.stopRequested.connect(self.stopRequested.emit)
 
 
 class DiffusionBacktestingTab(QWidget):
@@ -1314,5 +1322,355 @@ class LDM4TSBacktestingTab(QWidget):
             "Backtest Error",
             f"Backtest failed with error:\n\n{error}"
         )
+
+
+class SSSDBacktestingTab(QWidget):
+    """SSSD backtesting tab"""
+    startRequested = Signal(dict)
+    pauseRequested = Signal()
+    stopRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build SSSD backtesting UI"""
+        root = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        
+        # Header
+        header_box = QGroupBox("SSSD Backtesting")
+        header_layout = QVBoxLayout(header_box)
+        header_label = QLabel(
+            "<b>Backtest SSSD multi-timeframe diffusion forecasting</b><br><br>"
+            "Test SSSD predictions on historical data with multi-horizon uncertainty quantification."
+        )
+        header_label.setWordWrap(True)
+        header_layout.addWidget(header_label)
+        layout.addWidget(header_box)
+        
+        # Model Settings
+        model_box = QGroupBox("Model Settings")
+        model_layout = QFormLayout(model_box)
+        
+        # Checkpoint
+        checkpoint_layout = QHBoxLayout()
+        self.sssd_bt_checkpoint_edit = QLineEdit()
+        self.sssd_bt_checkpoint_edit.setPlaceholderText("Path to SSSD checkpoint (.pt)")
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_checkpoint)
+        
+        checkpoint_layout.addWidget(self.sssd_bt_checkpoint_edit)
+        checkpoint_layout.addWidget(browse_btn)
+        model_layout.addRow("Checkpoint:", checkpoint_layout)
+        
+        # Horizons (formato unificato x-ym/zm)
+        self.sssd_bt_horizons_edit = QLineEdit("1-10m/2m, 15m, 30m, 1h")
+        self.sssd_bt_horizons_edit.setToolTip(
+            "Orizzonti di previsione - Formati supportati:\n"
+            "• Lista semplice: '1m, 5m, 15m'\n"
+            "• Range con step: '1-10m/2m' → 1m, 3m, 5m, 7m, 9m\n"
+            "• Mix: '1-10m/2m, 15m, 30m, 1h'"
+        )
+        model_layout.addRow("Horizons:", self.sssd_bt_horizons_edit)
+        
+        layout.addWidget(model_box)
+        
+        # Backtest Parameters
+        params_box = QGroupBox("Backtest Parameters")
+        params_layout = QFormLayout(params_box)
+        
+        # Symbol
+        self.sssd_bt_symbol_combo = QComboBox()
+        self.sssd_bt_symbol_combo.addItems(["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"])
+        params_layout.addRow("Symbol:", self.sssd_bt_symbol_combo)
+        
+        # Timeframe
+        self.sssd_bt_timeframe_combo = QComboBox()
+        self.sssd_bt_timeframe_combo.addItems(["1m", "5m", "15m", "30m", "1h", "4h"])
+        self.sssd_bt_timeframe_combo.setCurrentText("1m")
+        params_layout.addRow("Timeframe:", self.sssd_bt_timeframe_combo)
+        
+        # Start date
+        self.sssd_bt_start_edit = QLineEdit()
+        self.sssd_bt_start_edit.setPlaceholderText("YYYY-MM-DD HH:MM:SS")
+        self.sssd_bt_start_edit.setToolTip("Start date for backtest (UTC)")
+        params_layout.addRow("Start Date:", self.sssd_bt_start_edit)
+        
+        # End date
+        self.sssd_bt_end_edit = QLineEdit()
+        self.sssd_bt_end_edit.setPlaceholderText("YYYY-MM-DD HH:MM:SS")
+        self.sssd_bt_end_edit.setToolTip("End date for backtest (UTC)")
+        params_layout.addRow("End Date:", self.sssd_bt_end_edit)
+        
+        # Diffusion samples
+        self.sssd_bt_samples_spinbox = QSpinBox()
+        self.sssd_bt_samples_spinbox.setRange(10, 500)
+        self.sssd_bt_samples_spinbox.setValue(50)
+        self.sssd_bt_samples_spinbox.setToolTip("Number of diffusion samples for uncertainty")
+        params_layout.addRow("Diffusion Samples:", self.sssd_bt_samples_spinbox)
+        
+        # Sampler
+        self.sssd_bt_sampler_combo = QComboBox()
+        self.sssd_bt_sampler_combo.addItems(["ddim", "ddpm", "dpmpp"])
+        self.sssd_bt_sampler_combo.setCurrentText("ddim")
+        self.sssd_bt_sampler_combo.setToolTip("Diffusion sampling algorithm")
+        params_layout.addRow("Sampler:", self.sssd_bt_sampler_combo)
+        
+        # Inference steps
+        self.sssd_bt_steps_spinbox = QSpinBox()
+        self.sssd_bt_steps_spinbox.setRange(5, 50)
+        self.sssd_bt_steps_spinbox.setValue(15)
+        self.sssd_bt_steps_spinbox.setToolTip("Number of denoising steps")
+        params_layout.addRow("Inference Steps:", self.sssd_bt_steps_spinbox)
+        
+        # Step size (forecast frequency)
+        self.sssd_bt_step_size_spinbox = QSpinBox()
+        self.sssd_bt_step_size_spinbox.setRange(1, 1000)
+        self.sssd_bt_step_size_spinbox.setValue(10)
+        self.sssd_bt_step_size_spinbox.setToolTip("Step size between forecasts (in candles)")
+        params_layout.addRow("Step Size:", self.sssd_bt_step_size_spinbox)
+        
+        layout.addWidget(params_box)
+        
+        # NVIDIA Optimizations
+        nvidia_box = QGroupBox("NVIDIA Optimizations")
+        nvidia_layout = QFormLayout(nvidia_box)
+        
+        # Device
+        self.sssd_bt_device_combo = QComboBox()
+        self.sssd_bt_device_combo.addItems(["cuda", "cuda:0", "cpu"])
+        self.sssd_bt_device_combo.setCurrentText("cuda")
+        nvidia_layout.addRow("Device:", self.sssd_bt_device_combo)
+        
+        # Mixed precision
+        self.sssd_bt_mixed_precision_cb = QCheckBox("Enable Mixed Precision (AMP)")
+        self.sssd_bt_mixed_precision_cb.setChecked(True)
+        nvidia_layout.addRow(self.sssd_bt_mixed_precision_cb)
+        
+        layout.addWidget(nvidia_box)
+        
+        # Control buttons
+        button_box = QGroupBox("Control")
+        button_layout = QHBoxLayout(button_box)
+        
+        self.sssd_bt_start_btn = QPushButton("🚀 Start Backtest")
+        self.sssd_bt_start_btn.clicked.connect(self._start_backtest)
+        
+        self.sssd_bt_stop_btn = QPushButton("⏹️ Stop")
+        self.sssd_bt_stop_btn.clicked.connect(self._stop_backtest)
+        self.sssd_bt_stop_btn.setEnabled(False)
+        
+        # Apply settings button
+        self.sssd_bt_apply_btn = QPushButton("💾 Save Settings")
+        self.sssd_bt_apply_btn.clicked.connect(self._apply_settings)
+        self.sssd_bt_apply_btn.setToolTip("Save settings to configs/sssd_settings.json")
+        
+        button_layout.addWidget(self.sssd_bt_start_btn)
+        button_layout.addWidget(self.sssd_bt_stop_btn)
+        button_layout.addWidget(self.sssd_bt_apply_btn)
+        button_layout.addStretch()
+        
+        layout.addWidget(button_box)
+        
+        # Progress
+        progress_box = QGroupBox("Progress")
+        progress_layout = QVBoxLayout(progress_box)
+        
+        self.sssd_bt_progress_bar = QProgressBar()
+        self.sssd_bt_progress_bar.setValue(0)
+        progress_layout.addWidget(self.sssd_bt_progress_bar)
+        
+        self.sssd_bt_status_label = QLabel("Ready")
+        progress_layout.addWidget(self.sssd_bt_status_label)
+        
+        layout.addWidget(progress_box)
+        
+        # Results table
+        results_box = QGroupBox("Results")
+        results_layout = QVBoxLayout(results_box)
+        
+        self.sssd_bt_results_table = QTableWidget()
+        self.sssd_bt_results_table.setColumnCount(7)
+        self.sssd_bt_results_table.setHorizontalHeaderLabels([
+            "Timestamp", "Horizon", "True", "Predicted", "Uncertainty", "Error", "Coverage"
+        ])
+        results_layout.addWidget(self.sssd_bt_results_table)
+        
+        # Metrics summary
+        self.sssd_bt_metrics_label = QLabel("Metrics: -")
+        results_layout.addWidget(self.sssd_bt_metrics_label)
+        
+        layout.addWidget(results_box)
+        
+        layout.addStretch()
+        
+        scroll.setWidget(content)
+        root.addWidget(scroll)
+        
+        # Load settings
+        self._load_settings()
+    
+    def _load_settings(self):
+        """Load SSSD settings from configs/sssd_settings.json"""
+        try:
+            from pathlib import Path
+            import json
+            
+            sssd_config_file = Path(__file__).resolve().parents[3] / "configs" / "sssd_settings.json"
+            
+            if not sssd_config_file.exists():
+                return
+            
+            with open(sssd_config_file, 'r', encoding='utf-8') as f:
+                sssd_config = json.load(f)
+            
+            backtest_settings = sssd_config.get("backtesting", {})
+            
+            # Load settings into widgets
+            if "checkpoint_path" in backtest_settings:
+                self.sssd_bt_checkpoint_edit.setText(backtest_settings["checkpoint_path"])
+            if "horizons" in backtest_settings:
+                self.sssd_bt_horizons_edit.setText(backtest_settings["horizons"])
+            if "num_samples" in backtest_settings:
+                self.sssd_bt_samples_spinbox.setValue(backtest_settings["num_samples"])
+            if "sampler" in backtest_settings:
+                self.sssd_bt_sampler_combo.setCurrentText(backtest_settings["sampler"])
+            if "steps_inference" in backtest_settings:
+                self.sssd_bt_steps_spinbox.setValue(backtest_settings["steps_inference"])
+            if "device" in backtest_settings:
+                self.sssd_bt_device_combo.setCurrentText(backtest_settings["device"])
+            if "mixed_precision_enabled" in backtest_settings:
+                self.sssd_bt_mixed_precision_cb.setChecked(backtest_settings["mixed_precision_enabled"])
+                
+        except Exception as e:
+            from loguru import logger
+            logger.warning(f"Failed to load SSSD backtest settings: {e}")
+    
+    def _apply_settings(self):
+        """Save SSSD backtest settings to configs/sssd_settings.json"""
+        try:
+            from pathlib import Path
+            import json
+            
+            sssd_config_file = Path(__file__).resolve().parents[3] / "configs" / "sssd_settings.json"
+            
+            # Load existing or create new
+            if sssd_config_file.exists():
+                with open(sssd_config_file, 'r', encoding='utf-8') as f:
+                    sssd_config = json.load(f)
+            else:
+                sssd_config = {"inference": {}, "training": {}, "backtesting": {}}
+            
+            # Update backtesting settings
+            sssd_config["backtesting"].update({
+                "checkpoint_path": self.sssd_bt_checkpoint_edit.text().strip(),
+                "horizons": self.sssd_bt_horizons_edit.text().strip(),
+                "num_samples": self.sssd_bt_samples_spinbox.value(),
+                "sampler": self.sssd_bt_sampler_combo.currentText(),
+                "steps_inference": self.sssd_bt_steps_spinbox.value(),
+                "device": self.sssd_bt_device_combo.currentText(),
+                "mixed_precision_enabled": self.sssd_bt_mixed_precision_cb.isChecked(),
+            })
+            
+            # Save to file
+            sssd_config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(sssd_config_file, 'w', encoding='utf-8') as f:
+                json.dump(sssd_config, f, indent=2)
+            
+            from loguru import logger
+            from PySide6.QtWidgets import QMessageBox
+            logger.info(f"SSSD backtest settings saved to {sssd_config_file}")
+            QMessageBox.information(
+                self,
+                "Settings Saved",
+                f"SSSD backtest settings saved to:\n{sssd_config_file}"
+            )
+            
+        except Exception as e:
+            from loguru import logger
+            from PySide6.QtWidgets import QMessageBox
+            logger.exception(f"Failed to save SSSD backtest settings: {e}")
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                f"Failed to save SSSD backtest settings:\n{str(e)}"
+            )
+    
+    def _browse_checkpoint(self):
+        """Browse for checkpoint"""
+        from pathlib import Path
+        from PySide6.QtWidgets import QFileDialog
+        
+        base_dir = Path(__file__).resolve().parents[3]
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select SSSD Checkpoint",
+            str(base_dir / "artifacts" / "sssd" / "checkpoints"),
+            "PyTorch Models (*.pt *.pth);;All Files (*.*)"
+        )
+        
+        if file_path:
+            self.sssd_bt_checkpoint_edit.setText(file_path)
+    
+    def _start_backtest(self):
+        """Start SSSD backtest"""
+        from PySide6.QtWidgets import QMessageBox
+        from loguru import logger
+        
+        try:
+            # Collect parameters
+            params = {
+                'backtest_type': 'sssd',
+                'checkpoint': self.sssd_bt_checkpoint_edit.text().strip(),
+                'symbol': self.sssd_bt_symbol_combo.currentText(),
+                'timeframe': self.sssd_bt_timeframe_combo.currentText(),
+                'start_date': self.sssd_bt_start_edit.text().strip(),
+                'end_date': self.sssd_bt_end_edit.text().strip(),
+                'horizons': self.sssd_bt_horizons_edit.text().strip(),
+                'num_samples': self.sssd_bt_samples_spinbox.value(),
+                'sampler': self.sssd_bt_sampler_combo.currentText(),
+                'steps_inference': self.sssd_bt_steps_spinbox.value(),
+                'step_size': self.sssd_bt_step_size_spinbox.value(),
+                'device': self.sssd_bt_device_combo.currentText(),
+                'mixed_precision_enabled': self.sssd_bt_mixed_precision_cb.isChecked(),
+            }
+            
+            # Validate
+            from pathlib import Path
+            if not params['checkpoint'] or not Path(params['checkpoint']).exists():
+                QMessageBox.warning(self, "Missing Checkpoint", "Please select a valid SSSD checkpoint.")
+                return
+            
+            if not params['start_date'] or not params['end_date']:
+                QMessageBox.warning(self, "Missing Dates", "Please specify start and end dates.")
+                return
+            
+            # Disable start button, enable stop
+            self.sssd_bt_start_btn.setEnabled(False)
+            self.sssd_bt_stop_btn.setEnabled(True)
+            self.sssd_bt_status_label.setText("Starting SSSD backtest...")
+            
+            # Emit signal to parent
+            logger.info(f"Starting SSSD backtest: {params}")
+            self.startRequested.emit(params)
+            
+        except Exception as e:
+            logger.exception(f"Failed to start SSSD backtest: {e}")
+            QMessageBox.critical(self, "Start Error", f"Failed to start backtest:\n{str(e)}")
+            self.sssd_bt_start_btn.setEnabled(True)
+            self.sssd_bt_stop_btn.setEnabled(False)
+    
+    def _stop_backtest(self):
+        """Stop SSSD backtest"""
+        self.pauseRequested.emit()
+        self.sssd_bt_status_label.setText("Stopping...")
+        self.sssd_bt_stop_btn.setEnabled(False)
 
 

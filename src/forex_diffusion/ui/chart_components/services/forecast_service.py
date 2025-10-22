@@ -842,6 +842,56 @@ class ForecastService(ChartServiceBase):
         logger.info(f"LDM4TS forecast requested for {self.symbol} {self.timeframe}")
         self.forecastRequested.emit(payload)
 
+    def _on_sssd_forecast_clicked(self):
+        """Handle SSSD forecast button click."""
+        from pathlib import Path
+        import json
+        
+        # Load SSSD settings
+        sssd_config_file = Path(__file__).resolve().parents[4] / "configs" / "sssd_settings.json"
+        
+        if not sssd_config_file.exists():
+            QMessageBox.warning(
+                self.view,
+                "SSSD Settings Missing",
+                "Please configure SSSD settings in Prediction Settings (SSSD tab)."
+            )
+            return
+        
+        try:
+            with open(sssd_config_file, 'r', encoding='utf-8') as f:
+                sssd_config = json.load(f)
+        except Exception as e:
+            QMessageBox.warning(
+                self.view,
+                "SSSD Settings Load Error",
+                f"Failed to load SSSD settings:\n{str(e)}"
+            )
+            return
+        
+        inference_settings = sssd_config.get("inference", {})
+        
+        # Check if checkpoint exists
+        checkpoint_path = inference_settings.get("checkpoint_path", "")
+        if not checkpoint_path or not Path(checkpoint_path).exists():
+            QMessageBox.warning(
+                self.view,
+                "SSSD Checkpoint Missing",
+                "Please configure SSSD checkpoint path in Prediction Settings (SSSD tab)."
+            )
+            return
+        
+        # Create payload for SSSD forecast
+        payload = {
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "forecast_type": "sssd",  # Tag for worker to identify SSSD request
+            **inference_settings
+        }
+        
+        logger.info(f"SSSD forecast requested for {self.symbol} {self.timeframe}")
+        self.forecastRequested.emit(payload)
+
     def on_forecast_ready(self, df: pd.DataFrame, quantiles: dict):
         """
         Slot to receive forecast results from controller/worker.

@@ -1846,6 +1846,12 @@ class TrainingTab(QWidget):
 
             # Lightning and diffusion models use train.py
             if model in ['lightning', 'diffusion-ddpm', 'diffusion-ddim']:
+                # FIX: Correctly select batch size widget based on model type
+                if model == 'lightning':
+                    batch_size_val = self.light_batch.value()
+                else: # Diffusion models
+                    batch_size_val = self.batch_size_dl.value()
+
                 module = 'src.forex_diffusion.training.train'
                 args = [
                     sys.executable, '-m', module,
@@ -1855,7 +1861,7 @@ class TrainingTab(QWidget):
                     '--days_history', str(days),
                     '--patch_len', str(int(self.patch_len.value())),
                     '--epochs', str(int(self.light_epochs.value())),
-                    '--batch_size', str(int(self.light_batch.value())),
+                    '--batch_size', str(int(batch_size_val)),
                     '--val_frac', f"{self.light_val_frac.value():.2f}",
                     '--artifacts_dir', str(artifacts_dir),
                     '--indicator_tfs', ind_tfs_json,

@@ -294,33 +294,33 @@ def convert_horizons_for_inference(
 def create_future_timestamps(
     last_timestamp_ms: int,
     base_timeframe: str,
-    time_labels: List[str]
+    horizon_bars: List[int]
 ) -> List[int]:
     """
     Create future timestamps for predictions.
 
     Args:
         last_timestamp_ms: Last timestamp in milliseconds
-        base_timeframe: Base timeframe for the data
-        time_labels: Target time labels for predictions
+        base_timeframe: Base timeframe for the data (e.g., '1m', '5m')
+        horizon_bars: List of horizon offsets in number of bars
 
     Returns:
         List of future timestamps in milliseconds
     """
-    base_dt = pd.to_datetime(last_timestamp_ms, unit="ms", utc=True)
-    future_timestamps = []
+    try:
+        base_dt = pd.to_datetime(last_timestamp_ms, unit="ms", utc=True)
+        tf_delta = pd.to_timedelta(base_timeframe)
+        future_timestamps = []
 
-    for label in time_labels:
-        try:
-            future_dt = base_dt + pd.to_timedelta(label)
+        for bars in horizon_bars:
+            future_dt = base_dt + (tf_delta * bars)
             future_timestamps.append(int(future_dt.value // 1_000_000))
-        except Exception:
-            # Fallback to base timeframe increment
-            base_minutes = timeframe_to_minutes(base_timeframe)
-            future_dt = base_dt + pd.to_timedelta(f"{base_minutes}m")
-            future_timestamps.append(int(future_dt.value // 1_000_000))
-
-    return future_timestamps
+        
+        return future_timestamps
+    except Exception as e:
+        logger.error(f"Failed to create future timestamps: {e}")
+        # Fallback to a simple sequential list if calculation fails
+        return [last_timestamp_ms + (i + 1) * 60000 for i in range(len(horizon_bars))] 
 
 
 def validate_horizon_compatibility(

@@ -112,6 +112,114 @@ class ForecastWorker(QRunnable):
             logger.debug(f"Could not check LDM4TS settings: {e}")
             return False
 
+    def _run_sssd_inference(self) -> Optional[dict]:
+        """Run SSSD inference."""
+        try:
+            from ...inference.sssd_inference import SSSDInferenceService
+            from pathlib import Path
+            import json
+            
+            # Load SSSD settings from payload (already loaded in forecast_service)
+            checkpoint_path = self.payload.get('checkpoint_path', '')
+            if not checkpoint_path or not Path(checkpoint_path).exists():
+                logger.warning("SSSD checkpoint not found")
+                return None
+            
+            # Get service (singleton instance)
+            try:
+                service = SSSDInferenceService(
+                    checkpoint_path=checkpoint_path,
+                    device=self.payload.get('device', 'cuda'),
+                    compile_model=self.payload.get('compile_model', False)
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize SSSD service: {e}")
+                return None
+            
+            # Get OHLCV data
+            symbol = self.payload['symbol']
+            timeframe = self.payload['timeframe']
+            
+            # SSSD uses multi-timeframe data, fetch for all encoder timeframes
+            # For now, use lookback from config (default 200 bars for 1m)
+            lookback_bars = 200
+            
+            from sqlalchemy import text
+            with self.market_service.engine.connect() as conn:
+                query = text("""
+                    SELECT ts_utc, open, high, low, close, volume
+                    FROM market_data_candles
+                    WHERE symbol = :symbol AND timeframe = :timeframe
+                    ORDER BY ts_utc DESC
+                    LIMIT :lookback
+                """)
+                rows = conn.execute(query, {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "lookback": lookback_bars
+                }).fetchall()
+            
+            if not rows or len(rows) < 50:
+                logger.warning(f"Insufficient data for SSSD: {len(rows) if rows else 0} < 50")
+                return None
+            
+            # Convert to DataFrame (reverse to chronological order)
+            df = pd.DataFrame([
+                {
+                    'ts_utc': r[0],
+                    'open': float(r[1]),
+                    'high': float(r[2]),
+                    'low': float(r[3]),
+                    'close': float(r[4]),
+                    'volume': float(r[5]) if r[5] is not None else 0.0
+                }
+                for r in reversed(rows)
+            ])
+            
+            # Run inference
+            num_samples = self.payload.get('num_samples', 50)
+            sampler = self.payload.get('sampler', 'ddim')
+            
+            prediction = service.predict(
+                df=df,
+                num_samples=num_samples,
+                sampler=sampler,
+                use_cache=self.payload.get('cache_predictions', True)
+            )
+            
+            # Convert SSSDPrediction to quantiles format
+            horizons = prediction.horizons
+            last_close = df.iloc[-1]['close']
+            last_ts_ms = df.iloc[-1]['ts_utc']
+            
+            # Parse horizons string to get bar counts
+            from ...utils.horizon_format_adapter import get_inference_horizons_as_bars
+            horizon_str = self.payload.get('horizons', '1-10m/2m, 15m, 30m, 1h')
+            horizon_bars = get_inference_horizons_as_bars(horizon_str, timeframe)
+            
+            # Create future timestamps
+            tf_ms = self._tf_to_milliseconds(timeframe)
+            future_ts = [last_ts_ms + (i + 1) * tf_ms for i in range(len(horizon_bars))]
+            
+            # Build quantiles dict
+            quantiles = {
+                'source': 'sssd',
+                'q50': [prediction.q50[h] * last_close for h in horizons],  # Convert returns to prices
+                'q05': [prediction.q05[h] * last_close for h in horizons],
+                'q95': [prediction.q95[h] * last_close for h in horizons],
+                'future_ts': future_ts,
+                'label': f'SSSD ({prediction.model_name})',
+                'inference_time_ms': prediction.inference_time_ms,
+                'num_samples': prediction.num_samples
+            }
+            
+            logger.info(f"SSSD inference completed: {len(horizons)} horizons, {prediction.inference_time_ms:.0f}ms")
+            return quantiles
+            
+        except Exception as e:
+            logger.exception(f"SSSD inference failed: {e}")
+            return None
+
     def _run_ldm4ts_inference(self) -> Optional[dict]:
         """Run LDM4TS inference if enabled."""
         try:
@@ -229,7 +337,20 @@ class ForecastWorker(QRunnable):
             # Check forecast type from payload
             forecast_type = self.payload.get("forecast_type", "diffusion")
             
-            if forecast_type == "ldm4ts":
+            if forecast_type == "sssd":
+                # SSSD forecast explicitly requested
+                logger.info("SSSD forecast requested explicitly")
+                quantiles = self._run_sssd_inference()
+                
+                if quantiles:
+                    # Emit SSSD results
+                    self.signals.forecastReady.emit(pd.DataFrame(), quantiles)
+                    self.signals.status.emit("SSSD forecast completed")
+                    return
+                else:
+                    raise RuntimeError("SSSD inference failed")
+            
+            elif forecast_type == "ldm4ts":
                 # LDM4TS forecast explicitly requested
                 logger.info("LDM4TS forecast requested explicitly")
                 quantiles = self._run_ldm4ts_inference()
@@ -957,7 +1078,7 @@ class ForecastWorker(QRunnable):
 
             # Create future timestamps
             last_ts_ms = int(df_candles["ts_utc"].iat[-1])
-            future_ts = create_future_timestamps(last_ts_ms, tf, horizons_time_labels)
+            future_ts = create_future_timestamps(last_ts_ms, tf, horizons_bars)
             future_ts_with_anchor = [last_ts_ms] + future_ts
 
             # Check if we have multi-horizon predictions

@@ -106,12 +106,14 @@ class UnifiedPredictionSettingsDialog(QDialog):
         self.base_tab = self._create_base_tab()
         self.advanced_tab = self._create_advanced_tab()
         
-        # Create Generative Forecast tab with sub-tabs
-        self.generative_tab = self._create_generative_forecast_tab()
+        # Create Generative Forecast tabs
+        self.ldm4ts_tab = self._create_ldm4ts_tab()
+        self.sssd_tab = self._create_sssd_tab()
 
         self.tabs.addTab(self.base_tab, "Base Settings")
         self.tabs.addTab(self.advanced_tab, "Advanced Settings")
-        self.tabs.addTab(self.generative_tab, "LDM4TS")  # Renamed from "Generative Forecast"
+        self.tabs.addTab(self.ldm4ts_tab, "LDM4TS")
+        self.tabs.addTab(self.sssd_tab, "SSSD")
 
         main_layout.addWidget(self.tabs)
 
@@ -145,6 +147,7 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         # Load saved settings
         self.load_settings()
+        self._load_sssd_settings()
 
         # Initialize GPU info label
         self._update_gpu_info_label()
@@ -467,12 +470,196 @@ class UnifiedPredictionSettingsDialog(QDialog):
 
         return tab
     
-    def _create_generative_forecast_tab(self) -> QWidget:
-        """Create LDM4TS tab (inference settings only, training moved to Training tab)"""
-        # NOTE: This tab was renamed from "Generative Forecast" to "LDM4TS"
-        # The "LDM4TS Training" sub-tab was moved to main Training tab
-        # Now this only contains LDM4TS inference settings
-        return self._create_ldm4ts_tab()
+    def _create_sssd_tab(self) -> QWidget:
+        """Create SSSD (Structured State Space Diffusion) settings tab"""
+        tab = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        # Header info
+        info_box = QGroupBox("About SSSD")
+        info_layout = QVBoxLayout(info_box)
+        info_label = QLabel(
+            "<b>SSSD</b> (Structured State Space Diffusion) - Multi-scale time series forecasting<br><br>"
+            "Combina S4 layers (State Space Models) per encoding multi-timeframe + Diffusion per forecasting probabilistico.<br>"
+            "Fornisce incertezza quantificata tramite diffusion sampling (DDIM/DDPM).<br><br>"
+            "<b>Architettura:</b> Multi-timeframe S4 Encoder → Horizon Embeddings → Diffusion Head"
+        )
+        info_label.setWordWrap(True)
+        info_layout.addWidget(info_label)
+        layout.addWidget(info_box)
+
+        # Enable/Disable
+        enable_box = QGroupBox("Enable SSSD")
+        enable_layout = QVBoxLayout(enable_box)
+        
+        self.sssd_enabled_cb = QCheckBox("Enable SSSD Forecasting")
+        self.sssd_enabled_cb.setChecked(False)
+        self.sssd_enabled_cb.setToolTip(
+            "Abilita SSSD per forecasting multi-timeframe.\n"
+            "Richiede modello trainato (checkpoint .pt)."
+        )
+        enable_layout.addWidget(self.sssd_enabled_cb)
+        layout.addWidget(enable_box)
+
+        # Model Settings
+        model_box = QGroupBox("Model Settings")
+        model_layout = QFormLayout(model_box)
+
+        # Checkpoint path
+        checkpoint_layout = QHBoxLayout()
+        self.sssd_checkpoint_edit = QLineEdit()
+        self.sssd_checkpoint_edit.setPlaceholderText("Path to SSSD checkpoint (.pt)")
+        self.sssd_checkpoint_edit.setToolTip(
+            "Percorso al file checkpoint del modello SSSD trainato.\n"
+            "Generato da: python -m forex_diffusion.training.train_sssd"
+        )
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_sssd_checkpoint)
+        browse_btn.setToolTip("Seleziona file checkpoint (.pt)")
+        
+        checkpoint_layout.addWidget(self.sssd_checkpoint_edit)
+        checkpoint_layout.addWidget(browse_btn)
+        model_layout.addRow("Checkpoint:", checkpoint_layout)
+
+        # Horizons (formato unificato x-ym/zm)
+        self.sssd_horizons_edit = QLineEdit("1-10m/2m, 15m, 30m, 1h, 2h, 4h")
+        self.sssd_horizons_edit.setToolTip(TOOLTIPS['horizons'])
+        model_layout.addRow("Horizons:", self.sssd_horizons_edit)
+
+        layout.addWidget(model_box)
+
+        # Inference Settings
+        inference_box = QGroupBox("Inference Settings")
+        inference_layout = QFormLayout(inference_box)
+
+        # Number of diffusion samples
+        self.sssd_num_samples_spinbox = QSpinBox()
+        self.sssd_num_samples_spinbox.setRange(10, 500)
+        self.sssd_num_samples_spinbox.setValue(50)
+        self.sssd_num_samples_spinbox.setToolTip(
+            "Numero di campioni diffusion per quantificare incertezza.\n"
+            "Più campioni = incertezza più accurata ma più lento.\n"
+            "Range: 10-500, Default: 50 (ottimizzato per 1m)"
+        )
+        inference_layout.addRow("Diffusion Samples:", self.sssd_num_samples_spinbox)
+
+        # Sampler algorithm
+        self.sssd_sampler_combo = QComboBox()
+        self.sssd_sampler_combo.addItems(["ddim", "ddpm", "dpmpp"])
+        self.sssd_sampler_combo.setCurrentText("ddim")
+        self.sssd_sampler_combo.setToolTip(
+            "Algoritmo di sampling diffusion:\n"
+            "• DDIM: veloce, deterministico (default)\n"
+            "• DDPM: più lento, stocastico, alta qualità\n"
+            "• DPM++: veloce, alta qualità (experimental)"
+        )
+        inference_layout.addRow("Sampler:", self.sssd_sampler_combo)
+
+        # Inference steps
+        self.sssd_steps_inference_spinbox = QSpinBox()
+        self.sssd_steps_inference_spinbox.setRange(5, 50)
+        self.sssd_steps_inference_spinbox.setValue(15)
+        self.sssd_steps_inference_spinbox.setToolTip(
+            "Numero di denoising steps per inference.\n"
+            "Più step = qualità maggiore ma più lento.\n"
+            "Range: 5-50, Default: 15 (ottimizzato per 1m)"
+        )
+        inference_layout.addRow("Inference Steps:", self.sssd_steps_inference_spinbox)
+
+        # DDIM eta (stochasticity)
+        self.sssd_ddim_eta_spinbox = QDoubleSpinBox()
+        self.sssd_ddim_eta_spinbox.setRange(0.0, 1.0)
+        self.sssd_ddim_eta_spinbox.setSingleStep(0.1)
+        self.sssd_ddim_eta_spinbox.setValue(0.0)
+        self.sssd_ddim_eta_spinbox.setToolTip(
+            "DDIM stochasticity (solo per sampler DDIM):\n"
+            "• 0.0 = completamente deterministico\n"
+            "• 1.0 = equivalente a DDPM (stocastico)\n"
+            "Default: 0.0"
+        )
+        inference_layout.addRow("DDIM Eta:", self.sssd_ddim_eta_spinbox)
+
+        # Confidence threshold
+        self.sssd_confidence_threshold_spinbox = QDoubleSpinBox()
+        self.sssd_confidence_threshold_spinbox.setRange(0.0, 1.0)
+        self.sssd_confidence_threshold_spinbox.setSingleStep(0.05)
+        self.sssd_confidence_threshold_spinbox.setValue(0.7)
+        self.sssd_confidence_threshold_spinbox.setToolTip(
+            "Soglia confidence direzionale per segnali trading.\n"
+            "Confidence = |mean| / (|mean| + std)\n"
+            "Range: 0.0-1.0, Default: 0.7"
+        )
+        inference_layout.addRow("Confidence Threshold:", self.sssd_confidence_threshold_spinbox)
+
+        # Cache settings
+        self.sssd_cache_enabled_cb = QCheckBox("Enable Prediction Caching")
+        self.sssd_cache_enabled_cb.setChecked(True)
+        self.sssd_cache_enabled_cb.setToolTip("Cache predictions per 5 minuti (TTL)")
+        inference_layout.addRow(self.sssd_cache_enabled_cb)
+
+        self.sssd_cache_ttl_spinbox = QSpinBox()
+        self.sssd_cache_ttl_spinbox.setRange(60, 3600)
+        self.sssd_cache_ttl_spinbox.setSingleStep(60)
+        self.sssd_cache_ttl_spinbox.setValue(300)
+        self.sssd_cache_ttl_spinbox.setSuffix(" sec")
+        self.sssd_cache_ttl_spinbox.setToolTip("Time-to-live per cache predictions (secondi)")
+        inference_layout.addRow("Cache TTL:", self.sssd_cache_ttl_spinbox)
+
+        layout.addWidget(inference_box)
+
+        # NVIDIA Optimizations
+        nvidia_box = QGroupBox("NVIDIA Optimizations")
+        nvidia_layout = QFormLayout(nvidia_box)
+
+        # Device selection
+        self.sssd_device_combo = QComboBox()
+        self.sssd_device_combo.addItems(["cuda", "cuda:0", "cuda:1", "cpu"])
+        self.sssd_device_combo.setCurrentText("cuda")
+        self.sssd_device_combo.setToolTip("Device per inference (CUDA = GPU, CPU = fallback)")
+        nvidia_layout.addRow("Device:", self.sssd_device_combo)
+
+        # Mixed precision
+        self.sssd_mixed_precision_cb = QCheckBox("Enable Mixed Precision (AMP)")
+        self.sssd_mixed_precision_cb.setChecked(True)
+        self.sssd_mixed_precision_cb.setToolTip(
+            "Automatic Mixed Precision per inference veloce.\n"
+            "Usa FP16 dove possibile per ridurre VRAM e accelerare.\n"
+            "Richiede GPU NVIDIA con Tensor Cores (RTX/V100+)"
+        )
+        nvidia_layout.addRow(self.sssd_mixed_precision_cb)
+
+        # torch.compile (disabled for Windows compatibility)
+        self.sssd_compile_model_cb = QCheckBox("Enable torch.compile (Experimental)")
+        self.sssd_compile_model_cb.setChecked(False)
+        self.sssd_compile_model_cb.setEnabled(False)  # Disabled on Windows
+        self.sssd_compile_model_cb.setToolTip(
+            "torch.compile per ulteriore accelerazione.\n"
+            "DISABILITATO: non compatibile con Windows (libtriton issue)"
+        )
+        nvidia_layout.addRow(self.sssd_compile_model_cb)
+
+        layout.addWidget(nvidia_box)
+
+        # Apply button
+        apply_layout = QHBoxLayout()
+        self.sssd_apply_btn = QPushButton("Apply Settings")
+        self.sssd_apply_btn.clicked.connect(self._apply_sssd_settings)
+        self.sssd_apply_btn.setToolTip("Salva impostazioni SSSD in configs/sssd_settings.json")
+        apply_layout.addStretch()
+        apply_layout.addWidget(self.sssd_apply_btn)
+        layout.addLayout(apply_layout)
+
+        layout.addStretch()
+
+        scroll.setWidget(content)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.addWidget(scroll)
+
+        return tab
     
     def _create_ldm4ts_training_tab(self) -> QWidget:
         """Create LDM4TS Training tab"""
@@ -1744,6 +1931,115 @@ class UnifiedPredictionSettingsDialog(QDialog):
         elif not use_gpu and num_models == 1:
             self.gpu_info_label.setText("✓ CPU: inference con 1 modello")
             self.gpu_info_label.setStyleSheet("color: #888; font-style: italic; padding: 5px;")
+
+    def _load_sssd_settings(self):
+        """Load SSSD settings from configs/sssd_settings.json"""
+        try:
+            sssd_config_file = Path(__file__).resolve().parents[3] / "configs" / "sssd_settings.json"
+            
+            if not sssd_config_file.exists():
+                logger.debug("SSSD settings file not found, using defaults")
+                return
+            
+            with open(sssd_config_file, 'r', encoding='utf-8') as f:
+                sssd_config = json.load(f)
+            
+            inference_settings = sssd_config.get("inference", {})
+            
+            # Load inference settings into widgets
+            if "checkpoint_path" in inference_settings:
+                self.sssd_checkpoint_edit.setText(inference_settings["checkpoint_path"])
+            if "horizons" in inference_settings:
+                self.sssd_horizons_edit.setText(inference_settings["horizons"])
+            if "num_samples" in inference_settings:
+                self.sssd_num_samples_spinbox.setValue(inference_settings["num_samples"])
+            if "sampler" in inference_settings:
+                self.sssd_sampler_combo.setCurrentText(inference_settings["sampler"])
+            if "ddim_eta" in inference_settings:
+                self.sssd_ddim_eta_spinbox.setValue(inference_settings["ddim_eta"])
+            if "steps_inference" in inference_settings:
+                self.sssd_steps_inference_spinbox.setValue(inference_settings["steps_inference"])
+            if "confidence_threshold" in inference_settings:
+                self.sssd_confidence_threshold_spinbox.setValue(inference_settings["confidence_threshold"])
+            if "cache_predictions" in inference_settings:
+                self.sssd_cache_enabled_cb.setChecked(inference_settings["cache_predictions"])
+            if "cache_ttl_seconds" in inference_settings:
+                self.sssd_cache_ttl_spinbox.setValue(inference_settings["cache_ttl_seconds"])
+            if "device" in inference_settings:
+                self.sssd_device_combo.setCurrentText(inference_settings["device"])
+            if "mixed_precision_enabled" in inference_settings:
+                self.sssd_mixed_precision_cb.setChecked(inference_settings["mixed_precision_enabled"])
+            if "compile_model" in inference_settings:
+                self.sssd_compile_model_cb.setChecked(inference_settings["compile_model"])
+            
+            logger.info(f"SSSD settings loaded from {sssd_config_file}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to load SSSD settings: {e}")
+
+    def _browse_sssd_checkpoint(self):
+        """Browse for SSSD checkpoint file"""
+        base_dir = Path(__file__).resolve().parents[3]
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select SSSD Checkpoint",
+            str(base_dir / "artifacts" / "sssd" / "checkpoints"),
+            "PyTorch Models (*.pt *.pth);;All Files (*.*)"
+        )
+        
+        if file_path:
+            self.sssd_checkpoint_edit.setText(file_path)
+            logger.info(f"Selected SSSD checkpoint: {file_path}")
+            self._apply_sssd_settings()
+
+    def _apply_sssd_settings(self):
+        """Apply and save SSSD settings to configs/sssd_settings.json"""
+        try:
+            # Load existing settings or create new
+            sssd_config_file = Path(__file__).resolve().parents[3] / "configs" / "sssd_settings.json"
+            
+            if sssd_config_file.exists():
+                with open(sssd_config_file, 'r', encoding='utf-8') as f:
+                    sssd_config = json.load(f)
+            else:
+                sssd_config = {"inference": {}, "training": {}, "backtesting": {}}
+            
+            # Update inference settings
+            sssd_config["inference"].update({
+                "checkpoint_path": self.sssd_checkpoint_edit.text().strip(),
+                "horizons": self.sssd_horizons_edit.text().strip(),
+                "num_samples": self.sssd_num_samples_spinbox.value(),
+                "sampler": self.sssd_sampler_combo.currentText(),
+                "ddim_eta": self.sssd_ddim_eta_spinbox.value(),
+                "steps_inference": self.sssd_steps_inference_spinbox.value(),
+                "confidence_threshold": self.sssd_confidence_threshold_spinbox.value(),
+                "cache_predictions": self.sssd_cache_enabled_cb.isChecked(),
+                "cache_ttl_seconds": self.sssd_cache_ttl_spinbox.value(),
+                "device": self.sssd_device_combo.currentText(),
+                "mixed_precision_enabled": self.sssd_mixed_precision_cb.isChecked(),
+                "compile_model": self.sssd_compile_model_cb.isChecked(),
+            })
+            
+            # Save to file
+            sssd_config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(sssd_config_file, 'w', encoding='utf-8') as f:
+                json.dump(sssd_config, f, indent=2)
+            
+            logger.info(f"SSSD settings saved to {sssd_config_file}")
+            QMessageBox.information(
+                self,
+                "Settings Saved",
+                f"SSSD settings saved to:\n{sssd_config_file}"
+            )
+            
+        except Exception as e:
+            logger.exception(f"Failed to save SSSD settings: {e}")
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                f"Failed to save SSSD settings:\n{str(e)}"
+            )
 
     @staticmethod
     def get_model_paths() -> List[str]:

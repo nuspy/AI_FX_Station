@@ -344,10 +344,15 @@ def setup_ui(
     diffusion_training_tab = TrainingTab(main_window)
     training_container.addTab(diffusion_training_tab, "Diffusion")
     
-    # Sub-tab 2: LDM4TS Training (will be moved from Forecast Settings)
+    # Sub-tab 2: LDM4TS Training
     from .ldm4ts_training_tab import LDM4TSTrainingTab
     ldm4ts_training_tab = LDM4TSTrainingTab(main_window)
     training_container.addTab(ldm4ts_training_tab, "LDM4TS")
+    
+    # Sub-tab 3: SSSD Training
+    from .sssd_training_tab import SSSDTrainingTab
+    sssd_training_tab = SSSDTrainingTab(main_window)
+    training_container.addTab(sssd_training_tab, "SSSD")
     
     backtesting_tab = BacktestingTab(main_window)
 

@@ -285,6 +285,7 @@ class StandardizedModelLoader:
                         'checkpoint_path': str(model_path)
                     }
 
+
             if isinstance(data, dict):
                 # Check if model_type is incorrectly set but model is actually Lightning
                 if 'model' in data and hasattr(data['model'], '__class__'):

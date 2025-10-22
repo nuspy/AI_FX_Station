@@ -1,13 +1,13 @@
 {
   "model_paths": [
-    "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=01-val_loss=0.0000.ckpt"
+    "D:/Projects/ForexGPT/artifacts/lightning/EURUSD-1m-epoch=00-val_loss=0.0000.ckpt"
   ],
   "type_basic": true,
-  "type_advanced": false,
+  "type_advanced": true,
   "type_rw": false,
   "combine_models": false,
   "aggregation_method": "Mean",
-  "use_gpu_inference": false,
+  "use_gpu_inference": true,
   "horizons": "1m,2m,3m,4m,5m,6m,7m,8m,9m,10m,11m,12m,13m,14m,15m,20m,25m,30m,45m,1h,75m,90m,105m,2h,135m,150m,165m,3h",
   "n_samples": 50,
   "quantiles": "0.05, 0.50, 0.95",

@@ -142,6 +142,14 @@ class ForexDiffusionLit(pl.LightningModule):
         # Predicts different values for each horizon from latent z
         # Architecture: z_dim -> hidden -> num_horizons
         num_horizons = int(safe_get(model_cfg, "num_horizons", default=1))
+
+        # Fallback for flat hparams from checkpoint
+        if num_horizons == 1 and hasattr(self.cfg, 'num_horizons'):
+            try:
+                num_horizons = int(self.cfg.num_horizons)
+                logger.info(f"[ForexDiffusionLit] Overriding num_horizons from flat hparams: {num_horizons}")
+            except (TypeError, ValueError):
+                pass
         if num_horizons > 1:
             self.multi_horizon_head = torch.nn.Sequential(
                 torch.nn.Linear(z_dim, 256),

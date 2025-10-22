@@ -100,6 +100,19 @@ class LightningMultiHorizonPredictor:
             if not state_dict:
                 raise RuntimeError("Checkpoint is missing state_dict")
 
+            # FIX: Re-construct model with saved hyperparameters from the checkpoint
+            hyper_parameters = checkpoint.get('hyper_parameters')
+            if hyper_parameters:
+                # The model's __init__ expects a config object, not a raw dict.
+                # We create a SimpleNamespace object from the hparams dict to simulate the config object.
+                config_obj = SimpleNamespace(**hyper_parameters)
+                model = ForexDiffusionLit(cfg=config_obj)
+                logger.info("Re-constructed ForexDiffusionLit model from saved hparams.")
+            else:
+                # Fallback for older models that might not have hparams saved
+                logger.warning("No hyperparameters found in checkpoint, initializing default model.")
+                model = ForexDiffusionLit()
+
             sanitized_state_dict = {}
             renamed_keys = []
             for key, value in state_dict.items():
@@ -109,17 +122,14 @@ class LightningMultiHorizonPredictor:
                     renamed_keys.append((key, sanitized_key))
                 sanitized_state_dict[sanitized_key] = value
 
-            model = ForexDiffusionLit()
-
-            hyper_parameters = checkpoint.get('hyper_parameters')
+            # Attach hparams for reference, although model is already built
             if hyper_parameters:
                 try:
-                    model.save_hyperparameters(hyper_parameters)
+                    # This is a Pytorch Lightning method, might not exist on raw nn.Module
+                    if hasattr(model, 'save_hyperparameters'):
+                        model.save_hyperparameters(hyper_parameters)
                 except Exception:
-                    try:
-                        model.hparams = SimpleNamespace(**hyper_parameters)
-                    except Exception:
-                        logger.warning("Failed to attach hyperparameters from checkpoint")
+                    model.hparams = SimpleNamespace(**hyper_parameters)
 
             missing, unexpected = model.load_state_dict(sanitized_state_dict, strict=False)
             if renamed_keys:
@@ -324,7 +334,7 @@ class LightningMultiHorizonPredictor:
                     result[horizon] = float(np.mean(samples))
 
                 logger.debug(
-                    "[LightningPredictor] horizon=%s raw_mean=%.6f raw_std=%.6f",
+                    "[LightningPredictor] horizon={} raw_mean={:.6f} raw_std={:.6f}",
                     horizon,
                     raw_mean[i],
                     raw_std[i]

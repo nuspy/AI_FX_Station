@@ -652,6 +652,10 @@ class UIBuilderMixin:
         self.ldm4ts_forecast_btn = QPushButton("🔮 Forecast LDM4TS")
         self.ldm4ts_forecast_btn.setToolTip("Vision-enhanced LDM4TS forecast\nCtrl+Click on chart to forecast from specific point")
         row1_layout.addWidget(self.ldm4ts_forecast_btn)
+        
+        self.sssd_forecast_btn = QPushButton("🔮 Forecast SSSD")
+        self.sssd_forecast_btn.setToolTip("SSSD multi-timeframe diffusion forecast\nStructured State Space + Diffusion")
+        row1_layout.addWidget(self.sssd_forecast_btn)
 
         self.clear_forecasts_btn = QPushButton("🗑️ Clear")
         row1_layout.addWidget(self.clear_forecasts_btn)

@@ -63,5 +63,7 @@ def build_price_path(
         else:
             returns_array = returns_array[:horizon_count]
 
-    prices = anchor_price * (1.0 + returns_array)
+    # Calculate cumulative product of (1 + returns) and multiply by anchor
+    cumulative_returns = np.cumprod(1.0 + returns_array)
+    prices = anchor_price * cumulative_returns
     return prices
