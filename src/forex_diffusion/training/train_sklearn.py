@@ -1065,7 +1065,15 @@ def main():
             Xa_f = Xa[ok]
             ya_f = ya[ok]
             return Xa_f.reshape(-1, 1), ya_f
-        mask = np.isfinite(Xa).all(axis=1) & np.isfinite(ya)
+        
+        # Handle multi-dimensional y (multi-horizon targets)
+        if ya.ndim == 1:
+            # Single target: (N,)
+            mask = np.isfinite(Xa).all(axis=1) & np.isfinite(ya)
+        else:
+            # Multi-horizon targets: (N, H)
+            mask = np.isfinite(Xa).all(axis=1) & np.isfinite(ya).all(axis=1)
+        
         return Xa[mask], ya[mask]
 
     Xtr_f, ytr_f = _filter_finite(Xtr, ytr)
@@ -1237,6 +1245,8 @@ def main():
     
     num_horizons = len(horizons_meta)
     horizon_display = format_horizon_spec(horizons_meta)  # Compact format for filename
+    # Replace invalid filename characters (/ is invalid on Windows)
+    horizon_display = horizon_display.replace('/', '_')
     
     run_name = f"{args.symbol.replace('/','')}_{args.timeframe}_d{args.days_history}_h{horizon_display}_{args.algo}{encoder_suffix}"
 
@@ -1266,8 +1276,16 @@ def main():
     }
 
     out_path = out_dir / f"{run_name}.pkl"
-    dump(payload, out_path, compress=3)
-    print(f"[OK] saved model to {out_path} (val_mae={mae:.6f}, encoder={encoder_type})")
+    
+    try:
+        dump(payload, out_path, compress=3)
+        print(f"[OK] saved model to {out_path} (val_mae={mae:.6f}, encoder={encoder_type})")
+    except Exception as e:
+        print(f"[ERROR] Failed to save model to {out_path}")
+        print(f"[ERROR] Exception: {e}")
+        import traceback
+        traceback.print_exc()
+        raise  # Re-raise to ensure training is marked as failed
 
 
 if __name__ == "__main__":

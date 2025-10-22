@@ -1109,12 +1109,27 @@ class ForecastWorker(QRunnable):
             # Convert to prices relative to base price using shared converter
             q50 = build_price_path(mean_returns, base_price, len(horizons_bars))
 
-            # Calculate bands using ensemble uncertainty
+            # Calculate uncertainty bands
+            # IMPORTANT: For small returns, use ADDITIVE uncertainty, not multiplicative!
+            # Multiplicative (cumulative product) causes exponential growth of bands
             z = 1.645 if bool(self.payload.get("apply_conformal", True)) else 1.0
-            lower_returns = mean_returns - z * std_returns
-            upper_returns = mean_returns + z * std_returns
-            q05 = build_price_path(lower_returns, base_price, len(horizons_bars))
-            q95 = build_price_path(upper_returns, base_price, len(horizons_bars))
+            
+            # Build uncertainty bands directly in price space (additive)
+            # q05/q95 = q50 +/- z * cumulative_std_in_price_space
+            # Cumulative std grows as sqrt(sum(variance)) for independent steps
+            cumulative_std_price = np.zeros(len(horizons_bars))
+            for i in range(len(horizons_bars)):
+                # Std at step i: convert return std to price std
+                # price_std[i] = base_price * std_returns[i]
+                # Cumulative: sqrt(sum of variances up to i)
+                variance_sum = np.sum(std_returns[:i+1]**2)
+                cumulative_std_price[i] = base_price * np.sqrt(variance_sum)
+            
+            q05 = q50 - z * cumulative_std_price
+            q95 = q50 + z * cumulative_std_price
+            
+            logger.debug(f"Uncertainty bands: cumulative std = [{cumulative_std_price[0]:.6f}, ..., {cumulative_std_price[-1]:.6f}]")
+            logger.debug(f"Band width (pips): [{(q95[0]-q05[0])*10000:.1f}, ..., {(q95[-1]-q05[-1])*10000:.1f}]")
 
             # Create future timestamps
             last_ts_ms = int(df_candles["ts_utc"].iat[-1])

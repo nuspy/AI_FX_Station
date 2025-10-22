@@ -598,15 +598,15 @@ class ForecastService(ChartServiceBase):
 
     def _plot_multi_horizon_forecast(self, quantiles: dict, source: str = "multi_horizon"):
         """
-        Plot multi-horizon forecasts as separate lines on the chart.
+        Plot multi-horizon forecasts as a continuous curve connecting all horizon points.
         
         Args:
             quantiles: Dict with multi-horizon predictions
                 Expected format:
                 {
-                    'horizons': [15, 60, 240],
-                    'predictions_dict': {15: {...}, 60: {...}, 240: {...}},
-                    'future_ts_dict': {15: [...], 60: [...], 240: [...]},  # optional
+                    'horizons': [1, 2, 3, ..., 180],  # Horizon bars
+                    'predictions_dict': {1: {...}, 2: {...}, 180: {...}},
+                    'future_ts_dict': {1: [...], 2: [...], 180: [...]},  # optional
                     'model_path_used': 'path/to/model.pkl',
                     'label': 'Model Name'
                 }
@@ -622,6 +622,12 @@ class ForecastService(ChartServiceBase):
                 self._plot_forecast_overlay(quantiles, source)
                 return
             
+            # IMPORTANT: Multi-horizon should be plotted as ONE continuous curve,
+            # not as separate lines for each horizon!
+            # Build arrays of all points: x_vals[i] = timestamp at horizon[i], y_vals[i] = prediction at horizon[i]
+            
+            logger.info(f"Plotting multi-horizon forecast: {len(horizons)} horizons as continuous curve")
+            
             # Get model info for coloring
             model_path = quantiles.get("model_path_used", quantiles.get("model_path", source))
             model_name = str(quantiles.get("label") or quantiles.get("source") or source)
@@ -629,124 +635,157 @@ class ForecastService(ChartServiceBase):
             # Get base color for model
             base_color = self._get_color_for_model(model_path)
             
-            # Color palette for different horizons (lighter to darker)
-            # Short horizons = lighter, long horizons = darker
-            import colorsys
             import pyqtgraph as pg
             
-            def lighten_color(hex_color, factor=0.3):
-                """Lighten a hex color by factor (0-1)."""
-                hex_color = hex_color.lstrip('#')
-                r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-                h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
-                v = min(1.0, v + (1 - v) * factor)
-                r, g, b = colorsys.hsv_to_rgb(h, s, v)
-                return '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
+            # Build continuous arrays for all horizons
+            sorted_horizons = sorted(horizons)
+            x_vals_list = []
+            q50_list = []
+            q05_list = []
+            q95_list = []
             
-            logger.info(f"Plotting multi-horizon forecast: {len(horizons)} horizons from {model_name}")
+            # Get last timestamp and timeframe delta
+            if self._last_df is None or self._last_df.empty:
+                logger.warning("No data available for multi-horizon plotting")
+                return
             
-            # Plot each horizon as a separate line
-            for i, horizon in enumerate(sorted(horizons)):
+            try:
+                last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
+            except Exception:
+                last_ts = pd.Timestamp.utcnow().tz_localize("UTC")
+            
+            td = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
+            
+            # Collect all points for continuous curve
+            for horizon in sorted_horizons:
                 pred_data = predictions_dict.get(horizon)
                 if pred_data is None:
                     continue
                 
-                # Extract prediction values
+                # Extract prediction values (single value per horizon)
                 if isinstance(pred_data, dict):
-                    q50 = pred_data.get('mean') or pred_data.get('q50')
-                    q05 = pred_data.get('q05')
-                    q95 = pred_data.get('q95')
+                    q50_val = pred_data.get('mean') or pred_data.get('q50')
+                    q05_val = pred_data.get('q05')
+                    q95_val = pred_data.get('q95')
                 else:
-                    q50 = [float(pred_data)]
-                    q05 = None
-                    q95 = None
+                    q50_val = float(pred_data)
+                    q05_val = None
+                    q95_val = None
                 
-                if q50 is None:
+                if q50_val is None:
                     continue
                 
-                # Convert to array
-                q50_arr = np.asarray(q50, dtype=float).flatten()
+                # Handle if value is array (take first)
+                if isinstance(q50_val, (list, np.ndarray)):
+                    q50_val = float(q50_val[0]) if len(q50_val) > 0 else None
+                    if q50_val is None:
+                        continue
                 
-                # Get timestamps for this horizon
+                # Timestamp for this horizon
                 future_ts = future_ts_dict.get(horizon) if future_ts_dict else None
-                
                 if future_ts is not None:
                     try:
-                        x_vals = pd.to_datetime(future_ts, unit="ms", utc=True)
+                        # Use provided timestamp
+                        ts = pd.to_datetime(future_ts[0] if isinstance(future_ts, list) else future_ts, unit="ms", utc=True)
                     except Exception:
-                        x_vals = pd.to_datetime(future_ts, utc=True)
+                        ts = pd.to_datetime(future_ts[0] if isinstance(future_ts, list) else future_ts, utc=True)
                 else:
-                    # Create timestamps based on horizon
-                    if self._last_df is None or self._last_df.empty:
-                        continue
-                    try:
-                        last_ts = pd.to_datetime(self._last_df["ts_utc"].astype("int64"), unit="ms", utc=True).iat[-1]
-                    except Exception:
-                        last_ts = pd.Timestamp.utcnow().tz_localize("UTC")
-                    td = self._tf_to_timedelta(getattr(self, "timeframe", "1m"))
-                    # Single point at horizon bars ahead
-                    x_vals = [last_ts + td * horizon]
+                    # Calculate timestamp: last_ts + td * horizon
+                    ts = last_ts + td * horizon
                 
-                # Normalize to naive datetime
+                # Append to lists
+                x_vals_list.append(ts)
+                q50_list.append(float(q50_val))
+                
+                # Handle uncertainty bounds
+                if q05_val is not None:
+                    if isinstance(q05_val, (list, np.ndarray)):
+                        q05_val = float(q05_val[0]) if len(q05_val) > 0 else float(q50_val)
+                    q05_list.append(float(q05_val))
+                else:
+                    q05_list.append(float(q50_val))  # Fallback: no uncertainty
+                
+                if q95_val is not None:
+                    if isinstance(q95_val, (list, np.ndarray)):
+                        q95_val = float(q95_val[0]) if len(q95_val) > 0 else float(q50_val)
+                    q95_list.append(float(q95_val))
+                else:
+                    q95_list.append(float(q50_val))  # Fallback: no uncertainty
+            
+            if not x_vals_list:
+                logger.warning("No valid horizon data to plot")
+                return
+            
+            # Convert to arrays
+            x_vals = pd.DatetimeIndex(x_vals_list)
+            q50_arr = np.array(q50_list, dtype=float)
+            q05_arr = np.array(q05_list, dtype=float)
+            q95_arr = np.array(q95_list, dtype=float)
+            
+            logger.info(f"Multi-horizon continuous curve: {len(x_vals)} points from {sorted_horizons[0]} to {sorted_horizons[-1]} bars")
+            
+            # Prepend anchor point (current price at current time)
+            try:
+                req_ms = quantiles.get("requested_at_ms")
+                if req_ms is not None:
+                    t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True)
+                    anchor_price = quantiles.get("anchor_price")
+                    if anchor_price is not None:
+                        last_close = float(anchor_price)
+                    else:
+                        last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
+                    
+                    x_vals = pd.DatetimeIndex([t0]).append(x_vals)
+                    q50_arr = np.insert(q50_arr, 0, last_close)
+                    q05_arr = np.insert(q05_arr, 0, last_close)
+                    q95_arr = np.insert(q95_arr, 0, last_close)
+                    logger.debug(f"Prepended anchor: t0={t0}, price={last_close:.6f}")
+            except Exception as e:
+                logger.warning(f"Failed to prepend anchor point: {e}")
+            
+            # Normalize to naive datetime
+            try:
+                x_vals = x_vals.tz_localize(None)
+            except Exception:
                 try:
-                    x_vals = pd.to_datetime(x_vals, utc=True).tz_localize(None)
-                except Exception:
                     x_vals = pd.to_datetime(x_vals).tz_localize(None)
-                
-                # Align lengths
-                n = min(len(x_vals), len(q50_arr))
-                if n == 0:
-                    continue
-                q50_arr = q50_arr[:n]
-                x_vals = x_vals[:n]
-                
-                # Prepend anchor point
-                try:
-                    req_ms = quantiles.get("requested_at_ms")
-                    if req_ms is not None:
-                        t0 = pd.to_datetime(int(req_ms), unit="ms", utc=True).tz_convert(None)
-                        anchor_price = quantiles.get("anchor_price")
-                        if anchor_price is not None:
-                            last_close = float(anchor_price)
-                        else:
-                            last_close = float(self._last_df["close"].iat[-1] if "close" in self._last_df.columns else self._last_df["price"].iat[-1])
-                        x_vals = pd.DatetimeIndex([t0]).append(pd.DatetimeIndex(x_vals))
-                        q50_arr = np.insert(q50_arr, 0, last_close)
-                except Exception as e:
-                    logger.debug(f"Failed to prepend anchor for horizon {horizon}: {e}")
-                
-                # Convert to numeric
-                if isinstance(x_vals, pd.DatetimeIndex):
-                    x_numeric = x_vals.astype('int64') // 10**9
-                else:
-                    x_numeric = np.array([pd.Timestamp(x).timestamp() for x in x_vals])
-                
-                # Color gradient: short horizons lighter, long horizons darker
-                color_factor = i / max(len(horizons) - 1, 1)
-                if color_factor < 0.5:
-                    # Lighten for short horizons
-                    horizon_color = lighten_color(base_color, 0.4 * (1 - color_factor * 2))
-                else:
-                    # Use base or darken slightly for long horizons
-                    horizon_color = base_color
-                
-                # Line width: thinner for short, thicker for long
-                line_width = 1.5 + i * 0.3
-                
-                # Label with horizon
-                horizon_label = f"{model_name} @ {horizon}bars"
-                
-                # Plot line
-                line = self.ax.plot(
-                    x_numeric, q50_arr,
-                    pen=pg.mkPen(horizon_color, width=line_width),
-                    symbol='o', symbolSize=3,
-                    symbolBrush=pg.mkBrush(horizon_color),
-                    symbolPen=pg.mkPen(horizon_color),
-                    name=horizon_label
+                except Exception:
+                    pass
+            
+            # Convert to numeric timestamps for PyQtGraph
+            x_numeric = x_vals.astype('int64') // 10**9
+            
+            # Plot main line (q50)
+            line = self.ax.plot(
+                x_numeric, q50_arr,
+                pen=pg.mkPen(base_color, width=2.5),
+                symbol='o', symbolSize=4,
+                symbolBrush=pg.mkBrush(base_color),
+                symbolPen=pg.mkPen(base_color),
+                name=model_name
+            )
+            
+            # Plot uncertainty band (q05-q95)
+            if not np.array_equal(q05_arr, q50_arr) or not np.array_equal(q95_arr, q50_arr):
+                # There is actual uncertainty
+                from PySide6.QtCore import Qt
+                fill_curve = pg.FillBetweenItem(
+                    pg.PlotDataItem(x_numeric, q05_arr),
+                    pg.PlotDataItem(x_numeric, q95_arr),
+                    brush=pg.mkBrush(base_color + '30')  # Add alpha
                 )
+                self.ax.addItem(fill_curve)
                 
-                logger.debug(f"Plotted horizon {horizon}: {len(x_numeric)} points, color={horizon_color}")
+                # Draw boundary lines
+                border_color = base_color
+                line05 = self.ax.plot(x_numeric, q05_arr, pen=pg.mkPen(border_color, width=1, style=Qt.PenStyle.DashLine))
+                line95 = self.ax.plot(x_numeric, q95_arr, pen=pg.mkPen(border_color, width=1, style=Qt.PenStyle.DashLine))
+                
+                logger.debug(f"Plotted uncertainty band: q05=[{np.min(q05_arr):.6f}, {np.max(q05_arr):.6f}], q95=[{np.min(q95_arr):.6f}, {np.max(q95_arr):.6f}]")
+            else:
+                logger.debug("No uncertainty data (q05=q95=q50)")
+            
+            logger.info(f"Successfully plotted multi-horizon forecast: {len(x_numeric)} points, range=[{np.min(q50_arr):.6f}, {np.max(q50_arr):.6f}]")
             
         except Exception as e:
             logger.exception(f"Failed to plot multi-horizon forecast: {e}")
