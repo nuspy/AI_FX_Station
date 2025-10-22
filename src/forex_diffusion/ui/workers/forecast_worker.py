@@ -975,7 +975,47 @@ class ForecastWorker(QRunnable):
             mean_returns = np.array(ensemble_preds["mean"], dtype=float)
             std_returns = np.array(ensemble_preds["std"], dtype=float)
 
-            # Log diagnostics for scaling
+            # === DIAGNOSTIC LOGGING: Detect scaling issues ===
+            logger.info("=" * 80)
+            logger.info("FORECAST DIAGNOSTIC: Returns Analysis")
+            logger.info("=" * 80)
+            logger.info(f"Base price (last_close): {base_price:.6f}")
+            logger.info(f"Anchor price override: {anchor_price}")
+            logger.info(f"Number of horizons: {len(mean_returns)}")
+            logger.info(f"")
+            logger.info(f"Mean returns RAW (first 5): {mean_returns[:5]}")
+            logger.info(f"Std returns RAW (first 5): {std_returns[:5]}")
+            logger.info(f"")
+            logger.info(f"Return statistics:")
+            logger.info(f"  Min return: {np.min(mean_returns):.8f}")
+            logger.info(f"  Max return: {np.max(mean_returns):.8f}")
+            logger.info(f"  Mean return: {np.mean(mean_returns):.8f}")
+            logger.info(f"  Median return: {np.median(mean_returns):.8f}")
+            logger.info(f"")
+            
+            # Auto-detect scaling issues
+            mean_abs = np.abs(np.mean(mean_returns))
+            if mean_abs > 0.1:
+                logger.warning("⚠️ SCALING ISSUE DETECTED: Returns look like PRICES (absolute values)")
+                logger.warning(f"   Expected: returns ~ 0.0001 (0.01%)")
+                logger.warning(f"   Actual:   returns ~ {mean_abs:.6f}")
+                logger.warning(f"   This will cause forecast to explode via cumulative product!")
+            elif mean_abs > 0.01:
+                logger.warning("⚠️ SCALING ISSUE DETECTED: Returns amplified 100x")
+                logger.warning(f"   Expected: returns ~ 0.0001 (0.01%)")
+                logger.warning(f"   Actual:   returns ~ {mean_abs:.6f} (1%)")
+                logger.warning(f"   Forecast will be 100x too large!")
+            elif mean_abs > 0.001:
+                logger.warning("⚠️ SCALING ISSUE DETECTED: Returns amplified 10x")
+                logger.warning(f"   Expected: returns ~ 0.0001 (0.01%)")
+                logger.warning(f"   Actual:   returns ~ {mean_abs:.6f} (0.1%)")
+                logger.warning(f"   Forecast will be 10x too large!")
+            else:
+                logger.info(f"✓ Returns magnitude looks normal: {mean_abs:.8f}")
+            
+            logger.info("=" * 80)
+
+            # Log diagnostics for scaling (keep original debug line)
             logger.debug(
                 "Ensemble returns summary: base=%.6f, anchor=%s, mean=%s, std=%s",
                 base_price,
@@ -1105,10 +1145,42 @@ class ForecastWorker(QRunnable):
 
             display_name = str(self.payload.get("name") or "Parallel Ensemble")
             ensemble_points = list(zip(future_ts_with_anchor, q50.tolist(), q05.tolist(), q95.tolist()))
+            
+            # === DIAGNOSTIC LOGGING: Final price conversions ===
+            logger.info("=" * 80)
+            logger.info("FORECAST DIAGNOSTIC: Final Price Conversion Results")
+            logger.info("=" * 80)
+            logger.info(f"Base price: {base_price:.6f}")
+            logger.info(f"Last close (anchor): {last_close:.6f}")
+            logger.info(f"")
+            logger.info(f"Q50 prices (first 5): {q50[:5]}")
+            logger.info(f"Q05 prices (first 5): {q05[:5]}")
+            logger.info(f"Q95 prices (first 5): {q95[:5]}")
+            logger.info(f"")
+            logger.info(f"Price deltas from base (first 5):")
+            deltas_q50 = q50[:5] - base_price
+            logger.info(f"  Q50 deltas: {deltas_q50}")
+            logger.info(f"  Q50 deltas in pips: {deltas_q50 * 10000}")
+            logger.info(f"")
+            
+            # Check if prices are reasonable
+            max_delta_pips = np.max(np.abs(q50 - base_price)) * 10000
+            if max_delta_pips > 1000:
+                logger.error(f"❌ FORECAST ERROR: Max price movement {max_delta_pips:.1f} pips is unrealistic!")
+                logger.error(f"   For EUR/USD, typical 1h forecast should be < 50 pips")
+                logger.error(f"   Problem: Returns were likely treated as prices or amplified")
+            elif max_delta_pips > 500:
+                logger.warning(f"⚠️ FORECAST WARNING: Max price movement {max_delta_pips:.1f} pips is very large!")
+                logger.warning(f"   Expected for intraday: < 100 pips")
+            else:
+                logger.info(f"✓ Price movements look reasonable: max {max_delta_pips:.1f} pips")
+            
+            logger.info("=" * 80)
+            
             logger.info(
                 "Ensemble horizon diagnostics: base=%.6f points=%s",
                 base_price,
-                ensemble_points
+                ensemble_points[:3]  # Only show first 3 to avoid cluttering
             )
 
             # Prepend anchor point for continuous plotting

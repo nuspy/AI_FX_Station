@@ -99,6 +99,9 @@ def _build_arrays(
     for start in range(start_idx, end_idx - patch_len + 1):
         stop = start + patch_len
         
+        # Current close price (anchor for returns)
+        current_close = float(closes[stop - 1])
+        
         # Collect targets for all horizons
         if is_multi_horizon:
             multi_targets = []
@@ -106,7 +109,10 @@ def _build_arrays(
                 target_idx = stop + h - 1
                 if target_idx >= len(df):
                     break
-                multi_targets.append(float(closes[target_idx]))
+                future_close = float(closes[target_idx])
+                # Target is RETURN, not absolute price
+                target_return = (future_close - current_close) / current_close
+                multi_targets.append(target_return)
             
             if len(multi_targets) != len(horizons):
                 # Skip if not all horizons available
@@ -114,7 +120,7 @@ def _build_arrays(
             
             patch = values[start:stop]
             windows.append(patch.T)  # (C, L)
-            targets.append(multi_targets)  # List of targets
+            targets.append(multi_targets)  # List of returns
             
             if cond_values is not None:
                 # Use conditioning at the furthest horizon
@@ -125,9 +131,13 @@ def _build_arrays(
             if target_idx >= len(df):
                 break
             
+            future_close = float(closes[target_idx])
+            # Target is RETURN, not absolute price
+            target_return = (future_close - current_close) / current_close
+            
             patch = values[start:stop]
             windows.append(patch.T)  # (C, L)
-            targets.append(float(closes[target_idx]))
+            targets.append(target_return)
             
             if cond_values is not None:
                 cond_list.append(cond_values[target_idx])
@@ -447,8 +457,22 @@ def main() -> None:
 
     # Split targets and conditions based on train_size
     train_size = scaler_metadata["train_size"]
-    train_y = targets[:train_size]
-    val_y = targets[train_size:]
+    train_y_raw = targets[:train_size]
+    val_y_raw = targets[train_size:]
+    
+    # Normalize targets (returns) for better learning
+    # Compute mean/std ONLY on training targets (no look-ahead bias)
+    target_mu = float(np.mean(train_y_raw))
+    target_sigma = float(np.std(train_y_raw))
+    if target_sigma == 0:
+        target_sigma = 1.0
+    
+    train_y = (train_y_raw - target_mu) / target_sigma
+    val_y = (val_y_raw - target_mu) / target_sigma
+    
+    logger.info(f"[Target Stats] mean={target_mu:.8f}, std={target_sigma:.8f}")
+    logger.info(f"[Target Range] train: [{np.min(train_y):.2f}, {np.max(train_y):.2f}]")
+    
     cond_train = cond[:train_size] if cond is not None else None
     cond_val = cond[train_size:] if cond is not None else None
 
@@ -470,22 +494,41 @@ def main() -> None:
         pin_memory=True,
     )
 
-    model = ForexDiffusionLit()
+    # Prepare hyperparameters BEFORE creating model
+    if isinstance(horizons, int):
+        horizon_meta = horizons
+        num_horizons = 1
+    else:
+        horizon_meta = horizons
+        num_horizons = len(horizons)
+    
+    # Create config object with num_horizons for model initialization
+    from types import SimpleNamespace
+    from ..config import get_config
+    
+    # Get default config and override num_horizons
+    base_cfg = get_config()
+    
+    # Ensure model section exists and set num_horizons
+    if not hasattr(base_cfg, 'model'):
+        base_cfg.model = SimpleNamespace()
+    base_cfg.model.num_horizons = num_horizons
+    
+    logger.info(f"[train] Creating ForexDiffusionLit model with num_horizons={num_horizons}")
+    
+    # Create model WITH config containing correct num_horizons
+    model = ForexDiffusionLit(cfg=base_cfg)
+    
     model.dataset_stats = {
         "channel_order": CHANNEL_ORDER,
         "mu": mu.tolist(),
         "sigma": sigma.tolist(),
+        "target_mu": target_mu,  # NEW: target normalization stats
+        "target_sigma": target_sigma,  # NEW: target normalization stats
         "scaler_metadata": scaler_metadata,  # NEW: metadata for bias verification
     }
     try:
-        # Save horizons info
-        if isinstance(horizons, int):
-            horizon_meta = horizons
-            num_horizons = 1
-        else:
-            horizon_meta = horizons
-            num_horizons = len(horizons)
-        
+        # Save horizons info to checkpoint hyperparameters
         model.save_hyperparameters(
             {
                 "symbol": args.symbol,
@@ -496,8 +539,9 @@ def main() -> None:
                 "patch_len": args.patch_len,
             }
         )
-    except Exception:
-        pass
+        logger.info(f"[train] Saved hyperparameters with num_horizons={num_horizons}")
+    except Exception as e:
+        logger.warning(f"[train] Failed to save hyperparameters: {e}")
 
     out_dir = Path(args.artifacts_dir).resolve() / "lightning"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -593,9 +637,12 @@ def main() -> None:
         "channel_order": CHANNEL_ORDER,
         "mu": model.dataset_stats["mu"],
         "sigma": model.dataset_stats["sigma"],
+        "target_mu": target_mu,  # NEW: target normalization mean
+        "target_sigma": target_sigma,  # NEW: target normalization std
         "indicator_tfs": coerce_indicator_tfs(args.indicator_tfs),
         "warmup_bars": args.warmup_bars,
         "rv_window": args.rv_window,
+        "target_type": "return",  # NEW: targets are returns, not absolute prices
     }
     sidecar.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"[OK] saved checkpoint to {ckpt_path}")

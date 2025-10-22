@@ -331,20 +331,42 @@ class ModelExecutor:
                             price_mu = getattr(model, 'price_mu', None)
                             price_sigma = getattr(model, 'price_sigma', None)
 
-                            if price_mu is None or price_sigma is None:
-                                predictions_dict = raw_pred_dict
-                                price_pred_dict = None
-                                logger.warning(
-                                    "Lightning model %s missing normalization stats; treating outputs as returns",
-                                    Path(self.model_path).name
-                                )
+                            # NEW: Lightning models trained after fix predict RETURNS, not prices
+                            # Check model metadata to determine target type
+                            target_type = getattr(model, 'target_type', 'return')  # default: return
+                            target_mu = getattr(model, 'target_mu', None)
+                            target_sigma = getattr(model, 'target_sigma', None)
+                            
+                            if target_type == 'price':
+                                # OLD behavior: model predicts absolute prices
+                                if price_mu is None or price_sigma is None:
+                                    predictions_dict = raw_pred_dict
+                                    price_pred_dict = None
+                                    logger.warning(
+                                        "Lightning model %s missing normalization stats; treating outputs as returns",
+                                        Path(self.model_path).name
+                                    )
+                                else:
+                                    price_pred_dict = denormalize_lightning_outputs(
+                                        raw_pred_dict,
+                                        price_mu,
+                                        price_sigma
+                                    )
+                                    predictions_dict = returns_from_prices(price_pred_dict, last_close_value)
                             else:
-                                price_pred_dict = denormalize_lightning_outputs(
-                                    raw_pred_dict,
-                                    price_mu,
-                                    price_sigma
-                                )
-                                predictions_dict = returns_from_prices(price_pred_dict, last_close_value)
+                                # NEW behavior: model predicts returns directly (normalized z-scores)
+                                # De-normalize z-scores to actual returns using TARGET stats
+                                if target_mu is not None and target_sigma is not None:
+                                    predictions_dict = {
+                                        h: float(raw_pred_dict[h]) * target_sigma + target_mu
+                                        for h in raw_pred_dict.keys()
+                                    }
+                                    logger.debug(f"De-normalized returns using target_mu={target_mu:.8f}, target_sigma={target_sigma:.8f}")
+                                else:
+                                    # Fallback: no normalization (raw predictions are returns)
+                                    predictions_dict = raw_pred_dict
+                                    logger.warning(f"Lightning model {Path(self.model_path).name} missing target normalization stats")
+                                price_pred_dict = None
 
                             sorted_horizons = sorted(predictions_dict.keys())
                             predictions = np.array([

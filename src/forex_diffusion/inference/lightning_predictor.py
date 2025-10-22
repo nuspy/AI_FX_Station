@@ -59,6 +59,9 @@ class LightningMultiHorizonPredictor:
         self.num_horizons: int = 0
         self.price_mu: Optional[float] = None
         self.price_sigma: Optional[float] = None
+        self.target_mu: Optional[float] = None  # NEW: target normalization mean
+        self.target_sigma: Optional[float] = None  # NEW: target normalization std
+        self.target_type: str = "price"  # "price" (old models) or "return" (new models)
         
         # Load model
         logger.info(f"Loading Lightning model from {self.checkpoint_path}")
@@ -83,6 +86,9 @@ class LightningMultiHorizonPredictor:
         if hasattr(self, 'model') and self.model is not None:
             setattr(self.model, 'price_mu', self.price_mu)
             setattr(self.model, 'price_sigma', self.price_sigma)
+            setattr(self.model, 'target_mu', self.target_mu)  # NEW
+            setattr(self.model, 'target_sigma', self.target_sigma)  # NEW
+            setattr(self.model, 'target_type', self.target_type)  # NEW
         
         logger.info(f"Model horizons: {self.horizons} ({'multi' if self.is_multi_horizon else 'single'})")
         logger.info(f"Device: {self.device}")
@@ -131,14 +137,31 @@ class LightningMultiHorizonPredictor:
                 except Exception:
                     model.hparams = SimpleNamespace(**hyper_parameters)
 
+            # Filter out multi_horizon_head keys if model doesn't have it
+            # (checkpoint was trained with multi-horizon, but we're loading for single-horizon inference)
+            if not hasattr(model, 'multi_horizon_head') or model.multi_horizon_head is None:
+                # Remove multi_horizon_head keys from state_dict
+                keys_to_remove = [k for k in sanitized_state_dict.keys() if 'multi_horizon_head' in k]
+                for k in keys_to_remove:
+                    del sanitized_state_dict[k]
+                if keys_to_remove:
+                    logger.info(f"Removed {len(keys_to_remove)} multi_horizon_head keys from checkpoint (model initialized without multi-horizon head)")
+            
             missing, unexpected = model.load_state_dict(sanitized_state_dict, strict=False)
             if renamed_keys:
                 rename_msg = ", ".join([f"{old}->{new}" for old, new in renamed_keys[:5]])
                 if len(renamed_keys) > 5:
                     rename_msg += ", ..."
                 logger.info(f"Sanitized {len(renamed_keys)} state_dict keys for torch.compile artifacts: {rename_msg}")
-            if missing:
-                logger.warning(f"Missing keys when loading Lightning model: {missing}")
+            
+            # Filter out expected missing keys (multi_horizon_head)
+            expected_missing = [k for k in missing if 'multi_horizon_head' in k]
+            unexpected_missing = [k for k in missing if k not in expected_missing]
+            
+            if unexpected_missing:
+                logger.warning(f"Unexpected missing keys when loading Lightning model: {unexpected_missing}")
+            if expected_missing:
+                logger.debug(f"Skipped {len(expected_missing)} multi_horizon_head keys (not needed for inference)")
             if unexpected:
                 logger.warning(f"Unexpected keys when loading Lightning model: {unexpected}")
 
@@ -232,6 +255,20 @@ class LightningMultiHorizonPredictor:
 
             self.is_multi_horizon = len(self.horizons) > 1
             self.num_horizons = len(self.horizons)
+            
+            # Extract target type (new models train on returns, old on prices)
+            target_type = sidecar.get('target_type', 'price')  # default: old behavior (price)
+            self.target_type = target_type
+            
+            # Extract target normalization stats (for new models)
+            target_mu = sidecar.get('target_mu')
+            target_sigma = sidecar.get('target_sigma')
+            if target_mu is not None and target_sigma is not None:
+                self.target_mu = float(target_mu)
+                self.target_sigma = float(target_sigma)
+                logger.info(f"Model target normalization: mu={self.target_mu:.8f}, sigma={self.target_sigma:.8f}")
+            
+            logger.info(f"Model target type: {self.target_type}")
 
             if not self.patch_len:
                 fallback_patch_len = getattr(self.model, 'patch_len', None)
